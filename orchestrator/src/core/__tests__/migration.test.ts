@@ -34,13 +34,22 @@ describe('migration 0002 PostgreSQL cutover', () => {
     // Regression for "column timeout_min does not exist": ensureSchema
     // (= runCompositionRootMigrations) must add the column before any
     // verify_gates SELECT runs on a daemon restarted against a pre-7091bbcc DB.
+    //
+    // Simulates an existing install: run ensureSchema to get a full schema,
+    // then roll the schema_migrations version back to an old value and drop the
+    // column; the next ensureSchema (simulating a daemon restart on the new
+    // binary) sees the old version → runs the full DDL → re-adds the column.
     const db = openDb(`pglite://verify-gates-timeout-min-${randomUUID()}`)
     try {
-      // 1. Set up a known-good schema (ensureSchema is idempotent).
+      // 1. Bootstrap the full schema (all tables + SCHEMA_VERSION recorded).
       await ensureSchema(db)
 
-      // 2. Roll back to the pre-7091bbcc state by dropping the column.
-      //    This is the on-disk condition that triggered the production failure.
+      // 2. Simulate an old install: remove the current schema version and drop
+      //    the column to reproduce the state before timeout_min was added.
+      await db.execute({
+        sql: `DELETE FROM schema_migrations WHERE version = ?`,
+        args: [SCHEMA_VERSION],
+      })
       await db.execute(`ALTER TABLE verify_gates DROP COLUMN timeout_min`)
       await db.execute({
         sql: `INSERT INTO verify_gates
@@ -50,7 +59,7 @@ describe('migration 0002 PostgreSQL cutover', () => {
       })
 
       // 3. Daemon restarts — runCompositionRootMigrations calls ensureSchema.
-      //    This must re-add timeout_min before any verify_gates SELECT fires.
+      //    SCHEMA_VERSION is NOT in schema_migrations → full DDL runs → adds timeout_min.
       await ensureSchema(db)
 
       // 4. First gate read after boot — must not throw
@@ -61,7 +70,7 @@ describe('migration 0002 PostgreSQL cutover', () => {
         name: 'typecheck',
         cmd: 'npx',
       })
-      // Column was re-added with no DEFAULT — NULL → undefined in VerifyScope.
+      // Column was added with no DEFAULT — NULL → undefined in VerifyScope.
       expect(scopes[0].steps[0].timeoutMin).toBeUndefined()
     } finally {
       await db.close()
@@ -72,13 +81,21 @@ describe('migration 0002 PostgreSQL cutover', () => {
     // Regression for "column evidence does not exist": ensureSchema
     // (= runCompositionRootMigrations) must add the column before any
     // verify_gates SELECT runs on a daemon restarted against a pre-0039 DB.
+    //
+    // Simulates a schema-0038 install: run ensureSchema, roll the version back
+    // to '0038', and drop the evidence column. The next ensureSchema (the new
+    // binary with SCHEMA_VERSION = '0039') runs the full DDL and re-adds it.
     const db = openDb(`pglite://verify-gates-evidence-${randomUUID()}`)
     try {
-      // 1. Set up a known-good schema (ensureSchema is idempotent).
+      // 1. Bootstrap the full schema.
       await ensureSchema(db)
 
-      // 2. Roll back to the pre-0039 state by dropping the column.
-      //    This is the on-disk condition that triggered the production failure.
+      // 2. Simulate a pre-0039 install: roll back to version '0038' and drop
+      //    the evidence column to reproduce the state before it was added.
+      await db.execute({
+        sql: `DELETE FROM schema_migrations WHERE version = ?`,
+        args: [SCHEMA_VERSION],
+      })
       await db.execute(`ALTER TABLE verify_gates DROP COLUMN evidence`)
       await db.execute({
         sql: `INSERT INTO verify_gates
@@ -88,7 +105,7 @@ describe('migration 0002 PostgreSQL cutover', () => {
       })
 
       // 3. Daemon restarts — runCompositionRootMigrations calls ensureSchema.
-      //    This must re-add evidence before any verify_gates SELECT fires.
+      //    SCHEMA_VERSION ('0039') is NOT in schema_migrations → full DDL runs → adds evidence.
       await ensureSchema(db)
 
       // 4. First gate read after boot — must not throw
