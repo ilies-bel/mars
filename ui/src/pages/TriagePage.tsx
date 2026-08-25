@@ -489,6 +489,9 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
                   Recovery spent — carry the work forward:
                 </p>
                 <div className="flex flex-wrap items-center gap-2">
+                  <code className="font-mono text-micro text-warn/70 select-all">
+                    mars remerge {item.entityId}
+                  </code>
                   <button
                     disabled={pending !== null}
                     onClick={() => void handleVerb('remerge')}
@@ -497,6 +500,11 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
                   >
                     {pending === 'remerge' ? '…' : 'Remerge'}
                   </button>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <code className="font-mono text-micro text-warn/70 select-all">
+                    mars task add --supersede {item.entityId}
+                  </code>
                   <button
                     disabled={pending !== null}
                     onClick={() => void handleVerb('supersede')}

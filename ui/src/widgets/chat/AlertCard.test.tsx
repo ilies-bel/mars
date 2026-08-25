@@ -60,17 +60,17 @@ describe('AlertCard – recipe rendering', () => {
 
   it('renders the kind icon for failed', () => {
     const html = render({ kind: 'failed' })
-    expect(html).toContain('⚠️')
+    expect(html).toContain('⚠')
   })
 
   it('renders the kind icon for arc-failed', () => {
     const html = render({ kind: 'arc-failed' })
-    expect(html).toContain('⛓️')
+    expect(html).toContain('⊗')
   })
 
   it('renders the kind icon for draft-proposal', () => {
     const html = render({ kind: 'draft-proposal' })
-    expect(html).toContain('💡')
+    expect(html).toContain('◇')
   })
 
   it('renders verb buttons from the recipe', () => {

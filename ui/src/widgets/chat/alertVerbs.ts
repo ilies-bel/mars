@@ -85,13 +85,13 @@ export const resolveThreadForItem = async (
   qc: QueryClient,
 ): Promise<string> => {
   if (item.kind === 'arc-failed' || item.kind === 'failed') {
-    try {
-      const result = await startThreadFromAlert(item.fixForTaskId ?? item.entityId)
-      return result.threadId
-    } catch {
-      // The entity may not be an arc (e.g. a HITL or plan-level failed row) —
-      // fall through to the generic queue-item thread path.
-    }
+    // These rows are always backed by a daemon-derived arc Alert — errors must
+    // propagate so the operator sees the failure rather than silently landing in
+    // an unkeyed fallback thread (which would be a different thread from the
+    // arc-keyed one the same row opens on retry, and would open blank instead of
+    // seeded with the arc context).
+    const result = await startThreadFromAlert(item.fixForTaskId ?? item.entityId)
+    return result.threadId
   }
   const thread = await startThreadForQueueItem(
     item.id,
