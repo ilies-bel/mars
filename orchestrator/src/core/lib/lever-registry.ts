@@ -764,23 +764,6 @@ const REGISTRY: LeverRegistryEntry[] = [
 
   // ── self-evolve ───────────────────────────────────────────────────────────
   {
-    id: 'self-evolve.auto-enqueue',
-    label: 'Self-evolve auto-enqueue (auto-enqueues high-confidence mechanical reflection suggestions as tasks)',
-    family: 'self-evolve',
-    scope: 'global',
-    readCurrent: () => {
-      try {
-        return String(loadDaemonConfig().selfEvolve.autoEnqueue)
-      } catch {
-        return null
-      }
-    },
-    allowedValues: { type: 'enum', values: ['true', 'false'] },
-    gesture: 'mars lever set self-evolve.auto-enqueue <true|false>',
-    appliesWithoutRestart: false,
-    consumer: { file: 'src/core/lib/reflector.ts', symbol: 'persistSuggestions' },
-  },
-  {
     id: 'self-evolve.drift-threshold-pct',
     label: 'Self-evolve drift threshold percentage',
     family: 'self-evolve',
@@ -802,24 +785,6 @@ const REGISTRY: LeverRegistryEntry[] = [
     // author classified this as no-consumer, so we follow suit until
     // mars-e78e0004 resolves the wiring decision.
   },
-  {
-    id: 'self-evolve.task-confidence-threshold',
-    label: 'Self-evolve minimum task-confidence for auto-enqueue (0–1)',
-    family: 'self-evolve',
-    scope: 'global',
-    readCurrent: () => {
-      try {
-        return String(loadDaemonConfig().selfEvolve.taskConfidenceThreshold)
-      } catch {
-        return null
-      }
-    },
-    allowedValues: { type: 'range', min: 0, max: 1 },
-    gesture: 'mars lever set self-evolve.task-confidence-threshold <0–1>',
-    appliesWithoutRestart: false,
-    consumer: { file: 'src/core/lib/reflector.ts', symbol: 'persistSuggestions' },
-  },
-
   // ── task-spec ─────────────────────────────────────────────────────────────
   {
     id: 'task-spec.files',

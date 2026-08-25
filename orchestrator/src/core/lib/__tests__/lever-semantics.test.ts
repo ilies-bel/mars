@@ -79,10 +79,10 @@ describe('lever defaults unchanged', () => {
     expect(e!.allowedValues).toEqual({ type: 'enum', values: ['on', 'off'] })
   })
 
-  it('self-evolve.auto-enqueue defaults to false', () => {
-    // selfEvolve.autoEnqueue = false by default: mechanical suggestions go to proposals, not tasks
-    const e = loadLeverRegistry().find((x) => x.id === 'self-evolve.auto-enqueue')
+  it('self-evolve.drift-threshold-pct uses a range validator', () => {
+    // ADR-0038: autoEnqueue is removed; only driftThresholdPct remains settable
+    const e = loadLeverRegistry().find((x) => x.id === 'self-evolve.drift-threshold-pct')
     expect(e).toBeDefined()
-    expect(e!.allowedValues).toEqual({ type: 'enum', values: ['true', 'false'] })
+    expect(e!.allowedValues).toMatchObject({ type: 'range' })
   })
 })

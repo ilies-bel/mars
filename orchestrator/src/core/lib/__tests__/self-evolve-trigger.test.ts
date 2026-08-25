@@ -198,43 +198,26 @@ describe('runSelfEvolveTrigger', () => {
 
   afterEach(() => {
     delete process.env.MARS_REPO
-    delete process.env.MARS_SELF_EVOLVE_AUTO_TRIGGER
     rmSync(repo, { recursive: true, force: true })
   })
 
-  // PRD case 1: autoTrigger=false → no proposals, no queued tasks
-  it('is a no-op when autoTrigger is false (default)', async () => {
-    // Default is false — do not set MARS_SELF_EVOLVE_AUTO_TRIGGER
+  // ADR-0038: the trigger always runs (no autoEnqueue gate) and only raises proposals.
+  // With no snapshots on disk, it is a no-op.
+  it('is a no-op when no KPI snapshots exist', async () => {
     const ctx = await loadContext(repo)
-
-    // Insert two confident snapshots with a large drift to confirm the guard
-    // is purely the autoTrigger switch, not the absence of data.
-    await insertSnapshot(ctx.store, {
-      id: 'snap-prior',
-      takenAt: '2026-01-01T00:00:00Z',
-      failureRate: 0.10,
-    })
-    await insertSnapshot(ctx.store, {
-      id: 'snap-current',
-      takenAt: '2026-01-02T00:00:00Z',
-      failureRate: 0.25, // +150% — well above any threshold
-    })
-
+    // No snapshots inserted — function returns early at readLatestTwoSnapshots.
     const tasksBefore = await ctx.countTasks()
     const result = await ctx.runSelfEvolveTrigger({ store: ctx.store })
     const tasksAfter = await ctx.countTasks()
 
     expect(result.raised).toHaveLength(0)
-    expect(tasksAfter).toBe(tasksBefore) // no tasks queued
+    expect(tasksAfter).toBe(tasksBefore) // no tasks queued — proposals only, ADR-0038
     const proposals = await ctx.listProposals({ source: 'reflection' })
     expect(proposals).toHaveLength(0)
   })
 
-  // PRD case 2: autoTrigger=true, confident drift above threshold → exactly one
-  // draft proposal with source='reflection', status='draft', title naming the
-  // regressed KPI, body containing both the regressed delta and the full vector.
-  it('raises exactly one draft proposal for a confirmed regression when enabled', async () => {
-    process.env.MARS_SELF_EVOLVE_AUTO_TRIGGER = 'true'
+  // ADR-0038: trigger is always on; raises proposals (never tasks) for confirmed regressions.
+  it('raises exactly one draft proposal for a confirmed regression', async () => {
     const ctx = await loadContext(repo)
 
     // prior: failure_rate=0.10; current: 0.25 → +150% regression (lower-is-better)
@@ -283,7 +266,6 @@ describe('runSelfEvolveTrigger', () => {
   // PRD case 3: dedup — re-running while prior draft is still 'draft' creates
   // zero additional proposals.
   it('skips raising a duplicate when an open draft already exists for the same KPI', async () => {
-    process.env.MARS_SELF_EVOLVE_AUTO_TRIGGER = 'true'
     const ctx = await loadContext(repo)
 
     await insertSnapshot(ctx.store, {
@@ -315,7 +297,6 @@ describe('runSelfEvolveTrigger', () => {
   // PRD case 4: failure_rate low-confidence on the current snapshot suppresses
   // failure_rate (per-KPI gating), producing zero proposals.
   it('creates zero proposals when the current snapshot has failure_rate_low_confidence=1', async () => {
-    process.env.MARS_SELF_EVOLVE_AUTO_TRIGGER = 'true'
     const ctx = await loadContext(repo)
 
     await insertSnapshot(ctx.store, {
@@ -342,7 +323,6 @@ describe('runSelfEvolveTrigger', () => {
   })
 
   it('creates zero proposals when the prior snapshot has failure_rate_low_confidence=1', async () => {
-    process.env.MARS_SELF_EVOLVE_AUTO_TRIGGER = 'true'
     const ctx = await loadContext(repo)
 
     await insertSnapshot(ctx.store, {
@@ -369,7 +349,6 @@ describe('runSelfEvolveTrigger', () => {
   // cost_per_arc_p90 (added to skipped with reason 'low-confidence'), while
   // failure_rate remains confident on both sides and its regression is still raised.
   it('raises a proposal only for failure_rate and skips cost_per_arc when cost_per_arc is low-confidence on one side', async () => {
-    process.env.MARS_SELF_EVOLVE_AUTO_TRIGGER = 'true'
     const ctx = await loadContext(repo)
 
     // Prior: failure_rate=0.10, cost_per_arc confident (both flags 0)

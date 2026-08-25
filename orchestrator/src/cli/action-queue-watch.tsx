@@ -84,7 +84,6 @@ const GLOBAL_ACTION_OPS = new Set([
   'restart-daemon',
   'continue-all-daemon-killed',
   'run-reflect',
-  'enable-auto-reflect',
 ])
 
 /**

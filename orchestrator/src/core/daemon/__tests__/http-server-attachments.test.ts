@@ -118,8 +118,6 @@ const makeDeps = (
   inFlightCount: () => 0,
   selfUpdate: async () => {},
   runReflect: async () => ({ proposalsRaised: 0 }),
-  enableAutoReflect: async () => {},
-  disableAutoReflect: async () => {},
   stepDone: async () => ({ next: null as string | null }),
   recipeCatalog: cachedRecipeCatalog as Awaited<ReturnType<typeof loadRecipeCatalog>>,
   traceStore: nullTraceStore,

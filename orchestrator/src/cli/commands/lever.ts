@@ -355,15 +355,10 @@ const leverSet: Command = {
         !Array.isArray(file.selfEvolve)
           ? (file.selfEvolve as Record<string, unknown>)
           : {}
-      const field =
-        id === 'self-evolve.auto-enqueue'
-          ? 'autoEnqueue'
-          : id === 'self-evolve.drift-threshold-pct'
-            ? 'driftThresholdPct'
-            : 'taskConfidenceThreshold'
-      const typed =
-        id === 'self-evolve.auto-enqueue' ? value === 'true' : Number(value)
-      patchDaemonConfigFile({ selfEvolve: { ...existing, [field]: typed } })
+      // Only self-evolve.drift-threshold-pct is settable; unknown sub-levers
+      // are rejected earlier by the lever registry lookup.
+      const typed = Number(value)
+      patchDaemonConfigFile({ selfEvolve: { ...existing, driftThresholdPct: typed } })
     } else if (id === 'steward.autotune') {
       // Map on→tell, off→off. `tell` is the autonomous default; `ask` is
       // meaningless for a runtime knob (nothing to ask at 3am), so it is not

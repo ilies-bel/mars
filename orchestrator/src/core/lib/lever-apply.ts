@@ -225,15 +225,14 @@ export const applyLeverValue = (id: string, value: string): ApplyLeverResult => 
     const typed: boolean | number = id === 'scoring.auto-trigger' ? value === 'true' : Number(value)
     persistScoringPatch({ [field]: typed } as Parameters<typeof persistScoringPatch>[0])
   } else if (id.startsWith('self-evolve.')) {
-    const field =
-      id === 'self-evolve.auto-enqueue'
-        ? 'autoEnqueue'
-        : id === 'self-evolve.drift-threshold-pct'
-          ? 'driftThresholdPct'
-          : 'taskConfidenceThreshold'
-    const typed: boolean | number =
-      id === 'self-evolve.auto-enqueue' ? value === 'true' : Number(value)
-    persistSelfEvolvePatch({ [field]: typed } as Parameters<typeof persistSelfEvolvePatch>[0])
+    // Only self-evolve.drift-threshold-pct is settable; unknown sub-levers fall through to NOT_SETTABLE.
+    if (id !== 'self-evolve.drift-threshold-pct') {
+      throw new LeverApplyError(
+        `lever '${id}' cannot be applied via this endpoint; use: ${entry.gesture}`,
+        'NOT_SETTABLE',
+      )
+    }
+    persistSelfEvolvePatch({ driftThresholdPct: Number(value) })
   } else if (id === 'budget.window') {
     writeBudgetConfig({ windowMs: parseDurationToMs(value) })
   } else if (id === 'budget.window-tokens') {

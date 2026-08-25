@@ -1,15 +1,15 @@
 /**
  * KPI-drift self-evolve trigger and reflect-recommended detector.
  *
- * `runSelfEvolveTrigger`: When selfEvolve.autoEnqueue is true: loads the two
- * most recently taken KPI snapshots, runs the drift detector, and raises one
- * draft proposal (source='reflection') per confirmed regression that does not
- * already have an open draft. When the switch is off this function is a no-op.
+ * `runSelfEvolveTrigger`: Loads the two most recently taken KPI snapshots,
+ * runs the drift detector, and raises one draft proposal (source='reflection')
+ * per confirmed regression that does not already have an open draft.
+ * Never queues tasks — only raises proposals (ADR-0038).
  *
- * `runReflectRecommendedDetector`: Evaluates reflect-worthiness regardless of
- * autoEnqueue. When any signal fires AND autoEnqueue is off, raises one
- * level-triggered 'reflect-recommended' action-queue row with evidence. When
- * no signal fires, or autoEnqueue is on, the row is closed. Three detectors:
+ * `runReflectRecommendedDetector`: Evaluates reflect-worthiness using three
+ * cheap SQL detectors (no LLM). When any signal fires, ensures exactly one
+ * open 'reflect-recommended' action-queue row exists. When no signal fires,
+ * closes any open row. Three detectors:
  *   1. KPI drift (reuses detectKpiDrift)
  *   2. ≥3 recent tasks share a failure signature FAMILY (`<gate>/<errorClass>`,
  *      see failureSignatureFamilySql) — rewordings of the same gate error at
@@ -138,21 +138,14 @@ const readLatestTwoSnapshots = async (
 /**
  * Entry point for the KPI-drift self-evolve trigger.
  *
- * When autoEnqueue is false: returns immediately with no proposals raised.
- * When autoEnqueue is true: checks drift and raises one draft proposal per
- * confirmed regression that does not already have an open draft.
- *
- * Never queues tasks. The `store` option is for test injection; production
- * callers omit it and the default store is used.
+ * Checks KPI drift and raises one draft proposal per confirmed regression
+ * that does not already have an open draft. Never queues tasks.
+ * The `store` option is for test injection; production callers omit it.
  */
 export const runSelfEvolveTrigger = async (opts?: {
   store?: TaskStore
 }): Promise<SelfEvolveTriggerResult> => {
   const cfg = loadDaemonConfig()
-  if (!cfg.selfEvolve.autoEnqueue) {
-    return { raised: [], skipped: [] }
-  }
-
   const store = opts?.store ?? (await getDefaultTaskStore())
   const snapshots = await readLatestTwoSnapshots(store)
   if (snapshots === null) {
@@ -225,16 +218,13 @@ interface ReflectWorthinessEvidence {
 /**
  * Why the reflect-recommended detector did not raise a row.
  *
- * - `'auto-enqueue-on'`: selfEvolve.autoEnqueue=true, so high-confidence
- *   mechanical suggestions are auto-enqueued as tasks and the action-queue
- *   chip is not needed.
  * - `'no-evidence'`: all three detectors (KPI drift, failure clusters, token
  *   spike) evaluated the rolling window and found nothing above threshold.
  * - `'cooldown'`: an operator resolved a reflect-recommended row within the
  *   configured cooldown window (selfEvolve.reflectCooldownDays). Re-raising
  *   immediately would undo the explicit operator dismissal.
  */
-type ReflectDetectorSkipReason = 'auto-enqueue-on' | 'no-evidence' | 'cooldown'
+type ReflectDetectorSkipReason = 'no-evidence' | 'cooldown'
 
 export interface ReflectRecommendedResult {
   /** True when the row was raised (or the existing open row was bumped). */
@@ -392,11 +382,10 @@ const countRecentTasks = async (store: TaskStore, days: number): Promise<number>
  * Level-triggered reflect-recommended detector (ADR-0048).
  *
  * Evaluates reflect-worthiness over a rolling window using three cheap SQL
- * detectors (no LLM). When any signal fires and autoEnqueue is off, ensures
- * exactly one open 'reflect-recommended' action-queue row exists with the
- * evidence in its payload (re-raises are idempotent — the existing row is
- * bumped, not duplicated). When no signal fires, or autoEnqueue is on (the
- * trigger already handles routing of mechanical suggestions), closes any open row.
+ * detectors (no LLM). When any signal fires, ensures exactly one open
+ * 'reflect-recommended' action-queue row exists with the evidence in its
+ * payload (re-raises are idempotent — the existing row is bumped, not
+ * duplicated). When no signal fires, closes any open row.
  *
  * A cooldown prevents re-raising within `selfEvolve.reflectCooldownDays` of an
  * operator resolution — the explicit dismissal is honoured for that window.
@@ -419,7 +408,7 @@ export const runReflectRecommendedDetector = async (opts?: {
     './action-queue.js'
   )
 
-  if (!worthy || cfg.selfEvolve.autoEnqueue) {
+  if (!worthy) {
     // Close any stale open row (level-trigger off).
     await supersedeActionQueueItemsBySignature(
       'reflect-recommended',
@@ -427,10 +416,7 @@ export const runReflectRecommendedDetector = async (opts?: {
       'status-changed',
       'self-evolve:reflect-detector',
     )
-    const skipReason: ReflectDetectorSkipReason = cfg.selfEvolve.autoEnqueue
-      ? 'auto-enqueue-on'
-      : 'no-evidence'
-    return { raised: false, rowId: null, evidence: null, skipReason }
+    return { raised: false, rowId: null, evidence: null, skipReason: 'no-evidence' }
   }
 
   // Cooldown: when the operator resolved a reflect-recommended row within the
@@ -499,8 +485,8 @@ export const runReflectRecommendedDetector = async (opts?: {
 
 /**
  * Close any open 'reflect-recommended' action-queue row. Called when the
- * operator runs reflect or enables auto-enqueue so the level-trigger is
- * immediately cleared without waiting for the next detector sweep.
+ * operator runs reflect so the level-trigger is immediately cleared without
+ * waiting for the next detector sweep.
  */
 export const closeReflectRecommendedRow = async (): Promise<void> => {
   const { supersedeActionQueueItemsBySignature } = await import('./action-queue.js')

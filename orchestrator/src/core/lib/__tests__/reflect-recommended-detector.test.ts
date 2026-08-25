@@ -31,12 +31,11 @@
  * rolled DDL either — `openDb` bootstraps the canonical schema on first use.
  *
  * Acceptance criteria verified here:
- *  1. Detector fires on KPI drift when autoEnqueue=false → raises row
+ *  1. Detector fires on KPI drift → raises row
  *  2. Detector fires on ≥3 tasks sharing a failure signature → raises row
  *  3. Detector fires on any task with token spend ≥2× window median → raises row
- *  4. autoEnqueue=true → no row raised (returns raised=false)
- *  5. At most one open row per window (dedup: second call with same condition bumps seen_count, not new row)
- *  6. Condition no longer holds → open row is closed (level-trigger off)
+ *  4. At most one open row per window (dedup: second call with same condition bumps seen_count, not new row)
+ *  5. Condition no longer holds → open row is closed (level-trigger off)
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -188,12 +187,11 @@ describe('runReflectRecommendedDetector', () => {
 
   afterEach(() => {
     delete process.env.MARS_REPO
-    delete process.env.MARS_SELF_EVOLVE_AUTO_TRIGGER
     rmSync(repo, { recursive: true, force: true })
   })
 
   // Acceptance criterion 1: KPI drift fires the detector
-  it('raises a reflect-recommended row when KPI drift is detected and autoEnqueue is off', async () => {
+  it('raises a reflect-recommended row when KPI drift is detected', async () => {
     const ctx = await loadContext(repo)
 
     // prior: failure_rate=0.10, current: 0.25 → +150% drift (well above 10% threshold)
@@ -259,31 +257,7 @@ describe('runReflectRecommendedDetector', () => {
     expect(await ctx.countOpenReflectRows()).toBe(1)
   })
 
-  // Acceptance criterion 4: autoEnqueue=true → no row raised
-  it('does not raise a row when autoEnqueue is true', async () => {
-    process.env.MARS_SELF_EVOLVE_AUTO_TRIGGER = 'true'
-    const ctx = await loadContext(repo)
-
-    // Insert significant KPI drift so detector would fire if autoEnqueue=false
-    await insertSnapshot(ctx.store, {
-      id: 'snap-prior',
-      takenAt: '2026-01-01T00:00:00Z',
-      failureRate: 0.10,
-    })
-    await insertSnapshot(ctx.store, {
-      id: 'snap-current',
-      takenAt: '2026-01-02T00:00:00Z',
-      failureRate: 0.25,
-    })
-
-    const result = await ctx.runReflectRecommendedDetector({ store: ctx.store })
-
-    expect(result.raised).toBe(false)
-    expect(result.rowId).toBeNull()
-    expect(await ctx.countOpenReflectRows()).toBe(0)
-  })
-
-  // Acceptance criterion 5: dedup — at most one open row per window
+  // Acceptance criterion 4: dedup — at most one open row per window
   it('bumps the existing open row rather than creating a second one (dedup)', async () => {
     const ctx = await loadContext(repo)
 
@@ -343,7 +317,7 @@ describe('runReflectRecommendedDetector', () => {
     expect(await ctx.countResolvedReflectRows()).toBe(1)
   })
 
-  // No row when no signals fire and autoEnqueue=false
+  // No row when no signals fire
   it('returns raised=false and no row when no signals fire', async () => {
     const ctx = await loadContext(repo)
     // No data inserted — all detectors quiet
@@ -356,7 +330,7 @@ describe('runReflectRecommendedDetector', () => {
   })
 
   // Diagnostic skip reasons
-  it("returns skipReason='no-evidence' when no signals fire and autoEnqueue is off", async () => {
+  it("returns skipReason='no-evidence' when no signals fire", async () => {
     const ctx = await loadContext(repo)
     // No data inserted — all detectors quiet
 
@@ -364,28 +338,6 @@ describe('runReflectRecommendedDetector', () => {
 
     expect(result.raised).toBe(false)
     expect(result.skipReason).toBe('no-evidence')
-  })
-
-  it("returns skipReason='auto-enqueue-on' when autoEnqueue is on even with evidence present", async () => {
-    process.env.MARS_SELF_EVOLVE_AUTO_TRIGGER = 'true'
-    const ctx = await loadContext(repo)
-
-    // Insert KPI drift that would normally fire the detector
-    await insertSnapshot(ctx.store, {
-      id: 'snap-prior',
-      takenAt: '2026-01-01T00:00:00Z',
-      failureRate: 0.10,
-    })
-    await insertSnapshot(ctx.store, {
-      id: 'snap-current',
-      takenAt: '2026-01-02T00:00:00Z',
-      failureRate: 0.25,
-    })
-
-    const result = await ctx.runReflectRecommendedDetector({ store: ctx.store })
-
-    expect(result.raised).toBe(false)
-    expect(result.skipReason).toBe('auto-enqueue-on')
   })
 
   it('returns skipReason=null when a row is raised', async () => {

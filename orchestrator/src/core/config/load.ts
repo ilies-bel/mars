@@ -31,9 +31,7 @@ export interface MarsConfig {
     verify: number
   }
   selfEvolve: {
-    autoEnqueue: boolean
     driftThresholdPct: number
-    taskConfidenceThreshold: number
   }
   scoring: {
     autoTrigger: boolean

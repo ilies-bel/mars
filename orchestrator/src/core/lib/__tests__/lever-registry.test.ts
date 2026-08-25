@@ -311,15 +311,6 @@ describe('readCurrent() against seeded daemon.json', () => {
     expect(e.readCurrent()).toBe('8')
   })
 
-  it('self-evolve.auto-enqueue returns persisted value', () => {
-    writeFileSync(
-      join(tmpDir, '.mars', 'daemon.json'),
-      JSON.stringify({ selfEvolve: { autoEnqueue: true } }),
-    )
-    const e = loadLeverRegistry().find((x) => x.id === 'self-evolve.auto-enqueue')!
-    expect(e.readCurrent()).toBe('true')
-  })
-
   it('self-evolve.drift-threshold-pct returns persisted value', () => {
     writeFileSync(
       join(tmpDir, '.mars', 'daemon.json'),
@@ -327,15 +318,6 @@ describe('readCurrent() against seeded daemon.json', () => {
     )
     const e = loadLeverRegistry().find((x) => x.id === 'self-evolve.drift-threshold-pct')!
     expect(e.readCurrent()).toBe('15')
-  })
-
-  it('self-evolve.task-confidence-threshold returns persisted value', () => {
-    writeFileSync(
-      join(tmpDir, '.mars', 'daemon.json'),
-      JSON.stringify({ selfEvolve: { taskConfidenceThreshold: 0.9 } }),
-    )
-    const e = loadLeverRegistry().find((x) => x.id === 'self-evolve.task-confidence-threshold')!
-    expect(e.readCurrent()).toBe('0.9')
   })
 
   it('budget.window returns (not set) when not configured', () => {

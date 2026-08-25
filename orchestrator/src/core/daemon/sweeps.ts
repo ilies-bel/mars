@@ -595,10 +595,6 @@ export const SWEEPS: readonly SweepSpec[] = [
             log(`[reflect-detector] auto-reflect errored: ${(reflectErr as Error).message}`)
           }
         }
-      } else if (result.skipReason === 'auto-enqueue-on') {
-        log(
-          '[reflect-detector] no row raised — selfEvolve.autoEnqueue=true routes mechanical suggestions directly to task queue',
-        )
       } else {
         log(
           '[reflect-detector] no signals: kpiDrift=0 failureClusters=0 tokenSpike=null; reflection not yet needed',

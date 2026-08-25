@@ -70,8 +70,6 @@ const makeDeps = (
   selfUpdate: async () => {},
 
   runReflect: async () => ({ proposalsRaised: 0 }),
-  enableAutoReflect: async () => {},
-  disableAutoReflect: async () => {},
   stepDone: async () => ({ next: null as string | null }),
   snoozeItem: async () => {},
   recipeCatalog: cachedRecipeCatalog as Awaited<ReturnType<typeof loadRecipeCatalog>>,
@@ -531,8 +529,6 @@ describe('HTTP action endpoint', () => {
   selfUpdate: async () => {},
 
   runReflect: async () => ({ proposalsRaised: 0 }),
-  enableAutoReflect: async () => {},
-  disableAutoReflect: async () => {},
   stepDone: async () => ({ next: null as string | null }),
   snoozeItem: async () => {},
       }),

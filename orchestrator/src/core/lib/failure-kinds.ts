@@ -92,7 +92,6 @@ type ActionOp =
   | 'validate'
   | 'reject'
   | 'run-reflect'
-  | 'enable-auto-reflect'
   | 'land-work'
 
 /**

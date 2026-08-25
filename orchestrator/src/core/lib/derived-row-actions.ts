@@ -78,7 +78,6 @@ export const derivedRowActions = (rowKind: string, entityId?: string): ActionDes
   if (rowKind === 'reflect-recommended') {
     return [
       { id: 'run-reflect', label: 'Run reflect', op: 'run-reflect' },
-      { id: 'enable-auto', label: 'Enable auto', op: 'enable-auto-reflect' },
     ]
   }
   if (rowKind === 'workflow-draft-pending') {

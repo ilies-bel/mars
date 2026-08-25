@@ -26,9 +26,7 @@ describe('daemonConfigSchema', () => {
     const result = daemonConfigSchema.safeParse({
       caps: { implement: 12, triage: 8, refine: 6, setupInstall: 2, verify: 1 },
       selfEvolve: {
-        autoEnqueue: true,
         driftThresholdPct: 10,
-        taskConfidenceThreshold: 0.8,
         reflectCooldownDays: 7,
       },
       scoring: { autoTrigger: false, lowTrendThreshold: 0.5, lowTrendWindow: 5 },

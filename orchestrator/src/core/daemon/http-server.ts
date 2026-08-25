@@ -320,7 +320,6 @@ export type ReflectionSuggestionOutcome =
 export interface DeepReflectionDetail extends DeepReflectionSummary {
   sourceTaskId: string | null
   autoRunReflect: 'on' | 'off'
-  autoEnqueue: boolean
   report: {
     summary: string
     rootCause: string
@@ -351,7 +350,6 @@ export interface DeepReflectionsListResult {
   /** Number of .json files that could not be read or parsed (malformed). */
   unreadableCount: number
   autoRunReflect: 'on' | 'off'
-  autoEnqueue: boolean
   lastReflectedAt: string | null
 }
 
@@ -476,18 +474,6 @@ export interface HttpServerDeps {
    * Returns the number of proposals raised.
    */
   runReflect: () => Promise<{ proposalsRaised: number }>
-  /**
-   * Set selfEvolve.autoEnqueue=true in the daemon config (persisted to
-   * daemon.json), then close the open reflect-recommended action-queue row
-   * so the level-trigger is immediately cleared.
-   */
-  enableAutoReflect: () => Promise<void>
-  /**
-   * Set selfEvolve.autoEnqueue=false in the daemon config (persisted to
-   * daemon.json). The reflect-recommended detector will re-raise its row
-   * on the next sweep if conditions are still met.
-   */
-  disableAutoReflect: () => Promise<void>
   /**
    * Execute a daemon self-update: download the latest release binary, verify
    * sha256, atomically swap it for the current binary, and re-exec the daemon.

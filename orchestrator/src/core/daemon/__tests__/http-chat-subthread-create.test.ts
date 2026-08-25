@@ -47,9 +47,7 @@ describe('POST /chat/subthreads', () => {
       landWork: async () => {}, investigateWorktree: async () => ({ explanation: '' }),
       diagnoseFailure: async () => ({ diagnosis: '' }), restartDaemon: async () => {},
       continueAllDaemonKilled: async () => ({ continued: [], degraded: [], skipped: [] }), isAcceptingWork: () => true, inFlightCount: () => 0,
-      selfUpdate: async () => {}, runReflect: async () => ({ proposalsRaised: 0 }),
-      enableAutoReflect: async () => {},
-  disableAutoReflect: async () => {}, stepDone: async () => ({ next: null as string | null }),
+      selfUpdate: async () => {}, runReflect: async () => ({ proposalsRaised: 0 }), stepDone: async () => ({ next: null as string | null }),
       snoozeItem: async () => {}, recipeCatalog: nullRecipeCatalog, traceStore: nullTraceStore,
       appServices: stubAppServices({ buildSituationReport: async () => 'Situation: one task needs attention.' }),
     })
@@ -93,9 +91,7 @@ describe('POST /chat/subthreads', () => {
       landWork: async () => {}, investigateWorktree: async () => ({ explanation: '' }),
       diagnoseFailure: async () => ({ diagnosis: '' }), restartDaemon: async () => {},
       continueAllDaemonKilled: async () => ({ continued: [], degraded: [], skipped: [] }), isAcceptingWork: () => true, inFlightCount: () => 0,
-      selfUpdate: async () => {}, runReflect: async () => ({ proposalsRaised: 0 }),
-      enableAutoReflect: async () => {},
-  disableAutoReflect: async () => {}, stepDone: async () => ({ next: null as string | null }),
+      selfUpdate: async () => {}, runReflect: async () => ({ proposalsRaised: 0 }), stepDone: async () => ({ next: null as string | null }),
       snoozeItem: async () => {}, recipeCatalog: nullRecipeCatalog, traceStore: nullTraceStore,
       appServices: stubAppServices({ buildSituationReport: async () => { throw new Error('unavailable') } }),
     })

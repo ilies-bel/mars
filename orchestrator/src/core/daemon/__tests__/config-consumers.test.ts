@@ -19,9 +19,7 @@ import { join, resolve } from 'node:path'
 
 // Derived from SelfEvolveConfig in config.ts.
 const SELF_EVOLVE_FIELDS = [
-  'autoEnqueue',
   'driftThresholdPct',
-  'taskConfidenceThreshold',
   'reflectCooldownDays',
 ] as const
 

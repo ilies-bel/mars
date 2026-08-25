@@ -18,7 +18,6 @@ export const SAFE_MARS_VERBS: readonly string[] = [
   'validate',
   'task-add',
   'run-reflect',
-  'enable-auto-reflect',
   'land-work',
   // Archiving only files a Subthread away, and `unarchive-subthread` puts it
   // back with the transcript intact — recoverable, so it needs no confirmation.

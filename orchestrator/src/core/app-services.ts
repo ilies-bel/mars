@@ -1465,16 +1465,15 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     listDeepReflectArcCandidates(opts)
 
   /**
-   * Read the reflection control state (autoRunReflect lever + selfEvolve.autoEnqueue).
+   * Read the reflection control state (autoRunReflect lever).
    * Falls back to safe defaults when the config file is absent or malformed.
    */
-  const readReflectState = (): { autoRunReflect: 'on' | 'off'; autoEnqueue: boolean } => {
+  const readReflectState = (): { autoRunReflect: 'on' | 'off' } => {
     try {
       const levers = readControlLevers()
-      const cfg = loadDaemonConfig()
-      return { autoRunReflect: levers.autoRunReflect, autoEnqueue: cfg.selfEvolve.autoEnqueue }
+      return { autoRunReflect: levers.autoRunReflect }
     } catch {
-      return { autoRunReflect: 'on', autoEnqueue: false }
+      return { autoRunReflect: 'on' }
     }
   }
 
@@ -1485,8 +1484,8 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
       entries = await readdir(dir)
     } catch {
       // Directory absent — no reports yet.
-      const { autoRunReflect, autoEnqueue } = readReflectState()
-      return { reports: [], totalDiscovered: 0, unreadableCount: 0, autoRunReflect, autoEnqueue, lastReflectedAt: null }
+      const { autoRunReflect } = readReflectState()
+      return { reports: [], totalDiscovered: 0, unreadableCount: 0, autoRunReflect, lastReflectedAt: null }
     }
 
     // Accept every .json file regardless of prefix — naming conventions have
@@ -1547,8 +1546,8 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     const limit = opts?.limit ?? 100
     const reports = parsed.slice(0, limit)
 
-    const { autoRunReflect, autoEnqueue } = readReflectState()
-    return { reports, totalDiscovered, unreadableCount, autoRunReflect, autoEnqueue, lastReflectedAt }
+    const { autoRunReflect } = readReflectState()
+    return { reports, totalDiscovered, unreadableCount, autoRunReflect, lastReflectedAt }
   }
 
   const viewDeepReflection: AppServices['viewDeepReflection'] = async (originId, at) => {
@@ -1671,7 +1670,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
       }
     }
 
-    const { autoRunReflect, autoEnqueue } = readReflectState()
+    const { autoRunReflect } = readReflectState()
 
     return {
       originId: typeof data.originId === 'string' ? data.originId : originId,
@@ -1688,7 +1687,6 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
       },
       sourceTaskId: typeof data.sourceTaskId === 'string' ? data.sourceTaskId : null,
       autoRunReflect,
-      autoEnqueue,
       report: report === null ? null : {
         summary: typeof report.summary === 'string' ? report.summary : '',
         rootCause: typeof report.rootCause === 'string' ? report.rootCause : '',
