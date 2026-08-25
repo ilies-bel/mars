@@ -5,9 +5,9 @@ import { VerifyGateInputSchema, type VerifyGateInput } from '../core/verify-gate
 
 /** All VerifyGateInput fields with non-optional defaults applied, except for
  * `timeoutMin` which remains optional (null = use the process-wide default) and
- * `evidence` which is discovery metadata intentionally omitted at normalization time. */
+ * `evidence` which is optional discovery metadata threaded through when present. */
 type NormalizedVerifyGateInput = Required<Omit<VerifyGateInput, 'timeoutMin' | 'evidence'>> &
-  Pick<VerifyGateInput, 'timeoutMin'>
+  Pick<VerifyGateInput, 'timeoutMin' | 'evidence'>
 
 export interface DetectedVerifyGate extends NormalizedVerifyGateInput {
   evidence: string
@@ -16,7 +16,8 @@ export interface DetectedVerifyGate extends NormalizedVerifyGateInput {
 /**
  * Turn a proposed gate set into the complete registry input shape used by
  * onboarding. JSON edits pass through the same validation as all other gate
- * input, and discovery metadata such as `evidence` is intentionally omitted.
+ * input. The `evidence` field is preserved when present so that detection
+ * observations survive through to the gate registry.
  */
 export const normalizeDetectedVerifyGates = (
   gates: readonly VerifyGateInput[],
@@ -32,6 +33,7 @@ export const normalizeDetectedVerifyGates = (
       tier: parsed.tier ?? 'task',
       source: parsed.source ?? 'detected',
       timeoutMin: parsed.timeoutMin,
+      evidence: parsed.evidence,
     }
   })
 

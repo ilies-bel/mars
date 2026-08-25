@@ -36,8 +36,8 @@ export const installOnboardingVerifyGates = async (
     for (const gate of gates) {
       await tx.execute(
         `INSERT INTO verify_gates
-          (id, scope, name, cmd, args_json, required, tier, source, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'onboarding', ?)`,
+          (id, scope, name, cmd, args_json, required, tier, source, created_at, evidence)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'onboarding', ?, ?)`,
         [
           randomUUID(),
           gate.scope ?? '.',
@@ -47,6 +47,7 @@ export const installOnboardingVerifyGates = async (
           gate.required === false ? 0 : 1,
           gate.tier ?? 'task',
           Date.now(),
+          gate.evidence ?? null,
         ],
       )
     }
