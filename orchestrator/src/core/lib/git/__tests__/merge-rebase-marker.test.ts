@@ -13,7 +13,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { stat } from 'node:fs/promises'
+import { readFile, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 
@@ -48,6 +48,11 @@ const markerExists = async (): Promise<boolean> => {
   } catch {
     return false
   }
+}
+
+const readMarker = async (): Promise<Record<string, unknown>> => {
+  const raw = await readFile(rebaseMarkerPath(worktreeDir), 'utf8')
+  return JSON.parse(raw) as Record<string, unknown>
 }
 
 beforeAll(() => {
@@ -94,6 +99,7 @@ describe('mergeBranch — rebase-in-progress marker', () => {
     expect(await markerExists()).toBe(false)
 
     let markerFoundDuringMerge = false
+    let markerContent: Record<string, unknown> | null = null
 
     const result = await mergeBranch({
       branch: 'task/marker-test',
@@ -102,14 +108,31 @@ describe('mergeBranch — rebase-in-progress marker', () => {
       lockTimeoutMs: 10_000,
       // onBeforeFastForward fires AFTER the rebase and BEFORE the lock is
       // released, while the merge body async fn is still in flight. At this
-      // point the marker should be present.
+      // point the marker should be present with correct JSON content.
       onBeforeFastForward: async () => {
         markerFoundDuringMerge = await markerExists()
+        if (markerFoundDuringMerge) {
+          markerContent = await readMarker()
+        }
       },
     })
 
     expect(result.merged).toBe(true)
     expect(markerFoundDuringMerge).toBe(true)
+
+    // Marker content must identify the branch, target, and worktree path so
+    // an agent that finds a stopped rebase can determine who started it.
+    expect(markerContent).not.toBeNull()
+    // Narrow away null so the remaining assertions work without casts.
+    const mc = markerContent!
+    expect(mc).toMatchObject({
+      branch: 'task/marker-test',
+      integrationBranch: 'main',
+      worktreePath: worktreeDir,
+    })
+    // startedAt must be a valid ISO timestamp string.
+    expect(typeof mc['startedAt']).toBe('string')
+    expect(new Date(mc['startedAt'] as string).toISOString()).toBe(mc['startedAt'])
 
     // After mergeBranch returns the inner finally must have removed the marker.
     expect(await markerExists()).toBe(false)
