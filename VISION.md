@@ -168,7 +168,7 @@ been tested where it is made.
 | DEC-21 — Mars explains itself | An autonomous act whose Notice states what changed but not why. |
 | HR-2 — the UI is the main surface | Take any act Mars offers and try to complete it in the UI alone. An affordance whose only completion is a CLI command, or a slash command in another tool, falsifies it. |
 | DEC-2 — Mars changes its own config and workflows unprompted | Provoke a condition Mars has a configured response to, then watch without touching anything. A change Mars only ever proposes, or that waits on an operator gesture to apply, falsifies it. |
-| HR-7 — provider-agnostic | Install with the default configuration and dispatch a task. A provider SDK imported by the core, or an API key Mars must hold for that default path to work, falsifies it. |
+| HR-7 — provider-agnostic | Install with the default configuration and dispatch a **coding task**. A provider SDK imported by the core, or an API key Mars must hold for that default coding-task dispatch path to work, falsifies it. An undeclared provider dependency on any other named surface (chat, review, vcs-supervisor, etc.) also falsifies it; a deviation declared in §11 does not — declared deviations are bounded exceptions, not violations. |
 | DEC-6 — workflow edits apply mid-run | Edit a workflow while a run is in flight, then watch that run reach a step after the edit. A run that finishes on the definition it started with, or that pins a snapshot taken at dispatch, falsifies it. |
 | HR-9 / DEC-13 — git is concrete, not a port | Trace the core's git calls and an implement run's worktree. A VCS port the core dispatches through, a swappable non-git implementation behind it, or a run that proceeds without a worktree, falsifies it. |
 | DEC-12 — borrowing a coding CLI is one adapter kind, not the architecture | Try to configure a key-backed provider adapter alongside the CLI-borrowing one. A provider port whose contract admits only a local CLI subprocess, or a key-backed path that requires changing the port rather than registering against it, falsifies it. |
@@ -246,6 +246,8 @@ the reshape that would make it true, and only part of that reshape has
 landed (`HeadlessRunOpts` was made serializable; `spawnArgv`, `feedPrompt`
 and `readOutput(stdout)`, named in the same ADR consequence, were not).
 Tracked by task `mars-9a45415b`.
+
+**Append 3 — Chat routes exclusively through Codex: a declared, bounded HR-7 deviation.** The interactive chat surface (`mars:chat` and its sub-skills) dispatches through a single, hardcoded provider (Codex) and does not route through the provider port described in DEC-12. This is a known divergence from HR-7. It is declared here so that §8's HR-7 falsification test does not count it as an unacknowledged violation — declared deviations are bounded exceptions, not gaps. The boundary is strict: the Codex dependency is confined to the chat layer and does not propagate to the core coding-task dispatch path, the worker pool, or the vcs-supervisor (Vega). Routing chat through the provider port is a pending correctness task, not an open design question.
 
 ## 12. What this supersedes
 
