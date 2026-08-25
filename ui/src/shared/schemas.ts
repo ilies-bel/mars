@@ -529,12 +529,12 @@ export const taskFailureKinds = [
 export const isTaskFailureActionQueueKind = (kind: string): boolean =>
   (taskFailureKinds as readonly string[]).includes(kind)
 
-// Mirror of CONDITION_KINDS from orchestrator/src/core/lib/action-queue-kinds.ts.
+// Mirror of DERIVED_KINDS from orchestrator/src/core/lib/action-queue-kinds.ts.
 //
-// Condition kinds are derived on read from live system state — there is no
-// stored row to close. Whether a condition-kind row survives a verb depends
+// Derived kinds are derived on read from live system state — there is no
+// stored row to close. Whether a derived-kind row survives a verb depends
 // entirely on whether the underlying condition still holds after the verb, which
-// only the refetched feed knows. DO NOT optimistically hide condition-kind rows
+// only the refetched feed knows. DO NOT optimistically hide derived-kind rows
 // on verb success; let the row disappear because the refetched feed no longer
 // contains it (or stay, because the condition persists).
 //

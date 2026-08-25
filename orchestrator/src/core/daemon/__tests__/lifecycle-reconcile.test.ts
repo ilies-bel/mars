@@ -118,7 +118,7 @@ describe('reconcileTerminalTasks', () => {
 
   // NOTE: the former "stale-worktree rows ... payload.originalTaskId"
   // coverage that lived here was deleted (not rewritten) — `stale-worktree`
-  // is now a CONDITION_KINDS entry (action-queue-kinds.ts): it is derived on
+  // is now a DERIVED_KINDS entry (action-queue-kinds.ts): it is derived on
   // every read from worktree mtimes (`deriveStaleWorktreeConditions` in
   // view/derived-conditions.ts) and never stored as an `action_queue_items`
   // row. `raiseActionQueueItem` still accepts the kind, but the row it writes

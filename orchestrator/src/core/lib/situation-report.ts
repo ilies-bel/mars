@@ -46,18 +46,17 @@ const plural = (count: number, singular: string, pluralNoun = `${singular}s`): s
   `${count} ${count === 1 ? singular : pluralNoun}`
 
 /**
- * Kinds that are per-TASK conditions which can co-occur for the same task
- * (ADR-0057 condition kinds are derived independently, with no
- * reconciliation between them, so one failed task can raise several open
- * rows at once). Manually mirrors the UI's `taskFailureKinds` (in
- * ui/src/shared/schemas.ts), which itself mirrors this file's own
- * `NON_TASK_FAILURE_KINDS` complement (in
+ * Kinds that are per-TASK and can co-occur for the same task (ADR-0057
+ * derived kinds are computed independently, with no reconciliation between
+ * them, so one failed task can raise several open rows at once). Manually
+ * mirrors the UI's `taskFailureKinds` (in ui/src/shared/schemas.ts), which
+ * itself mirrors this file's own `NON_TASK_FAILURE_KINDS` complement (in
  * `orchestrator/src/core/daemon/view/action-queue.ts`) — including
  * `recovery-abandoned`, which the UI mirror omitted until that drift was
  * fixed. Kept in lockstep by hand, not by import, because the UI and
  * orchestrator are separate packages.
  */
-const GROUPABLE_CONDITION_KINDS: ReadonlySet<string> = new Set([
+const GROUPABLE_DERIVED_KINDS: ReadonlySet<string> = new Set([
   'failed',
   'steward-repeat',
   'cancelled-blocker-cascade',
@@ -116,7 +115,7 @@ export const countNeedsYou = (
   let count = 0
   for (const item of actionQueue) {
     if (item.kind === 'draft-proposal') continue
-    if (item.entityId && item.kind && GROUPABLE_CONDITION_KINDS.has(item.kind)) {
+    if (item.entityId && item.kind && GROUPABLE_DERIVED_KINDS.has(item.kind)) {
       if (seenEntities.has(item.entityId)) continue
       seenEntities.add(item.entityId)
     }

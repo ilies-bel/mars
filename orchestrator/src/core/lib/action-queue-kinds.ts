@@ -96,14 +96,11 @@ export const KIND_CLASS: Record<ActionQueueKind, ActionQueueClass> = {
   'signature-storm': 'notice',              // circuit breaker active; auto-recovers
   'stale-worktree': 'notice',               // worktree pruner handles cleanup
   'phantom-task': 'notice',                 // phantom watchdog removes stale rows
-  'cancelled-blocker-cascade': 'notice',    // Mars cancelled dependents; informing
-  'slices-dropped': 'notice',               // Mars dropped slices; informing
-  'observability-store-oversize': 'notice', // auto-trim actor runs
   'requeue-warning': 'notice',              // Mars requeuing; informing
-  'scheduling-decision': 'notice',          // Mars decided; informing
   'arc-superseded-on-main': 'notice',       // Mars superseded arc; informing
   'spend-control-notice': 'notice',         // budget notice; informing
   'reflect-recommended': 'notice',          // recommendation; Mars handles underlying
+  'mockup-ready': 'notice',                 // mockup ready; informational, no action required
 
   // ── alert — something wrong; operator needed ────────────────────────────────
   'failed': 'alert',                        // task failed; recovery exhausted
@@ -133,28 +130,31 @@ export const KIND_CLASS: Record<ActionQueueKind, ActionQueueClass> = {
   'fragmented-repo-layout': 'alert',       // repo layout fragmented
   'recovery-abandoned': 'alert',           // recovery gave up; no automated moves left
   'arc-verification-failed': 'alert',      // arc-level verification failed
-  'gate-enrichment-stale': 'alert',        // enrichment request timed out
-  'verify-uncovered': 'alert',             // task has no verify command
   'workflow-install-drift': 'alert',       // workflow templates drifted
   'done-with-unmerged-commits': 'alert',   // task done but commits not merged
   'outbox-lag': 'alert',                   // outbox processing backed up
+  'cancelled-blocker-cascade': 'alert',    // Mars cancelled dependents; state needs operator attention
+  'slices-dropped': 'alert',               // Mars dropped slices; operator must intervene
+  'observability-store-oversize': 'alert', // store oversize; operator must act
+  'coder-question': 'alert',               // coder has a question; operator is on the hook
+  'budget-window': 'alert',               // budget window exceeded; operator must act
+  'budget-arc': 'alert',                  // arc budget issue; operator must act
 
   // ── decision — nothing wrong; operator must pick to proceed ────────────────
   'draft-proposal': 'decision',            // proposal awaiting approval
   'hitl-slice-needs-operator': 'decision', // HITL slice step needs operator
   'awaiting-validation': 'decision',       // waiting for operator validation
   'awaiting-human': 'decision',            // manual step; operator must act
-  'coder-question': 'decision',            // coder has a question
   'workflow-draft-pending': 'decision',    // workflow draft needs operator review
   'gate-enrichment': 'decision',           // gate enrichment needed
-  'budget-window': 'decision',             // operator must set budget window
-  'budget-arc': 'decision',               // operator must approve arc budget
   'scorer-suggested': 'decision',          // scorer suggested; operator decides
   'promotion-decision': 'decision',        // operator must decide on promotion
   'tool-promotion': 'decision',           // operator must decide on tool promotion
-  'mockup-ready': 'decision',             // mockup ready for operator review/approval
   'qa-step-list-opt-in': 'decision',      // operator must opt in to QA step list
   'qa-step-list-promote': 'decision',     // operator must promote QA step list
+  'scheduling-decision': 'decision',       // operator must choose a scheduling option
+  'gate-enrichment-stale': 'decision',    // enrichment request timed out; operator picks next step
+  'verify-uncovered': 'decision',         // task has no verify command; operator must decide
 }
 
 /**

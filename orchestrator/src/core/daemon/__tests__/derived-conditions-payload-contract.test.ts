@@ -17,7 +17,7 @@
  * recipe (or vice versa) fails this test immediately instead of silently
  * rendering an empty detail panel.
  *
- * Scope note: this module derives 9 of the `CONDITION_KINDS` (the rest —
+ * Scope note: this module derives 9 of the `DERIVED_KINDS` (the rest —
  * `phantom-task`, `worktree-ahead`, `orphaned-origin`, `steward-repeat`,
  * `e2e-tooling-missing`, `stale-queued-summary` — are derived elsewhere, out
  * of this file's join surface). Of those 9, `subscriber-stalled` and

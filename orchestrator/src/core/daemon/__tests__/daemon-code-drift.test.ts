@@ -1,7 +1,7 @@
 /**
  * Tests for the level-triggered `daemon-code-drift` action-queue row.
  *
- * `daemon-code-drift` is a CONDITION_KINDS entry (action-queue-kinds.ts): per
+ * `daemon-code-drift` is a DERIVED_KINDS entry (action-queue-kinds.ts): per
  * ADR-0057/ADR-0094 it is derived on every read from live daemon state
  * (`deriveDaemonCodeDriftConditions` in `view/derived-conditions.ts`) and is
  * never stored as an `action_queue_items` row. Production code confirms this
