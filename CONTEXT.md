@@ -504,7 +504,7 @@ The deterministic verify step: it runs configured shell checks such as typecheck
 _Avoid_: agent verification, agent verify, shell verification
 
 **Notice**:
-An edge-triggered action queue message recording something that already happened, cleared by acknowledgment rather than by any change of state.
+An edge-triggered action queue message that informs the operator of something without asking anything of them — typically because Mars still has an automated move left and is taking it — cleared by acknowledgment rather than by any change of state. A Notice never carries an operator obligation; the moment one is required the situation is an Alert instead.
 _Avoid_: info item, informational alert, FYI
 
 **Verify gate**:
