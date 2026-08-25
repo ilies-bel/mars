@@ -354,58 +354,127 @@ export const setupWorktree = async (
             }
             // Fall through — setup continues normally
           } else {
-            // One or more user-owned paths are dirty — fail the task.
+            // One or more user-owned paths are dirty on the integration checkout.
+            //
+            // When the operatorAutoCommit lever is on (the default), take the automated
+            // move: commit the operator's tracked changes as a `wip(operator)` commit,
+            // speak a Notice, and let setup proceed. The merge step uses the same helper
+            // (`autoCommitOperatorDirt`) and the same lever, so both paths produce
+            // byte-identical commit subjects and the same Notice kind — the operator sees
+            // one consistent story regardless of which step acted first (PRD ce46f01e
+            // work item 4).
+            //
+            // When the lever is off, fall back to the residual behavior: fail the task and
+            // raise a dirty-integration Alert so the operator cleans the branch manually.
             //
             // Per the edgeless-blocked invariant (blocker-invariant.ts), 'blocked'
             // requires at least one task_blockers edge pointing at a concrete blocker
-            // task.  A dirty integration branch has no blocker task to wait on, so
+            // task. A dirty integration branch has no blocker task to wait on, so
             // 'blocked' is the wrong terminal — it violates the invariant and leaves
-            // the task unrecoverable without `mars unblock` + `mars restart`.
-            //
-            // 'failed' + actionQueue item is the correct pattern:
-            //   - the operator sees an actionable alert to clean the branch
-            //   - `mars restart` (or the self-heal recovery spawner) retries the task
-            //   - no orphaned 'blocked' row with zero edges can accumulate
-            const dirtyPaths = rawLines.map((l) => l.trim()).filter((l) => l.length > 0)
-            const dirtyMsg = `integration branch '${integrationBranch}' has uncommitted changes`
-            const dirtySignature = computeFailureSignature('setup:dirty-integration', dirtyMsg)
-            await updateTask(taskId, {
-              status: 'failed',
-              error: dirtyMsg,
-              failedPhase: 'setup',
-              failureReason: dirtyMsg,
-              failureSignature: dirtySignature,
-              failureReasonCode: dirtySignature,
-            }, store)
-            await raiseActionQueueItem({
-              kind: 'dirty-integration',
-              category: 'orchestrator',
-              priority: 'high',
-              title: `merge target ${integrationBranch} has uncommitted changes`,
-              body: [
-                `Task ${taskId} was stopped because the integration branch '${integrationBranch}' has uncommitted changes.`,
-                'Merging into a dirty checkout would corrupt the integration branch.',
-                '',
-                'Dirty paths:',
-                ...dirtyPaths.map((p) => `  ${p}`),
-                '',
-                `Resolve: clean the integration branch checkout, then \`mars restart ${taskId}\`.`,
-              ].join('\n'),
-              payload: { taskId, integrationBranch, dirtyPaths, statusOutput: dirtyCheck.statusOutput },
-              context: { repoRoot: integRoot },
-              raisedBy: 'agent:setup-worktree:dirty-integration',
-              signature: `${taskId}:setup:dirty-integration`,
-              originTaskId: taskId,
-            }).catch((raiseErr: unknown) => {
-              console.error(
-                `[setup] task ${taskId} dirty-integration action-queue raise errored:`,
-                raiseErr,
+            // the task unrecoverable without `mars unblock` + `mars restart`. This
+            // reasoning governs the lever-off residual path only; the lever-on path
+            // proceeds and never sets a terminal status here.
+            const { resolveControlLevers, isOperatorAutoCommitDisabled } = await import('../../core/config/levers')
+            const levers = resolveControlLevers()
+            if (!isOperatorAutoCommitDisabled(levers)) {
+              // Lever on — auto-commit the operator's tracked dirt so setup can proceed.
+              // At setup time baseSha = headSha (no merge has happened yet), so the
+              // merged-paths range is empty and there can be no contested paths.
+              const { autoCommitOperatorDirt } = await import('../../core/lib/git/operator-auto-commit')
+              const { speakOperatorAutoCommitNotice } = await import('../../core/lib/notices/operator-auto-commit')
+              const headR = await runTool(
+                {
+                  tool: 'git',
+                  argv: ['rev-parse', 'HEAD'],
+                  cwd: integRoot,
+                  taskId,
+                  originId: trace.originId,
+                  phase: 'setup',
+                },
+                trace.traceStore,
               )
-            })
-            throw new WorkflowTerminalError(
-              'setup-dirty-integration',
-              `Task ${taskId}: ${dirtyMsg} — task failed`,
-            )
+              const integHeadSha = headR.exitCode === 0 ? headR.stdout.trim() : ''
+              const autoCommit = await autoCommitOperatorDirt({
+                repoRoot: integRoot,
+                taskId,
+                baseSha: integHeadSha,
+                headSha: integHeadSha,
+                traceCtx: buildPhaseCtx(trace, taskId, 'setup'),
+              })
+              if (autoCommit.committed) {
+                await speakOperatorAutoCommitNotice({
+                  taskId,
+                  branch: integrationBranch,
+                  commitSha: autoCommit.sha,
+                  files: autoCommit.files,
+                }).catch((noticeErr: unknown) => {
+                  console.error(
+                    `[setup:dirty-guard] task ${taskId} operator-auto-commit notice errored (non-fatal):`,
+                    noticeErr,
+                  )
+                })
+                console.log(
+                  `[setup:dirty-guard] task ${taskId}: auto-committed ${autoCommit.files.length} operator ` +
+                    `path(s) as ${autoCommit.sha.slice(0, 9)}; setup proceeds`,
+                )
+              } else {
+                console.warn(
+                  `[setup:dirty-guard] task ${taskId}: lever on but auto-commit declined: ` +
+                    `${autoCommit.reason}; setup proceeds`,
+                )
+              }
+              // Fall through — setup continues regardless of auto-commit outcome. If the
+              // dirt persists, the merge step's own auto-commit lever handles it.
+            } else {
+              // Lever off: residual case — fail the task, raise the dirty-integration
+              // Alert, and park. The operator resolves by cleaning the branch and using
+              // `mars restart`.
+              //
+              // 'failed' + actionQueue item is the correct pattern:
+              //   - the operator sees an actionable alert to clean the branch
+              //   - `mars restart` (or the self-heal recovery spawner) retries the task
+              //   - no orphaned 'blocked' row with zero edges can accumulate
+              const dirtyPaths = rawLines.map((l) => l.trim()).filter((l) => l.length > 0)
+              const dirtyMsg = `integration branch '${integrationBranch}' has uncommitted changes`
+              const dirtySignature = computeFailureSignature('setup:dirty-integration', dirtyMsg)
+              await updateTask(taskId, {
+                status: 'failed',
+                error: dirtyMsg,
+                failedPhase: 'setup',
+                failureReason: dirtyMsg,
+                failureSignature: dirtySignature,
+                failureReasonCode: dirtySignature,
+              }, store)
+              await raiseActionQueueItem({
+                kind: 'dirty-integration',
+                category: 'orchestrator',
+                priority: 'high',
+                title: `merge target ${integrationBranch} has uncommitted changes`,
+                body: [
+                  `Task ${taskId} was stopped because the integration branch '${integrationBranch}' has uncommitted changes.`,
+                  'Merging into a dirty checkout would corrupt the integration branch.',
+                  '',
+                  'Dirty paths:',
+                  ...dirtyPaths.map((p) => `  ${p}`),
+                  '',
+                  `Resolve: clean the integration branch checkout, then \`mars restart ${taskId}\`.`,
+                ].join('\n'),
+                payload: { taskId, integrationBranch, dirtyPaths, statusOutput: dirtyCheck.statusOutput },
+                context: { repoRoot: integRoot },
+                raisedBy: 'agent:setup-worktree:dirty-integration',
+                signature: `${taskId}:setup:dirty-integration`,
+                originTaskId: taskId,
+              }).catch((raiseErr: unknown) => {
+                console.error(
+                  `[setup] task ${taskId} dirty-integration action-queue raise errored:`,
+                  raiseErr,
+                )
+              })
+              throw new WorkflowTerminalError(
+                'setup-dirty-integration',
+                `Task ${taskId}: ${dirtyMsg} — task failed`,
+              )
+            }
           }
         }
       }

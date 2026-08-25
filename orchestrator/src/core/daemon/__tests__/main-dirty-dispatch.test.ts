@@ -396,3 +396,247 @@ describe('runMainDirtyDispatchCheck', () => {
     30_000,
   )
 })
+
+// ---------------------------------------------------------------------------
+// PRD ce46f01e work item 4: operatorAutoCommit lever at setup time
+//
+// These tests call setupWorktree directly (via vi.doMock + vi.resetModules)
+// to verify the two lever-gate cases:
+//   - lever ON  → auto-commit via shared helper, setup proceeds, no
+//                 dirty-integration row raised
+//   - lever OFF → task fails, exactly one dirty-integration row raised,
+//                 autoCommitOperatorDirt NOT called
+//
+// vi.doMock() is called at the BOTTOM of the file so that the existing
+// `runMainDirtyDispatchCheck` tests (which use their own vi.resetModules()
+// in beforeEach) are never affected by these factories.
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a minimal MarsCtx sufficient for setupWorktree to run.  The cast to
+ * `never` bypasses the full type surface so this helper can stay lean.
+ */
+function makeSetupCtx(taskId: string) {
+  return {
+    runId: taskId,
+    workflowId: 'task',
+    input: {
+      taskId,
+      kind: 'task',
+      integrationBranch: 'main',
+      recoveryPayload: null,
+      fixForTaskId: null,
+    },
+    logger: { child: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn() }) },
+    signal: new AbortController().signal,
+    services: {
+      store: {
+        getTask: vi.fn().mockResolvedValue(null),
+        query: vi.fn().mockResolvedValue({ rows: [] }),
+        execute: vi.fn().mockResolvedValue({ rows: [] }),
+        batch: vi.fn().mockResolvedValue([]),
+        atomic: vi.fn().mockImplementation(async (fn: (scope: unknown) => Promise<void>) => {
+          await fn({ execute: vi.fn().mockResolvedValue({ rows: [] }) })
+        }),
+      },
+      traceStore: null,
+    },
+    currentStep: null,
+    emit: vi.fn(),
+    step: vi.fn(),
+  } as never
+}
+
+/** Register the full set of doMock factories setupWorktree needs. */
+function registerSetupWorktreeMocks(overrides: {
+  checkIntegrationBranchDirty?: ReturnType<typeof vi.fn>
+  updateTask?: ReturnType<typeof vi.fn>
+  raiseActionQueueItem?: ReturnType<typeof vi.fn>
+  autoCommitOperatorDirt?: ReturnType<typeof vi.fn>
+  speakOperatorAutoCommitNotice?: ReturnType<typeof vi.fn>
+} = {}) {
+  const {
+    checkIntegrationBranchDirty = vi.fn().mockResolvedValue({ dirty: false, statusOutput: '' }),
+    updateTask = vi.fn().mockResolvedValue(undefined),
+    raiseActionQueueItem = vi.fn().mockResolvedValue('aq-stub'),
+    autoCommitOperatorDirt = vi.fn().mockResolvedValue({ committed: true, sha: 'abc1234567890', files: ['README.md'] }),
+    speakOperatorAutoCommitNotice = vi.fn().mockResolvedValue(undefined),
+  } = overrides
+
+  // Paths are relative to THIS test file (src/core/daemon/__tests__/).
+  vi.doMock('../../queue', () => ({
+    updateTask,
+    hasIncompleteBlockers: vi.fn().mockResolvedValue(false),
+    getTask: vi.fn().mockResolvedValue(null),
+    TERMINAL_TASK_STATUSES: ['done', 'failed', 'dropped'],
+    resolveQueueClient: vi.fn(),
+    enqueueTask: vi.fn(),
+  }))
+  vi.doMock('../../lib/main-dirty', () => ({
+    checkIntegrationBranchDirty,
+    parseMainCommiterPayload: vi.fn().mockReturnValue(null),
+    MAIN_COMMITER_RECIPE: '__main-committer__',
+  }))
+  vi.doMock('../../lib/git/worktree', () => ({
+    createWorktree: vi.fn().mockResolvedValue({ path: '/tmp/wt-lever-test', branch: 'task/lever-test' }),
+    syncWorktreeToIntegration: vi.fn().mockResolvedValue({ kind: 'already-current' }),
+    restoreWorktreeIfMissing: vi.fn().mockResolvedValue('present'),
+    provisionCommitterWorktree: vi.fn().mockResolvedValue({ path: '/tmp/com', branch: 'task/fix' }),
+    attachToOriginWorktree: vi.fn().mockResolvedValue({ path: '/tmp/orig', branch: 'task/orig' }),
+    removeWorktree: vi.fn().mockResolvedValue(undefined),
+  }))
+  vi.doMock('../../lib/worktree-install', () => ({
+    installWorktreeDeps: vi.fn().mockResolvedValue({ sites: [], totalDurationMs: 0 }),
+    repairInstallInPlace: vi.fn().mockResolvedValue({ repaired: false }),
+    WorktreeInstallError: class WorktreeInstallError extends Error {},
+    WorktreeModulesMissingError: class WorktreeModulesMissingError extends Error {
+      failureStep = 'setup:modules-missing'
+    },
+  }))
+  vi.doMock('../../lib/action-queue', () => ({ raiseActionQueueItem }))
+  vi.doMock('../../lib/run-tool', () => ({
+    runTool: vi.fn().mockResolvedValue({
+      exitCode: 0,
+      stdout: 'abc1234\n',
+      stderr: '',
+      durationMs: 1,
+      traceEventId: 'trace-1',
+    }),
+    nullTraceStore: { createSpan: () => ({ end: () => {} }), addEvent: () => {} },
+  }))
+  vi.doMock('../../lib/origin', () => ({
+    resolveOriginIdForTask: vi.fn().mockImplementation(async (id: string) => id),
+  }))
+  vi.doMock('../../queue-fix-tasks', () => ({
+    handleTaskFailureWithFixTask: vi.fn().mockResolvedValue({ outcome: 'fix-task-spawned' }),
+  }))
+  vi.doMock('../../lib/git/checkpoint', () => ({
+    captureCheckpoint: vi.fn().mockResolvedValue({ ref: 'refs/mars/checkpoint/pf', sha: 'sha1', files: [] }),
+    discardWorkingTreeChanges: vi.fn().mockResolvedValue(undefined),
+    restoreCheckpoint: vi.fn().mockResolvedValue(undefined),
+    checkpointRefFor: vi.fn().mockImplementation((key: string) => `refs/mars/checkpoint/${key}`),
+  }))
+  vi.doMock('../../lib/git/merge', () => ({
+    isZeroCommitBranch: vi.fn().mockResolvedValue(false),
+    checkMergeTargetStatus: vi.fn().mockResolvedValue({ kind: 'clean' }),
+    isBranchTipInIntegration: vi.fn().mockResolvedValue(true),
+  }))
+  vi.doMock('../../lib/worktree-dependents', () => ({
+    findLiveWorktreeDependents: vi.fn().mockResolvedValue([]),
+  }))
+  vi.doMock('../../lib/run-worker-with-span', () => ({
+    runNonLlmStepWithSpan: async <T>(opts: { fn: () => Promise<T> }) => opts.fn(),
+  }))
+  vi.doMock('../../lib/reflect-signals', () => ({
+    recordSignals: vi.fn().mockResolvedValue(undefined),
+  }))
+  vi.doMock('../../lib/git/operator-auto-commit', () => ({ autoCommitOperatorDirt }))
+  vi.doMock('../../lib/notices/operator-auto-commit', () => ({ speakOperatorAutoCommitNotice }))
+}
+
+describe('setup-worktree: operatorAutoCommit lever at setup time', () => {
+  let repo2: string
+
+  beforeEach(() => {
+    repo2 = setupRepo()
+    process.env.MARS_REPO = repo2
+  })
+
+  afterEach(async () => {
+    const { __resetContextCacheForTests } = await import('../../context')
+    __resetContextCacheForTests()
+    delete process.env.MARS_REPO
+    rmSync(repo2, { recursive: true, force: true })
+  })
+
+  it(
+    'lever on + user-owned dirt: setup proceeds, wip(operator) commit made, no dirty-integration row raised',
+    async () => {
+      // No daemon.json → lever defaults to 'on'. Dirty integration branch with
+      // user-owned changes — the lever-on path should auto-commit and proceed.
+      const mockAutoCommit = vi.fn().mockResolvedValue({ committed: true, sha: 'abc1234567890', files: ['README.md'] })
+      const mockNotice = vi.fn().mockResolvedValue(undefined)
+      const mockRaiseItem = vi.fn().mockResolvedValue('aq-1')
+
+      registerSetupWorktreeMocks({
+        checkIntegrationBranchDirty: vi.fn().mockResolvedValue({ dirty: true, statusOutput: ' M README.md' }),
+        raiseActionQueueItem: mockRaiseItem,
+        autoCommitOperatorDirt: mockAutoCommit,
+        speakOperatorAutoCommitNotice: mockNotice,
+      })
+      vi.resetModules()
+
+      const { setupWorktree } = await import('../../../workflows/primitives/index')
+      const { __resetContextCacheForTests } = await import('../../context')
+      __resetContextCacheForTests()
+
+      // Act: setup must not throw
+      const result = await setupWorktree(makeSetupCtx('lever-on-task'))
+
+      // Assert: setup proceeded (worktree returned)
+      expect(result).toMatchObject({ path: '/tmp/wt-lever-test', branch: 'task/lever-test' })
+
+      // Assert: autoCommitOperatorDirt called once — the wip(operator) commit is
+      // made via the shared helper (criterion 3: identical to the merge path)
+      expect(mockAutoCommit).toHaveBeenCalledOnce()
+
+      // Assert: notice spoken via the shared helper
+      expect(mockNotice).toHaveBeenCalledOnce()
+
+      // Assert: no dirty-integration action-queue row raised
+      const dirtyRows = mockRaiseItem.mock.calls.filter(
+        (c) => (c[0] as { kind?: string }).kind === 'dirty-integration',
+      )
+      expect(dirtyRows).toHaveLength(0)
+    },
+    30_000,
+  )
+
+  it(
+    'lever off + user-owned dirt: task fails, exactly one dirty-integration row raised',
+    async () => {
+      // Write lever off — residual path should fail the task and raise an alert.
+      writeFileSync(
+        resolve(repo2, '.mars', 'daemon.json'),
+        JSON.stringify({ controlLevers: { operatorAutoCommit: 'off' } }),
+      )
+
+      const mockUpdateTask = vi.fn().mockResolvedValue(undefined)
+      const mockRaiseItem = vi.fn().mockResolvedValue('aq-2')
+      const mockAutoCommit = vi.fn()
+      const mockNotice = vi.fn()
+
+      registerSetupWorktreeMocks({
+        checkIntegrationBranchDirty: vi.fn().mockResolvedValue({ dirty: true, statusOutput: ' M README.md' }),
+        updateTask: mockUpdateTask,
+        raiseActionQueueItem: mockRaiseItem,
+        autoCommitOperatorDirt: mockAutoCommit,
+        speakOperatorAutoCommitNotice: mockNotice,
+      })
+      vi.resetModules()
+
+      const { setupWorktree } = await import('../../../workflows/primitives/index')
+      const { __resetContextCacheForTests } = await import('../../context')
+      __resetContextCacheForTests()
+
+      // Act: should throw with the dirty-integration kind
+      await expect(setupWorktree(makeSetupCtx('lever-off-task'))).rejects.toThrow('setup-dirty-integration')
+
+      // Assert: task set to 'failed'
+      const failedCall = mockUpdateTask.mock.calls.find(
+        (c) => (c[1] as Record<string, unknown>)?.status === 'failed',
+      )
+      expect(failedCall).toBeDefined()
+
+      // Assert: exactly one dirty-integration row raised
+      const dirtyRows = mockRaiseItem.mock.calls.filter(
+        (c) => (c[0] as { kind?: string }).kind === 'dirty-integration',
+      )
+      expect(dirtyRows).toHaveLength(1)
+
+      // Assert: autoCommitOperatorDirt NOT called — residual path bypasses the shared helper
+      expect(mockAutoCommit).not.toHaveBeenCalled()
+    },
+    30_000,
+  )
+})

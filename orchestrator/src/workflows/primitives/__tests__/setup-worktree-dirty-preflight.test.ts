@@ -11,7 +11,7 @@
  *     integration branch and must proceed even when main has uncommitted changes.
  */
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtempSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { __resetContextCacheForTests } from '../../../core/context'
@@ -91,6 +91,9 @@ const {
   mockIsBranchTipInIntegration: vi.fn().mockResolvedValue(true),
   mockFindLiveWorktreeDependents: vi.fn().mockResolvedValue([]),
   mockRemoveWorktree: vi.fn().mockResolvedValue(undefined),
+  // operatorAutoCommit lever: shared helper mocks (for the dirty-guard lever tests)
+  mockAutoCommitOperatorDirt: vi.fn().mockResolvedValue({ committed: true, sha: 'abc1234567890', files: ['README.md'] }),
+  mockSpeakOperatorAutoCommitNotice: vi.fn().mockResolvedValue(undefined),
 }))
 
 // ---------------------------------------------------------------------------
@@ -192,6 +195,17 @@ vi.mock('../../../core/lib/reflect-signals', () => ({
   recordSignals: vi.fn().mockResolvedValue(undefined),
 }))
 
+// operatorAutoCommit shared helpers — used by the new lever-aware guard path.
+vi.mock('../../../core/lib/git/operator-auto-commit', async (importOriginal) => {
+  const orig = await importOriginal<typeof import('../../../core/lib/git/operator-auto-commit')>()
+  return { ...orig, autoCommitOperatorDirt: mockAutoCommitOperatorDirt }
+})
+
+vi.mock('../../../core/lib/notices/operator-auto-commit', async (importOriginal) => {
+  const orig = await importOriginal<typeof import('../../../core/lib/notices/operator-auto-commit')>()
+  return { ...orig, speakOperatorAutoCommitNotice: mockSpeakOperatorAutoCommitNotice }
+})
+
 // Import the primitives AFTER all vi.mock() calls.
 const { setupWorktree, merge } = await import('../index')
 
@@ -282,6 +296,9 @@ beforeEach(() => {
   mockIsBranchTipInIntegration.mockReset().mockResolvedValue(true)
   mockFindLiveWorktreeDependents.mockReset().mockResolvedValue([])
   mockRemoveWorktree.mockReset().mockResolvedValue(undefined)
+  // operatorAutoCommit shared helpers
+  mockAutoCommitOperatorDirt.mockReset().mockResolvedValue({ committed: true, sha: 'abc1234567890', files: ['README.md'] })
+  mockSpeakOperatorAutoCommitNotice.mockReset().mockResolvedValue(undefined)
 })
 
 // ---------------------------------------------------------------------------
@@ -490,8 +507,11 @@ describe('setup-worktree auto-stash of .mars/ preflight artifacts', () => {
     expect(mockRaiseActionQueueItem).not.toHaveBeenCalled()
   })
 
-  it('(b) parks the task as blocked when dirty paths include user-owned files (mixed)', async () => {
-    // Arrange: mix of .mars/ and user-owned files.
+  it('(b) parks the task as blocked when dirty paths include user-owned files (mixed, lever off)', async () => {
+    // Arrange: mix of .mars/ and user-owned files. Force lever off so this test
+    // continues to exercise the residual fail path regardless of the default.
+    mkdirSync(join(tmpRepo, '.mars'), { recursive: true })
+    writeFileSync(join(tmpRepo, '.mars', 'daemon.json'), JSON.stringify({ controlLevers: { operatorAutoCommit: 'off' } }))
     const statusOutput = '?? .mars/http.port\n M src/index.ts'
     mockCheckIntegrationBranchDirty.mockResolvedValue({ dirty: true, statusOutput })
     const ctx = makeCtx('test-mixed')
@@ -513,8 +533,10 @@ describe('setup-worktree auto-stash of .mars/ preflight artifacts', () => {
     expect(mockCreateWorktree).not.toHaveBeenCalled()
   })
 
-  it('(c) parks the task as blocked when only user-owned files are dirty (regression)', async () => {
-    // Regression guard for slice 1: pure user-owned dirty paths must still fail.
+  it('(c) parks the task as blocked when only user-owned files are dirty, lever off (regression)', async () => {
+    // Regression guard: when lever is off, pure user-owned dirty paths must still fail.
+    mkdirSync(join(tmpRepo, '.mars'), { recursive: true })
+    writeFileSync(join(tmpRepo, '.mars', 'daemon.json'), JSON.stringify({ controlLevers: { operatorAutoCommit: 'off' } }))
     const statusOutput = ' M README.md\n?? scratch.txt'
     mockCheckIntegrationBranchDirty.mockResolvedValue({ dirty: true, statusOutput })
     const ctx = makeCtx('test-user-only')
@@ -586,6 +608,78 @@ describe('setup-worktree remerge-workflow guard', () => {
     expect(mockSyncWorktreeToIntegration).toHaveBeenCalled()
     const callArgs = mockSyncWorktreeToIntegration.mock.calls[0][0] as { onConflict: string }
     expect(callArgs.onConflict).toBe('recreate')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// PRD ce46f01e work item 4: operatorAutoCommit lever at setup time
+//
+// Acceptance criteria:
+//   - lever ON (default) + user-owned dirt → setup proceeds; autoCommitOperatorDirt
+//     called (wip(operator) commit made via shared helper); speakOperatorAutoCommitNotice
+//     called; no dirty-integration row raised.
+//   - lever OFF + user-owned dirt → task fails; exactly one dirty-integration row
+//     raised; autoCommitOperatorDirt NOT called.
+// ---------------------------------------------------------------------------
+
+describe('setup-worktree dirty-integration: operatorAutoCommit lever', () => {
+  it('lever on (default) + user-owned dirt: setup proceeds, shared helper called, no dirty-integration row', async () => {
+    // Arrange: no daemon.json → lever defaults to 'on'. User-owned dirt on integration.
+    const statusOutput = ' M README.md'
+    mockCheckIntegrationBranchDirty.mockResolvedValue({ dirty: true, statusOutput })
+    const ctx = makeCtx('test-lever-on')
+
+    // Act: setup should NOT throw
+    const result = await setupWorktree(ctx)
+
+    // Assert: setup proceeded (worktree returned)
+    expect(result).toMatchObject({ path: '/tmp/fake-worktree', branch: 'task/test-task' })
+    expect(mockCreateWorktree).toHaveBeenCalledOnce()
+
+    // Assert: autoCommitOperatorDirt was called once (wip(operator) commit made via shared helper)
+    expect(mockAutoCommitOperatorDirt).toHaveBeenCalledOnce()
+
+    // Assert: notice was spoken (same kind as the merge path)
+    expect(mockSpeakOperatorAutoCommitNotice).toHaveBeenCalledOnce()
+
+    // Assert: NO dirty-integration action-queue row raised
+    const dirtyIntegrationCalls = mockRaiseActionQueueItem.mock.calls.filter(
+      (call) => (call[0] as { kind?: string }).kind === 'dirty-integration',
+    )
+    expect(dirtyIntegrationCalls).toHaveLength(0)
+  })
+
+  it('lever off + user-owned dirt: task fails, exactly one dirty-integration row raised', async () => {
+    // Arrange: lever off, user-owned dirt on integration.
+    mkdirSync(join(tmpRepo, '.mars'), { recursive: true })
+    writeFileSync(
+      join(tmpRepo, '.mars', 'daemon.json'),
+      JSON.stringify({ controlLevers: { operatorAutoCommit: 'off' } }),
+    )
+    const statusOutput = ' M README.md'
+    mockCheckIntegrationBranchDirty.mockResolvedValue({ dirty: true, statusOutput })
+    const ctx = makeCtx('test-lever-off')
+
+    // Act: setup should throw
+    await expect(setupWorktree(ctx)).rejects.toThrow(WorkflowTerminalError)
+
+    // Assert: task set to 'failed'
+    const failedCall = mockUpdateTask.mock.calls.find(
+      (call) => (call[1] as Record<string, unknown>)?.status === 'failed',
+    )
+    expect(failedCall).toBeDefined()
+
+    // Assert: worktree NOT created
+    expect(mockCreateWorktree).not.toHaveBeenCalled()
+
+    // Assert: exactly one dirty-integration row raised
+    const dirtyIntegrationCalls = mockRaiseActionQueueItem.mock.calls.filter(
+      (call) => (call[0] as { kind?: string }).kind === 'dirty-integration',
+    )
+    expect(dirtyIntegrationCalls).toHaveLength(1)
+
+    // Assert: autoCommitOperatorDirt NOT called (lever-off path bypasses the shared helper)
+    expect(mockAutoCommitOperatorDirt).not.toHaveBeenCalled()
   })
 })
 
