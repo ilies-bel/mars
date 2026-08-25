@@ -40,7 +40,7 @@ export type AutonomousNoticeKind = z.infer<typeof AutonomousNoticeKindSchema>
 export const STEWARD_RUNTIME_TUNE_LEVER = 'steward_runtime_tune' as const
 export const IDLE_PROPOSAL_OFFER_LEVER = 'idle_proposal_offer' as const
 export const CODEGRAPH_SUGGESTION_LEVER = 'codegraph_suggestion' as const
-export const PUSH_HABIT_OBSERVATION_LEVER = 'push_habit_observation' as const
+export const UNVERIFIED_COMMITS_LEVER = 'unverified_commits' as const
 export const ARCHITECTURE_REPORT_LEVER = 'architecture_report' as const
 
 export interface AutonomousNoticePayloads {
@@ -190,6 +190,8 @@ const REGISTRY: { [Kind in AutonomousNoticeKind]: NoticeKindEntry<Kind> } = {
       silence(IDLE_PROPOSAL_OFFER_LEVER, 'Stop suggesting proposals', 'stop'),
       // Per-instance: dismisses only this proposal's offer, not the whole class.
       dismissNotice(`idle-proposal:${p.proposalId}`, 'never'),
+      // Class-level: turns the lever off so no more idle proposals surface.
+      silence(IDLE_PROPOSAL_OFFER_LEVER, 'Stop suggesting these'),
     ],
   },
   'suggestion.codegraph': {
@@ -218,11 +220,15 @@ const REGISTRY: { [Kind in AutonomousNoticeKind]: NoticeKindEntry<Kind> } = {
   'observation.manual-push': {
     act: 'offer',
     render: (p) =>
-      `I noticed ${p.commits} commits reached ${sentenceValue(p.branch)} outside the pipeline in the last ${p.windowDays} days, which means they skipped verify and I cannot vouch for them.`,
-    lever: PUSH_HABIT_OBSERVATION_LEVER,
-    offers: () => [
-      ack(),
-      silence(PUSH_HABIT_OBSERVATION_LEVER, 'Stop mentioning these', 'never'),
+      `${p.commits} commits on ${sentenceValue(p.branch)} have never been through verify — I cannot vouch for them.`,
+    lever: UNVERIFIED_COMMITS_LEVER,
+    offers: (p) => [
+      {
+        id: 'enqueue-verify',
+        label: 'Verify them',
+        target: { type: 'subject', title: `Run verify on unverified commits on ${sentenceValue(p.branch)}` },
+      },
+      silence(UNVERIFIED_COMMITS_LEVER, "Don't mention this again", 'never'),
     ],
   },
   'trend.token-spend': {

@@ -791,7 +791,13 @@ export const readLeverAutonomyLevel = (name: string): AutonomyLevel => {
   if (leversRaw === null || typeof leversRaw !== 'object' || Array.isArray(leversRaw)) {
     return defaultLevelFor(name)
   }
-  const leverData = (leversRaw as Record<string, unknown>)[name]
+  // Migration: when looking up 'unverified_commits', fall back to the legacy
+  // key 'push_habit_observation' so an existing operator preference is not
+  // silently discarded by the lever rename.
+  const leversMap = leversRaw as Record<string, unknown>
+  const leverData =
+    leversMap[name] ??
+    (name === 'unverified_commits' ? leversMap['push_habit_observation'] : undefined)
   if (leverData === null || typeof leverData !== 'object' || Array.isArray(leverData)) {
     return defaultLevelFor(name)
   }

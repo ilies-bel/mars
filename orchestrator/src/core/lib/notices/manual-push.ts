@@ -35,7 +35,7 @@ export interface ManualPushObservation {
 export interface DetectManualPushOptions {
   branch: string
   windowDays?: number
-  /** Minimum hand-landed commits before this is a habit rather than an event. */
+  /** Minimum unverified commits before this is worth mentioning. */
   threshold?: number
   now?: () => number
   /**

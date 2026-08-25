@@ -70,6 +70,16 @@ describe('renderConversationNotice', () => {
     }
   })
 
+  it('frames the manual-push observation as a repo-state fact, not an operator verdict', () => {
+    const body = bodyFor('observation.manual-push')
+    // New phrasing: repo-state subject
+    expect(body).toContain('have never been through verify')
+    // Old framing must be absent
+    expect(body).not.toContain('outside the pipeline')
+    expect(body).not.toContain('habit')
+    expect(body).not.toContain('push_habit_observation')
+  })
+
   it('reflects the file count in the auto-commit notice body', () => {
     // Contract for "Add files to auto-commit notice payload": the rendered
     // sentence must surface how many files were captured so the operator can

@@ -18,7 +18,7 @@ import {
   ARCHITECTURE_REPORT_LEVER,
   CODEGRAPH_SUGGESTION_LEVER,
   IDLE_PROPOSAL_OFFER_LEVER,
-  PUSH_HABIT_OBSERVATION_LEVER,
+  UNVERIFIED_COMMITS_LEVER,
 } from '../conversation-copy.js'
 import { readLeverAutonomyLevel } from '../../daemon/config.js'
 import { detectIdleProposal } from './idle-proposal.js'
@@ -94,14 +94,30 @@ export const runNoticeSweep = async (deps: NoticeSweepDeps): Promise<NoticeSweep
     }
   }
 
-  if (allowed(PUSH_HABIT_OBSERVATION_LEVER)) {
-    const observation = await detectManualPush(client, {
-      branch: deps.integrationBranch,
-      listCommits: deps.listCommits,
-      listCommitRange: deps.listCommitRange,
+  if (allowed(UNVERIFIED_COMMITS_LEVER)) {
+    // Cooldown: skip if a manual-push notice was already posted within the
+    // current observation window (14 days, matching the detector default).
+    // We check conversation_pending_messages (the source-of-truth for all
+    // posted notices, pending or delivered) and look for the lever name in
+    // segments — a stable, content-free proxy for "this kind was posted".
+    const windowMs = 14 * 24 * 60 * 60 * 1000
+    const sinceMs = Date.now() - windowMs
+    const recentPush = await client.execute({
+      sql: `SELECT 1 FROM conversation_pending_messages
+             WHERE segments LIKE ?
+               AND created_at >= ?
+             LIMIT 1`,
+      args: [`%${UNVERIFIED_COMMITS_LEVER}%`, sinceMs],
     })
-    if (observation) {
-      await speak({ kind: 'observation.manual-push', payload: observation, priority: 'routine' })
+    if (recentPush.rows.length === 0) {
+      const observation = await detectManualPush(client, {
+        branch: deps.integrationBranch,
+        listCommits: deps.listCommits,
+        listCommitRange: deps.listCommitRange,
+      })
+      if (observation) {
+        await speak({ kind: 'observation.manual-push', payload: observation, priority: 'routine' })
+      }
     }
   }
 
