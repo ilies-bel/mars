@@ -76,7 +76,7 @@ import type { DbClient, DbStatement } from './db.js'
 import { __execSchemaBatch } from './db.js'
 
 /** Bumped when the canonical DDL changes shape. */
-export const SCHEMA_VERSION = '0038'
+export const SCHEMA_VERSION = '0039'
 
 /**
  * The well-known `chat_threads` row that backs the main thread.
@@ -1408,9 +1408,10 @@ const DDL: readonly string[] = [
   // Per-step wall-clock timeout (minutes). Added in 7091bbcc. Must live here
   // so a restarted daemon migrates the column before any verify_gates SELECT.
   `ALTER TABLE verify_gates ADD COLUMN IF NOT EXISTS timeout_min REAL`,
-  // Free-text observation that justified adding this gate. Must live here so
-  // a restarted daemon migrates the column before any verify_gates INSERT.
-  `ALTER TABLE verify_gates ADD COLUMN IF NOT EXISTS evidence TEXT`,
+  // Free-text provenance of the observation that justified adding this gate.
+  // Added in schema 0039; required before any verify_gates SELECT that
+  // projects `evidence` so a restarted daemon migrates it first.
+  `ALTER TABLE verify_gates ADD COLUMN IF NOT EXISTS evidence text`,
 
   // ── quarantined verify-gate repair proposals ─────────────────────────────
   // The unique quarantine episode key is the durable idempotency boundary for

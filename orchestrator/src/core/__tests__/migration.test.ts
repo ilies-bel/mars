@@ -68,6 +68,42 @@ describe('migration 0002 PostgreSQL cutover', () => {
     }
   })
 
+  it('migrates evidence into an existing verify_gates table on the first post-0039 boot', async () => {
+    // Regression for "column evidence does not exist": ensureSchema
+    // (= runCompositionRootMigrations) must add the column before any
+    // verify_gates SELECT runs on a daemon restarted against a pre-0039 DB.
+    const db = openDb(`pglite://verify-gates-evidence-${randomUUID()}`)
+    try {
+      // 1. Set up a known-good schema (ensureSchema is idempotent).
+      await ensureSchema(db)
+
+      // 2. Roll back to the pre-0039 state by dropping the column.
+      //    This is the on-disk condition that triggered the production failure.
+      await db.execute(`ALTER TABLE verify_gates DROP COLUMN evidence`)
+      await db.execute({
+        sql: `INSERT INTO verify_gates
+                (id, scope, name, cmd, args_json, required, tier, source, created_at, state)
+              VALUES (?, '.', 'lint', 'npm', '["run","lint"]', 1, 'task', 'human', ?, 'active')`,
+        args: ['gate-pre-evidence', 1000],
+      })
+
+      // 3. Daemon restarts — runCompositionRootMigrations calls ensureSchema.
+      //    This must re-add evidence before any verify_gates SELECT fires.
+      await ensureSchema(db)
+
+      // 4. First gate read after boot — must not throw
+      //    "column evidence does not exist".
+      const scopes = await loadVerifyGates(db)
+      expect(scopes).toHaveLength(1)
+      expect(scopes[0].steps[0]).toMatchObject({
+        name: 'lint',
+        cmd: 'npm',
+      })
+    } finally {
+      await db.close()
+    }
+  })
+
   it('supports time-window task queries without callers casting updated_at', async () => {
     const db = openDb(`pglite://task-timestamp-range-${randomUUID()}`)
     try {
