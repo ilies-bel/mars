@@ -65,7 +65,7 @@ const parkAtClosedPreview = async (
     priority: 'high',
     title: `Validate ${task.id}`,
     body: 'Preview ready: http://127.0.0.1:1',
-    payload: { taskId: task.id, devServerUrl: 'http://127.0.0.1:1' },
+    payload: { taskId: task.id, devServerUrl: 'http://127.0.0.1:1', remoteUrl: null, branch: 'task/test' },
     context: { taskId: task.id },
     raisedBy: 'test',
     signature: task.id,

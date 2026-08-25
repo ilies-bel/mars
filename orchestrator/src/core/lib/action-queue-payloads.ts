@@ -71,12 +71,22 @@ export type {
   DiagnoseInconclusivePayload,
   LifecycleContracts,
 } from './payload-contracts/lifecycle'
+export type {
+  AwaitingValidationPayload,
+  AwaitingValidationPreviewGonePayload,
+  BehaviourUnverifiedPayload,
+  MockupReadyPayload,
+  QaStepListOptInPayload,
+  QaStepListPromotePayload,
+  ValidationQaContracts,
+} from './payload-contracts/validation-qa'
 
 import type { AwaitingHumanContracts } from './payload-contracts/awaiting-human'
 import type { GateEnrichmentContracts } from './payload-contracts/gate-enrichment'
 import type { LifecycleContracts } from './payload-contracts/lifecycle'
 import type { SchedulingContracts } from './payload-contracts/scheduling'
 import type { SliceWorkflowContracts } from './payload-contracts/slice-workflow'
+import type { ValidationQaContracts } from './payload-contracts/validation-qa'
 
 // ── Shared shapes ─────────────────────────────────────────────────────────────
 
@@ -99,7 +109,8 @@ type AuditedPayloads = AwaitingHumanContracts &
   GateEnrichmentContracts &
   LifecycleContracts &
   SchedulingContracts &
-  SliceWorkflowContracts
+  SliceWorkflowContracts &
+  ValidationQaContracts
 
 /**
  * The payload type for one action-queue kind.
@@ -157,9 +168,9 @@ export const ACTION_QUEUE_PAYLOAD_AUDIT = {
   'slices-dropped': 'typed',
   'slice-failed': 'typed',
   'hitl-slice-needs-operator': 'typed',
-  'awaiting-validation': 'unaudited',
-  'awaiting-validation-preview-gone': 'unaudited',
-  'behaviour-unverified': 'unaudited',
+  'awaiting-validation': 'typed',
+  'awaiting-validation-preview-gone': 'typed',
+  'behaviour-unverified': 'typed',
   'observability-store-oversize': 'unaudited',
   'outbox-lag': 'unaudited',
   'reflect-recommended': 'unaudited',
@@ -187,9 +198,9 @@ export const ACTION_QUEUE_PAYLOAD_AUDIT = {
   'health-check-alert': 'unaudited',
   'fragmented-repo-layout': 'typed',
   'recovery-abandoned': 'typed',
-  'mockup-ready': 'unaudited',
-  'qa-step-list-opt-in': 'unaudited',
-  'qa-step-list-promote': 'unaudited',
+  'mockup-ready': 'typed',
+  'qa-step-list-opt-in': 'typed',
+  'qa-step-list-promote': 'typed',
 } as const satisfies Record<ActionQueueKind, 'typed' | 'derived-condition' | 'unaudited'>
 
 // ── Kind families ─────────────────────────────────────────────────────────────
@@ -239,13 +250,6 @@ export type UnauditedKindFamily =
  * the list is empty" does.
  */
 export const UNAUDITED_KIND_FAMILY = {
-  'awaiting-validation': 'validation-qa',
-  'awaiting-validation-preview-gone': 'validation-qa',
-  'behaviour-unverified': 'validation-qa',
-  'mockup-ready': 'validation-qa',
-  'qa-step-list-opt-in': 'validation-qa',
-  'qa-step-list-promote': 'validation-qa',
-
   'budget-window': 'spend-provider',
   'budget-arc': 'spend-provider',
   'spend-control-notice': 'spend-provider',

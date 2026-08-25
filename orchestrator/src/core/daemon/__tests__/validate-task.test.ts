@@ -125,7 +125,7 @@ describe('coreRejectTask', () => {
       priority: 'high',
       title: 'Validate',
       body: 'preview running',
-      payload: { taskId: id, devServerUrl: 'http://127.0.0.1:4242' },
+      payload: { taskId: id, devServerUrl: 'http://127.0.0.1:4242', remoteUrl: null, branch: 'task/test' },
       context: {},
       raisedBy: 'merge:preview-gate',
       signature: `${id}:awaiting-validation`,

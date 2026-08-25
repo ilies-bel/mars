@@ -12,6 +12,7 @@ import { REPRESENTATIVE_PAYLOADS as gateEnrichment } from './gate-enrichment'
 import { REPRESENTATIVE_PAYLOADS as lifecycle } from './lifecycle'
 import { REPRESENTATIVE_PAYLOADS as scheduling } from './scheduling'
 import { REPRESENTATIVE_PAYLOADS as sliceWorkflow } from './slice-workflow'
+import { REPRESENTATIVE_PAYLOADS as validationQa } from './validation-qa'
 
 /**
  * One representative payload per typed action-queue kind.
@@ -26,4 +27,5 @@ export const ALL_REPRESENTATIVE_PAYLOADS: Partial<Record<ActionQueueKind, Record
   ...lifecycle,
   ...scheduling,
   ...sliceWorkflow,
+  ...validationQa,
 }

@@ -499,7 +499,6 @@ const RECIPE_DEFINITIONS = {
 
   // ── Human-in-the-loop ──────────────────────────────────────────────────────
 
-  // family: validation-qa
   'awaiting-validation': {
     humanSummary: () =>
       'You need to review this completed task — validate it to merge the work, or reject to start over.',
@@ -515,7 +514,6 @@ const RECIPE_DEFINITIONS = {
     ],
   },
 
-  // family: validation-qa
   'awaiting-validation-preview-gone': {
     humanSummary: () =>
       'A task still needs a validation decision, but its preview is no longer reachable.',
@@ -599,16 +597,14 @@ const RECIPE_DEFINITIONS = {
 
   // ── Verification ──────────────────────────────────────────────────────────
 
-  // family: validation-qa
   'behaviour-unverified': {
     humanSummary: () =>
       'A task was merged but Mars could not check it actually works — follow the linked proposal to verify manually.',
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
       entityId: ctx.entityId,
-      proposalId: str(ctx.payload['proposalId']),
-      reason: str(ctx.payload['reason']),
-      branch: str(ctx.payload['branch']),
+      proposalId: str(ctx.payload.proposalId),
+      reason: str(ctx.payload.reason),
     }),
     verbs: [],
   },
@@ -1354,7 +1350,6 @@ const RECIPE_DEFINITIONS = {
     ],
   },
 
-  // family: validation-qa
   'mockup-ready': {
     humanSummary: (ctx) => {
       const proposalId = str(ctx.payload['proposalId']) || 'unknown'
@@ -1369,7 +1364,6 @@ const RECIPE_DEFINITIONS = {
     verbs: [],
   },
 
-  // family: validation-qa
   'qa-step-list-opt-in': {
     humanSummary: (_ctx) =>
       'Decide if you want to enable automatic QA step list generation for this project.',
@@ -1384,7 +1378,6 @@ const RECIPE_DEFINITIONS = {
     ],
   },
 
-  // family: validation-qa
   'qa-step-list-promote': {
     humanSummary: (_ctx) =>
       'Decide if you want to promote the QA step list to project documentation, or keep it as a task artifact only.',
