@@ -450,6 +450,7 @@ const DDL: readonly string[] = [
    BEGIN
      IF OLD.status IN ('done', 'failed', 'dropped')
         AND NEW.status IS DISTINCT FROM OLD.status
+        AND (NEW.drop_reason IS DISTINCT FROM 'superseded')
         AND NOT EXISTS (
           SELECT 1 FROM task_terminal_reopens
           WHERE task_id = OLD.id AND consumed_at IS NULL

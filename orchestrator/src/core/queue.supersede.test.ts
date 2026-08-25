@@ -264,3 +264,78 @@ describe('queue.supersede', () => {
     expect(newTask.prompt).not.toContain('Inherited salvage checkpoint')
   })
 })
+
+// ── Terminal-origin supersede (regression: failed/done → dropped blocked by trigger) ──
+//
+// The `reject_terminal_task_transition` PostgreSQL trigger blocks any status change
+// away from a terminal status unless an unconsumed task_terminal_reopens row exists.
+// The supersede drop (arc.ts) sets drop_reason = 'superseded'; the trigger carves that
+// out to allow terminal → dropped(superseded) so `mars task add --supersede <id>` works
+// when the origin is already in a terminal state.
+
+describe('queue.supersede - terminal origin', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('failed origin with worktree: new task enqueued, inherits branch, origin drops to superseded', async () => {
+    const q = await loadQueue(repo)
+
+    const origin = await q.enqueueTask('failed task', undefined, { skipTriage: true })
+    const { branch } = await provisionWorktree(q, repo, origin.id)
+
+    // Mark failed — this is the state the trigger previously blocked.
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'failed', error = 'recovery exhausted' WHERE id = ?`,
+      args: [origin.id],
+    })
+
+    // This call used to throw:
+    //   "terminal task <id> cannot transition from failed to dropped"
+    const newTask = await q.enqueueTask('rescue attempt', undefined, {
+      skipTriage: true,
+      supersedes: origin.id,
+    })
+
+    // New task is enqueued and inherits the origin's branch.
+    expect(newTask.status).toBe('queued')
+    expect(newTask.branch).toBe(branch)
+    expect(newTask.worktreePath).toContain(newTask.id)
+
+    // Origin is settled as dropped(superseded) so the failed action-queue
+    // condition is no longer derived for it.
+    const settled = await q.getTask(origin.id)
+    expect(settled?.status).toBe('dropped')
+  })
+
+  it('done origin with no worktree: new task enqueued (fresh), done origin drops to superseded', async () => {
+    const q = await loadQueue(repo)
+
+    const origin = await q.enqueueTask('already merged task', undefined, { skipTriage: true })
+    // Simulate a done task: status=done, no branch or worktree.
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'done', branch = NULL, worktree_path = NULL WHERE id = ?`,
+      args: [origin.id],
+    })
+
+    // Supersede the done task — no branch to inherit, but enqueue must succeed.
+    const newTask = await q.enqueueTask('follow-on work', undefined, {
+      skipTriage: true,
+      supersedes: origin.id,
+    })
+
+    // New task is enqueued; no branch is inherited (origin had none).
+    expect(newTask.status).toBe('queued')
+
+    // The done origin transitions to dropped(superseded).
+    const settled = await q.getTask(origin.id)
+    expect(settled?.status).toBe('dropped')
+  })
+})
