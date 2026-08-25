@@ -143,8 +143,13 @@ const REGISTRY: { [Kind in AutonomousNoticeKind]: NoticeKindEntry<Kind> } = {
     render: (p) =>
       `I increased implement workers from ${p.from} to ${p.to} because ${p.pending} tasks stayed above the ${p.threshold}-task backlog threshold for ${p.sustainedSeconds}s.`,
     lever: STEWARD_RUNTIME_TUNE_LEVER,
-    offers: () => [
+    offers: (p) => [
       ack(),
+      {
+        id: 'revert',
+        label: `Put it back to ${p.from}`,
+        target: { type: 'verb', op: 'steward-restore-worker-cap', entityId: String(p.from) },
+      },
       silence(STEWARD_RUNTIME_TUNE_LEVER, 'Stop doing this automatically'),
     ],
   },
@@ -153,8 +158,13 @@ const REGISTRY: { [Kind in AutonomousNoticeKind]: NoticeKindEntry<Kind> } = {
     render: (p) =>
       `I reduced implement workers from ${p.from} to ${p.to} because the host was swapping at ${p.pagingPps} pages/s.`,
     lever: STEWARD_RUNTIME_TUNE_LEVER,
-    offers: () => [
+    offers: (p) => [
       ack(),
+      {
+        id: 'revert',
+        label: `Put it back to ${p.from}`,
+        target: { type: 'verb', op: 'steward-restore-worker-cap', entityId: String(p.from) },
+      },
       silence(STEWARD_RUNTIME_TUNE_LEVER, 'Stop doing this automatically'),
     ],
   },
@@ -163,8 +173,13 @@ const REGISTRY: { [Kind in AutonomousNoticeKind]: NoticeKindEntry<Kind> } = {
     render: (p) =>
       `I restored implement workers from ${p.from} to ${p.to} because host pressure cleared.`,
     lever: STEWARD_RUNTIME_TUNE_LEVER,
-    offers: () => [
+    offers: (p) => [
       ack(),
+      {
+        id: 'revert',
+        label: `Put it back to ${p.from}`,
+        target: { type: 'verb', op: 'steward-restore-worker-cap', entityId: String(p.from) },
+      },
       silence(STEWARD_RUNTIME_TUNE_LEVER, 'Stop doing this automatically'),
     ],
   },

@@ -5536,6 +5536,7 @@ export const startDaemon = async (
       baselineCap: initialCaps.implement,
       isPaused: pause.get().paused,
     }),
+    setImplementWorkerCap: (cap) => { setSemLimit(sems.implement, cap) },
     getDaemonShas: () => ({ sourceSha, currentSha, isStale }),
     getLiveAgentsRoster: () =>
       buildLiveAgentsRoster({

@@ -27,6 +27,9 @@ export const SAFE_MARS_VERBS: readonly string[] = [
   // Acknowledging the daemon-died condition just deletes the crash marker file;
   // the daemon has already restarted so this is a non-destructive clear.
   'dismiss-daemon-died',
+  // Restoring the implement worker cap to a prior value reverses an autonomous
+  // dial and is always recoverable — the Steward can move the cap again.
+  'steward-restore-worker-cap',
 ]
 
 /**
