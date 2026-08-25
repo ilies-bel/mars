@@ -1,14 +1,14 @@
 /**
- * Notice class lifecycle tests.
+ * Action-queue class lifecycle tests.
  *
  * Verifies that:
- *   - CONDITION_KINDS, NOTICE_KINDS, and classifyKind correctly classify
- *     action-queue kinds.
+ *   - KIND_CLASS and classifyKind correctly classify action-queue kinds by
+ *     operator obligation (notice / alert / decision).
  *   - A Notice-kind row can be raised and listed.
  *   - Dismissing a Notice durably records the dismissal.
  *   - After dismissal, the notice stays dismissed (isNoticeDismissed returns
  *     true and listDismissedNotices includes the record).
- *   - The two pre-existing classes (condition and decision) are unaffected.
+ *   - Alert and Decision rows are unaffected by the notice infrastructure.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -17,20 +17,20 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import {
-  CONDITION_KINDS,
-  NOTICE_KINDS,
+  KIND_CLASS,
   classifyKind,
 } from '../action-queue-kinds'
 
 // ── Classification unit tests (no DB) ────────────────────────────────────────
 
-describe('classifyKind — three-class model', () => {
-  it('classifies known condition kinds as condition', () => {
-    expect(classifyKind('failed')).toBe('condition')
-    expect(classifyKind('stale-queued')).toBe('condition')
-    expect(classifyKind('gate-broken')).toBe('condition')
-    expect(classifyKind('daemon-died')).toBe('condition')
-    expect(classifyKind('orphaned-origin')).toBe('condition')
+describe('classifyKind — three-class model (ADR-0104)', () => {
+  it('classifies known alert kinds as alert', () => {
+    expect(classifyKind('failed')).toBe('alert')
+    expect(classifyKind('stale-queued')).toBe('alert')
+    expect(classifyKind('gate-broken')).toBe('alert')
+    expect(classifyKind('daemon-died')).toBe('alert')
+    expect(classifyKind('orphaned-origin')).toBe('alert')
+    expect(classifyKind('recovery-abandoned')).toBe('alert')
   })
 
   it('classifies known notice kinds as notice', () => {
@@ -38,18 +38,30 @@ describe('classifyKind — three-class model', () => {
     expect(classifyKind('scheduling-decision')).toBe('notice')
     expect(classifyKind('requeue-warning')).toBe('notice')
     expect(classifyKind('arc-superseded-on-main')).toBe('notice')
+    expect(classifyKind('reflect-recommended')).toBe('notice')
   })
 
-  it('classifies all other known kinds as decision', () => {
+  it('classifies known decision kinds as decision', () => {
     expect(classifyKind('draft-proposal')).toBe('decision')
     expect(classifyKind('awaiting-human')).toBe('decision')
-    expect(classifyKind('reflect-recommended')).toBe('decision')
-    expect(classifyKind('recovery-abandoned')).toBe('decision')
+    expect(classifyKind('coder-question')).toBe('decision')
+    expect(classifyKind('gate-enrichment')).toBe('decision')
   })
 
-  it('CONDITION_KINDS and NOTICE_KINDS are disjoint', () => {
-    for (const kind of NOTICE_KINDS) {
-      expect(CONDITION_KINDS.has(kind)).toBe(false)
+  it('KIND_CLASS notice and decision sets are disjoint', () => {
+    const noticeKinds = Object.entries(KIND_CLASS).filter(([, c]) => c === 'notice').map(([k]) => k)
+    const decisionKinds = new Set(
+      Object.entries(KIND_CLASS).filter(([, c]) => c === 'decision').map(([k]) => k),
+    )
+    for (const kind of noticeKinds) {
+      expect(decisionKinds.has(kind)).toBe(false)
+    }
+  })
+
+  it('KIND_CLASS is exhaustive: no kind maps to an unknown class', () => {
+    const validClasses = new Set(['notice', 'alert', 'decision'])
+    for (const [kind, cls] of Object.entries(KIND_CLASS)) {
+      expect(validClasses.has(cls), `${kind} has unknown class ${cls}`).toBe(true)
     }
   })
 })
@@ -217,7 +229,7 @@ describe('Notice class — raise, list, dismiss, stays dismissed', () => {
     expect(record?.dismissedBy).toBe('second-dismisser')
   })
 
-  it('condition and decision rows are unaffected by the notice infrastructure', async () => {
+  it('alert and decision rows are unaffected by the notice infrastructure', async () => {
     const m = await loadModule(repo)
 
     // Raise a decision kind — should raise and be visible as normal.

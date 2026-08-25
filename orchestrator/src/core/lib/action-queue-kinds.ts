@@ -66,28 +66,115 @@ export type ActionQueueKind = (typeof ACTION_QUEUE_KINDS)[number]
 export const isActionQueueKind = (s: unknown): s is ActionQueueKind =>
   ACTION_QUEUE_KINDS.includes(s as ActionQueueKind)
 
-// ── Three-class model ─────────────────────────────────────────────────────────
+// ── Three-class model (ADR-0104) ──────────────────────────────────────────────
 
 /**
- * The three structural classes of action-queue items (introduced alongside
- * the two-class model in ADR-0094).
+ * The three operator-obligation classes of action-queue items.
  *
- * - `condition` — derived on read from live state; its predicate going false
- *   makes it vanish. Dismissal is structurally unavailable.
- * - `decision`  — row-backed; closed atomically with the resolving mutation;
- *   has explicit verbs (accept, reject, approve, …).
- * - `notice`    — row-backed; closed by the user saying "I have read this."
- *   Dismissal is terminal and durable: once dismissed, the raiser must not
- *   re-create it (checked via the `notice_dismissals` table).
+ * - `notice`   — Mars has an automated move and is taking it; asks nothing of
+ *                the operator. Raised to inform, not to request.
+ * - `alert`    — Something is wrong and the operator is needed; raised the
+ *                moment the last automated move is spent, or immediately when
+ *                there never was one.
+ * - `decision` — Nothing is wrong, but work cannot proceed until the operator
+ *                picks. Raised to gate on a human choice.
+ *
+ * The set is closed. Every kind must be explicitly classified in
+ * {@link KIND_CLASS}; there is no permissive fallback — an unclassified kind
+ * is a compile-time error.
  */
-export type ActionQueueClass = 'condition' | 'decision' | 'notice'
+export type ActionQueueClass = 'notice' | 'alert' | 'decision'
 
 /**
- * Kinds whose items are pure derived conditions — computed on every read
- * from live system state, never stored. A condition item vanishes the moment
- * its predicate goes false.
+ * Exhaustive mapping from every action-queue kind to its operator-obligation
+ * class. All 59 kinds are listed; adding a new kind to {@link ACTION_QUEUE_KINDS}
+ * without a corresponding entry here is a TypeScript error.
  */
-export const CONDITION_KINDS: ReadonlySet<ActionQueueKind> = new Set<ActionQueueKind>([
+export const KIND_CLASS: Record<ActionQueueKind, ActionQueueClass> = {
+  // ── notice — Mars has automated move; asks nothing of operator ──────────────
+  'subscriber-stalled': 'notice',           // subscription watchdog restarts cursor
+  'signature-storm': 'notice',              // circuit breaker active; auto-recovers
+  'stale-worktree': 'notice',               // worktree pruner handles cleanup
+  'phantom-task': 'notice',                 // phantom watchdog removes stale rows
+  'cancelled-blocker-cascade': 'notice',    // Mars cancelled dependents; informing
+  'slices-dropped': 'notice',               // Mars dropped slices; informing
+  'observability-store-oversize': 'notice', // auto-trim actor runs
+  'requeue-warning': 'notice',              // Mars requeuing; informing
+  'scheduling-decision': 'notice',          // Mars decided; informing
+  'arc-superseded-on-main': 'notice',       // Mars superseded arc; informing
+  'spend-control-notice': 'notice',         // budget notice; informing
+  'reflect-recommended': 'notice',          // recommendation; Mars handles underlying
+
+  // ── alert — something wrong; operator needed ────────────────────────────────
+  'failed': 'alert',                        // task failed; recovery exhausted
+  'stale-queued': 'alert',                  // tasks stuck in queue; dispatch issue
+  'stale-queued-summary': 'alert',          // batch summary of stale-queued
+  'gate-broken': 'alert',                   // CI/verify gate broken
+  'daemon-died': 'alert',                   // daemon crashed; no auto-respawn succeeded
+  'daemon-code-drift': 'alert',             // template drift; operator must update
+  'baseline-broken': 'alert',               // main branch broken
+  'worktree-ahead': 'alert',                // commits stranded in worktree
+  'orphaned-origin': 'alert',               // origin task orphaned
+  'steward-repeat': 'alert',                // steward stuck in repeat loop
+  'e2e-tooling-missing': 'alert',           // tooling not installed
+  'diagnose-inconclusive': 'alert',         // investigation gave no answer
+  'daemon-killed': 'alert',                 // daemon killed unexpectedly
+  'prerequisite-failed': 'alert',           // prerequisite check failed
+  'slice-failed': 'alert',                  // a PRD slice failed
+  'awaiting-validation-preview-gone': 'alert', // preview URL gone; cannot validate
+  'behaviour-unverified': 'alert',          // behaviour check failed
+  'api-outage': 'alert',                    // external API down
+  'provider-rate-limited': 'alert',         // provider rate limiting
+  'env-incident': 'alert',                  // env configuration problem
+  'low-disk-space': 'alert',               // disk space critical
+  'daemon-outage': 'alert',                // daemon outage detected
+  'dirty-integration': 'alert',            // integration branch dirty
+  'health-check-alert': 'alert',           // health check failure
+  'fragmented-repo-layout': 'alert',       // repo layout fragmented
+  'recovery-abandoned': 'alert',           // recovery gave up; no automated moves left
+  'arc-verification-failed': 'alert',      // arc-level verification failed
+  'gate-enrichment-stale': 'alert',        // enrichment request timed out
+  'verify-uncovered': 'alert',             // task has no verify command
+  'workflow-install-drift': 'alert',       // workflow templates drifted
+  'done-with-unmerged-commits': 'alert',   // task done but commits not merged
+  'outbox-lag': 'alert',                   // outbox processing backed up
+
+  // ── decision — nothing wrong; operator must pick to proceed ────────────────
+  'draft-proposal': 'decision',            // proposal awaiting approval
+  'hitl-slice-needs-operator': 'decision', // HITL slice step needs operator
+  'awaiting-validation': 'decision',       // waiting for operator validation
+  'awaiting-human': 'decision',            // manual step; operator must act
+  'coder-question': 'decision',            // coder has a question
+  'workflow-draft-pending': 'decision',    // workflow draft needs operator review
+  'gate-enrichment': 'decision',           // gate enrichment needed
+  'budget-window': 'decision',             // operator must set budget window
+  'budget-arc': 'decision',               // operator must approve arc budget
+  'scorer-suggested': 'decision',          // scorer suggested; operator decides
+  'promotion-decision': 'decision',        // operator must decide on promotion
+  'tool-promotion': 'decision',           // operator must decide on tool promotion
+  'mockup-ready': 'decision',             // mockup ready for operator review/approval
+  'qa-step-list-opt-in': 'decision',      // operator must opt in to QA step list
+  'qa-step-list-promote': 'decision',     // operator must promote QA step list
+}
+
+/**
+ * Map a kind to its operator-obligation class.
+ * Every kind is explicitly classified in {@link KIND_CLASS}; calling this
+ * with an unknown kind is a TypeScript error.
+ */
+export const classifyKind = (kind: ActionQueueKind): ActionQueueClass => KIND_CLASS[kind]
+
+/**
+ * Structural subset: kinds whose items are derived on every read from live
+ * system state — no stored row, no raiser. A derived item vanishes the moment
+ * its predicate goes false.
+ *
+ * This is a *structural* property, independent of operator-obligation class.
+ * Its primary use is timestamp selection in rendering: a derived item's
+ * `lastSeenAt` reflects the query time, not the event time, so display code
+ * should use `raisedAt` (the underlying evidence timestamp) instead.
+ */
+export const DERIVED_KINDS: ReadonlySet<ActionQueueKind> = new Set<ActionQueueKind>([
   'failed',
   'stale-queued',
   'stale-queued-summary',
@@ -104,28 +191,3 @@ export const CONDITION_KINDS: ReadonlySet<ActionQueueKind> = new Set<ActionQueue
   'steward-repeat',
   'e2e-tooling-missing',
 ])
-
-/**
- * Kinds whose items are informational events the user acknowledges with
- * "I have read this." Dismissal is terminal and durable. The raiser must
- * check for a prior dismissal record (via `isNoticeDismissed`) before
- * re-raising.
- */
-export const NOTICE_KINDS: ReadonlySet<ActionQueueKind> = new Set<ActionQueueKind>([
-  'spend-control-notice',
-  'scheduling-decision',
-  'requeue-warning',
-  'arc-superseded-on-main',
-  'mockup-ready',
-])
-
-/**
- * Map a kind to its structural class.
- * Unmapped kinds default to `decision` — backwards-compatible for any kind
- * not yet explicitly classified.
- */
-export const classifyKind = (kind: ActionQueueKind): ActionQueueClass => {
-  if (CONDITION_KINDS.has(kind)) return 'condition'
-  if (NOTICE_KINDS.has(kind)) return 'notice'
-  return 'decision'
-}

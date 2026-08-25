@@ -24,7 +24,7 @@ import {
   type RecipeHumanDetail,
   type RecipeVerb,
 } from '../../lib/action-queue-recipes'
-import { isActionQueueKind, classifyKind, NOTICE_KINDS, type ActionQueueKind, type ActionQueueClass } from '../../lib/action-queue-kinds'
+import { isActionQueueKind, classifyKind, KIND_CLASS, DERIVED_KINDS, type ActionQueueKind, type ActionQueueClass } from '../../lib/action-queue-kinds'
 import { shortId } from '../../lib/short-id'
 import type { DispatchPauseState } from '../pause-state'
 
@@ -816,22 +816,7 @@ const buildRecipeFields = (
  * (lines 177–531 before this slice) exactly: same sort, same daemon-killed-
  * batch synthesis, same diagnose-failure gate, same stale-worktree git probe.
  */
-/** Derived-kind kinds that are never stored; their rows are produced on read. */
-const DERIVED_KINDS = new Set([
-  'failed',
-  'stale-queued',
-  'gate-broken',
-  'subscriber-stalled',
-  'signature-storm',
-  'daemon-died',
-  'daemon-code-drift',
-  'baseline-broken',
-  'stale-worktree',
-  'phantom-task',
-  'worktree-ahead',
-  'orphaned-origin',
-  'steward-repeat',
-])
+// DERIVED_KINDS is imported from action-queue-kinds and covers all 15 derived kinds.
 
 export const buildActionQueueView = async ({
   stateStore,
@@ -853,7 +838,7 @@ export const buildActionQueueView = async ({
   // for these kinds, so the filter is a belt-and-suspenders guard, not a primary
   // mechanism.
   const filteredPersistedRows = conditionsSource
-    ? allPersistedRows.filter((r) => !DERIVED_KINDS.has(r.kind))
+    ? allPersistedRows.filter((r) => !DERIVED_KINDS.has(r.kind as ActionQueueKind))
     : allPersistedRows
   // Early kind filter: skip enrichment for non-matching rows. Applied before
   // the task-graph query so callers with a small kind set (e.g. the polling
@@ -1272,28 +1257,29 @@ export const buildActionQueueView = async ({
     const noticeKey: string | null = itemClass === 'notice'
       ? (typeof row.payload.noticeKey === 'string'
           ? row.payload.noticeKey
-          : (NOTICE_KINDS.has(row.kind as ActionQueueKind) ? row.kind : null))
+          : (isActionQueueKind(row.kind) && KIND_CLASS[row.kind as ActionQueueKind] === 'notice' ? row.kind : null))
       : null
 
-    // Condition rows are derived on every read, so their `lastSeenAt` is the
-    // derive time — rendering it makes every condition claim it happened "0s
+    // Derived items are regenerated on every read, so their `lastSeenAt` is the
+    // query time — rendering it makes every derived item claim it happened "0s
     // ago" no matter how old the underlying evidence is. Their `raisedAt` is
     // the real evidence time (a gate's `last_failure_at`, a crash's
     // `crashDetectedAt`, a worktree's mtime), so read that instead.
     //
     // This was previously patched per-kind for `failed` and `daemon-died`,
-    // which left the other eleven condition kinds lying: five quarantined
-    // gates all rendered "0s ago" on a live queue. It is a property of the
-    // class, not of those two kinds, so classify once and apply it.
+    // which left the other derived kinds lying: five quarantined gates all
+    // rendered "0s ago" on a live queue. It is a structural property of
+    // DERIVED_KINDS, not tied to any single class, so check membership once
+    // and apply it.
     //
     // `failed` keeps its sharper source: the task's own updatedAt is the exact
     // failure time, where raisedAt is only the derive-time fallback.
     //
-    // Decision and notice rows are stored, so their lastSeenAt is meaningful.
+    // Stored (non-derived) rows have a meaningful lastSeenAt.
     const rowAt =
       row.kind === 'failed'
         ? (taskById.get(entityId)?.updatedAt ?? new Date(row.raisedAt).toISOString())
-        : itemClass === 'condition'
+        : DERIVED_KINDS.has(row.kind as ActionQueueKind)
           ? new Date(row.raisedAt).toISOString()
           : new Date(row.lastSeenAt).toISOString()
 
@@ -1399,7 +1385,7 @@ export const buildActionQueueView = async ({
       diagnosis: null,
       failureReasonCode: null,
       recoveryExhausted: false,
-      class: 'decision',
+      class: 'alert',
       noticeKey: null,
       humanSummary: daemonKilledRecipe.humanSummary(batchRecipeCtx),
       humanDetail: daemonKilledRecipe.humanDetail(batchRecipeCtx),
@@ -1689,7 +1675,7 @@ export const buildActionQueueHistoryView = async ({
     const historyNoticeKey: string | null = historyItemClass === 'notice'
       ? (typeof row.payload.noticeKey === 'string'
           ? row.payload.noticeKey
-          : (NOTICE_KINDS.has(row.kind as ActionQueueKind) ? row.kind : null))
+          : (isActionQueueKind(row.kind) && KIND_CLASS[row.kind as ActionQueueKind] === 'notice' ? row.kind : null))
       : null
 
     rows.push({
