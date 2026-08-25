@@ -799,7 +799,7 @@ const failedRowCopy = (
       ? unknownFailureKind(failingStepFromSignature(signature), capturedError)
       : null
   return {
-    title: failedTaskTitle({ signature, taskId: entityId, capturedError }),
+    title: failedTaskTitle({ signature, capturedError }),
     body:
       kind !== null
         ? kind.verboseReason
