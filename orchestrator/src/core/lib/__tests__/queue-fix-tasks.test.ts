@@ -1992,4 +1992,60 @@ describe('non-code retry cap', () => {
 
     cleanup()
   })
+
+  it('handleTaskFailureWithFixTask writes VerifyOutputPayload to recovery_payload for verify:test/test-assertion-error', async () => {
+    process.env.MARS_FIX_RETRY_BUDGET = '5'
+    const { q, ft } = await loadModules(repo)
+    const t = await q.enqueueTask('run tests', undefined, { skipTriage: true })
+    const rawOutput =
+      'AssertionError: expected 1 to equal 2\n' +
+      '  at src/foo.test.ts:42:10\n' +
+      '  Expected: 2\n' +
+      '  Received: 1\n'
+
+    const r = await ft.handleTaskFailureWithFixTask({
+      taskId: t.id,
+      failingStep: 'verify:test',
+      errorOutput: rawOutput,
+      branch: 'task/y',
+    })
+    // The handler must reach the fix-task spawn path (outcome='blocked').
+    expect(r.outcome).toBe('blocked')
+    expect(r.failureSignature).toBe('verify:test/test-assertion-error')
+
+    // The source task's recovery_payload must contain the serialised blob.
+    const reloaded = await q.getTask(t.id)
+    expect(reloaded?.recoveryPayload).not.toBeNull()
+
+    // Round-trip through parseVerifyOutputPayload must recover the full output.
+    const { parseVerifyOutputPayload } = await import('../../lib/main-commiter-payload')
+    const parsed = parseVerifyOutputPayload(reloaded?.recoveryPayload ?? null)
+    expect(parsed).not.toBeNull()
+    expect(parsed?.kind).toBe('verify-output')
+    expect(parsed?.signature).toBe('verify:test/test-assertion-error')
+    // The output field preserves rawOutput exactly — no truncation.
+    expect(parsed?.output).toBe(rawOutput)
+  })
+
+  it('handleTaskFailureWithFixTask does NOT write recovery_payload for non-test-assertion signatures', async () => {
+    process.env.MARS_FIX_RETRY_BUDGET = '5'
+    const { q, ft, rc } = await loadModules(repo)
+    const sig = 'verify:typecheck/typecheck-cannot-find-name'
+    const cleanup = registerTestRecipe(rc, sig)
+    const t = await q.enqueueTask('do thing', undefined, { skipTriage: true })
+
+    const r = await ft.handleTaskFailureWithFixTask({
+      taskId: t.id,
+      failingStep: 'verify:typecheck',
+      errorOutput: 'TS2304: cannot find name foo',
+      branch: 'task/z',
+    })
+    expect(r.outcome).toBe('blocked')
+    expect(r.failureSignature).toBe(sig)
+
+    // recovery_payload must remain null for non-test-assertion signatures.
+    const reloaded = await q.getTask(t.id)
+    expect(reloaded?.recoveryPayload).toBeNull()
+    cleanup()
+  })
 })

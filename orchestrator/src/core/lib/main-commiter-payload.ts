@@ -96,3 +96,66 @@ export const SOURCE_ERROR_SUMMARY = (
   dispatchPhase: 'dispatch' | 'verify' | 'merge',
 ): string =>
   `dirty integration branch (${integrationBranch}) detected at ${dispatchPhase}; parked behind main-commiter recovery`
+
+// ---------------------------------------------------------------------------
+// VerifyOutputPayload — test-assertion failure context persisted on the source
+// task's `recovery_payload` column before a fix task is spawned.
+// ---------------------------------------------------------------------------
+
+/**
+ * Shape of the JSON blob persisted on `tasks.recovery_payload` for a
+ * `verify:test/test-assertion-error` failure. Discriminated by
+ * `kind: 'verify-output'` so consumers can safely call
+ * `parseMainCommiterPayload` on the same column — it returns `null` for this
+ * kind, leaving the two payload shapes independent.
+ *
+ * Written by `handleTaskFailureWithFixTask` (queue-fix-tasks.ts) immediately
+ * before `upsertFixTask` is called, so it is available to the fix-task brief
+ * builder from that point forward. Only ever written for the source (origin)
+ * task, never on fix-task rows.
+ */
+export interface VerifyOutputPayload {
+  kind: 'verify-output'
+  /** The full failure signature, e.g. `verify:test/test-assertion-error`. */
+  signature: string
+  /**
+   * Full raw stdout+stderr of the failing verify step, without truncation.
+   * This is the `errorOutput` received by `handleTaskFailureWithFixTask`,
+   * not the `truncateFailure()` result, so the failing file path, test
+   * name, assertion line, and expected-vs-received diff are all preserved.
+   */
+  output: string
+}
+
+/** Serialise a VerifyOutputPayload for the `recovery_payload` column. */
+export const serialiseVerifyOutputPayload = (
+  payload: VerifyOutputPayload,
+): string => JSON.stringify(payload)
+
+/**
+ * Parse a `recovery_payload` string into a typed `VerifyOutputPayload`,
+ * returning `null` when the payload is missing, malformed, or for a
+ * different kind (e.g. `'main-commiter'`).
+ *
+ * Safe to call on any `recovery_payload` value — it discriminates on
+ * `kind: 'verify-output'` and returns `null` for everything else, so
+ * callers do not need to pre-filter by task type.
+ */
+export const parseVerifyOutputPayload = (
+  raw: string | null | undefined,
+): VerifyOutputPayload | null => {
+  if (raw == null || raw.length === 0) return null
+  try {
+    const parsed = JSON.parse(raw) as Partial<VerifyOutputPayload>
+    if (parsed.kind !== 'verify-output') return null
+    if (typeof parsed.signature !== 'string') return null
+    if (typeof parsed.output !== 'string') return null
+    return {
+      kind: 'verify-output',
+      signature: parsed.signature,
+      output: parsed.output,
+    }
+  } catch {
+    return null
+  }
+}
