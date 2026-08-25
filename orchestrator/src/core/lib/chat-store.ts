@@ -292,7 +292,7 @@ export const toMessageApiView = (
 export interface AlertSegmentAction {
   op: string
   label: string
-  style: 'primary' | 'destructive' | 'default'
+  style: 'primary' | 'destructive' | 'default' | 'snooze'
 }
 
 /**
