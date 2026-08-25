@@ -486,6 +486,33 @@ describe('fix-recipes', () => {
       expect(prompt).toContain('git rev-list --count main..HEAD')
     })
 
+    it('emits a ## FAILING ASSERTION block before STEP 2 when verifyOutput is set', () => {
+      const sampleVerifyOutput =
+        'FAIL src/foo.test.ts > expects bar\nAssertionError: expected "baz" to equal "bar"'
+      const recipe = getRecipe('verify:test/test-assertion-error')
+      const prompt = recipe.buildPrompt({ ...ctx, verifyOutput: sampleVerifyOutput })
+      // Heading must be present
+      expect(prompt).toContain('## FAILING ASSERTION')
+      // Verbatim verify output must be present
+      expect(prompt).toContain(sampleVerifyOutput)
+      // The block must appear before the STEP 2 heading (use the em-dash form to
+      // skip the "proceed to STEP 2" bullet in STEP 1 which contains "STEP 2" as text)
+      const assertionIdx = prompt.indexOf('## FAILING ASSERTION')
+      const step2HeadingIdx = prompt.indexOf('STEP 2 —')
+      expect(assertionIdx).toBeGreaterThan(-1)
+      expect(step2HeadingIdx).toBeGreaterThan(assertionIdx)
+    })
+
+    it('omits the ## FAILING ASSERTION block and falls back to STEP 3 failureOutput when verifyOutput is absent', () => {
+      const recipe = getRecipe('verify:test/test-assertion-error')
+      const prompt = recipe.buildPrompt(ctx)
+      // No FAILING ASSERTION heading when verifyOutput is not set
+      expect(prompt).not.toContain('## FAILING ASSERTION')
+      // The existing STEP 3 / failureOutput path must still render the statusOutput
+      expect(prompt).toContain('Captured test failure output')
+      expect(prompt).toContain(ctx.statusOutput)
+    })
+
   })
 
   describe('getRecipe', () => {

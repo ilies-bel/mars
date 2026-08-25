@@ -47,6 +47,20 @@ export interface FixRecipeContext {
    * Optional — older call sites that pre-date this field leave it absent.
    */
   failureSignature?: string
+  /**
+   * Full raw verify-step output captured when the source task failed with
+   * `verify:test/test-assertion-error`. Injected by `arc/recovery.ts:spawnRecovery`
+   * from the source task's `recovery_payload` column (written by
+   * `queue-fix-tasks.ts` immediately before spawning the fix task).
+   *
+   * When present, `testAssertionErrorRecipe.buildPrompt` emits a
+   * `## FAILING ASSERTION` block at the top of the prompt so the fix coder
+   * sees the exact failing file path, test name, and diff without re-running
+   * the suite. When absent (NULL payload, legacy fix tasks, or a non-test
+   * signature), the recipe falls back to the existing `STEP 3` / `failureOutput`
+   * display with no error.
+   */
+  verifyOutput?: string
 }
 
 /**
@@ -564,6 +578,9 @@ const testAssertionErrorRecipe: FixRecipe = {
       '',
       `Do not use \`git log\` or any other command to make this decision — only the integer from \`rev-list --count\` is authoritative.`,
       '',
+      ...(ctx.verifyOutput
+        ? ['## FAILING ASSERTION', '', '```', ctx.verifyOutput, '```', '']
+        : []),
       `STEP 2 — Lift the failing worktree's diff into YOUR recovery worktree. Only enter this step when \`${countCmd}\` printed \`0\`.`,
       '',
       `Your recovery worktree is on a FRESH branch based on current ${integration}. Before lifting the diff, confirm: \`git merge-base --is-ancestor ${integration} HEAD\` must exit 0. If it exits non-zero, rebase first: \`git rebase ${integration}\`.`,

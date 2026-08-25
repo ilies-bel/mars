@@ -40,6 +40,7 @@ import {
   SOURCE_ERROR_SUMMARY,
   VERIFY_MAIN_DIRTY_CODE,
   serialiseMainCommiterPayload,
+  parseVerifyOutputPayload,
   type MainCommiterPayload,
 } from '../lib/main-commiter-payload'
 import { internalBus } from '../../internal-bus'
@@ -255,6 +256,12 @@ export const spawnRecovery = async (
   // `originalPrompt`; backfill from the source row if a direct caller
   // forgot. Default to '' only when the source genuinely has no prompt.
   const incomingPrompt = input.recipeContext.originalPrompt
+  // Extract the verify-output payload (written by queue-fix-tasks.ts for
+  // verify:test/test-assertion-error failures) so the testAssertionErrorRecipe
+  // can embed the exact failing assertion diff in the fix-coder's brief.
+  // Returns null for NULL payloads, legacy rows, and non-test-assertion
+  // signatures — safe to call unconditionally.
+  const verifyOutputPayload = parseVerifyOutputPayload(source.recoveryPayload ?? null)
   const recipeContextWithSource: FixRecipeContext = {
     ...input.recipeContext,
     // Thread the failure signature into the context so the generic recipe
@@ -265,6 +272,7 @@ export const spawnRecovery = async (
       incomingPrompt && incomingPrompt.trim().length > 0
         ? incomingPrompt
         : source.prompt ?? '',
+    ...(verifyOutputPayload !== null ? { verifyOutput: verifyOutputPayload.output } : {}),
   }
   const basePrompt = recipe.buildPrompt(recipeContextWithSource)
   // Append the optional QA note verbatim under a ## QA note heading so
