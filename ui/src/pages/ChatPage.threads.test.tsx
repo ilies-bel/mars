@@ -55,8 +55,6 @@ const mockStartThreadFromAlert = vi.fn()
 vi.mock('@/entities/alerts/api', () => ({
   startThreadFromAlert: (...args: unknown[]) => mockStartThreadFromAlert(...args),
   fetchAlerts: vi.fn().mockResolvedValue([]),
-  useAlerts: () => ({ alerts: [], error: null }),
-  useStartThreadFromAlert: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
 const mockUseActionQueue = vi.fn(() => ({ items: [], error: null }))

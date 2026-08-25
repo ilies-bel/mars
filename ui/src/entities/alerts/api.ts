@@ -15,11 +15,9 @@
  *   - `technical` — the raw signal for an operator who wants the detail.
  */
 
-import { useMutation, useQuery } from '@tanstack/react-query'
 import { z } from 'zod'
 
 const BASE = import.meta.env.VITE_API_BASE ?? ''
-const QUERY_KEY = ['alerts'] as const
 
 /** One node in the arc's proposal → attempt → recovery lineage. */
 const alertChainNodeSchema = z.object({
@@ -47,57 +45,12 @@ const alertSchema = z.object({
 // The daemon's GET /alerts returns a bare Alert array (no wrapper object).
 const alertsResponseSchema = z.array(alertSchema)
 
-export type AlertChainNode = z.infer<typeof alertChainNodeSchema>
 export type Alert = z.infer<typeof alertSchema>
 
 export async function fetchAlerts(): Promise<Alert[]> {
   const r = await fetch(`${BASE}/api/alerts`)
   if (!r.ok) throw new Error(`GET /api/alerts → ${r.status}`)
   return alertsResponseSchema.parse(await r.json())
-}
-
-export interface AlertsState {
-  alerts: Alert[]
-  error: Error | null
-}
-
-/** Base polling interval in milliseconds. */
-const BASE_POLL_INTERVAL_MS = 15_000
-
-/** Maximum backoff: 5 minutes. */
-const MAX_POLL_INTERVAL_MS = 5 * 60_000
-
-/**
- * Hook that syncs the arc-rooted Alert list with the daemon. Mount inside a
- * `QueryClientProvider`. Polls every ~15 s so an Alert that clears (via an
- * entity mutation) or a newly derived one surfaces without a manual refresh.
- *
- * On repeated fetch failures (e.g. the daemon is temporarily unreachable or
- * the route returns 504) the interval backs off exponentially:
- *   - 1st failure  → 30 s
- *   - 2nd failure  → 60 s
- *   - 3rd failure  → 120 s  (and so on, capped at 5 min)
- * A single success resets the interval back to 15 s.
- */
-export function useAlerts(): AlertsState {
-  const query = useQuery({
-    queryKey: QUERY_KEY,
-    queryFn: fetchAlerts,
-    refetchInterval: (q) => {
-      const failureCount = q.state.fetchFailureCount ?? 0
-      if (failureCount === 0) return BASE_POLL_INTERVAL_MS
-      // Exponential backoff: 15 s × 2^N, capped at MAX_POLL_INTERVAL_MS.
-      return Math.min(
-        BASE_POLL_INTERVAL_MS * Math.pow(2, failureCount),
-        MAX_POLL_INTERVAL_MS,
-      )
-    },
-  })
-
-  return {
-    alerts: query.data ?? [],
-    error: (query.error as Error | null) ?? null,
-  }
 }
 
 const startThreadResponseSchema = z.object({ threadId: z.string() })
@@ -116,11 +69,3 @@ export async function startThreadFromAlert(arcId: string): Promise<{ threadId: s
   return startThreadResponseSchema.parse(await r.json())
 }
 
-/**
- * Mutation hook wrapping {@link startThreadFromAlert}. The caller navigates to
- * the returned thread on success; nothing else needs invalidating (picking an
- * Alert leaves the Bell list unchanged — an Alert clears only on arc resolution).
- */
-export function useStartThreadFromAlert() {
-  return useMutation({ mutationFn: startThreadFromAlert })
-}
