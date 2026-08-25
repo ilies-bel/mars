@@ -280,6 +280,7 @@ const makeToolPromotionRow = (
   verbs: [],
   toolPromotionDetail: detail,
   arcGoal: null,
+  operatorGoal: null,
   class: 'decision',
   noticeKey: null,
   recoveryExhausted: false,

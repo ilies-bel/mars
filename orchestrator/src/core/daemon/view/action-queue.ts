@@ -1615,6 +1615,7 @@ export const buildActionQueueView = async ({
       recoveryExhausted: false,
       // Synthetic aggregate row — no single arc goal applies.
       arcGoal: null,
+      operatorGoal: null,
       class: 'alert',
       noticeKey: null,
       humanSummary: daemonKilledRecipe.humanSummary(batchRecipeCtx),

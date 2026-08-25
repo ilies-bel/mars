@@ -299,6 +299,7 @@ describe('GET /view/action-queue/history via HTTP server', () => {
         resolvedBy: 'daemon:auto-supersede',
       },
       arcGoal: null,
+      operatorGoal: null,
       class: 'decision',
       noticeKey: null,
       recoveryExhausted: false,
