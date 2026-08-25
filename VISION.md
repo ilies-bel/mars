@@ -218,6 +218,21 @@ When reality contradicts something written here, the code is wrong until the
 operator says otherwise. The agent files a **proposal** saying so and leaves the
 text alone.
 
+**Append 1 — Runtime worker-pool cap tuning (the Steward dial) is a
+scheduler-frequency operational decision and is explicitly outside the scope of
+HR-4's per-act Notice requirement.** The Steward dials the worker-pool cap
+continuously — roughly 200 adjustments per day, approximately one every seven
+minutes — in response to queue depth, provider latency, and budget headroom.
+Announcing each adjustment as a Notice would flood the operator surface and
+directly violate §7's *readable cold* standard, which exists to protect operator
+attention: a message that is routine by volume cannot be readable cold. Volume is
+the deciding factor, not whether the act is autonomous. The correct surface is the
+Steward page, backed by `steward_ledger`, where every adjustment's rationale
+remains readable at any time without generating a stream of Notices the operator
+must clear. A reader applying §8's falsification test to HR-4 and finding no
+per-adjustment Notice for the dial should treat this carve-out as deliberate, not
+a gap.
+
 ## 12. What this supersedes
 
 - `docs/knowledge/vision.md` — deleted. Its non-goals "no write surface in the
