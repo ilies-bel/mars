@@ -25,9 +25,12 @@ import { mergeBranch } from '../../lib/git/merge'
 import { commitMain } from '../../lib/git/commit-main'
 import { resolveGitBin, exec, execProbe, branchExists } from '../../lib/git/internal'
 import { classifyPorcelainLines } from '../../lib/git/classify-porcelain'
+import { autoCommitOperatorDirt as gitAutoCommitOperatorDirt } from '../../lib/git/operator-auto-commit'
 import type {
   AttachToOriginWorktreeSpec,
   BranchExistsSpec,
+  VcsAutoCommitOperatorDirtSpec,
+  VcsAutoCommitOperatorDirtResult,
   CommitResult,
   CommitSpec,
   CommitterWorktreeSpec,
@@ -433,6 +436,17 @@ export const localGitVcs: Vcs = {
   async addWorktreeForBranch(spec: VcsAddWorktreeForBranchSpec): Promise<void> {
     const { cwd, path, branch } = spec
     await exec(resolveGitBin(), ['worktree', 'add', path, branch], { cwd })
+  },
+
+  async autoCommitOperatorDirt(
+    spec: VcsAutoCommitOperatorDirtSpec,
+  ): Promise<VcsAutoCommitOperatorDirtResult> {
+    return gitAutoCommitOperatorDirt({
+      repoRoot: spec.repoRoot,
+      taskId: spec.taskId,
+      baseSha: spec.baseSha,
+      headSha: spec.headSha,
+    })
   },
 }
 

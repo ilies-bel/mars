@@ -380,7 +380,6 @@ export const setupWorktree = async (
               // Lever on — auto-commit the operator's tracked dirt so setup can proceed.
               // At setup time baseSha = headSha (no merge has happened yet), so the
               // merged-paths range is empty and there can be no contested paths.
-              const { autoCommitOperatorDirt } = await import('../../core/lib/git/operator-auto-commit')
               const { speakOperatorAutoCommitNotice } = await import('../../core/lib/notices/operator-auto-commit')
               const headR = await runTool(
                 {
@@ -394,12 +393,11 @@ export const setupWorktree = async (
                 trace.traceStore,
               )
               const integHeadSha = headR.exitCode === 0 ? headR.stdout.trim() : ''
-              const autoCommit = await autoCommitOperatorDirt({
+              const autoCommit = await resolveVcs().autoCommitOperatorDirt({
                 repoRoot: integRoot,
                 taskId,
                 baseSha: integHeadSha,
                 headSha: integHeadSha,
-                traceCtx: buildPhaseCtx(trace, taskId, 'setup'),
               })
               if (autoCommit.committed) {
                 await speakOperatorAutoCommitNotice({

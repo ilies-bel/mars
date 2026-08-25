@@ -11,7 +11,6 @@
 
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { patchDaemonConfigFile, readDaemonConfigFile } from '../daemon/config.js'
 import { raiseActionQueueItem } from './action-queue.js'
 import { shortId } from './short-id.js'
 
@@ -49,24 +48,6 @@ export function readQaStepListFlag(marsStateDir: string): boolean {
     // File missing or invalid JSON — default to false.
   }
   return false
-}
-
-/**
- * Persist the `qaStepList.enabled` flag to daemon.json.
- *
- * Merges into any existing `qaStepList` sub-object so other keys under that
- * namespace are not overwritten. Uses `patchDaemonConfigFile` so all other
- * top-level daemon.json keys are preserved.
- */
-export function persistQaStepListEnabled(enabled: boolean): void {
-  const existing = readDaemonConfigFile()
-  const existingQa =
-    existing.qaStepList !== null &&
-    typeof existing.qaStepList === 'object' &&
-    !Array.isArray(existing.qaStepList)
-      ? (existing.qaStepList as Record<string, unknown>)
-      : {}
-  patchDaemonConfigFile({ qaStepList: { ...existingQa, enabled } })
 }
 
 /**

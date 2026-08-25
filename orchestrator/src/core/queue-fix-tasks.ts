@@ -1565,8 +1565,13 @@ export const handleTaskFailureWithFixTask = async (
       const repoRoot = getRepoRoot()
       const { stdout } = await execAsync('git', ['rev-parse', branch], { cwd: repoRoot })
       const liveTipSha = stdout.trim()
-      const { isSalvageCheckpointCommit } = await import('./lib/git/checkpoint')
-      const isStillCheckpoint = await isSalvageCheckpointCommit(repoRoot, liveTipSha)
+      const { resolveVcs } = await import('./ports/vcs/registry')
+      const isStillCheckpoint = await resolveVcs().hasCommitTrailer({
+        cwd: repoRoot,
+        sha: liveTipSha,
+        trailerKey: 'Mars-Checkpoint',
+        trailerValue: 'salvage',
+      })
       if (!isStillCheckpoint) {
         // The branch has advanced past the checkpoint since the failure was
         // recorded. The "branch tip is an unfinished salvage checkpoint (…)"

@@ -414,6 +414,26 @@ export interface VcsIsAncestorSpec {
   descendant: string
 }
 
+/** Args for {@link Vcs.autoCommitOperatorDirt}. */
+export interface VcsAutoCommitOperatorDirtSpec {
+  /** Repo root where the integration branch is checked out (NOT a worktree). */
+  repoRoot: string
+  /** Task whose merge the auto-commit is unblocking — named in the message. */
+  taskId: string
+  /**
+   * The sha whose tree the checkout's content is based on: the recorded
+   * last-synced sha when there is one, else the pre-merge integration sha.
+   */
+  baseSha: string
+  /** The just-merged tip `refs/heads/<integrationBranch>` now points at. */
+  headSha: string
+}
+
+/** Result of {@link Vcs.autoCommitOperatorDirt}. */
+export type VcsAutoCommitOperatorDirtResult =
+  | { committed: true; sha: string; files: string[] }
+  | { committed: false; reason: string }
+
 /** Args for {@link Vcs.addWorktreeForBranch}. */
 export interface VcsAddWorktreeForBranchSpec {
   /** Directory the `git worktree add` runs from — any path inside the repo. */
@@ -515,4 +535,12 @@ export interface Vcs {
   isAncestor(spec: VcsIsAncestorSpec): Promise<boolean>
   /** Check an existing branch out into a new worktree (`worktree add <path> <branch>`). Throws on failure. */
   addWorktreeForBranch(spec: VcsAddWorktreeForBranchSpec): Promise<void>
+  /**
+   * Commit the operator's uncommitted tracked changes on the integration
+   * checkout as a single `wip(operator): …` commit. Returns
+   * `{committed: false, reason}` rather than throwing on any git failure —
+   * including the benign "nothing to commit" case — so callers can fall back
+   * to checkpoint-and-park handling instead of treating non-success as fatal.
+   */
+  autoCommitOperatorDirt(spec: VcsAutoCommitOperatorDirtSpec): Promise<VcsAutoCommitOperatorDirtResult>
 }

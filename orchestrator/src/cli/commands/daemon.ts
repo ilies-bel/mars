@@ -12,20 +12,26 @@ import type { ChildProcess } from 'node:child_process'
 import { appendFileSync, mkdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import {
+  AUTONOMY_LEVELS,
   loadDaemonConfig,
   CAP_CLI_TO_JSON,
   MAX_CONCURRENCY_CAP,
   patchDaemonConfigFile,
   persistLeverAutonomyLevel,
   readDaemonConfigFile,
+  readLeverAutonomyLevel,
 } from '../../core/daemon/config'
 import type { AutonomyLevel } from '../../core/daemon/config'
-import {
-  AUTONOMY_LEVELS,
-  KNOWN_PRODUCER_KEYS,
-  PRODUCER_LEVER_SPECS,
-  getLever,
-} from '../../core/levers/store'
+
+// NOTE: These mirror the PRODUCER_LEVER_SPECS / KNOWN_PRODUCER_KEYS constants
+// in core/levers/store.ts. They are inlined here to keep the CLI adapter layer
+// (ADR-0056) free of a new core/ import. When adding a new card-producer key,
+// update both core/levers/store.ts and this local declaration.
+interface ProducerLeverSpec { key: string; defaultAutonomyLevel: AutonomyLevel }
+const PRODUCER_LEVER_SPECS: readonly ProducerLeverSpec[] = [
+  { key: 'terminal-matcher', defaultAutonomyLevel: 'ask' },
+] as const
+const KNOWN_PRODUCER_KEYS: readonly string[] = PRODUCER_LEVER_SPECS.map((s) => s.key)
 import { describePauseState } from '../../core/daemon/pause-state'
 import type { DispatchPauseState } from '../../core/daemon/pause-state'
 import {
@@ -594,7 +600,7 @@ const daemonListLevers: Command = {
   usage: 'usage: mars daemon list-levers',
   run: (_args, deps) => {
     for (const spec of PRODUCER_LEVER_SPECS) {
-      const current = getLever(spec.key)
+      const current = readLeverAutonomyLevel(spec.key)
       deps.out(`${spec.key}: current=${current} default=${spec.defaultAutonomyLevel}`)
     }
     return { code: 0 }

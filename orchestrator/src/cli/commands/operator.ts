@@ -30,14 +30,15 @@
 import type { Command } from '../command'
 import {
   loadDaemonConfig,
+  patchDaemonConfigFile,
   persistPaused,
   persistSelfEvolveAutoEnqueue,
   persistSelfEvolvePatch,
   persistScoringPatch,
+  readDaemonConfigFile,
   readPersistedPaused,
   writeControlLever,
 } from '../../core/daemon/config'
-import { persistQaStepListEnabled } from '../../core/lib/qa-step-list-flag.js'
 import { isDaemonAlive } from '../../core/daemon/paths'
 import { describePauseState } from '../../core/daemon/pause-state'
 import type { DispatchPauseState } from '../../core/daemon/pause-state'
@@ -286,7 +287,14 @@ const operatorSet: Command = {
         deps.err(`mars operator set: value must be 'on' or 'off'; got '${value}'`)
         return { code: 2 }
       }
-      persistQaStepListEnabled(value === 'on')
+      const _existingCfg = readDaemonConfigFile()
+      const _existingQa =
+        _existingCfg.qaStepList !== null &&
+        typeof _existingCfg.qaStepList === 'object' &&
+        !Array.isArray(_existingCfg.qaStepList)
+          ? (_existingCfg.qaStepList as Record<string, unknown>)
+          : {}
+      patchDaemonConfigFile({ qaStepList: { ..._existingQa, enabled: value === 'on' } })
       deps.out(`qa-step-list: ${value}`)
       return { code: 0 }
     }

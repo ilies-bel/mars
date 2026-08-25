@@ -496,20 +496,6 @@
   {
     "type": "dependency",
     "from": "orchestrator/src/cli/commands/daemon.ts",
-    "to": "orchestrator/src/core/levers/store.ts",
-    "unresolvedTo": "../../core/levers/store",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-cli-to-core"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "orchestrator/src/cli/commands/daemon.ts",
     "to": "orchestrator/src/core/lib/repo-root-branch-warning.ts",
     "unresolvedTo": "../../core/lib/repo-root-branch-warning",
     "dependencyTypes": [
@@ -1243,20 +1229,6 @@
     "from": "orchestrator/src/cli/commands/operator.ts",
     "to": "orchestrator/src/core/daemon/pause-state.ts",
     "unresolvedTo": "../../core/daemon/pause-state",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-cli-to-core"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "orchestrator/src/cli/commands/operator.ts",
-    "to": "orchestrator/src/core/lib/qa-step-list-flag.ts",
-    "unresolvedTo": "../../core/lib/qa-step-list-flag.js",
     "dependencyTypes": [
       "local",
       "import"
