@@ -45,6 +45,7 @@ vi.mock('../trace-events-store', async (importOriginal) => {
 })
 vi.mock('../../context', () => ({
   getRepoRoot: vi.fn().mockReturnValue('/tmp'),
+  getStateDir: vi.fn().mockReturnValue('/tmp'),
   resolveContext: vi.fn().mockReturnValue({ stateDir: '/tmp' }),
   resolveDbTarget: vi.fn().mockReturnValue('pglite://reflector-lever-binding'),
 }))
@@ -333,6 +334,64 @@ describe('buildPrompt — lever registry embedded', () => {
     expect(beforeCorpus).toMatch(/LEVER BINDING/)
     expect(beforeCorpus).toMatch(/leverGap/)
     expect(beforeCorpus).toMatch(/BIAS TOWARD GAPS/)
+  })
+})
+
+// ─── Built-in pipeline exclusion ──────────────────────────────────────────────
+
+describe('parseAndValidateOutcome -- built-in pipeline exclusion', () => {
+  it('rejects a workflow.steps lever binding whose proposedValue references orchestrator/src/', () => {
+    const registry = miniRegistry()
+    // workflow.steps is not in miniRegistry, so we add a minimal entry to
+    // exercise the guard (otherwise the unknown-id check fires first).
+    const extendedRegistry = [
+      ...registry,
+      {
+        id: 'workflow.steps',
+        label: 'User-owned workflow step definitions',
+        family: 'workflow' as const,
+        scope: 'per-workflow' as const,
+        readCurrent: () => '(none)',
+        allowedValues: { type: 'freeform' as const },
+        gesture: 'mars workflow author <name>',
+        appliesWithoutRestart: true,
+      },
+    ]
+    const raw = {
+      type: 'lever',
+      lever: {
+        id: 'workflow.steps',
+        currentValue: '(none)',
+        proposedValue: 'Edit orchestrator/src/workflows/implement-workflow.ts step verify to narrow scope',
+      },
+    }
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const result = parseAndValidateOutcome(raw, extendedRegistry)
+    expect(result).toBeNull()
+    expect(warnSpy).toHaveBeenCalledWith(
+      'workflow.steps binding rejected: proposedValue references built-in pipeline source',
+    )
+    warnSpy.mockRestore()
+  })
+
+  it('accepts a leverGap outcome for a built-in pipeline finding (e.g. verify.scope)', () => {
+    const registry = miniRegistry()
+    const raw = {
+      type: 'leverGap',
+      leverGap: {
+        proposedLeverId: 'verify.scope',
+        family: 'verify',
+        whatItWouldControl: 'Verify command file-scope pattern',
+      },
+    }
+    const result = parseAndValidateOutcome(raw, registry)
+    expect(result).not.toBeNull()
+    expect(result!.type).toBe('leverGap')
+    if (result!.type === 'leverGap') {
+      expect(result!.leverGap.proposedLeverId).toBe('verify.scope')
+      expect(result!.leverGap.family).toBe('verify')
+      expect(result!.leverGap.whatItWouldControl).toBe('Verify command file-scope pattern')
+    }
   })
 })
 

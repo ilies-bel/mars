@@ -349,6 +349,15 @@ is a code change, not a knob — that must be a leverGap, not forced onto
 an id not in the registry will cause the suggestion to be REJECTED and
 never filed — the operator will never see it.
 
+BUILT-IN PIPELINE EXCLUSION: The lever 'workflow.steps' covers ONLY
+user-owned workflows scaffolded as .mars/workflows/*.js files. The built-in
+pipelines (implement, triage, plan, slice) are compiled into the orchestrator
+binary and are NOT editable through workflow.steps. Any finding about a step
+of a built-in pipeline (e.g. implement's verify step, implement's code step,
+implement's merge supervision) MUST use type:'leverGap', never type:'lever'
+with id 'workflow.steps'. A binding to workflow.steps for a built-in pipeline
+finding will be REJECTED and the suggestion will never reach the operator.
+
 3. harnessMaturity: assess the current verify-gate configuration.
    - Count tasks that ran with zero verify gates (look for the
      "no-gates-configured" step name in gate outcomes / verify output).
@@ -682,6 +691,17 @@ export const parseAndValidateOutcome = (
       // eslint-disable-next-line no-console
       console.warn(
         `[reflector] outcome validation: unknown lever id "${id}" — rejecting suggestion`,
+      )
+      return null
+    }
+
+    // Guard: workflow.steps only covers user-owned .mars/workflows/*.js files.
+    // Any proposedValue referencing orchestrator source is a built-in pipeline
+    // finding that must use leverGap instead (BUILT-IN PIPELINE EXCLUSION).
+    if (id === 'workflow.steps' && /orchestrator\/src\//.test(proposedValue)) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        'workflow.steps binding rejected: proposedValue references built-in pipeline source',
       )
       return null
     }
