@@ -15,9 +15,7 @@ import {
   appendProposalNotes,
   findOpenTasksMatchingTitle,
 } from '../proposals'
-import { enqueueTask } from '../queue'
 import type { ReflectCorpus } from './reflect-query'
-import type { SelfEvolveConfig } from '../daemon/config'
 import { isReflectDisabled } from './reflect-signals'
 import { isMemoryCaptureDisabled } from './auto-reflect-gate'
 import { insertMemoryPacket } from '../store/memory-packet-store'
@@ -1012,26 +1010,9 @@ const persistOneSuggestion = async (s: ReflectionSuggestion): Promise<string | n
 export const persistSuggestions = async (
   suggestions: readonly ReflectionSuggestion[],
   _sourceTaskId: string,
-  selfEvolve?: Pick<SelfEvolveConfig, 'autoEnqueue' | 'taskConfidenceThreshold'>,
 ): Promise<void> => {
   for (const s of suggestions) {
-    if (
-      selfEvolve?.autoEnqueue === true &&
-      s.kind === 'mechanical' &&
-      s.confidence >= (selfEvolve.taskConfidenceThreshold ?? 0.8)
-    ) {
-      await enqueueTask(s.prompt, undefined, {
-        author: { kind: 'agent', name: 'reflector' },
-        spec: {
-          files: [],
-          verifyCmd: null,
-          doneCriteria: [s.title],
-          mergeMode: 'auto',
-        },
-      })
-    } else {
-      await persistOneSuggestion(s)
-    }
+    await persistOneSuggestion(s)
     if (!isMemoryCaptureDisabled() && !isReflectDisabled()) {
       await insertMemoryPacket({
         domain: 'general',

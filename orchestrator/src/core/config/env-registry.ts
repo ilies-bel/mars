@@ -143,28 +143,11 @@ export const ENV_KNOBS: readonly EnvKnob[] = [
       'Maximum concurrent verify steps. Defaults to 1 because parallel test suites share ports and snapshot dirs and interfere with each other; raise only for explicitly parallel-safe suites.',
   },
   {
-    name: 'MARS_SELF_EVOLVE_AUTO_TRIGGER',
-    schema: boolFromEnv,
-    path: 'selfEvolve.autoEnqueue',
-    default: DEFAULT_SELF_EVOLVE.autoEnqueue,
-    fileAliases: ['selfEvolve.autoEnqueue', 'selfEvolve.autoTrigger'],
-    description:
-      "When true, a high-confidence 'mechanical' reflection suggestion is auto-enqueued as a Task instead of left as a draft proposal.",
-  },
-  {
     name: 'MARS_SELF_EVOLVE_DRIFT_THRESHOLD',
     schema: positiveNumberFromEnv,
     path: 'selfEvolve.driftThresholdPct',
     default: DEFAULT_SELF_EVOLVE.driftThresholdPct,
     description: 'Percent drift threshold that triggers a self-evolve suggestion.',
-  },
-  {
-    name: 'MARS_SELF_EVOLVE_TASK_CONFIDENCE_THRESHOLD',
-    schema: unitIntervalFromEnv,
-    path: 'selfEvolve.taskConfidenceThreshold',
-    default: DEFAULT_SELF_EVOLVE.taskConfidenceThreshold,
-    description:
-      "Minimum confidence (0..1) for a 'mechanical' reflection suggestion to be auto-enqueued as a Task when autoEnqueue is true.",
   },
   {
     name: 'MARS_SCORING_AUTO_TRIGGER',

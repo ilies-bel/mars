@@ -1,13 +1,15 @@
 /**
  * Routing tests for persistSuggestions.
  *
- * Verifies that suggestions are routed to a Task (via enqueueTask) or a
- * proposal (via createProposal) based on autoEnqueue, confidence, and kind.
- * Tests use mocks at the system boundary (DB / queue) rather than
- * inspecting internals.
+ * Asserts the invariant required by ADR-0038 and DEC-17: persistSuggestions
+ * ALWAYS routes to a proposal (via createProposal) and NEVER enqueues a task,
+ * regardless of suggestion kind, confidence, or any other input.
+ *
+ * This test is what keeps DEC-17 true: "Growth reacts to observed events and
+ * produces proposals that wait; it is never a job that invents work to justify
+ * running."
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { SelfEvolveConfig } from '../../daemon/config'
 
 // Mock all DB-touching collaborators so tests run without a SQLite file.
 vi.mock('../../proposals', () => ({
@@ -42,22 +44,6 @@ import { persistSuggestions, buildPrompt } from '../reflector'
 import { createProposal } from '../../proposals'
 import { enqueueTask } from '../../queue'
 
-const THRESHOLD = 0.8
-
-const autoEnqueueOn: SelfEvolveConfig = {
-  autoEnqueue: true,
-  driftThresholdPct: 10,
-  taskConfidenceThreshold: THRESHOLD,
-  reflectCooldownDays: 7,
-}
-
-const autoEnqueueOff: SelfEvolveConfig = {
-  autoEnqueue: false,
-  driftThresholdPct: 10,
-  taskConfidenceThreshold: THRESHOLD,
-  reflectCooldownDays: 7,
-}
-
 const mechanical = {
   title: 'Tighten typecheck flags',
   prompt: 'Add --strict to tsconfig. Verify: npm run typecheck. Save your work.',
@@ -85,76 +71,48 @@ const architectural = {
   },
 }
 
-describe('persistSuggestions routing', () => {
+describe('persistSuggestions — invariant: zero tasks, always proposals', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
 
-  it('auto-enqueues a mechanical suggestion when autoTrigger=true and confidence >= threshold', async () => {
-    await persistSuggestions([mechanical], 'src-task', autoEnqueueOn)
-
-    expect(enqueueTask).toHaveBeenCalledOnce()
-    expect(createProposal).not.toHaveBeenCalled()
-  })
-
-  it('enqueues task with author=reflector and a structured spec', async () => {
-    await persistSuggestions([mechanical], 'src-task', autoEnqueueOn)
-
-    const [_prompt, _plan, opts] = (enqueueTask as ReturnType<typeof vi.fn>).mock.calls[0]
-    expect(opts?.author).toEqual({ kind: 'agent', name: 'reflector' })
-    expect(opts?.spec).toBeDefined()
-    expect(opts?.spec?.mergeMode).toBe('auto')
-    expect(opts?.spec?.doneCriteria).toHaveLength(1)
-  })
-
-  it('never auto-enqueues an architectural suggestion, even at high confidence', async () => {
-    await persistSuggestions([architectural], 'src-task', autoEnqueueOn)
+  it('persists a high-confidence mechanical suggestion as a proposal, never as a task', async () => {
+    await persistSuggestions([mechanical], 'src-task')
 
     expect(enqueueTask).not.toHaveBeenCalled()
     expect(createProposal).toHaveBeenCalledOnce()
   })
 
-  it('routes to proposal when autoTrigger=false, even for high-confidence mechanical', async () => {
-    await persistSuggestions([mechanical], 'src-task', autoEnqueueOff)
+  it('persists an architectural suggestion as a proposal, never as a task', async () => {
+    await persistSuggestions([architectural], 'src-task')
 
     expect(enqueueTask).not.toHaveBeenCalled()
     expect(createProposal).toHaveBeenCalledOnce()
   })
 
-  it('routes to proposal when confidence is below threshold', async () => {
-    const lowConfidence = { ...mechanical, confidence: 0.5 }
-    await persistSuggestions([lowConfidence], 'src-task', autoEnqueueOn)
+  it('persists a low-confidence mechanical suggestion as a proposal, never as a task', async () => {
+    const lowConf = { ...mechanical, confidence: 0.1 }
+    await persistSuggestions([lowConf], 'src-task')
 
     expect(enqueueTask).not.toHaveBeenCalled()
     expect(createProposal).toHaveBeenCalledOnce()
   })
 
-  it('routes to proposal when confidence exactly equals threshold', async () => {
-    // Boundary: confidence === threshold qualifies (>=, not >)
-    const atThreshold = { ...mechanical, confidence: THRESHOLD }
-    await persistSuggestions([atThreshold], 'src-task', autoEnqueueOn)
-
-    expect(enqueueTask).toHaveBeenCalledOnce()
-    expect(createProposal).not.toHaveBeenCalled()
-  })
-
-  it('routes multiple suggestions independently based on their kind and confidence', async () => {
+  it('persists multiple mixed suggestions — all as proposals, zero tasks', async () => {
     await persistSuggestions(
       [
-        mechanical, // → enqueueTask
-        architectural, // → createProposal (architectural)
-        { ...mechanical, rootCauseKey: 'low_conf', confidence: 0.3 }, // → createProposal (low conf)
+        mechanical,
+        architectural,
+        { ...mechanical, rootCauseKey: 'low_conf', confidence: 0.2 },
       ],
       'src-task',
-      autoEnqueueOn,
     )
 
-    expect(enqueueTask).toHaveBeenCalledTimes(1)
-    expect(createProposal).toHaveBeenCalledTimes(2)
+    expect(enqueueTask).not.toHaveBeenCalled()
+    expect(createProposal).toHaveBeenCalledTimes(3)
   })
 
-  it('routes all to proposals when no config is supplied (safe default)', async () => {
-    // No config → defaults to autoTrigger=false path (all proposals)
+  it('produces a proposal even for a single-suggestion call with no source task', async () => {
     await persistSuggestions([mechanical], 'src-task')
 
     expect(enqueueTask).not.toHaveBeenCalled()

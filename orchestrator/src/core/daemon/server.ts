@@ -5421,20 +5421,6 @@ export const startDaemon = async (
       bus.emit('view.action-queue-invalidated')
       return { proposalsRaised }
     },
-    enableAutoReflect: async () => {
-      const { persistSelfEvolveAutoEnqueue } = await import('./config')
-      const { closeReflectRecommendedRow } = await import('../lib/self-evolve-trigger')
-      persistSelfEvolveAutoEnqueue(true)
-      log('[enable-auto-reflect] selfEvolve.autoEnqueue set to true in daemon.json')
-      await closeReflectRecommendedRow()
-      bus.emit('view.action-queue-invalidated')
-    },
-    disableAutoReflect: async () => {
-      const { persistSelfEvolveAutoEnqueue } = await import('./config')
-      persistSelfEvolveAutoEnqueue(false)
-      log('[disable-auto-reflect] selfEvolve.autoEnqueue set to false in daemon.json')
-      bus.emit('view.action-queue-invalidated')
-    },
     isAcceptingWork: () => acceptingWork,
     inFlightCount: () => tracker.inFlightCount(),
     selfUpdate: async () => {

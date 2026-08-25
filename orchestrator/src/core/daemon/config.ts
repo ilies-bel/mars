@@ -142,20 +142,7 @@ export const CAP_CLI_TO_JSON: Readonly<Record<string, keyof DaemonCaps>> =
 export const MAX_CONCURRENCY_CAP: number = Math.max(64, cpus().length * 2)
 
 export interface SelfEvolveConfig {
-  /**
-   * When true, a high-confidence mechanical reflection suggestion is
-   * automatically enqueued as a Task (rather than left as a draft proposal).
-   * Controls only the routing of suggestion outputs — not whether reflection
-   * runs. Default false.
-   */
-  autoEnqueue: boolean
   driftThresholdPct: number
-  /**
-   * Minimum confidence (0..1) for a 'mechanical' suggestion to be
-   * auto-enqueued as a Task when autoEnqueue is true. Default 0.8.
-   * 'architectural' suggestions are never auto-enqueued regardless of this value.
-   */
-  taskConfidenceThreshold: number
   /**
    * Number of days after an operator resolves a reflect-recommended
    * action-queue item before the detector is allowed to raise a new one.
@@ -225,11 +212,7 @@ export const daemonConfigSchema = z
       .optional(),
     selfEvolve: z
       .object({
-        autoEnqueue: z.boolean().optional(),
-        /** Legacy alias for `autoEnqueue`, accepted for migration. */
-        autoTrigger: z.boolean().optional(),
         driftThresholdPct: z.number().optional(),
-        taskConfidenceThreshold: z.number().optional(),
         reflectCooldownDays: z.number().optional(),
       })
       .partial()
@@ -289,7 +272,7 @@ export type DaemonConfigFile = z.infer<typeof daemonConfigSchema>
  */
 export interface DaemonEnvOverrides {
   caps: DaemonCaps
-  selfEvolve: Pick<SelfEvolveConfig, 'autoEnqueue' | 'driftThresholdPct' | 'taskConfidenceThreshold'>
+  selfEvolve: Pick<SelfEvolveConfig, 'driftThresholdPct'>
   scoring: Pick<ScoringConfig, 'autoTrigger' | 'lowTrendThreshold' | 'lowTrendWindow'>
 }
 
@@ -337,14 +320,9 @@ export const resolveEnvOverrides = (
       verify: int('MARS_MAX_VERIFY', DEFAULTS.verify),
     },
     selfEvolve: {
-      autoEnqueue: bool('MARS_SELF_EVOLVE_AUTO_TRIGGER', DEFAULT_SELF_EVOLVE.autoEnqueue),
       driftThresholdPct: positive(
         'MARS_SELF_EVOLVE_DRIFT_THRESHOLD',
         DEFAULT_SELF_EVOLVE.driftThresholdPct,
-      ),
-      taskConfidenceThreshold: float01(
-        'MARS_SELF_EVOLVE_TASK_CONFIDENCE_THRESHOLD',
-        DEFAULT_SELF_EVOLVE.taskConfidenceThreshold,
       ),
     },
     scoring: {
@@ -412,9 +390,7 @@ export const DEFAULTS: DaemonCaps = {
 
 /** Exported for `src/core/config/registry.ts` — see {@link DEFAULTS}. */
 export const DEFAULT_SELF_EVOLVE: SelfEvolveConfig = {
-  autoEnqueue: false,
   driftThresholdPct: 10,
-  taskConfidenceThreshold: 0.8,
   reflectCooldownDays: 7,
 }
 
@@ -466,25 +442,6 @@ const positiveInt = (value: unknown, fallback: number): number => {
 
 export const daemonConfigPath = (): string =>
   resolve(resolveContext().stateDir, 'daemon.json')
-
-/**
- * Persist a selfEvolve patch to the daemon config file (daemon.json).
- * Merges the patch into the existing file content, creating or overwriting
- * the file. Any fields not mentioned in `patch` are preserved.
- *
- * Used by the `enable-auto-reflect` action to set `autoEnqueue=true` without
- * losing other configured values. Safe to call from the daemon process.
- */
-export const persistSelfEvolveAutoEnqueue = (autoEnqueue: boolean): void => {
-  const existing = readDaemonConfigFileLenient()
-  const existingSe =
-    existing.selfEvolve !== null &&
-    typeof existing.selfEvolve === 'object' &&
-    !Array.isArray(existing.selfEvolve)
-      ? (existing.selfEvolve as Record<string, unknown>)
-      : {}
-  patchDaemonConfigFile({ selfEvolve: { ...existingSe, autoEnqueue } })
-}
 
 /**
  * Persist a selfEvolve patch to daemon.json, merging into the existing block.
@@ -880,23 +837,12 @@ export const loadDaemonConfig = (): DaemonConfig => {
     verify: envInt('MARS_MAX_VERIFY', DEFAULTS.verify),
   }
 
-  const envAutoEnqueue = envBool(
-    'MARS_SELF_EVOLVE_AUTO_TRIGGER',
-    DEFAULT_SELF_EVOLVE.autoEnqueue,
-  )
   const rawDrift = process.env['MARS_SELF_EVOLVE_DRIFT_THRESHOLD']
   const envDriftNum = rawDrift !== undefined && rawDrift !== '' ? Number(rawDrift) : NaN
   const envDriftPct =
     Number.isFinite(envDriftNum) && envDriftNum > 0
       ? envDriftNum
       : DEFAULT_SELF_EVOLVE.driftThresholdPct
-  const rawConf = process.env['MARS_SELF_EVOLVE_TASK_CONFIDENCE_THRESHOLD']
-  const envConfNum = rawConf !== undefined && rawConf !== '' ? Number(rawConf) : NaN
-  const envConfThreshold =
-    Number.isFinite(envConfNum) && envConfNum >= 0 && envConfNum <= 1
-      ? envConfNum
-      : DEFAULT_SELF_EVOLVE.taskConfidenceThreshold
-
   const envScoringAutoTrigger = envBool(
     'MARS_SCORING_AUTO_TRIGGER',
     DEFAULT_SCORING.autoTrigger,
@@ -918,9 +864,7 @@ export const loadDaemonConfig = (): DaemonConfig => {
   )
 
   let fileCaps: Partial<DaemonCaps> = {}
-  let fileAutoEnqueue: boolean | undefined
   let fileDriftPct: number | undefined
-  let fileConfThreshold: number | undefined
   let fileReflectCooldownDays: number | undefined
   let fileScoringAutoTrigger: boolean | undefined
   let fileScoringThreshold: number | undefined
@@ -949,24 +893,9 @@ export const loadDaemonConfig = (): DaemonConfig => {
       verify: positiveInt(c.verify, envCaps.verify),
     }
     const se = parsed.selfEvolve ?? {}
-    // Accept new key first, fall back to old key for migration.
-    if (typeof se.autoEnqueue === 'boolean') {
-      fileAutoEnqueue = se.autoEnqueue
-    } else if (typeof se.autoTrigger === 'boolean') {
-      fileAutoEnqueue = se.autoTrigger
-    }
     const seThreshold = se.driftThresholdPct
     if (typeof seThreshold === 'number' && Number.isFinite(seThreshold) && seThreshold > 0) {
       fileDriftPct = seThreshold
-    }
-    const seConfThreshold = se.taskConfidenceThreshold
-    if (
-      typeof seConfThreshold === 'number' &&
-      Number.isFinite(seConfThreshold) &&
-      seConfThreshold >= 0 &&
-      seConfThreshold <= 1
-    ) {
-      fileConfThreshold = seConfThreshold
     }
     const seCooldown = se.reflectCooldownDays
     if (
@@ -1020,9 +949,7 @@ export const loadDaemonConfig = (): DaemonConfig => {
       verify: fileCaps.verify ?? envCaps.verify,
     },
     selfEvolve: {
-      autoEnqueue: fileAutoEnqueue ?? envAutoEnqueue,
       driftThresholdPct: fileDriftPct ?? envDriftPct,
-      taskConfidenceThreshold: fileConfThreshold ?? envConfThreshold,
       reflectCooldownDays: fileReflectCooldownDays ?? DEFAULT_SELF_EVOLVE.reflectCooldownDays,
     },
     scoring: {

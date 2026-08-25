@@ -325,8 +325,6 @@ const handleEventsRequest = async (
  *   POST /actions/reject/:id     → reject a preview-gated task (→ failed)
  *   POST /actions/restart-daemon       → re-exec the daemon
  *   POST /actions/run-reflect          → run reflect flow + clear reflect-recommended row
- *   POST /actions/enable-auto-reflect  → set autoEnqueue=true + clear reflect-recommended row
- *   POST /actions/disable-auto-reflect → set autoEnqueue=false (detector re-raises row on next sweep)
  *   POST /actions/land-work/:id        → merge ahead commits onto integration branch
  *
  * Socket binding, listening, and the OS-assigned port are owned by
@@ -2590,8 +2588,6 @@ export const registerRoutes = (
               }
               if (response.target.op === 'run-reflect') {
                 await deps.runReflect()
-              } else if (response.target.op === 'enable-auto-reflect') {
-                await deps.enableAutoReflect()
               } else if (response.target.op === 'diagnose') {
                 if (!response.target.entityId) throw new Error('diagnose response requires an entityId')
                 await deps.diagnoseFailure(response.target.entityId)
@@ -2979,28 +2975,6 @@ export const registerRoutes = (
         .then(({ proposalsRaised }) =>
           sendJson(res, 200, { ok: true, proposalsRaised }),
         )
-        .catch((err: unknown) => sendError(res, err))
-      return
-    }
-
-    // POST /actions/enable-auto-reflect — persist selfEvolve.autoEnqueue=true
-    // to daemon.json and clear the open reflect-recommended row so the
-    // level-trigger is immediately cleared. Global op: no entity id.
-    if (req.url === '/actions/enable-auto-reflect') {
-      deps
-        .enableAutoReflect()
-        .then(() => sendJson(res, 200, { ok: true }))
-        .catch((err: unknown) => sendError(res, err))
-      return
-    }
-
-    // POST /actions/disable-auto-reflect — persist selfEvolve.autoEnqueue=false
-    // to daemon.json. The reflect-recommended detector will re-raise its
-    // action-queue row on the next sweep if conditions are still met.
-    if (req.url === '/actions/disable-auto-reflect') {
-      deps
-        .disableAutoReflect()
-        .then(() => sendJson(res, 200, { ok: true }))
         .catch((err: unknown) => sendError(res, err))
       return
     }
