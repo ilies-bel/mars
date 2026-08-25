@@ -288,8 +288,10 @@ const formatOperationalDuration = (milliseconds: number): string => {
  * computed `humanSummary`, which is derived from the kind alone without access
  * to the live pause-state or escalation context the renderer sees. Kinds whose
  * renderer returns `null` (no override) continue to use the recipe's sentence.
+ *
+ * Exported for the jargon-ban test (action-queue-jargon-ban.test.ts).
  */
-const OPERATIONAL_ALERT_COPY: Record<
+export const OPERATIONAL_ALERT_COPY: Record<
   ActionQueueKind,
   ((row: PersistedActionQueueRow, pauseState: DispatchPauseState | null) => { title: string; body: string; humanSummary?: string }) | null
 > = {
