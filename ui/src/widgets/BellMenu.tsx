@@ -1,12 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { BellIcon } from 'lucide-react'
-import { useAlerts, useStartThreadFromAlert } from '@/entities/alerts'
+import { useQueryClient } from '@tanstack/react-query'
+import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
+import { countNeedsYou, sortItems } from '@/entities/actionQueue/clusterRows'
+import { dismissActionQueueItem } from '@/shared/api'
+import { startThreadFromAlert } from '@/entities/alerts/api'
+import { hasResolvableTask } from '@/shared/schemas'
 
 /**
  * Navigate to a chat thread by writing the `#/chat?thread=<id>` hash. Setting
  * `window.location.hash` fires a native `hashchange`, which the app router (and
  * ChatPage's hashchange sync) pick up to render the thread. Used after pulling
- * an Alert into a conversation.
+ * an item into a conversation.
  */
 const navigateToThread = (threadId: string): void => {
   if (typeof window === 'undefined') return
@@ -14,36 +19,61 @@ const navigateToThread = (threadId: string): void => {
 }
 
 /**
- * Top-bar Bell surface (ADR-0080 foundation).
+ * Kinds whose action-queue rows are informational notices the operator
+ * acknowledges by reading. Mirrors NOTICE_KINDS in
+ * orchestrator/src/core/lib/action-queue-kinds.ts — kept as a local literal
+ * so the browser bundle never imports orchestrator node-only modules.
+ */
+const NOTICE_KINDS = new Set([
+  'spend-control-notice',
+  'scheduling-decision',
+  'requeue-warning',
+  'arc-superseded-on-main',
+  'mockup-ready',
+])
+
+/**
+ * Top-bar Bell surface (ADR-0080). Shows a single ranked list of all open
+ * action-queue items — condition-class Alerts and notice-class Notices together,
+ * sorted by the same ranking the Needs You page uses (priority then recency).
  *
- * A single bell for Alerts — the arc-rooted read aggregate (ADR-0054): each shows its goal
- *    (what the arc was trying to do) over the plain-English reason it failed.
- *    Read-only — an Alert clears only when the underlying entity mutates
- *    (ADR-0048), so there is no ack.
- * The badge count is open Alerts, capped at "9+". Clicking toggles a
- * minimal popover; outside-click and Escape close it. Styling reuses NavBar's
- * tokens (bg-background / border-primary/30 / text-foreground / text-primary).
+ * - Condition-class Alerts: clear only when the underlying condition resolves.
+ *   No ack button. Alerts backed by a resolvable task expose an
+ *   open-into-conversation button.
+ * - Notice-class Notices: stored rows the operator acknowledges by reading.
+ *   Have an Acknowledge button that calls dismissActionQueueItem and
+ *   invalidates the 'action-queue' query key.
+ *
+ * Badge: countNeedsYou(items), hidden when 0, capped at '99+'.
  */
 export const BellMenu = () => {
-  const { alerts } = useAlerts()
-  const { mutate: startThread, isPending } = useStartThreadFromAlert()
+  const { items } = useActionQueue()
+  const queryClient = useQueryClient()
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
-  // Pull an Alert into a conversation, navigate to it, and close the popover.
-  // Picking an Alert does NOT clear it from the Bell (ADR-0048) — it clears only
-  // when its arc resolves, so the alert list is left untouched here.
-  const discussAlert = useCallback(
-    (arcId: string) => {
-      startThread(arcId, {
-        onSuccess: ({ threadId }) => {
-          navigateToThread(threadId)
-          setOpen(false)
-        },
+  const filtered = items.filter((item) => item.kind !== 'draft-proposal')
+  const sorted = sortItems(filtered)
+  const count = countNeedsYou(filtered)
+  const badgeLabel = count > 99 ? '99+' : String(count)
+
+  const handleAck = useCallback(
+    (id: string) => {
+      void dismissActionQueueItem(id).then(() => {
+        queryClient.invalidateQueries({ queryKey: ['action-queue'] })
       })
     },
-    [startThread],
+    [queryClient],
   )
+
+  // startThreadFromAlert is a module-level import; setOpen is a stable state
+  // setter — neither changes across renders, so deps are empty.
+  const discussItem = useCallback((entityId: string) => {
+    void startThreadFromAlert(entityId).then(({ threadId }) => {
+      navigateToThread(threadId)
+      setOpen(false)
+    })
+  }, [])
 
   // Close on outside-click and Escape while open.
   useEffect(() => {
@@ -72,32 +102,68 @@ export const BellMenu = () => {
         className="relative rounded px-2 py-1 text-primary hover:text-foreground"
       >
         <BellIcon size={14} aria-hidden="true" />
+        {count > 0 && (
+          <span
+            aria-label={`${badgeLabel} items need attention`}
+            className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-micro text-background"
+          >
+            {badgeLabel}
+          </span>
+        )}
       </button>
 
       {open && (
         <div className="absolute right-0 top-full z-50 mt-1 w-72 rounded border border-primary/30 bg-background p-2 text-label shadow-lg">
           <section>
             <h2 className="px-1 pb-1 font-mono text-micro uppercase tracking-wide text-primary">
-              Alerts
+              Needs You
             </h2>
-            {alerts.length === 0 ? (
-              <p className="px-1 py-1 text-primary">No alerts</p>
+            {sorted.length === 0 ? (
+              <p className="px-1 py-1 text-primary">Nothing needs you</p>
             ) : (
               <ul>
-                {alerts.map((alert) => (
-                  <li key={alert.arcId}>
-                    <button
-                      type="button"
-                      disabled={isPending}
-                      onClick={() => discussAlert(alert.arcId)}
-                      aria-label={`Discuss: ${alert.goal}`}
-                      className="block w-full rounded px-1 py-1 text-left hover:bg-primary/10 disabled:opacity-50"
+                {sorted.map((item) => {
+                  const isNotice = NOTICE_KINDS.has(item.kind)
+                  return (
+                    <li
+                      key={item.id}
+                      className="flex items-start gap-2 rounded px-1 py-1 hover:bg-primary/10"
                     >
-                      <p className="text-foreground">{alert.goal}</p>
-                      <p className="text-primary">{alert.reason}</p>
-                    </button>
-                  </li>
-                ))}
+                      {isNotice ? (
+                        <span className="mt-0.5 shrink-0 font-mono text-micro uppercase text-blue-500">
+                          Notice
+                        </span>
+                      ) : (
+                        <span
+                          aria-hidden="true"
+                          className="mt-1.5 h-2 w-2 shrink-0 animate-pulse rounded-full bg-destructive"
+                        />
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-foreground">{item.title}</p>
+                        {isNotice ? (
+                          <button
+                            type="button"
+                            onClick={() => handleAck(item.id)}
+                            className="text-micro text-primary underline hover:text-foreground"
+                          >
+                            Acknowledge
+                          </button>
+                        ) : (
+                          hasResolvableTask(item) && (
+                            <button
+                              type="button"
+                              onClick={() => discussItem(item.entityId)}
+                              className="text-micro text-primary underline hover:text-foreground"
+                            >
+                              Discuss
+                            </button>
+                          )
+                        )}
+                      </div>
+                    </li>
+                  )
+                })}
               </ul>
             )}
           </section>
