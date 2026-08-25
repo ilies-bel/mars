@@ -56,3 +56,59 @@ describe('deriveCause', () => {
     expect(cause).toBe('merge failed (merge:conflict/unclassified)')
   })
 })
+
+describe('floor guard', () => {
+  it('strips node boilerplate "(Use ..." from the last line', () => {
+    const cause = deriveCause(
+      detail({
+        failureSignature: 'verify/unclassified',
+        errorExcerpt:
+          'ReferenceError: x is not defined\n(Use `node --trace-warnings ...` to show where the warning was created)',
+      }),
+    )
+    expect(cause).toBe('verify failed (verify/unclassified)')
+  })
+
+  it('strips a bare path(line,col): fragment with no message', () => {
+    const cause = deriveCause(
+      detail({
+        failureSignature: 'verify/unclassified',
+        errorExcerpt: 'some build output\nsrc/foo.ts(3,31):',
+      }),
+    )
+    expect(cause).toBe('verify failed (verify/unclassified)')
+  })
+
+  it('strips a last line with fewer than 10 non-whitespace characters', () => {
+    const cause = deriveCause(
+      detail({
+        failureSignature: 'verify/unclassified',
+        errorExcerpt: 'Failed to compile\n...',
+      }),
+    )
+    expect(cause).toBe('verify failed (verify/unclassified)')
+  })
+
+  it('strips a truncated "or" fragment under 5 chars', () => {
+    const cause = deriveCause(
+      detail({
+        failureSignature: 'verify/unclassified',
+        errorExcerpt: 'some error\nor',
+      }),
+    )
+    expect(cause).toBe('verify failed (verify/unclassified)')
+  })
+
+  it('still appends a well-formed TypeScript error message', () => {
+    const cause = deriveCause(
+      detail({
+        failureSignature: 'verify/unclassified',
+        errorExcerpt:
+          'src/foo.ts(3,31): error TS2339: Property x does not exist on type Y',
+      }),
+    )
+    expect(cause).toBe(
+      'verify failed: src/foo.ts(3,31): error TS2339: Property x does not exist on type Y',
+    )
+  })
+})

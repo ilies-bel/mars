@@ -42,7 +42,17 @@ export const deriveCause = (detail: AlertHumanDetail | undefined): string | unde
       .filter((l) => l.trim())
       .at(-1)
       ?.trim()
-    if (lastLine && lastLine.length < 120) {
+    // Floor guard: skip last lines that carry no useful signal — node boilerplate
+    // hints, bare path(line,col): fragments with no message, very short punctuation
+    // noise, or truncated "or" fragments.  These make the card harder to read, not
+    // easier, so fall through to the signature-based fallback instead.
+    const uninformative =
+      !!lastLine &&
+      (lastLine.startsWith('(Use ') ||
+        /^\S+\(\d+,\d+\):\s*$/.test(lastLine) ||
+        lastLine.replace(/\s/g, '').length < 10 ||
+        (lastLine.startsWith('or') && lastLine.length < 5))
+    if (!uninformative && lastLine && lastLine.length < 120) {
       return `${phrase}: ${lastLine}`
     }
   }
