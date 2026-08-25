@@ -1143,6 +1143,15 @@ export const buildActionQueueView = async ({
       body = operationalCopy.body
     }
 
+    // Recovery-in-flight: when the derived 'failed' row signals that a fix
+    // task is currently running, override the title regardless of what
+    // failedRowCopy or operationalCopy wrote — the operator-obligation
+    // changes from "act now" to "Mars is handling it".
+    if (row.kind === 'failed' && row.payload.recoveryInFlight === true) {
+      const taskId = typeof row.payload.taskId === 'string' ? row.payload.taskId : entityId
+      title = `Mars is attempting to fix task ${taskId} — no action needed yet`
+    }
+
     // Propagate fixForTaskId so the UI can render an "origin" link on recovery rows.
     // hitl-slice-needs-operator items are not task-backed, so no fixForTaskId.
     const fixForTaskId =
@@ -1263,7 +1272,13 @@ export const buildActionQueueView = async ({
     // the recipe's generic sentence. The recipe computes humanSummary from the
     // kind alone; operational renderers also see the live pause-state and
     // escalation context, so their sentence is more accurate when present.
-    const humanSummary = operationalCopy?.humanSummary ?? recipeFields.humanSummary
+    let humanSummary = operationalCopy?.humanSummary ?? recipeFields.humanSummary
+    // Recovery-in-flight: the recipe's default says "Mars used up its retry"
+    // which is wrong while a live fix task exists. Swap in a notice-class copy
+    // so the summary reflects the notice-class obligation rather than the alert.
+    if (row.kind === 'failed' && row.payload.recoveryInFlight === true) {
+      humanSummary = 'Mars is attempting a repair — no action needed yet'
+    }
 
     // Extract conditionKey for health-check-alert rows. Used by the Steward
     // to auto-close open rows when the associated condition is gone.
@@ -1293,6 +1308,15 @@ export const buildActionQueueView = async ({
       if (stewardAttempts !== null) {
         itemClass = 'alert'
       }
+    }
+    // Recovery-in-flight: a 'failed' row whose derived payload signals an
+    // active fix/recovery task is classified as 'notice' — Mars is still trying
+    // and the operator is not on the hook yet. classifyKind maps 'failed' →
+    // 'alert' by default; this overrides for the live repair context.
+    // baseline-broken is intentionally excluded: no auto-repair path exists for
+    // test failures, so it stays 'alert' from the first instant.
+    if (row.kind === 'failed' && row.payload.recoveryInFlight === true) {
+      itemClass = 'notice'
     }
     // noticeKey: for notice items, read from the payload (set by the raiser),
     // falling back to the kind itself for notice kinds without a per-instance key.

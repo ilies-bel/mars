@@ -226,6 +226,10 @@ async function deriveFailedConditions(
         // Filled in by the live probe below. Absent/null means "not looked at",
         // which the recipe renders as nothing rather than as "clean".
         worktreeDirtyCount: null as number | null,
+        // Filled by the recovery-in-flight check below. True when a fix/recovery
+        // task is currently live for this failed task (queued/running/verifying/merging).
+        // The view layer uses this to classify the row as 'notice' instead of 'alert'.
+        recoveryInFlight: false as boolean,
       },
       context: { taskId: row.id },
       raisedAt,
@@ -233,6 +237,39 @@ async function deriveFailedConditions(
       signature: `failed:${row.id}`,
     }
   })
+
+  // ── Recovery-in-flight check ──────────────────────────────────────────────
+  // For each derived 'failed' row, determine whether a live fix/recovery task
+  // is currently running against it. When one is live (queued/running/
+  // verifying/merging), the operator cannot act — Mars is still trying.
+  // Mark the row recoveryInFlight:true so the view layer can classify it as
+  // 'notice' instead of 'alert', and update the title to reflect that.
+  //
+  // A single IN query covers the whole batch. Guarded against empty batch
+  // (an empty IN clause is invalid SQL).
+  if (rows.length > 0) {
+    const failedTaskIds = rows.map((r) => r.payload.taskId as string)
+    const placeholders = failedTaskIds.map(() => '?').join(', ')
+    const recoveryQueryResult = await client.execute({
+      sql: `SELECT fix_for_task_id
+              FROM tasks
+             WHERE fix_for_task_id IN (${placeholders})
+               AND status IN ('queued', 'running', 'verifying', 'merging')`,
+      args: failedTaskIds,
+    })
+    const inFlightOriginIds = new Set<string>(
+      recoveryQueryResult.rows.map(
+        (r) => (r as { fix_for_task_id: string }).fix_for_task_id,
+      ),
+    )
+    for (const queueRow of rows) {
+      const taskId = queueRow.payload.taskId as string
+      if (inFlightOriginIds.has(taskId)) {
+        queueRow.payload.recoveryInFlight = true
+        queueRow.title = `Mars is attempting to fix task ${taskId} — no action needed yet`
+      }
+    }
+  }
 
   // Whether the worktree holds uncommitted work is the single fact that
   // decides between `mars continue` and the destructive `mars restart` /
