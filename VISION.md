@@ -166,6 +166,7 @@ been tested where it is made.
 | DEC-17 — it idles | Drain the queue and watch for spend. |
 | DEC-19 — dismissal is respected | Dismiss with *stop asking me that*; the same suggestion returning falsifies it. |
 | DEC-21 — Mars explains itself | An autonomous act whose Notice states what changed but not why. |
+| HR-2 — the UI is the main surface | Take any act Mars offers and try to complete it in the UI alone. An affordance whose only completion is a CLI command, or a slash command in another tool, falsifies it. |
 
 ## 9. Definition of done
 
