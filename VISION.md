@@ -236,6 +236,8 @@ must clear. A reader applying §8's falsification test to HR-4 and finding no
 per-adjustment Notice for the dial should treat this carve-out as deliberate, not
 a gap.
 
+**Append 2 — Chat is single-provider (Codex).** Chat (`core/daemon/chat-runner.ts`) dispatches every API call through `core/daemon/codex-api.ts`, a hand-written HTTP client for the ChatGPT-backend Codex Responses endpoint. It authenticates with the OAuth token the Codex CLI stores in `~/.codex/auth.json` and hardcodes OpenAI's OAuth client id and base URL. The product reason: the direct client keeps the Codex CLI's base prompt, AGENTS.md discovery, and sandbox shell out of the context window — capabilities that would be lost by routing through a generic provider subprocess. This is a deliberate exception to HR-7's provider-agnostic headline. An operator choosing `defaultProvider: claude` or `defaultProvider: gemini` should expect chat to require a valid `codex login` session regardless. A reader checking §8's HR-7 falsification test should treat this carve-out as deliberate, not a gap.
+
 **Append 2 — DEC-12's key-backed clause is not met as of 2026-08-26.** The
 provider seam admits only a local CLI subprocess: `Provider` requires
 `spawnArgv` and `feedPrompt(handle)`, `HeadlessAdapter` requires
