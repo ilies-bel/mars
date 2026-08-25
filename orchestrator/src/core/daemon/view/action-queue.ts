@@ -300,16 +300,15 @@ const OPERATIONAL_ALERT_COPY: Record<
   'daemon-killed': null,
   'coder-question': null,
   'daemon-died': (row, _pauseState) => {
-    const pid = typeof row.payload.pid === 'number' ? row.payload.pid : 'unknown'
     const detectedAt =
       typeof row.payload.crashDetectedAt === 'string'
         ? row.payload.crashDetectedAt
         : new Date(row.lastSeenAt).toISOString()
     return {
-      title: `Daemon pid ${pid} exited unexpectedly; restarted at ${detectedAt}`,
+      title: `The background engine crashed and has restarted`,
       body:
-        `The daemon crash was detected at ${detectedAt} and the current daemon has already respawned. ` +
-        `There is no task transcript for this daemon-level alert. Inspect \`.mars/watch.log\` for the crash, then run \`mars list\` to find interrupted tasks.`,
+        `The crash was detected at ${detectedAt} and the engine has already respawned. ` +
+        `There is no task transcript for this system-level alert. Inspect \`.mars/watch.log\` for the crash, then run \`mars list\` to find interrupted tasks.`,
     }
   },
   'daemon-outage': (row, _pauseState) => {
@@ -327,9 +326,9 @@ const OPERATIONAL_ALERT_COPY: Record<
       ? `${strandedCount} task(s) were queued when it came back up.`
       : 'Queued-task count unknown.'
     return {
-      title: `Daemon was offline (~${outageSummary}) and restarted at ${detectedAt}`,
+      title: `The background engine was offline (~${outageSummary}) and restarted at ${detectedAt}`,
       body:
-        `The daemon was offline for ${outageSummary}. ${strandedNote} ` +
+        `The background engine was offline for ${outageSummary}. ${strandedNote} ` +
         `Queued tasks will be dispatched automatically. Inspect \`.mars/watch.log\` ` +
         `and run \`mars list\` to review tasks that accumulated during the outage.`,
     }
@@ -401,10 +400,10 @@ const OPERATIONAL_ALERT_COPY: Record<
         : (verdict.match(/^verify:([^/]+)/)?.[1] ?? 'unknown')
     const streak = typeof row.payload.streak === 'number' ? ` (${row.payload.streak} tasks)` : ''
     return {
-      title: `Gate ${gate} is failing with \`${verdict}\`${streak}`,
+      title: `A required check (${gate}) is consistently failing${streak}`,
       body:
-        `The ${gate} gate repeatedly produced \`${verdict}\`. Recovery is suppressed while it is broken. ` +
-        `Inspect \`.mars/watch.log\`, fix or disable the gate, then restart the affected tasks.`,
+        `The ${gate} check has repeatedly produced \`${verdict}\`. Recovery is suppressed while it is broken. ` +
+        `Inspect \`.mars/watch.log\`, fix or disable the check, then restart the affected tasks.`,
     }
   },
   'verify-uncovered': null,
@@ -429,42 +428,43 @@ const OPERATIONAL_ALERT_COPY: Record<
       typeof row.payload.stewardAttempts === 'number' ? row.payload.stewardAttempts : null
     if (attempts !== null) {
       return {
-        title: `${attempts} Steward attempts failed on \`${signature}\`; Mars has stopped auto-pausing for it`,
+        title: `${attempts} attempt${attempts === 1 ? '' : 's'} to fix the recurring error all failed — Mars has stopped auto-pausing for it`,
         body:
-          `The same failure signature keeps tripping the circuit breaker and every write-capable Steward ` +
-          `dispatch produced no fix. Mars will not pause dispatch for this signature again — cycling ` +
-          `pause/Steward/resume against a cause the Steward cannot reach only burns worktrees. Tasks keep ` +
-          `dispatching and keep failing until the shared cause is fixed. Inspect \`.mars/watch.log\` and the ` +
+          `The same error keeps recurring and every automated fix attempt produced no resolution. Mars will not pause task processing for this pattern again — cycling ` +
+          `pause and retry against a root cause the automated system cannot reach only wastes worktrees. Tasks keep ` +
+          `running and keep failing until the shared cause is fixed. Inspect \`.mars/watch.log\` and the ` +
           `\`steward_ledger\` rows for target '${signature}'.`,
-        // Overrides the recipe's generic "N tasks failed with signature …" sentence:
+        // Overrides the recipe's generic "N tasks failed with the same error …" sentence:
         // the Steward budget is spent and Mars is no longer handling this automatically,
         // so the operator is now on the hook — that context belongs in the summary.
         humanSummary:
-          `${attempts} automatic fix attempt${attempts === 1 ? '' : 's'} all failed for the repeating "${signature}" failure — Mars will no longer pause dispatch for it. Fix the root cause manually to stop the failures.`,
+          `${attempts} automatic fix attempt${attempts === 1 ? '' : 's'} all failed for the recurring error "${signature}" — Mars will no longer pause task processing automatically. Fix the root cause manually to stop the failures.`,
       }
     }
-    // Derive the "dispatch is paused" clause from current state, not the
+    // Derive the "task processing is paused" clause from current state, not the
     // frozen instant the breaker tripped. The action queue is a pure
     // projection: a row that was raised while the storm breaker was armed
-    // must not keep claiming dispatch is paused once the breaker clears.
+    // must not keep claiming task processing is paused once the breaker clears.
     const dispatchPausedByStorm =
       pauseState !== null && pauseState.paused && pauseState.reason === 'storm'
     if (dispatchPausedByStorm) {
       return {
-        title: `${streak} tasks failed with \`${signature}\`; dispatch is paused`,
+        title: `${streak} tasks failed with the same error pattern — task processing is paused`,
         body:
-          `The same failure signature is recurring across tasks, so dispatch is paused. ` +
-          `There is no single task transcript for this incident. Dispatch resumes as soon as the Steward reports ` +
+          `The same error keeps recurring across tasks, so task processing is paused. ` +
+          `There is no single task transcript for this incident. Task processing will resume as soon as the automated monitor reports ` +
           `an outcome (fix, no-op, or failure), or on the bounded crash/hang fallback. ` +
-          `Inspect \`.mars/watch.log\`, correct the shared cause, then inspect \`mars operator\` before resuming dispatch.`,
+          `Inspect \`.mars/watch.log\`, correct the shared cause, then inspect \`mars operator\` before resuming task processing.`,
+        humanSummary: `Mars detected ${streak} tasks failing with the same error pattern — task processing is paused while it monitors, no action needed from you.`,
       }
     }
     return {
-      title: `${streak} tasks failed with \`${signature}\``,
+      title: `${streak} tasks failed with the same error pattern`,
       body:
-        `The same failure signature recurred across tasks. Dispatch has since resumed. ` +
+        `The same error kept recurring across tasks. Task processing has since resumed. ` +
         `There is no single task transcript for this incident. ` +
-        `Inspect \`.mars/watch.log\` and correct the shared cause to prevent future storms.`,
+        `Inspect \`.mars/watch.log\` and correct the shared cause to prevent future occurrences.`,
+      humanSummary: `Mars detected ${streak} tasks failing with the same error pattern — task processing has since resumed, no action needed from you.`,
     }
   },
   'gate-enrichment-stale': null,
@@ -477,10 +477,10 @@ const OPERATIONAL_ALERT_COPY: Record<
         ? formatOperationalDuration(row.payload.queuedAgeMs)
         : 'an unknown duration'
     return {
-      title: `Task ${taskId} has been queued for ${age}`,
+      title: `A task has been waiting for ${age} and hasn't started yet`,
       body:
         `Task ${taskId} is still queued after ${age}; inspect it with \`mars list\` and check \`.mars/watch.log\` for dispatcher decisions. ` +
-        `No task transcript exists until dispatch starts.`,
+        `No task transcript exists until a worker picks it up.`,
     }
   },
   'stale-queued-summary': (row, _pauseState) => {
@@ -504,11 +504,10 @@ const OPERATIONAL_ALERT_COPY: Record<
       typeof row.payload['freeBytes'] === 'number'
         ? Math.round((row.payload['freeBytes'] as number) / (1024 * 1024))
         : '?'
-    // Dispatch is never actually paused via the PauseController for disk issues —
-    // the disk guard refuses individual dispatches, not the whole queue. Omit
-    // any "dispatch is paused" clause unconditionally.
+    // The disk guard refuses individual dispatches, not the whole queue —
+    // no PauseController is involved, so no "task processing is paused" clause.
     return {
-      title: `Low disk space: only ${freeMiB} MiB free — dispatches refused until space is reclaimed`,
+      title: `Running low on disk space (${freeMiB} MiB left) — new tasks won't start until space is freed`,
       body: row.body,
     }
   },
@@ -525,17 +524,20 @@ const OPERATIONAL_ALERT_COPY: Record<
       caughtTaskCount > 0
         ? ` — caught ${caughtTaskCount} task failure${caughtTaskCount === 1 ? '' : 's'} that would otherwise look unrelated`
         : ''
-    // Emit the dispatch-paused clause only when the live pause reason is 'baseline'.
-    // First-cause-wins means a baseline break while dispatch is already paused for
+    // Emit the task-processing-paused clause only when the live pause reason is 'baseline'.
+    // First-cause-wins means a check failing while task processing is already paused for
     // 'operator' or 'quota' must not claim credit for that pause.
     const dispatchPausedByBaseline =
       pauseState !== null && pauseState.paused && pauseState.reason === 'baseline'
     const pauseSuffix = dispatchPausedByBaseline
-      ? ' — dispatch is paused until the baseline is fixed'
+      ? ' — task processing is paused until it is fixed'
       : ''
     return {
-      title: `Integration branch fails required gate "${gateName}"${caughtSuffix}${pauseSuffix}`,
+      title: `A check is failing on the main branch (${gateName})${caughtSuffix}${pauseSuffix}`,
       body: typeof row.payload.output === 'string' ? row.payload.output : '',
+      humanSummary: dispatchPausedByBaseline
+        ? `A check is failing on the main branch (${gateName})${caughtSuffix} — task processing is paused until it is fixed.`
+        : undefined,
     }
   },
   'fragmented-repo-layout': (row) => {
