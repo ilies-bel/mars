@@ -171,6 +171,7 @@ been tested where it is made.
 | HR-7 — provider-agnostic | Install with the default configuration and dispatch a task. A provider SDK imported by the core, or an API key Mars must hold for that default path to work, falsifies it. |
 | DEC-6 — workflow edits apply mid-run | Edit a workflow while a run is in flight, then watch that run reach a step after the edit. A run that finishes on the definition it started with, or that pins a snapshot taken at dispatch, falsifies it. |
 | HR-9 / DEC-13 — git is concrete, not a port | Trace the core's git calls and an implement run's worktree. A VCS port the core dispatches through, a swappable non-git implementation behind it, or a run that proceeds without a worktree, falsifies it. |
+| DEC-12 — borrowing a coding CLI is one adapter kind, not the architecture | Try to configure a key-backed provider adapter alongside the CLI-borrowing one. A provider port whose contract admits only a local CLI subprocess, or a key-backed path that requires changing the port rather than registering against it, falsifies it. |
 
 ## 9. Definition of done
 
