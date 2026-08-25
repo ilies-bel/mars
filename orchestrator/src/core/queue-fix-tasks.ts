@@ -1803,7 +1803,7 @@ export const handleTaskFailureWithFixTask = async (
         probeCommand: effectiveBaselineProbeResult.probeCommand,
         probeExitCode: effectiveBaselineProbeResult.exitCode,
       },
-      context: { repoRoot: process.env.MARS_REPO ?? null },
+      context: { repoRoot: getRepoRoot() },
       raisedBy: 'agent:fail-fix-handler',
       signature: `baseline-failure:${input.taskId}:${failureSignature}`,
       originTaskId: task.originId,
