@@ -50,7 +50,24 @@ Verdict is one of:
 
 Do not accept "the code appears to do this" as `HOLDS`. You must have observed it.
 
+**Provoke the act; do not go looking for evidence of a past one.** A commit in
+`git log` and a type in a source file are artifacts, not observations. Reading
+them is legitimate *evidence* — a type signature with no field for a thing
+proves that thing is absent — but it is not a test, and a report must say which
+one it did. If the act cannot be provoked, state that in the verdict rather
+than letting archaeology read as a live test.
+
+**A database row is not a telling.** HR-2 makes the UI the operator surface.
+A `notices` row the operator cannot see does not satisfy "Mars acts, then
+tells" — if the record exists and nothing renders it, the act is *unannounced*,
+and that is a finding, not a pass.
+
 **5. Act.**
+
+Before filing anything, run `mars proposal list` and `mars list` and check for
+adjacent work. If something already covers this ground, say so and either
+extend it or explain why yours is distinct. Three proposals solving one problem
+is worse than none.
 - `BROKEN`, and the fix is unambiguous → `mars task add` it yourself. One task per
   defect. The prompt must stand alone: file path and symptom, the vision claim it
   violates by number, the suggested fix, a scoped `--verify` command relative to
@@ -65,12 +82,17 @@ Do not accept "the code appears to do this" as `HOLDS`. You must have observed i
 Append your verdict to the ledger: claim id, date, verdict, what you observed,
 what you filed.
 
-You may **append** to `VISION.md` — a missing falsification test, an open question
-that got settled, a decision taken but never written down. You may **never**
-revise it: do not rewrite a decision, soften a hard requirement, or delete a line
-because the code disagrees. When reality contradicts the vision, **the code is
-wrong** until the operator says otherwise — file a proposal and leave the text
-alone.
+`VISION.md` may be **appended to** — a missing falsification test, an open
+question that got settled, a decision taken but never written down. It may
+**never** be revised: do not rewrite a decision, soften a hard requirement, or
+delete a line because the code disagrees. When reality contradicts the vision,
+**the code is wrong** until the operator says otherwise — file a proposal and
+leave the text alone.
+
+**Never edit `VISION.md` yourself.** You are running on `main`, and an
+uncommitted edit there gets swept into a `wip(operator)` commit by the merge
+step's auto-commit. Route every append through `mars task add` instead, quoting
+the exact text to add and where it goes.
 
 **7. Report.**
 One short paragraph: which claim, what you did, the verdict, what you filed. If
@@ -82,5 +104,8 @@ nothing was wrong, say so plainly — a quiet iteration is a real result.
   operator's calls.
 - Never `git stash`. Never commit to `main`.
 - If a browser action fails three times, stop and report rather than working
-  around it.
+  around it. Stopping does not mean staying silent: a route that errors while
+  its siblings return 200 is a fully observed defect — file it. "Don't file
+  half-tested findings" applies to things you did not finish looking at, never
+  to something unambiguous you stopped short of *fixing*.
 - If the daemon is down, say "unknown", not "clean".
