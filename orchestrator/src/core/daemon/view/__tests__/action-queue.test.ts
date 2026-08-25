@@ -15,6 +15,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildActionQueueView,
+  deriveOperatorGoal,
   type ActionQueueStateStore,
   type ActionQueueTaskStore,
   type ConditionItemsSource,
@@ -1409,5 +1410,98 @@ describe('buildActionQueueView — arcGoal derivation', () => {
     const batchRow = rows.find((r) => r.entityId === '__daemon-killed-batch__')
     expect(batchRow).toBeDefined()
     expect(batchRow!.arcGoal).toBeNull()
+  })
+})
+
+// ── deriveOperatorGoal normalisation ─────────────────────────────────────────
+
+describe('deriveOperatorGoal — normalisation', () => {
+  const byId = (tasks: TaskForActionQueue[]): ReadonlyMap<string, TaskForActionQueue> =>
+    new Map(tasks.map((t) => [t.id, t]))
+
+  it('strips markdown heading markers', () => {
+    const task = makeTask({ prompt: '## Refactor the auth module' })
+    expect(deriveOperatorGoal(task, byId([task]))).toBe('Refactor the auth module')
+  })
+
+  it('strips triple-hash heading markers', () => {
+    const task = makeTask({ prompt: '### Add rate limiting to the API' })
+    expect(deriveOperatorGoal(task, byId([task]))).toBe('Add rate limiting to the API')
+  })
+
+  it('strips inline backtick pairs', () => {
+    const task = makeTask({ prompt: 'Remove the `deprecated` helper function' })
+    expect(deriveOperatorGoal(task, byId([task]))).toBe('Remove the deprecated helper function')
+  })
+
+  it('strips bold markers', () => {
+    const task = makeTask({ prompt: '**Fix** the broken login flow' })
+    expect(deriveOperatorGoal(task, byId([task]))).toBe('Fix the broken login flow')
+  })
+
+  it('rewrites "You should …" to imperative', () => {
+    const task = makeTask({ prompt: 'You should remove the unused import' })
+    expect(deriveOperatorGoal(task, byId([task]))).toBe('Remove the unused import')
+  })
+
+  it('rewrites "You need to …" to imperative', () => {
+    const task = makeTask({ prompt: 'You need to update the lockfile' })
+    expect(deriveOperatorGoal(task, byId([task]))).toBe('Update the lockfile')
+  })
+
+  it('rewrites "You must …" to imperative', () => {
+    const task = makeTask({ prompt: 'You must add a database index' })
+    expect(deriveOperatorGoal(task, byId([task]))).toBe('Add a database index')
+  })
+
+  it('takes only the first non-empty line', () => {
+    const task = makeTask({ prompt: '\n\nFix the parser\nAnd also the renderer' })
+    expect(deriveOperatorGoal(task, byId([task]))).toBe('Fix the parser')
+  })
+
+  it('truncates at 100 chars with ellipsis', () => {
+    const longPrompt =
+      'Implement the full OAuth2 PKCE authorisation flow with refresh-token rotation ' +
+      'and audit logging across every REST endpoint in the service'
+    const task = makeTask({ prompt: longPrompt })
+    const result = deriveOperatorGoal(task, byId([task]))
+    expect(result.length).toBe(100)
+    expect(result.endsWith('…')).toBe(true)
+  })
+
+  it('passes through short prompts unchanged', () => {
+    const task = makeTask({ prompt: 'Add unit tests for the queue module' })
+    expect(deriveOperatorGoal(task, byId([task]))).toBe('Add unit tests for the queue module')
+  })
+
+  it('prefers intent over prompt when intent is non-empty', () => {
+    const task = makeTask({ prompt: 'Raw prompt text', intent: 'Add OAuth2 login' })
+    expect(deriveOperatorGoal(task, byId([task]))).toBe('Add OAuth2 login')
+  })
+
+  it('follows fixForTaskId to the origin task', () => {
+    const origin = makeTask({ id: 'origin-1', prompt: 'Migrate the database schema' })
+    const fix = makeTask({ id: 'fix-1', prompt: 'Recovery attempt', fixForTaskId: 'origin-1' })
+    expect(deriveOperatorGoal(fix, byId([origin, fix]))).toBe('Migrate the database schema')
+  })
+
+  it('buildActionQueueView populates operatorGoal on failed-task rows', async () => {
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([makeRow()]),
+      taskStore: makeTaskStore([makeTask({ prompt: '## Deploy the new service' })]),
+    })
+    expect(rows[0]!.operatorGoal).toBe('Deploy the new service')
+  })
+
+  it('buildActionQueueView sets operatorGoal to null on non-task rows', async () => {
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([
+        makeRow({ kind: 'signature-storm', payload: { signature: 'code/foo', streak: 2 } }),
+      ]),
+      taskStore: makeTaskStore([]),
+    })
+    expect(rows[0]!.operatorGoal).toBeNull()
   })
 })

@@ -185,6 +185,15 @@ export interface ActionQueueRow {
    */
   arcGoal: string | null
   /**
+   * Operator-facing goal sentence derived from the same resolution chain as
+   * `arcGoal` but normalised differently: markdown heading markers, backtick
+   * pairs, and bold markers are stripped; a leading second-person construction
+   * ('You should …', 'You need to …') is rewritten to imperative; the result
+   * is capped at 100 characters with ellipsis. Null on non-task-backed rows
+   * and when the referenced task cannot be found.
+   */
+  operatorGoal: string | null
+  /**
    * Live preview URL for an `awaiting-human` manual-QA row. Present when the
    * `review(ctx, { reviewType: 'manual' })` primitive successfully spawned a
    * preview process and that process reported a URL. Null on every other row
@@ -857,6 +866,34 @@ const normaliseGoalText = (text: string): string => {
 }
 
 /**
+ * Normalises a raw intent or prompt string into a single-line operator-facing
+ * goal of at most 100 characters. Strips leading markdown heading markers
+ * (`#`, `##`, `###`), removes inline backtick pairs and bold markers (`**`),
+ * rewrites a leading second-person construction ('You should …', 'You need to
+ * …', 'You must …') to imperative, takes the first non-empty line, collapses
+ * internal whitespace, and truncates with an ellipsis suffix when needed.
+ */
+const normaliseOperatorGoal = (text: string): string => {
+  const firstLine =
+    text
+      .split('\n')
+      .map((l) => l.trim())
+      .find((l) => l.length > 0) ?? ''
+  // Strip markdown heading markers
+  let stripped = firstLine.replace(/^#{1,3}\s*/, '').trim()
+  // Strip inline code backtick pairs and bold markers
+  stripped = stripped.replace(/`([^`]*)`/g, '$1').replace(/\*\*([^*]*)\*\*/g, '$1')
+  // Rewrite leading second-person to imperative
+  stripped = stripped.replace(/^You\s+(should|need\s+to|must)\s+/i, '')
+  // Re-capitalise the first character after stripping
+  if (stripped.length > 0) {
+    stripped = stripped.charAt(0).toUpperCase() + stripped.slice(1)
+  }
+  const oneLine = stripped.replace(/\s+/g, ' ').trim()
+  return oneLine.length <= 100 ? oneLine : `${oneLine.slice(0, 99)}…`
+}
+
+/**
  * Derives the human-readable arc goal for an action-queue row.
  *
  * Resolution order:
@@ -900,6 +937,47 @@ export const deriveArcGoal = (
       ? current.intent
       : current.prompt
   return normaliseGoalText(source)
+}
+
+/**
+ * Derives the operator-facing goal sentence for an action-queue row.
+ *
+ * Mirrors the resolution chain of `deriveArcGoal` (fixForTaskId → originId
+ * → self) but applies `normaliseOperatorGoal` instead of `normaliseGoalText`.
+ * Prefers the resolved origin's `intent` when non-empty; otherwise falls back
+ * to its `prompt`.
+ *
+ * Returns a normalised plain-language string. Callers that only have a
+ * task-backed entity id should guard for a null task before calling.
+ */
+export const deriveOperatorGoal = (
+  task: TaskForActionQueue,
+  taskById: ReadonlyMap<string, TaskForActionQueue>,
+): string => {
+  let current: TaskForActionQueue = task
+
+  // Step 1: follow fixForTaskId (recovery tasks point at their origin).
+  if (current.fixForTaskId) {
+    current = taskById.get(current.fixForTaskId) ?? current
+  } else {
+    // Step 2: follow originId one or two hops (supersede lineage).
+    // Guard against self-reference and cycles.
+    const visited = new Set<string>([task.id])
+    for (let hop = 0; hop < 2; hop++) {
+      const oId = current.originId
+      if (!oId || oId === current.id || visited.has(oId)) break
+      const next = taskById.get(oId)
+      if (!next) break
+      visited.add(oId)
+      current = next
+    }
+  }
+
+  const source =
+    current.intent && current.intent.trim().length > 0
+      ? current.intent
+      : current.prompt
+  return normaliseOperatorGoal(source)
 }
 
 /**
@@ -1245,6 +1323,17 @@ export const buildActionQueueView = async ({
       }
     }
 
+    // Derive the operator-facing goal via the same resolution chain as arcGoal
+    // but with a richer normaliser: markdown, backticks, bold markers stripped;
+    // second-person rewritten to imperative; capped at 100 chars.
+    let operatorGoal: string | null = null
+    if (isTaskFailure) {
+      const task = taskById.get(entityId)
+      if (task) {
+        operatorGoal = deriveOperatorGoal(task, taskById)
+      }
+    }
+
     // Surface the live preview URL for awaiting-validation rows. The merge
     // primitive stamps it into the row payload at raise time (and persists the
     // same value on the task row), so the payload is the authoritative,
@@ -1440,6 +1529,7 @@ export const buildActionQueueView = async ({
       recoveryExhausted,
       fixForTaskId,
       arcGoal,
+      operatorGoal,
       toolPromotionDetail,
       previewUrl,
       logPath,
@@ -1792,6 +1882,15 @@ export const buildActionQueueHistoryView = async ({
       }
     }
 
+    // Derive the operator-facing goal (same resolution chain, richer normaliser).
+    let operatorGoal: string | null = null
+    if (isTaskFailure) {
+      const task = taskById.get(entityId)
+      if (task) {
+        operatorGoal = deriveOperatorGoal(task, taskById)
+      }
+    }
+
     // Build resolution metadata from the resolved row fields.
     const resolution: ActionQueueResolutionMeta | null =
       row.resolvedAt
@@ -1848,6 +1947,7 @@ export const buildActionQueueHistoryView = async ({
       recoveryExhausted,
       fixForTaskId,
       arcGoal,
+      operatorGoal,
       resolution,
       class: historyItemClass,
       noticeKey: historyNoticeKey,

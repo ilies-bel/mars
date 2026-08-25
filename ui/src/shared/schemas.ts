@@ -396,6 +396,13 @@ const actionQueueBaseSchema = z.object({
    */
   arcGoal: z.string().nullable().optional(),
   /**
+   * Operator-facing goal sentence normalised for readability: markdown heading
+   * markers, backtick pairs, and bold markers stripped; leading second-person
+   * construction ('You should …') rewritten to imperative; capped at 100 chars.
+   * Absent on non-task-backed rows and daemon versions that predate this field.
+   */
+  operatorGoal: z.string().nullable().optional(),
+  /**
    * Resolution metadata — non-null on history rows, absent/null on live open rows.
    * The UI uses this to render the Resolution block and suppress action buttons.
    */
