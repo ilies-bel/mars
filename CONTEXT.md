@@ -600,7 +600,7 @@ The single collapsed row left in the main transcript for a closed subthread. It 
 _Avoid_: replay, transcript-dump
 
 **Alert**:
-A level-triggered action queue message representing a condition that currently holds and stops being shown only when that condition ceases.
+A level-triggered action queue message telling the operator that something needs them to act, shown while that condition holds and stopping only when it ceases. Whether a message is an Alert is decided by operator obligation, not by severity: if Mars still has an automated move left, the same situation is a Notice, and it becomes an Alert at the moment the last automated move is spent.
 _Avoid_: warning, notification, alarm
 
 **Visual-first UI**:
