@@ -1,6 +1,4 @@
-import { parseClaudeSessionIds } from './lib/claude-session-ids'
-import type { Author, AuthorKind } from './author'
-import { type DbInValue, type DbStatement } from './lib/db'
+import { type DbInValue } from './lib/db'
 import { ensureQueueSchema, resolveQueueClient } from './lib/queue-client'
 import { Arc, updateTask } from './arc'
 import {
@@ -13,7 +11,6 @@ import {
 } from './arc/blockers'
 import { getDefaultDomainTaskStore } from './store/task-store'
 import type { DomainTaskStore as TaskStore } from './store/task-store'
-import type { SliceSpec, SubDeliverableSpec } from './slice-spec'
 
 // ADR-0101: Pure types, validators, row mappers, and getTask extracted to
 // the dependency-free leaf `queue-primitives.ts`. Re-exported here for
@@ -57,24 +54,13 @@ import {
   type TaskStatus,
   type Task,
   type TaskPlan,
-  type TaskKind,
-  type TaskTag,
-  type TaskDropReason,
-  type FailedPhase,
-  type MergeMode,
-  type QaReport,
   type EnqueueTaskOptions,
   type DropTaskResult,
   TERMINAL_TASK_STATUSES,
   UNSETTLED_BLOCKER_SQL,
-  IllegalTransitionError,
   TASK_SEL,
   ORDINARY_TASK_SQL,
   rowToTask,
-  getTask,
-  isMergeMode,
-  coerceToString,
-  deriveTaskKind,
 } from './lib/queue-primitives'
 
 /**
