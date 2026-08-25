@@ -616,3 +616,7 @@ _Avoid_: plugin, QA plugin, validator, checker plugin, behaviour plugin
 
 **Port**:
 A swappable module boundary in Mars: a cordis service slot bound to an async TypeScript interface whose arguments and results are plain serializable data (no live handles, callbacks, or process artifacts). Local implementations wrap existing code behind the interface; remote implementations (e.g. verification in CI) are ordinary services filling the same slot, with the wire protocol confined to that one adapter. Callers resolve Ports through the context, never by importing a concrete implementation. Distinct from a registry (a set of fine-grained in-process extension points, e.g. verify heuristics): the Port rule governs module boundaries only.
+
+**Decision**:
+An action queue message in which Mars asks the operator to choose between courses it cannot pick between itself, resolved by that choice rather than by any change in the world. It is the third operator-facing class alongside Alert and Notice: a Notice asks nothing, an Alert reports that something is wrong and needs fixing, and a Decision reports that nothing is wrong but work cannot proceed until the operator picks.
+_Avoid_: prompt, question, approval item, choice item
