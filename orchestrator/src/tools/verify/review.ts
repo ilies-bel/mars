@@ -50,6 +50,7 @@ import { type DomainTaskStore as TaskStore } from '../../core/store/task-store'
 import { quarantineVerifyGate } from '../../core/verify-gates'
 import { buildEventInsert } from '../../bus/publisher'
 import { raiseActionQueueItem } from '../../core/lib/action-queue'
+import { reportUncoveredVerifyCoverage } from '../../core/lib/verify-uncovered'
 import { PROVIDER_MODELS, type ProviderModelTier } from '../../core/workers/provider-types'
 import { runWorkerWithSpan, runNonLlmStepWithSpan } from '../../core/lib/run-worker-with-span'
 import { type RanVerifyStep } from '../../core/lib/derive-repro-command'
@@ -1185,6 +1186,22 @@ export const review = async (
           )
         })
         throw new Error(`task ${taskId} verify:${firstFailedName} failed`)
+      }
+
+      // Best-effort: raise a durable `verify-uncovered` alert when this task
+      // merged without any task-tier gate covering its changed files. The step
+      // named 'cant-verify:no-gate-coverage' is injected by `selectVerifySteps`
+      // only in that specific case — it is not present for quarantined-gate
+      // CAN'T-VERIFY verdicts.
+      // A raise failure must never turn CAN'T-VERIFY into FAIL, so this is
+      // deliberately fire-and-forget via .catch().
+      if (r.steps.some((s) => s.name === 'cant-verify:no-gate-coverage')) {
+        reportUncoveredVerifyCoverage({ changedPaths: changedFiles, taskId }).catch((err) => {
+          console.error(
+            `[verify-uncovered] task ${taskId}: could not raise verify-uncovered alert:`,
+            err,
+          )
+        })
       }
 
       return { verified: true }
