@@ -191,7 +191,7 @@ A glossary or ADR mutation performed by the daemon on its own internal worktree 
 _Avoid_: glossary slice, adr slice, writer task, structured-write slice
 
 **Action queue**:
-The operator-facing surface listing causal chains that have no automated next move left, one row per chain; replaces the catch-all Inbox.
+The operator-facing surface listing causal chains that have no automated next move left, one row per chain; replaces the catch-all Inbox. Carries both classes of action queue message — Alerts (level-triggered, condition-cleared) and Notices (edge-triggered, ack-cleared). "Action queue" is the term of record in the glossary, the CLI (mars action-queue), and the ADRs; the UI renders this same surface under the display label "Needs You". The two are the same concept, so never treat "Needs You" as a distinct entity or coin a "needs-you list".
 _Avoid_: inbox, inbox item, inbox_items, needs-you list, operator queue
 
 **Chain**:
