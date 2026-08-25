@@ -2597,18 +2597,6 @@ export const registerRoutes = (
               } else if (response.target.op === 'unarchive-subthread') {
                 if (!response.target.entityId) throw new Error('unarchive-subthread response requires an entityId')
                 await unarchiveSubthread(response.target.entityId)
-              } else if (response.target.op === 'steward-restore-worker-cap') {
-                if (!deps.setImplementWorkerCap) {
-                  sendJson(res, 501, { ok: false, error: 'setImplementWorkerCap not available' })
-                  return
-                }
-                if (!response.target.entityId) throw new Error('steward-restore-worker-cap response requires an entityId')
-                const cap = Number(response.target.entityId)
-                if (!Number.isInteger(cap) || cap < 1) {
-                  sendJson(res, 400, { ok: false, error: `steward-restore-worker-cap: invalid cap value: ${response.target.entityId}` })
-                  return
-                }
-                deps.setImplementWorkerCap(cap)
               } else {
                 const handler = entityHandlers[response.target.op as EntityOp]
                 if (!handler || !response.target.entityId) {

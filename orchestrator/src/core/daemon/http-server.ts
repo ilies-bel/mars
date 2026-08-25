@@ -571,13 +571,6 @@ export interface HttpServerDeps {
    */
   getStewardRuntimeState?: () => { liveCap: number; baselineCap: number; isPaused: boolean }
   /**
-   * Set the implement worker-pool cap to `cap` in the live semaphore.
-   * Called by the `steward-restore-worker-cap` preloaded-verb handler so
-   * the operator can undo an autonomous dial from the Notice's revert offer.
-   * Optional — when absent the verb handler returns 501 Not Implemented.
-   */
-  setImplementWorkerCap?: (cap: number) => void
-  /**
    * Returns the daemon's git SHAs for the code-drift signal. Used by
    * `GET /view/daemon-version` so the UI server's skew detector can
    * distinguish "daemon running older code" from "route not found".
