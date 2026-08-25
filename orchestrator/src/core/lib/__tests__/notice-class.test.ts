@@ -26,12 +26,31 @@ import {
 
 describe('classifyKind — three-class model (ADR-0104)', () => {
   it('classifies known alert kinds as alert', () => {
+    // Core alert kinds: task/system failures requiring operator intervention.
     expect(classifyKind('failed')).toBe('alert')
     expect(classifyKind('stale-queued')).toBe('alert')
     expect(classifyKind('gate-broken')).toBe('alert')
     expect(classifyKind('daemon-died')).toBe('alert')
     expect(classifyKind('orphaned-origin')).toBe('alert')
     expect(classifyKind('recovery-abandoned')).toBe('alert')
+    // Operational alerts — AC-required kinds; operator must act to resolve the broken state.
+    expect(classifyKind('low-disk-space')).toBe('alert')
+    expect(classifyKind('api-outage')).toBe('alert')
+    expect(classifyKind('env-incident')).toBe('alert')
+    expect(classifyKind('dirty-integration')).toBe('alert')
+    expect(classifyKind('health-check-alert')).toBe('alert')
+    expect(classifyKind('daemon-killed')).toBe('alert')
+    expect(classifyKind('prerequisite-failed')).toBe('alert')
+    expect(classifyKind('slice-failed')).toBe('alert')
+    expect(classifyKind('diagnose-inconclusive')).toBe('alert')
+    expect(classifyKind('done-with-unmerged-commits')).toBe('alert')
+    expect(classifyKind('arc-verification-failed')).toBe('alert')
+    expect(classifyKind('outbox-lag')).toBe('alert')
+    expect(classifyKind('workflow-install-drift')).toBe('alert')
+    expect(classifyKind('fragmented-repo-layout')).toBe('alert')
+    expect(classifyKind('awaiting-validation-preview-gone')).toBe('alert')
+    expect(classifyKind('behaviour-unverified')).toBe('alert')
+    expect(classifyKind('daemon-outage')).toBe('alert')
     // Reclassified from 'notice' → 'alert': operator must intervene to fix a broken state.
     expect(classifyKind('slices-dropped')).toBe('alert')
     expect(classifyKind('cancelled-blocker-cascade')).toBe('alert')
@@ -52,9 +71,19 @@ describe('classifyKind — three-class model (ADR-0104)', () => {
   })
 
   it('classifies known decision kinds as decision', () => {
+    // Core decision kinds: operator must choose to let work proceed.
     expect(classifyKind('draft-proposal')).toBe('decision')
     expect(classifyKind('awaiting-human')).toBe('decision')
     expect(classifyKind('gate-enrichment')).toBe('decision')
+    // AC-required decision kinds: operator picks among options; nothing is broken.
+    expect(classifyKind('promotion-decision')).toBe('decision')
+    expect(classifyKind('scorer-suggested')).toBe('decision')
+    expect(classifyKind('tool-promotion')).toBe('decision')
+    expect(classifyKind('workflow-draft-pending')).toBe('decision')
+    expect(classifyKind('qa-step-list-opt-in')).toBe('decision')
+    expect(classifyKind('qa-step-list-promote')).toBe('decision')
+    expect(classifyKind('hitl-slice-needs-operator')).toBe('decision')
+    expect(classifyKind('awaiting-validation')).toBe('decision')
     // Reclassified from 'notice' → 'decision': operator must choose, not just be informed.
     expect(classifyKind('scheduling-decision')).toBe('decision')
     // Reclassified from 'alert' → 'decision': nothing is broken; operator must pick an option.
