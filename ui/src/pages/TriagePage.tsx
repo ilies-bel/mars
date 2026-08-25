@@ -26,7 +26,7 @@
  * the page says so instead (see UnreachableState).
  */
 
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
 import { sortItems, buildRenderedRows, countNeedsYou } from '@/entities/actionQueue/clusterRows'
@@ -42,7 +42,7 @@ import { deriveCause } from '@/shared/alertCause'
 import { useFocusedProjectId } from '@/shared/useFocusedProject'
 import { defaultAqUrlState, encodeAqState } from '@/shared/actionQueueUrlState'
 import { taskHash } from '@/shared/routing'
-import { hasResolvableTask } from '@/shared/schemas'
+import { hasResolvableTask, isConditionActionQueueKind } from '@/shared/schemas'
 import type { ActionQueueItem } from '@/shared/schemas'
 import type { Decision } from '@/shared/schemas'
 
@@ -236,6 +236,43 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
   // firing on first click like the reversible Continue verb.
   const [confirmRestart, setConfirmRestart] = useState(false)
 
+  // True when this row's kind is a condition derived from live system state
+  // (ADR-0094). Condition-kind rows MUST NOT be optimistically hidden on verb
+  // success — whether the row survives depends entirely on whether the
+  // underlying condition still holds after the verb, which only the refetched
+  // feed can answer. Decision-kind rows MAY be hidden optimistically because
+  // the mutation and the row's closure are one atomic transaction.
+  const isCondition = isConditionActionQueueKind(item.kind)
+
+  // Guards post-refetch setState calls when the row has already unmounted
+  // (i.e. the condition resolved and the parent stopped rendering this row).
+  const mounted = useRef(true)
+  useEffect(() => {
+    return () => {
+      mounted.current = false
+    }
+  }, [])
+
+  // True while the action-queue query is re-fetching after a condition-kind
+  // verb success. Cleared once the refetch resolves (or the row unmounts).
+  const [settling, setSettling] = useState(false)
+
+  // Called after every successful verb. Decision-kind rows are hidden
+  // immediately (their stored row is closed atomically by the mutation).
+  // Condition-kind rows enter a brief settling state and disappear only when
+  // the refetched feed no longer contains them.
+  const handleSuccess = useCallback(() => {
+    if (isCondition) {
+      setSettling(true)
+      void qc.invalidateQueries({ queryKey: ['action-queue'] }).then(() => {
+        if (mounted.current) setSettling(false)
+      })
+    } else {
+      setResolved(true)
+      void qc.invalidateQueries({ queryKey: ['action-queue'] })
+    }
+  }, [isCondition, qc])
+
   // Use relativeTime so timestamps are handled via the existing helper
   // (avoids hand-dividing epoch-ms values which can silently land at 1970).
   const age = relativeTime(item.at)
@@ -272,15 +309,14 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
       try {
         const res = await postDecision(d)
         if (!res.ok) throw new Error(`request failed (${res.status})`)
-        setResolved(true)
-        void qc.invalidateQueries({ queryKey: ['action-queue'] })
+        handleSuccess()
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err))
       } finally {
         setPending(null)
       }
     },
-    [pending, qc],
+    [pending, handleSuccess],
   )
 
   const handleVerb = useCallback(
@@ -298,8 +334,7 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
         setError(null)
         try {
           await snoozeActionQueueItem(item.id, '1h')
-          setResolved(true)
-          void qc.invalidateQueries({ queryKey: ['action-queue'] })
+          handleSuccess()
         } catch (err) {
           setError(err instanceof Error ? err.message : String(err))
         } finally {
@@ -311,15 +346,14 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
       setError(null)
       try {
         await dispatchAlertVerb(item.id, item.entityId, op)
-        setResolved(true)
-        void qc.invalidateQueries({ queryKey: ['action-queue'] })
+        handleSuccess()
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err))
       } finally {
         setPending(null)
       }
     },
-    [pending, qc, item.id, item.entityId],
+    [pending, handleSuccess, item.id, item.entityId],
   )
 
   // Open (or reuse) a chat thread for this row and navigate to it — mirrors
@@ -594,6 +628,19 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
           data-testid="triage-error"
         >
           {error}
+        </p>
+      )}
+
+      {/* Settling indicator — shown while the action-queue feed re-fetches after
+          a condition-kind verb. The row disappears on its own once the refetched
+          feed no longer contains this item; while the condition still holds, the
+          row returns to normal state so the operator can see it persists. */}
+      {settling && (
+        <p
+          className="mt-1 font-mono text-micro text-muted-foreground"
+          data-testid="triage-settling"
+        >
+          Checking…
         </p>
       )}
     </div>

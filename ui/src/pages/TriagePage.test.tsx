@@ -909,3 +909,76 @@ describe('TriagePage – action-queue feed rejects but proposals error still sur
     expect(container.textContent).not.toContain('All quiet')
   })
 })
+
+// ---------------------------------------------------------------------------
+// TriageRow — condition-kind vs decision-kind visibility after verb success
+//
+// Condition kinds (baseline-broken, failed, stale-queued, …) are derived on
+// read from live system state — no stored row is closed by the mutation. The
+// row MUST NOT be hidden optimistically; it must stay rendered and disappear
+// only when the refetched feed no longer includes it.
+//
+// Decision kinds (gate-enrichment, awaiting-human, …) carry a stored row that
+// is closed atomically by the mutation. Those rows MAY be hidden immediately.
+// ---------------------------------------------------------------------------
+
+describe('TriageRow – condition-kind verb success: row stays rendered', () => {
+  it('baseline-broken: row stays rendered when item is still in the refetched feed', async () => {
+    // baseline-broken is a condition kind — derived on read, never stored.
+    // Clicking "Resume dispatch" does NOT close any stored row, so the row must
+    // remain visible until the refetched feed confirms the condition cleared.
+    // mockItems stays unchanged (simulating "condition still holds after verb").
+    mockItems.mockReturnValue([
+      makeItem('baseline-broken', {
+        verbs: [{ op: 'resume-dispatch', label: 'Resume dispatch', style: 'primary' }],
+      }),
+    ])
+    const { container } = renderPage()
+    const btn = container.querySelector('[data-testid="triage-verb-resume-dispatch"]') as HTMLButtonElement
+    expect(btn).not.toBeNull()
+    await act(async () => {
+      btn.click()
+    })
+    // Row must still be present — condition still holds in the refetched feed.
+    // `resolved` was never set to true (condition kind), so `if (resolved) return null`
+    // did not fire and the row is still in the DOM.
+    expect(container.querySelector('[data-testid="triage-verb-resume-dispatch"]')).not.toBeNull()
+  })
+
+  it('failed kind: row stays rendered after a verb (same condition-kind guarantee)', async () => {
+    // 'failed' is also a condition kind. Continue already had this property
+    // (invokeAction resolved but the row stayed) — this test makes the
+    // condition-kind contract explicit and guards it against regression.
+    mockItems.mockReturnValue([makeItem('failed')])
+    const { container } = renderPage()
+    const btn = container.querySelector('[data-testid="triage-continue"]') as HTMLButtonElement
+    expect(btn).not.toBeNull()
+    await act(async () => {
+      btn.click()
+    })
+    // Row still present — 'failed' is a condition kind.
+    expect(container.querySelector('[data-testid="triage-continue"]')).not.toBeNull()
+  })
+})
+
+describe('TriageRow – operator-decision kind: row hides optimistically on verb success', () => {
+  it('gate-enrichment decision button: row disappears immediately on success', async () => {
+    // gate-enrichment is a decision kind — its stored row is closed atomically
+    // with the mutation, so the client can safely hide it without waiting for a
+    // refetch. This is the correct, intended behaviour for all decision kinds.
+    mockItems.mockReturnValue([
+      makeItem('gate-enrichment', {
+        decisions: [{ label: 'Approve', endpoint: '/api/gate/approve', payload: {} }],
+      }),
+    ])
+    mockPostDecision.mockResolvedValueOnce(new Response(null, { status: 200 }))
+    const { container } = renderPage()
+    const btn = container.querySelector('[data-testid="triage-decision-Approve"]') as HTMLButtonElement
+    expect(btn).not.toBeNull()
+    await act(async () => {
+      btn.click()
+    })
+    // Row is gone — decision kind, row closed atomically with the mutation.
+    expect(container.querySelector('[data-testid="triage-decision-Approve"]')).toBeNull()
+  })
+})

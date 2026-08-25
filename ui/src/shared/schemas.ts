@@ -529,6 +529,40 @@ export const taskFailureKinds = [
 export const isTaskFailureActionQueueKind = (kind: string): boolean =>
   (taskFailureKinds as readonly string[]).includes(kind)
 
+// Mirror of CONDITION_KINDS from orchestrator/src/core/lib/action-queue-kinds.ts.
+//
+// Condition kinds are derived on read from live system state — there is no
+// stored row to close. Whether a condition-kind row survives a verb depends
+// entirely on whether the underlying condition still holds after the verb, which
+// only the refetched feed knows. DO NOT optimistically hide condition-kind rows
+// on verb success; let the row disappear because the refetched feed no longer
+// contains it (or stay, because the condition persists).
+//
+// conditionKinds.driftGate.test.ts recomputes the expected set directly from
+// the orchestrator source and fails if this list disagrees — fix this list
+// when the gate fires, do not loosen the gate.
+export const conditionKinds = [
+  'failed',
+  'stale-queued',
+  'stale-queued-summary',
+  'gate-broken',
+  'subscriber-stalled',
+  'signature-storm',
+  'daemon-died',
+  'daemon-code-drift',
+  'baseline-broken',
+  'stale-worktree',
+  'phantom-task',
+  'worktree-ahead',
+  'orphaned-origin',
+  'steward-repeat',
+  'e2e-tooling-missing',
+] as const
+
+/** True when this action-queue kind is a condition derived from live state. */
+export const isConditionActionQueueKind = (kind: string): boolean =>
+  (conditionKinds as readonly string[]).includes(kind)
+
 const taskFailureItemSchema = actionQueueBaseSchema.extend({
   kind: z.enum(taskFailureKinds),
 })
