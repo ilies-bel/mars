@@ -46,6 +46,9 @@ const {
   mockIsBranchTipInIntegration,
   mockFindLiveWorktreeDependents,
   mockRemoveWorktree,
+  // operatorAutoCommit lever helpers (dirty-guard lever tests)
+  mockAutoCommitOperatorDirt,
+  mockSpeakOperatorAutoCommitNotice,
 } = vi.hoisted(() => ({
   mockUpdateTask: vi.fn().mockResolvedValue(undefined),
   mockHasIncompleteBlockers: vi.fn().mockResolvedValue(false),
@@ -325,8 +328,11 @@ describe('setup-worktree dirty-integration preflight guard', () => {
     expect(blockedCall).toBeUndefined()
   })
 
-  it('parks task as blocked when integration branch has uncommitted changes', async () => {
-    // Arrange: dirty integration branch
+  it('parks task as blocked when integration branch has uncommitted changes (lever off)', async () => {
+    // Arrange: dirty integration branch. Force lever off — with lever on (default)
+    // the new code auto-commits and proceeds; this test exercises the residual path.
+    mkdirSync(join(tmpRepo, '.mars'), { recursive: true })
+    writeFileSync(join(tmpRepo, '.mars', 'daemon.json'), JSON.stringify({ controlLevers: { operatorAutoCommit: 'off' } }))
     const statusOutput = ' M README.md\n?? scratch.txt'
     mockCheckIntegrationBranchDirty.mockResolvedValue({ dirty: true, statusOutput })
     const ctx = makeCtx('test-dirty')
@@ -345,8 +351,10 @@ describe('setup-worktree dirty-integration preflight guard', () => {
     expect(mockCreateWorktree).not.toHaveBeenCalled()
   })
 
-  it('raises an action-queue item naming the integration branch and dirty paths', async () => {
-    // Arrange
+  it('raises an action-queue item naming the integration branch and dirty paths (lever off)', async () => {
+    // Arrange: lever off so the residual fail+raise path is taken.
+    mkdirSync(join(tmpRepo, '.mars'), { recursive: true })
+    writeFileSync(join(tmpRepo, '.mars', 'daemon.json'), JSON.stringify({ controlLevers: { operatorAutoCommit: 'off' } }))
     const statusOutput = ' M src/index.ts\n M package.json'
     mockCheckIntegrationBranchDirty.mockResolvedValue({ dirty: true, statusOutput })
     const ctx = makeCtx('test-aq')
@@ -374,10 +382,13 @@ describe('setup-worktree dirty-integration preflight guard', () => {
     })
   })
 
-  it('does not spawn a coder after blocking on dirty integration', async () => {
+  it('does not spawn a coder after blocking on dirty integration (lever off)', async () => {
     // The WorkflowTerminalError thrown by the guard stops the pipeline before
     // the code step runs. Verifying via the setup result/throw is sufficient —
     // no coder mock is wired up for this test by design.
+    // Force lever off so the terminal path fires (lever on would auto-commit and proceed).
+    mkdirSync(join(tmpRepo, '.mars'), { recursive: true })
+    writeFileSync(join(tmpRepo, '.mars', 'daemon.json'), JSON.stringify({ controlLevers: { operatorAutoCommit: 'off' } }))
     mockCheckIntegrationBranchDirty.mockResolvedValue({ dirty: true, statusOutput: ' M foo.ts' })
     const ctx = makeCtx('test-no-coder')
 

@@ -469,6 +469,9 @@ function registerSetupWorktreeMocks(overrides: {
     hasIncompleteBlockers: vi.fn().mockResolvedValue(false),
     getTask: vi.fn().mockResolvedValue(null),
     TERMINAL_TASK_STATUSES: ['done', 'failed', 'dropped'],
+    // MERGE_MODES is imported by workflows/primitives/shared.ts which
+    // setup-worktree.ts statically imports — must be present in the mock.
+    MERGE_MODES: ['auto', 'gated'],
     resolveQueueClient: vi.fn(),
     enqueueTask: vi.fn(),
   }))
@@ -619,8 +622,10 @@ describe('setup-worktree: operatorAutoCommit lever at setup time', () => {
       const { __resetContextCacheForTests } = await import('../../context')
       __resetContextCacheForTests()
 
-      // Act: should throw with the dirty-integration kind
-      await expect(setupWorktree(makeSetupCtx('lever-off-task'))).rejects.toThrow('setup-dirty-integration')
+      // Act: should throw with the dirty-integration kind.
+      // WorkflowTerminalError(kind, message) stores kind as a property, not in
+      // the message string — match the object shape rather than the message text.
+      await expect(setupWorktree(makeSetupCtx('lever-off-task'))).rejects.toMatchObject({ kind: 'setup-dirty-integration' })
 
       // Assert: task set to 'failed'
       const failedCall = mockUpdateTask.mock.calls.find(
