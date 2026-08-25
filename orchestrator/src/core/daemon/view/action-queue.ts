@@ -352,17 +352,17 @@ export const OPERATIONAL_ALERT_COPY: Record<
         ? row.payload.subscriberId
         : (row.signature?.replace(/^subscriber-stalled:/, '') ?? 'unknown subscriber')
     const pidMatch = rawSubscriber.match(/^(.*):(\d+)$/)
-    const subscriber = pidMatch
+    const processor = pidMatch
       ? `${pidMatch[1]} (pid ${pidMatch[2]})`
       : rawSubscriber
     const stalledFor = formatOperationalDuration(
       Math.max(0, row.lastSeenAt - row.raisedAt),
     )
     return {
-      title: `Subscriber ${subscriber} is stalled for ${stalledFor}`,
+      title: `Processor ${processor} is stalled for ${stalledFor}`,
       body:
-        `Subscriber ${subscriber} has not advanced for ${stalledFor}. There is no task transcript for this subscriber-level alert. ` +
-        `Inspect \`.mars/watch.log\` and the subscriber cursor before restarting the daemon.`,
+        `Processor ${processor} has not advanced for ${stalledFor}. There is no task transcript for this alert. ` +
+        `Inspect \`.mars/watch.log\` and the processor cursor before restarting the daemon.`,
     }
   },
   'observability-store-oversize': null,

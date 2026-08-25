@@ -666,8 +666,8 @@ const RECIPE_DEFINITIONS = {
         ? ctx.payload['missingKinds'].filter((kind): kind is string => typeof kind === 'string')
         : []
       return missing.length === 1
-        ? `The "${missing[0]}" Workflow is not installed, so tasks routed to it cannot dispatch.`
-        : 'Some built-in Workflows are not installed, so tasks routed to them cannot dispatch.'
+        ? `The "${missing[0]}" Workflow is not installed, so tasks routed to it cannot run.`
+        : 'Some built-in Workflows are not installed, so tasks routed to them cannot run.'
     },
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
@@ -732,7 +732,7 @@ const RECIPE_DEFINITIONS = {
   // family: daemon-health
   'outbox-lag': {
     humanSummary: () =>
-      'An event queue is backed up — a subscriber may be wedged. Check the subscriber status.',
+      'An internal processor is backed up and may be stuck — check its status.',
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
       entityId: ctx.entityId,
@@ -778,8 +778,8 @@ const RECIPE_DEFINITIONS = {
     humanSummary: (ctx) => {
       const resetsAt = str(ctx.payload['resetsAtIso'])
       return resetsAt
-        ? `The Claude API rate limit was hit — dispatch will resume automatically at ${resetsAt}.`
-        : 'The Claude API rate limit was hit — dispatch will resume automatically once the limit resets.'
+        ? `The Claude API rate limit was hit — new tasks will resume automatically at ${resetsAt}.`
+        : 'The Claude API rate limit was hit — new tasks will resume automatically once the limit resets.'
     },
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
@@ -1284,9 +1284,9 @@ const RECIPE_DEFINITIONS = {
   // family: verify-gate
   'dirty-integration': {
     humanSummary: (ctx) => {
-      const branch = str(ctx.payload['integrationBranch']) || 'integration branch'
+      const branch = str(ctx.payload['integrationBranch']) || 'main'
       const taskId = str(ctx.payload['taskId']) || ctx.entityId
-      return `Task ${taskId} parked: integration branch '${branch}' has uncommitted changes — clean the branch then restart the task.`
+      return `Task ${taskId} parked: branch '${branch}' has uncommitted changes — clean the branch then restart the task.`
     },
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
