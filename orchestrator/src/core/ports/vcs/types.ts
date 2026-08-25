@@ -16,13 +16,20 @@
  * The active implementation is selected by `MARS_VCS_KIND`
  * (see `../../config/registry.ts`'s `vcs` Port entry).
  *
- * Scope note (tracer-bullet slice, PRD ae17340a slice 36): this interface
- * covers every operation category the acceptance criteria name — worktree,
- * branch, commit, merge, status — with the thinnest serializable shape that
- * satisfies them. It deliberately narrows the richer, non-serializable
- * options the underlying `../../lib/git/*` helpers accept (callbacks,
- * `AbortSignal`, trace context) rather than carrying them through; wiring
- * existing callers onto this Port is left to a later slice.
+ * Scope note: this interface covers every operation category the acceptance
+ * criteria name — worktree, branch, commit, merge, status — with the
+ * thinnest serializable shape that satisfies them. It deliberately narrows
+ * the richer, non-serializable options the underlying `../../lib/git/*`
+ * helpers accept (callbacks, `AbortSignal`, trace context) rather than
+ * carrying them through, per ADR-0097's serializability rule. The dropped
+ * trace context is a known, open consequence tracked in proposal `99caef46`.
+ *
+ * Caller adoption: the daemon, the implement pipeline's setup and merge
+ * steps, and the CLI all resolve git through `resolveVcs()`. A handful of
+ * direct `../../lib/git/*` imports remain — notably `captureCheckpoint`,
+ * `discardWorkingTreeChanges`, and `mergeBranch` — all of which the port
+ * itself declares; whether to migrate those is under discussion in proposal
+ * `cde926e8` (HR-9/DEC-13 vs ADR-0097).
  */
 
 /** Args for {@link Vcs.createWorktree}. */
