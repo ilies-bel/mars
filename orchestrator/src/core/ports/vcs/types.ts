@@ -28,8 +28,10 @@
  * steps, and the CLI all resolve git through `resolveVcs()`. A handful of
  * direct `../../lib/git/*` imports remain — notably `captureCheckpoint`,
  * `discardWorkingTreeChanges`, and `mergeBranch` — all of which the port
- * itself declares; whether to migrate those is under discussion in proposal
- * `cde926e8` (HR-9/DEC-13 vs ADR-0097).
+ * itself declares; the HR-9/DEC-13 tension is resolved (bounded Reading B,
+ * VISION.md Append 2): the port stays, HR-9 and DEC-13 are amended.
+ * Migration of the remaining direct callers is deferred and tracked
+ * separately from the port itself.
  */
 
 /** Args for {@link Vcs.createWorktree}. */
