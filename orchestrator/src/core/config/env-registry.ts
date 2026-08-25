@@ -72,8 +72,7 @@ export interface EnvKnob {
    * Legacy/alternate dot-paths to also check when reading `daemon.json`
    * (checked in order, first match wins), for fields `daemonConfigSchema`
    * accepts under more than one key — e.g. `caps.setupInstall` vs the
-   * kebab-case `caps.setup-install`, or `selfEvolve.autoEnqueue` vs the
-   * legacy `selfEvolve.autoTrigger`. Defaults to `[path]` when omitted.
+   * kebab-case `caps.setup-install`. Defaults to `[path]` when omitted.
    */
   fileAliases?: readonly MarsConfigPath[]
 }

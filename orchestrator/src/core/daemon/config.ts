@@ -446,7 +446,7 @@ export const daemonConfigPath = (): string =>
 /**
  * Persist a selfEvolve patch to daemon.json, merging into the existing block.
  * Any fields not in `patch` are preserved. Used by `operator set` for
- * selfEvolve knobs other than `autoEnqueue`.
+ * selfEvolve knobs (e.g. `drift-threshold-pct`).
  */
 export const persistSelfEvolvePatch = (patch: Partial<SelfEvolveConfig>): void => {
   const existing = readDaemonConfigFileLenient()

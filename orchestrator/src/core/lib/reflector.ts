@@ -42,9 +42,8 @@ export interface ReflectionSuggestion {
   frequency: number
   /**
    * Model-assessed confidence (0..1) grounded in frequency, token deltas, and
-   * reproducibility. Used to gate auto-enqueuing: only suggestions with
-   * confidence >= selfEvolve.taskConfidenceThreshold and kind='mechanical' are
-   * auto-enqueued when autoEnqueue is enabled.
+   * reproducibility. High-confidence mechanical suggestions are surfaced as
+   * proposals (ADR-0038); the framework never auto-enqueues tasks from reflection.
    */
   confidence: number
   /**

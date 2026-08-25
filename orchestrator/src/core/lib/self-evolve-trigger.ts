@@ -312,8 +312,7 @@ const detectFailureClusters = async (
 
 /**
  * Evaluate all reflect-worthiness signals over the rolling window.
- * Returns the evidence structure regardless of autoEnqueue status — the
- * caller decides what to do with the result.
+ * Returns the evidence structure; the caller decides what to do with the result.
  */
 const evaluateWorthiness = async (
   store: TaskStore,
