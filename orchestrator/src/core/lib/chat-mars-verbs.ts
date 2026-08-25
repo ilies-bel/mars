@@ -29,6 +29,10 @@ export const SAFE_MARS_VERBS: readonly string[] = [
   // Reverting an auto-commit restores the previous HEAD, so the change is
   // recoverable by construction — no confirmation required.
   'revert-auto-commit',
+  // Adding a gate from a proposed spec creates a new verify gate with
+  // source='observation' and resolves the verify-uncovered AQ row — the gate
+  // can be removed with `mars verify-gate remove`, so this is recoverable.
+  'add-gate',
 ]
 
 /**

@@ -800,21 +800,40 @@ const RECIPE_DEFINITIONS = {
       changedPaths: ctx.payload['changedPaths'],
       recipe: str(ctx.payload['recipe']),
     }),
-    // Primary verb lets the operator dismiss the coverage gap as intentional.
-    // Secondary copy verb hands the operator the pre-filled `mars verify-gate add`
-    // command so they can add a gate without looking up the syntax.
-    // Dismiss is also appended automatically by `getRecipeVerbs` (via GENERIC_DISMISS_KINDS).
+    // The row asks one question — add a check for this scope, or decide none is
+    // needed — so it carries both answers.
+    //
+    // `add-gate` creates the gate in one click straight from `proposedGate`, and
+    // exists only when the raiser actually encoded a candidate check.
+    // `copy` hands the operator the exact `mars verify-gate add` command pre-filled
+    // from `proposedGate` when the raiser had enough context, or a minimal
+    // `--scope` form when it did not — the escape hatch for adapting the command
+    // rather than running it verbatim.
+    // `dismiss-uncovered` records the negative answer: the gap is intentional.
+    // Generic Dismiss is also appended by `getRecipeVerbs` (via GENERIC_DISMISS_KINDS).
     verbs: (ctx) => {
-      const scope = str(ctx.payload['scope']) || '<scope>'
-      return [
-        { op: 'dismiss-uncovered', label: 'No gate needed', style: 'primary' },
-        {
-          op: 'copy',
-          label: 'Copy add-gate command',
-          style: 'default',
-          hint: `mars verify-gate add --scope ${scope} --name <name> --cmd '<cmd>'`,
-        },
-      ]
+      const scope = str(ctx.payload['scope']) || '.'
+      const proposed = ctx.payload['proposedGate'] as
+        | { name?: string; cmd?: string; args?: string[]; scope?: string }
+        | undefined
+      const hint =
+        proposed?.name && proposed?.cmd
+          ? [
+              'mars verify-gate add',
+              `--scope ${str(proposed.scope) || scope}`,
+              `--name ${proposed.name}`,
+              `--cmd ${proposed.cmd}`,
+              ...(Array.isArray(proposed.args) && proposed.args.length > 0
+                ? ['--', ...proposed.args]
+                : []),
+            ].join(' ')
+          : `mars verify-gate add --scope ${scope} --name <name> --cmd <cmd>`
+      const baseVerbs: RecipeVerb[] = [{ op: 'copy', label: 'Add gate check', style: 'primary', hint }]
+      if (proposed) {
+        baseVerbs.push({ op: 'add-gate', label: 'Add gate', style: 'primary' })
+      }
+      baseVerbs.push({ op: 'dismiss-uncovered', label: 'No gate needed', style: 'primary' })
+      return baseVerbs
     },
   },
 

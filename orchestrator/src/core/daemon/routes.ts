@@ -218,6 +218,7 @@ type EntityOp =
   | 'reject'
   | 'land-work'
   | 'gate-restore'
+  | 'add-gate'
 
 const TRACE_EVENT_SEVERITIES: readonly TraceEventSeverity[] = [
   'info',
@@ -396,6 +397,12 @@ export const registerRoutes = (
         throw Object.assign(new Error('gate-restore not implemented'), { code: 'NOT_IMPLEMENTED' as const })
       }
       await deps.handleGateRestore(id)
+    },
+    'add-gate': async (id) => {
+      if (!deps.addGateFromItem) {
+        throw Object.assign(new Error('add-gate not implemented'), { code: 'NOT_IMPLEMENTED' as const })
+      }
+      await deps.addGateFromItem(id)
     },
   }
 

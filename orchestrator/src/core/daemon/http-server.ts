@@ -458,6 +458,15 @@ export interface HttpServerDeps {
    */
   handleGateRestore?: (id: string) => Promise<void>
   /**
+   * Create a verify gate from the `proposedGate` spec embedded in an open
+   * `verify-uncovered` action-queue item, then resolve that item so it no
+   * longer appears in the open queue. The gate is inserted with
+   * `source='observation'`. Throws when the item is not found or carries no
+   * valid `proposedGate`. Optional — when absent the endpoint returns
+   * 501 Not Implemented.
+   */
+  addGateFromItem?: (id: string) => Promise<void>
+  /**
    * Promote a fully-shaped draft proposal: flip its status from `draft` →
    * `prd-ready`, run the slicer to create tasks, and return the resulting
    * task IDs. Throws when the proposal is not in `draft` status or the
