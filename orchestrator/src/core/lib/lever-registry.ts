@@ -810,7 +810,7 @@ const REGISTRY: LeverRegistryEntry[] = [
         // Access via the raw selfEvolve cast — the Zod schema strips unknown
         // fields, so we access this as an opaque record until the schema is
         // extended by the consumer slice.
-        const se = file.selfEvolve as Record<string, unknown>
+        const se = file.selfEvolve as unknown as Record<string, unknown>
         const val = se.autoEnqueue
         if (typeof val === 'boolean') return String(val)
         return '(not set — defaults to false)'
@@ -835,7 +835,7 @@ const REGISTRY: LeverRegistryEntry[] = [
       // extends the schema; until then return a sentinel.
       try {
         const file = loadDaemonConfig()
-        const se = file.selfEvolve as Record<string, unknown>
+        const se = file.selfEvolve as unknown as Record<string, unknown>
         const val = se.taskConfidenceThreshold
         if (typeof val === 'number') return String(val)
         return '(not set — defaults to 0)'
