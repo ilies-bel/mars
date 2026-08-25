@@ -372,7 +372,7 @@ const RECIPE_DEFINITIONS = {
       const status = str(ctx.payload['status'])
       const ageText = typeof ageHours === 'number' ? `${ageHours}h` : 'a while'
       const statusText = status ? ` (status: ${status})` : ''
-      return `A task's worktree has sat untouched for ${ageText}${statusText} — clean it up or resume it (${taskId}).`
+      return `Mars is cleaning up a task workspace that has been inactive for ${ageText}${statusText} — no action needed from you (${taskId}).`
     },
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
@@ -442,7 +442,7 @@ const RECIPE_DEFINITIONS = {
   'draft-proposal': {
     humanSummary: (ctx) => {
       const title = str(ctx.payload['title']) || ctx.title
-      return `A new proposal is waiting for your review: "${title}".`
+      return `You have a new proposal to review: "${title}" — shape it into a PRD or promote it directly.`
     },
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
@@ -485,7 +485,7 @@ const RECIPE_DEFINITIONS = {
   // family: slice-workflow
   'hitl-slice-needs-operator': {
     humanSummary: () =>
-      'A task in the plan requires a human to take over — attach to it and do the work manually.',
+      'You need to take over a task in this plan — pick it up and complete the work manually.',
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
       entityId: ctx.entityId,
@@ -500,7 +500,7 @@ const RECIPE_DEFINITIONS = {
   // family: validation-qa
   'awaiting-validation': {
     humanSummary: () =>
-      'A task finished and its preview is ready for you to check — validate it to merge, or reject to restart.',
+      'You need to review this completed task — validate it to merge the work, or reject to start over.',
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
       entityId: ctx.entityId,
@@ -548,13 +548,13 @@ const RECIPE_DEFINITIONS = {
           const p = ctx.payload as Partial<LeaseParkPayload>
           const owner = str(p.leaseOwner) || 'someone'
           const step = str(p.stepName)
-          return `${owner} is working interactively${step ? ` at step '${step}'` : ''} — the task resumes automatically when the lease is released.`
+          return `Pick up this task — it is paused${step ? ` at step '${step}'` : ' at an interactive step'} for ${owner} to complete. Signal done when the step is finished.`
         }
         case 'lease-expired': {
           const p = ctx.payload as Partial<LeaseExpiredPayload>
           const owner = str(p.leaseOwner) || 'someone'
           const age = typeof p.ageMinutes === 'number' ? ` for ${p.ageMinutes} min` : ''
-          return `A lease held by ${owner} has been idle${age} — nobody is working on this task. Continue in the worktree or release it.`
+          return `Decide what to do — ${owner}'s session has been idle${age} with no progress. Continue in the worktree or release this task.`
         }
         case 'escalation': {
           // The escalating agent's own words are the only accurate summary
@@ -564,7 +564,7 @@ const RECIPE_DEFINITIONS = {
           // rather than passing a fragment off as one.
           return sentence.length >= 20
             ? sentence
-            : 'An agent stopped and escalated this to a human — read the detail and decide what to do.'
+            : 'You need to decide — an agent stopped and escalated this task. Read the details and choose what to do.'
         }
       }
     },
@@ -680,7 +680,7 @@ const RECIPE_DEFINITIONS = {
 
   'subscriber-stalled': {
     humanSummary: () =>
-      'An internal event processor keeps failing on the same event and has stopped — fix the underlying error to unblock it.',
+      'Mars is restarting an internal processor that keeps failing on the same event — no action needed from you.',
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
       entityId: ctx.entityId,
@@ -719,7 +719,7 @@ const RECIPE_DEFINITIONS = {
 
   'phantom-task': {
     humanSummary: () =>
-      'A task stalled with no active worker — Mars stopped it automatically. Restart or drop it.',
+      'Mars stopped a task that had no active worker and cleaned it up automatically — no action needed from you.',
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
       entityId: ctx.entityId,
@@ -748,7 +748,7 @@ const RECIPE_DEFINITIONS = {
   // family: proposal-promotion
   'reflect-recommended': {
     humanSummary: () =>
-      'Mars spotted patterns worth reflecting on — run a reflection to surface improvement proposals.',
+      'Mars spotted patterns in recent work worth reviewing — this is informational, no action needed from you.',
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
       entityId: ctx.entityId,
@@ -836,7 +836,7 @@ const RECIPE_DEFINITIONS = {
   'verify-uncovered': {
     humanSummary: (ctx) => {
       const scope = str(ctx.payload['scope']) || ctx.entityId
-      return `No task-tier verify gate covers changes in ${scope}; the task merged as CAN'T-VERIFY.`
+      return `Decide whether to add an automated check for ${scope} — a task merged without any check covering these changes.`
     },
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
@@ -853,8 +853,8 @@ const RECIPE_DEFINITIONS = {
       const signature = str(ctx.payload['signature'])
       const count = ctx.payload['count'] ?? ctx.payload['streak']
       return signature
-        ? `${count} tasks failed with signature ${signature}.`
-        : 'The same failure hit multiple tasks in a row — the environment may be broken. Queue is PAUSED.'
+        ? `Mars detected ${count} tasks failing with the same error pattern — the work queue is paused automatically while it monitors, no action needed from you.`
+        : 'Mars detected the same failure across multiple tasks — the work queue is paused automatically while it monitors, no action needed from you.'
     },
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
@@ -879,8 +879,8 @@ const RECIPE_DEFINITIONS = {
       const spec = ctx.payload.stepSpec
       const cmd = spec ? [spec.cmd, ...spec.args].join(' ') : ''
       return cmd
-        ? `Failure pattern ${ctx.payload.signature} recurred — approve \`${cmd}\` as a standing gate check, or retire the pattern.`
-        : 'A new failure pattern was spotted — review the proposed gate check and approve it or retire the pattern.'
+        ? `Decide whether to add \`${cmd}\` as a standing automated check — this error pattern keeps recurring. Approve it or retire the pattern.`
+        : 'Decide whether to add a proposed automated check for a recurring error pattern — approve it or retire the pattern.'
     },
     humanDetail: (ctx) => {
       const spec = ctx.payload.stepSpec
@@ -909,8 +909,8 @@ const RECIPE_DEFINITIONS = {
       const sig = str(ctx.payload['signature'])
       const count = ctx.payload['passCount']
       return sig
-        ? `Enforcing check enrich:${sig} passed ${count} verify runs in a row — consider retiring it if the regression is resolved.`
-        : `An enforcing enrichment check has run clean for many consecutive verify runs — it may be stale.`
+        ? `Decide whether to retire the auto-added check for "${sig}" — it has passed ${count} consecutive runs and the issue may be resolved.`
+        : `Decide whether to retire an auto-added check that has passed many consecutive runs — the issue it was tracking may be resolved.`
     },
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
@@ -961,7 +961,7 @@ const RECIPE_DEFINITIONS = {
   'scorer-suggested': {
     humanSummary: (ctx) => {
       const workflow = str(ctx.payload['workflowName']) || ctx.entityId
-      return `Mars suggested a quality scorer for the "${workflow}" workflow — accept it to start tracking quality automatically.`
+      return `You have a suggestion to consider — a quality scorer for "${workflow}" is proposed. Accept it to start tracking quality automatically, or dismiss it.`
     },
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
@@ -982,11 +982,11 @@ const RECIPE_DEFINITIONS = {
       const verdict = str(ctx.payload['verdict'])
       const workflow = str(ctx.payload['workflowName']) || ctx.entityId
       if (verdict === 'promote') {
-        return `The "${workflow}" workflow is performing better than before — promote it to make it the default.`
+        return `Decide whether to promote "${workflow}" to the default — it is performing better than before.`
       } else if (verdict === 'retire') {
-        return `The "${workflow}" workflow is performing worse than before — consider retiring it.`
+        return `Decide whether to retire "${workflow}" — it is performing worse than before.`
       }
-      return `A promotion decision is ready for the "${workflow}" workflow — review the benchmark and act.`
+      return `You need to decide what to do with "${workflow}" — review the benchmark results and choose.`
     },
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
@@ -1006,7 +1006,7 @@ const RECIPE_DEFINITIONS = {
   'workflow-draft-pending': {
     humanSummary: (ctx) => {
       const name = str(ctx.payload['workflowName']) || ctx.entityId
-      return `A self-authored workflow "${name}" is waiting for your approval before it can be dispatched.`
+      return `You need to approve a new workflow "${name}" before it can run — review it and approve or reject.`
     },
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
@@ -1024,7 +1024,7 @@ const RECIPE_DEFINITIONS = {
   'tool-promotion': {
     humanSummary: (ctx) => {
       const helperKey = str(ctx.payload['helperKey']) || ctx.entityId
-      return `A helper tool "${helperKey}" has benchmark evidence ready — review and promote or reject it.`
+      return `You need to decide on a helper tool "${helperKey}" — review the benchmark and choose to promote or reject it.`
     },
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
@@ -1125,8 +1125,8 @@ const RECIPE_DEFINITIONS = {
     humanSummary: (ctx) => {
       const direction = str(ctx.payload['direction'])
       return direction === 'paused'
-        ? 'The spend controller has paused dispatch — token spend crossed the configured threshold.'
-        : 'The spend controller has resumed dispatch — spend dropped below the resume threshold.'
+        ? 'Mars paused the work queue because token spend crossed the configured threshold — no action needed from you.'
+        : 'Mars resumed the work queue — spend dropped back below the threshold. No action needed from you.'
     },
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
@@ -1141,8 +1141,8 @@ const RECIPE_DEFINITIONS = {
     humanSummary: (ctx) => {
       const taskId = str(ctx.payload['taskId']) || ctx.entityId
       return ctx.payload['decision'] === 'woken'
-        ? `Usage pressure cleared, so Mars can run ${taskId} now.`
-        : `Mars deferred ${taskId} until provider usage pressure clears.`
+        ? `Pick whether to run task ${taskId} now — provider usage pressure has cleared and it is ready to go.`
+        : `Decide if you want to run task ${taskId} sooner — Mars has deferred it while provider usage is high.`
     },
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
@@ -1157,11 +1157,8 @@ const RECIPE_DEFINITIONS = {
   },
   // family: scheduling-workflow-drift
   'requeue-warning': {
-    humanSummary: (ctx) => {
-      const diag = ctx.payload['diagnostics'] as Record<string, unknown> | undefined
-      const kind = str(diag?.['class'])
-      return `Task is approaching the requeue ceiling (predicted class: ${kind}).`
-    },
+    humanSummary: (_ctx) =>
+      'Mars is monitoring a task approaching its retry limit — no action needed from you.',
     humanDetail: (ctx) => {
       const diag = ctx.payload['diagnostics'] as Record<string, unknown> | undefined
       return {
@@ -1181,8 +1178,8 @@ const RECIPE_DEFINITIONS = {
       const originId = str(ctx.payload['originId']) || ctx.entityId
       const sha = str(ctx.payload['supersededBySha'])
       return sha
-        ? `Arc ${originId} dropped as superseded: intent already on main at ${sha.slice(0, 8)}.`
-        : `Arc ${originId} dropped as superseded: intent already on main.`
+        ? `Mars dropped task group ${originId} — the same work already landed on the main branch (${sha.slice(0, 8)}). No action needed from you.`
+        : `Mars dropped task group ${originId} — the same work already landed on the main branch. No action needed from you.`
     },
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
@@ -1353,7 +1350,7 @@ const RECIPE_DEFINITIONS = {
   'mockup-ready': {
     humanSummary: (ctx) => {
       const proposalId = str(ctx.payload['proposalId']) || 'unknown'
-      return `Visual mockup ready for proposal ${proposalId}.`
+      return `Mars has prepared a visual mockup for proposal ${proposalId} — this is informational, no action needed from you.`
     },
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
@@ -1367,7 +1364,7 @@ const RECIPE_DEFINITIONS = {
   // family: validation-qa
   'qa-step-list-opt-in': {
     humanSummary: (_ctx) =>
-      'Enable QA step list generation for this project?',
+      'Decide if you want to enable automatic QA step list generation for this project.',
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
       entityId: ctx.entityId,
@@ -1382,7 +1379,7 @@ const RECIPE_DEFINITIONS = {
   // family: validation-qa
   'qa-step-list-promote': {
     humanSummary: (_ctx) =>
-      'Promote QA step list to project documentation?',
+      'Decide if you want to promote the QA step list to project documentation, or keep it as a task artifact only.',
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
       entityId: ctx.entityId,
