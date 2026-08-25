@@ -328,4 +328,36 @@ describe('Notice class — raise, list, dismiss, stays dismissed', () => {
     // An unrelated key is unaffected.
     expect(await m.isNoticeDismissed('idle-proposal:other-456')).toBe(false)
   })
+
+  it('detectIdleProposal skips a dismissed draft and returns the next candidate', async () => {
+    vi.resetModules()
+    process.env.MARS_REPO = repo
+
+    const m = (await import('../action-queue')) as unknown as NoticeModule
+    const { detectIdleProposal } = await import('../notices/idle-proposal')
+    const { resolveStateClient } = await import('../../store/state-client')
+    const db = resolveStateClient()
+
+    // Insert two draft proposals; A comes first by created_at ordering.
+    const now = 1_700_000_000_000
+    await db.execute({
+      sql: `INSERT INTO proposals (id, title, status, created_at, updated_at)
+            VALUES ('a-prop', 'Proposal A', 'draft', ?, ?)`,
+      args: [now, now],
+    })
+    await db.execute({
+      sql: `INSERT INTO proposals (id, title, status, created_at, updated_at)
+            VALUES ('b-prop', 'Proposal B', 'draft', ?, ?)`,
+      args: [now + 1, now + 1],
+    })
+
+    // Dismiss draft A — simulates the operator clicking "Stop asking me that".
+    await m.recordNoticeDismissal('idle-proposal:a-prop')
+
+    // detectIdleProposal must skip A and return B.
+    const result = await detectIdleProposal(db)
+    expect(result).not.toBeNull()
+    expect(result?.proposalId).toBe('b-prop')
+    expect(result?.title).toBe('Proposal B')
+  })
 })

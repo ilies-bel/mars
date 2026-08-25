@@ -132,21 +132,6 @@ const silence = (lever: string, label: string, id = 'silence'): PreloadedRespons
 })
 
 /**
- * Per-instance dismissal via `notice_dismissals`. Sends `dismiss-notice` to
- * the daemon, which records a durable dismissal keyed by `noticeKey` and
- * resolves the action-queue row — the same logical notice will not reappear.
- *
- * Use this instead of `silence()` when only this specific instance should be
- * suppressed, not the whole class. Each distinct `noticeKey` is independent:
- * dismissing one instance does not gate any other.
- */
-export const dismissNotice = (noticeKey: string, id = 'dismiss'): PreloadedResponse => ({
-  id,
-  label: 'Dismiss',
-  target: { type: 'verb', op: 'dismiss-notice', entityId: noticeKey },
-})
-
-/**
  * A Notice with no lever and no action still gets an Offer set: acknowledging
  * is how an FYI closes.
  */
@@ -189,7 +174,11 @@ const REGISTRY: { [Kind in AutonomousNoticeKind]: NoticeKindEntry<Kind> } = {
       // Class-level off-switch: turns off idle-proposal offers entirely.
       silence(IDLE_PROPOSAL_OFFER_LEVER, 'Stop suggesting proposals', 'stop'),
       // Per-instance: dismisses only this proposal's offer, not the whole class.
-      dismissNotice(`idle-proposal:${p.proposalId}`, 'never'),
+      {
+        id: 'never',
+        label: 'Stop asking me that',
+        target: { type: 'dismiss-notice', noticeKey: `idle-proposal:${p.proposalId}` },
+      },
       // Class-level: turns the lever off so no more idle proposals surface.
       silence(IDLE_PROPOSAL_OFFER_LEVER, 'Stop suggesting these'),
     ],

@@ -8,6 +8,7 @@
  */
 
 import type { DbClient } from '../db.js'
+import { isNoticeDismissed } from '../action-queue.js'
 
 export interface IdleProposalOffer {
   proposalId: string
@@ -61,7 +62,9 @@ export const detectIdleProposal = async (
              LIMIT 1`,
       args: [`%open-proposal-subject%${row.id}%`],
     })
-    if (offered.rows.length === 0) return { proposalId: row.id, title: row.title }
+    if (offered.rows.length > 0) continue
+    if (await isNoticeDismissed(`idle-proposal:${row.id}`)) continue
+    return { proposalId: row.id, title: row.title }
   }
   return null
 }
