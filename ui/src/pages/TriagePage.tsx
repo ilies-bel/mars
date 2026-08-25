@@ -43,6 +43,7 @@ import { useFocusedProjectId } from '@/shared/useFocusedProject'
 import { defaultAqUrlState, encodeAqState } from '@/shared/actionQueueUrlState'
 import { taskHash } from '@/shared/routing'
 import { hasResolvableTask, isConditionActionQueueKind } from '@/shared/schemas'
+import { useSseConnected } from '@/shared/sseStatus'
 import type { ActionQueueItem } from '@/shared/schemas'
 import type { Decision } from '@/shared/schemas'
 
@@ -770,6 +771,7 @@ export const TriagePage = () => {
   // Proposals is a third independent feed. Its error is surfaced as an inline
   // card so a schema-validation failure or network blip never blanks the page.
   const { error: proposalsError } = useProposals()
+  const connected = useSseConnected()
 
   const running = byCluster['In progress'].length
   const doneToday = aggregates.doneToday
@@ -779,13 +781,15 @@ export const TriagePage = () => {
   const needsYouCount = countNeedsYou(items)
 
   // Surface the pending count in the browser tab so the queue is glanceable
-  // from the tab bar without switching to it.
+  // from the tab bar without switching to it.  While the SSE stream is
+  // disconnected the count is potentially stale, so we drop the "(n)" prefix
+  // to avoid presenting a confident-but-wrong number in the tab bar.
   useEffect(() => {
     document.title =
-      needsYouCount > 0
+      connected && needsYouCount > 0
         ? `(${needsYouCount}) Action Queue — mars`
         : 'Action Queue — mars'
-  }, [needsYouCount])
+  }, [needsYouCount, connected])
 
   // Only show the empty state when every feed succeeded AND there is genuinely
   // nothing to act on. A feed error is itself something to surface, so the

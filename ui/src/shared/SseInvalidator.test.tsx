@@ -244,6 +244,152 @@ const ConnectionBadge = () => {
   return <span data-testid="connection-badge">{connected ? 'live' : 'offline'}</span>
 }
 
+// ---------------------------------------------------------------------------
+// Reconnect loop: exponential backoff and cache invalidation on reconnect
+// ---------------------------------------------------------------------------
+
+describe('SseInvalidator – reconnect loop with exponential backoff', () => {
+  it('creates a new EventSource after onerror and grows the backoff exponentially', async () => {
+    vi.useFakeTimers()
+    const instances: Array<{ onerror: ((e: Event) => void) | null; close: () => void }> = []
+    const closeCalls: number[] = []
+
+    class MockEventSource {
+      onerror: ((e: Event) => void) | null = null
+
+      constructor(_url: string) {
+        const idx = instances.length
+        closeCalls.push(0)
+        instances.push(this)
+        // Capture close calls per instance
+        this.close = () => { closeCalls[idx]++ }
+      }
+
+      close() {}
+
+      addEventListener(_type: string, _listener: EventListener) {}
+    }
+
+    vi.stubGlobal('EventSource', MockEventSource)
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+    const container = document.createElement('div')
+    const root = createRoot(container)
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+    })
+
+    await act(async () => {
+      root.render(
+        createElement(QueryClientProvider, { client: qc }, createElement(SseInvalidator)),
+      )
+    })
+
+    // One EventSource created on initial mount.
+    expect(instances).toHaveLength(1)
+
+    // Trigger the first error — marks disconnected and schedules reconnect.
+    await act(async () => {
+      instances[0].onerror?.(new Event('error'))
+    })
+    // Still one instance: the reconnect timer has not fired yet.
+    expect(instances).toHaveLength(1)
+
+    // Advance past MIN_BACKOFF (1 s) → second EventSource created.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000)
+    })
+    expect(instances).toHaveLength(2)
+
+    // Trigger a second error — the backoff should now be 2 s.
+    await act(async () => {
+      instances[1].onerror?.(new Event('error'))
+    })
+    expect(instances).toHaveLength(2)
+
+    // Advance only 1 s — the 2 s backoff has not elapsed; no new instance.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000)
+    })
+    expect(instances).toHaveLength(2)
+
+    // Advance the remaining 1 s → third EventSource created (backoff doubled).
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000)
+    })
+    expect(instances).toHaveLength(3)
+
+    await act(async () => root.unmount())
+    vi.unstubAllGlobals()
+    vi.useRealTimers()
+  })
+
+  it('resets backoff to MIN_BACKOFF after a successful hello event', async () => {
+    vi.useFakeTimers()
+    const instances: Array<{
+      onerror: ((e: Event) => void) | null
+      listeners: Map<string, EventListener>
+    }> = []
+
+    class MockEventSource {
+      onerror: ((e: Event) => void) | null = null
+      readonly listeners = new Map<string, EventListener>()
+
+      constructor(_url: string) {
+        instances.push(this)
+      }
+
+      close() {}
+
+      addEventListener(type: string, listener: EventListener) {
+        this.listeners.set(type, listener)
+      }
+    }
+
+    vi.stubGlobal('EventSource', MockEventSource)
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+    const container = document.createElement('div')
+    const root = createRoot(container)
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+    })
+
+    await act(async () => {
+      root.render(
+        createElement(QueryClientProvider, { client: qc }, createElement(SseInvalidator)),
+      )
+    })
+
+    // Fire an error to exhaust some backoff (backoff becomes 2 s).
+    await act(async () => {
+      instances[0].onerror?.(new Event('error'))
+    })
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_000) })
+    // Second instance created after 1 s.
+    expect(instances).toHaveLength(2)
+
+    // Simulate a successful hello — this should reset the backoff.
+    await act(async () => {
+      instances[1].listeners.get('hello')?.(new Event('hello'))
+    })
+
+    // Now fire an error on the second instance.
+    await act(async () => {
+      instances[1].onerror?.(new Event('error'))
+    })
+    // The backoff was reset to 1 s, so advancing 1 s creates the third instance.
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_000) })
+    expect(instances).toHaveLength(3)
+
+    await act(async () => root.unmount())
+    vi.unstubAllGlobals()
+    vi.useRealTimers()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Connection state store: setSseConnected / useSseConnected
+// ---------------------------------------------------------------------------
+
 describe('SseInvalidator – connection state store (SSR snapshot)', () => {
   afterEach(() => {
     // Reset module-level state so tests don't bleed into each other.

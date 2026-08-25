@@ -44,6 +44,15 @@ mock.module('@/entities/operator/useDispatchState', () => ({
   pauseReasonLabel: () => 'paused',
 }))
 
+// sseStatus — Shell renders the SSE reconnecting pill from it.
+// Connected by default (no pill); tests that check the disconnected state
+// set mockSseConnected = false before rendering.
+let mockSseConnected = true
+mock.module('@/shared/sseStatus', () => ({
+  useSseConnected: () => mockSseConnected,
+  setSseConnected: () => {},
+}))
+
 // ── Import after mocks are registered ────────────────────────────────────────
 
 const { Shell, ShellSidebar, SHELL_NAV_GROUPS } = await import('./Shell')
@@ -377,5 +386,37 @@ describe('Shell — Action Queue badge computation', () => {
     expect(html).toContain('>14<')
     expect(html).not.toContain('>7<')
     mockActionQueueItems = []
+  })
+})
+
+// ── Shell — SSE reconnecting pill ─────────────────────────────────────────────
+
+describe('Shell — SSE reconnecting pill', () => {
+  it('hides the reconnecting pill when the SSE stream is connected', () => {
+    mockSseConnected = true
+    const html = renderToStaticMarkup(<Shell hash="#/chat">page</Shell>)
+    expect(html).not.toContain('live updates paused')
+    mockSseConnected = true  // restore default
+  })
+
+  it('shows the reconnecting pill when the SSE stream is disconnected', () => {
+    mockSseConnected = false
+    const html = renderToStaticMarkup(<Shell hash="#/chat">page</Shell>)
+    expect(html).toContain('live updates paused')
+    mockSseConnected = true  // restore default
+  })
+
+  it('pill has a descriptive aria-label for screen readers', () => {
+    mockSseConnected = false
+    const html = renderToStaticMarkup(<Shell hash="#/chat">page</Shell>)
+    expect(html).toContain('aria-label="Live updates paused — reconnecting to the daemon"')
+    mockSseConnected = true  // restore default
+  })
+
+  it('pill carries data-testid="sse-reconnecting-pill" for E2E targeting', () => {
+    mockSseConnected = false
+    const html = renderToStaticMarkup(<Shell hash="#/chat">page</Shell>)
+    expect(html).toContain('data-testid="sse-reconnecting-pill"')
+    mockSseConnected = true  // restore default
   })
 })

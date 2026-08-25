@@ -4,6 +4,7 @@ import { sortItems, buildRenderedRows, countNeedsYou } from '@/entities/actionQu
 import type { RenderedRow } from '@/entities/actionQueue/clusterRows'
 import { resolvePageRoute } from '@/shared/routing'
 import type { RouteName } from '@/shared/routing'
+import { useSseConnected } from '@/shared/sseStatus'
 import { deriveBreadcrumbs } from './Breadcrumbs'
 import { DaemonDownBanner } from './DaemonDownBanner'
 import { DispatchPausedChip } from './DispatchPausedChip'
@@ -70,6 +71,7 @@ interface ShellTopbarProps {
 }
 
 const ShellTopbar = ({ hash }: ShellTopbarProps) => {
+  const connected = useSseConnected()
   const derivedCrumbs = deriveBreadcrumbs(hash)
 
   // For top-level nav routes, deriveBreadcrumbs returns []; fall back to group › page crumbs
@@ -141,10 +143,19 @@ const ShellTopbar = ({ hash }: ShellTopbarProps) => {
         </>
       )}
 
-      {/* Right-side chrome — dispatch pause, then awaiting-human counter.
-          Both hidden when they don't apply, so the bar costs nothing in the
-          normal case. */}
+      {/* Right-side chrome — SSE status, dispatch pause, then awaiting-human counter.
+          All hidden when they don't apply, so the bar costs nothing in the normal case. */}
       <div className="ml-auto flex shrink-0 items-center gap-2">
+        {!connected && (
+          <span
+            data-testid="sse-reconnecting-pill"
+            aria-label="Live updates paused — reconnecting to the daemon"
+            className="shrink-0 rounded-full px-2 py-0.5 font-mono text-micro leading-none"
+            style={{ background: 'rgba(168, 150, 132, 0.15)', color: 'var(--color-muted-dark)' }}
+          >
+            ⊘ live updates paused
+          </span>
+        )}
         <DispatchPausedChip />
         <LiveParkedChip />
       </div>
