@@ -142,5 +142,9 @@ export const stubAppServices = (
     },
     gateHealth: { scopes: [] },
   }),
+  viewGates: async () => ({ gates: [] }),
+  addGate: async () => { throw new Error('not implemented in stub') },
+  removeGate: async () => ({ removed: false }),
+  restoreGate: async () => ({ restored: false }),
   ...overrides,
 })

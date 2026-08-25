@@ -132,9 +132,16 @@ import {
   countNeedsYou,
   type SituationSemaphoreSnapshot,
 } from './lib/situation-report'
-import { listVerifyGates, type VerifyGate } from './verify-gates'
+import {
+  addVerifyGate,
+  removeVerifyGate,
+  restoreVerifyGate,
+  listVerifyGates,
+  type VerifyGate,
+  type VerifyGateInput,
+} from './verify-gates'
 
-export type { AgentToolCall }
+export type { AgentToolCall, VerifyGateInput, VerifyGate }
 
 /** Operator-facing verify-gate health, projected from the registry row. */
 export type GateHealthEntry = Pick<
@@ -366,6 +373,33 @@ export interface AppServices {
       scopes: Array<{ scope: string; gates: GateHealthEntry[] }>
     }
   }>
+  // ── verify gate read + mutations ──────────────────────────────────────────
+  /**
+   * Return all verify gates ordered by scope then creation time, as a flat
+   * list. Used by `GET /view/gates` so the UI can list and manage gates.
+   * Consumers that want scoped grouping should derive it client-side.
+   */
+  viewGates: () => Promise<{ gates: VerifyGate[] }>
+  /**
+   * Add a new verify gate. Returns the generated id.
+   *
+   * Throws (UNIQUE constraint violation) if a gate with the same (scope, name)
+   * already exists.
+   */
+  addGate: (input: VerifyGateInput) => Promise<{ id: string }>
+  /**
+   * Remove a verify gate by id or (scope, name) pair.
+   * Returns `{ removed: true }` when a row was deleted, `{ removed: false }` when
+   * no matching gate was found.
+   */
+  removeGate: (idOrRef: string | { scope: string; name: string }) => Promise<{ removed: boolean }>
+  /**
+   * Restore a quarantined gate back to `state = 'active'`, clearing the
+   * quarantine bookkeeping.  Returns `{ restored: true }` when the gate was
+   * flipped, `{ restored: false }` for an unknown id/ref or a gate that is
+   * already active.
+   */
+  restoreGate: (idOrRef: string | { scope: string; name: string }) => Promise<{ restored: boolean }>
 }
 
 /**
@@ -2012,6 +2046,26 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     }
   }
 
+  const viewGates: AppServices['viewGates'] = async () => {
+    const gates = await listVerifyGates()
+    return { gates }
+  }
+
+  const addGate: AppServices['addGate'] = async (input) => {
+    const id = await addVerifyGate(input)
+    return { id }
+  }
+
+  const removeGate: AppServices['removeGate'] = async (idOrRef) => {
+    const removed = await removeVerifyGate(idOrRef)
+    return { removed }
+  }
+
+  const restoreGate: AppServices['restoreGate'] = async (idOrRef) => {
+    const restored = await restoreVerifyGate(idOrRef)
+    return { restored }
+  }
+
   return {
     viewActionQueue,
     viewActionQueueHistory,
@@ -2058,5 +2112,9 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     viewChatHistory,
     viewChatConversation,
     viewSteward,
+    viewGates,
+    addGate,
+    removeGate,
+    restoreGate,
   }
 }
