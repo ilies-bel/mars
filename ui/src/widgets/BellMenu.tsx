@@ -130,7 +130,7 @@ export const BellMenu = () => {
                       className="flex items-start gap-2 rounded px-1 py-1 hover:bg-primary/10"
                     >
                       {isNotice ? (
-                        <span className="mt-0.5 shrink-0 font-mono text-micro uppercase text-blue-500">
+                        <span className="mt-0.5 shrink-0 font-mono text-micro uppercase text-muted-dark">
                           Notice
                         </span>
                       ) : (
