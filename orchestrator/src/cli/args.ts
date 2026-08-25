@@ -12,7 +12,8 @@
  * error into a `deps.err(...)` + `CommandResult{code}`.
  */
 
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { join } from 'node:path'
 
 export interface ParsedArgs {
   repo?: string
@@ -578,4 +579,157 @@ export const parseTags = (
 ): string[] | undefined => {
   const tags = args.multiFlags['--tag']
   return tags && tags.length > 0 ? tags : undefined
+}
+
+// ---------------------------------------------------------------------------
+// npm script existence validation
+// ---------------------------------------------------------------------------
+
+/**
+ * Script body patterns that make a gate unconditionally pass regardless of
+ * what it finds, rendering it useless as a quality gate.
+ */
+const UNCONDITIONAL_PASS_RE = /--no-exit-code|\|\|\s*true|;\s*exit\s+0|;\s*true(?:\s|$)/
+
+/**
+ * Pure core: check each `npm run <script>` / `npm test` segment in
+ * `verifyCmd` against `pkgScripts` — a map from relative directory path
+ * (e.g. `'.'`, `'orchestrator'`) to its `package.json` scripts object.
+ *
+ * The function tracks any leading `cd <dir>` segment and resolves the
+ * subsequent `npm run` call against that directory. Returns a user-facing
+ * error string on the first problem found, or `null` when everything is valid.
+ *
+ * Exported so callers can inject any `pkgScripts` map for testing without
+ * touching the filesystem.
+ */
+export const checkNpmScriptExists = (
+  verifyCmd: string,
+  pkgScripts: ReadonlyMap<string, Readonly<Record<string, string>>>,
+): string | null => {
+  let cwd = '.'
+
+  for (const raw of verifyCmd.split(/&&|\|\||;/)) {
+    const tokens = raw.trim().split(/\s+/).filter(Boolean)
+    if (tokens.length === 0) continue
+
+    // `cd <dir>` — update cwd for subsequent segments in the same chain.
+    if (tokens[0] === 'cd' && tokens[1]) {
+      cwd = tokens[1]
+      continue
+    }
+
+    // Identify the npm script being invoked.
+    let scriptName: string | null = null
+    if (tokens[0] === 'npm') {
+      if (tokens[1] === 'run' && tokens[2]) {
+        scriptName = tokens[2]
+      } else if (tokens[1] === 'test' && tokens.length === 2) {
+        scriptName = 'test'
+      }
+    }
+    if (scriptName === null) continue
+
+    const scripts = pkgScripts.get(cwd)
+    if (scripts === undefined) {
+      // No package.json loaded for this dir — can't validate, skip silently.
+      continue
+    }
+
+    if (scriptName in scripts) {
+      // Script exists. Check whether its body unconditionally passes.
+      const body = scripts[scriptName]
+      if (typeof body === 'string' && UNCONDITIONAL_PASS_RE.test(body)) {
+        const snippet = body.length > 80 ? body.slice(0, 80) + '…' : body
+        return (
+          `[mars] --verify resolves to script '${scriptName}' whose body contains an ` +
+          `unconditionally-passing pattern (it always exits 0 regardless of findings): ` +
+          `${snippet} — this gate asserts nothing. ` +
+          `Remove the no-op flag or use a different verification command.`
+        )
+      }
+      continue
+    }
+
+    // Script not found in the expected directory. Search other loaded dirs.
+    const foundElsewhere = [...pkgScripts.entries()].find(
+      ([dir, s]) => dir !== cwd && scriptName! in s,
+    )
+
+    const cwdDesc = cwd === '.' ? 'the repo root' : `${cwd}/`
+    if (foundElsewhere) {
+      const [foundDir] = foundElsewhere
+      const foundDesc = foundDir === '.' ? 'the repo root' : `${foundDir}/`
+      return (
+        `[mars] --verify names script '${scriptName}' which does not exist in ` +
+        `${cwdDesc} package.json — it was found in ${foundDesc} package.json. ` +
+        `Fix the cd prefix: use 'cd ${foundDir} && npm run ${scriptName}' instead.`
+      )
+    }
+
+    return (
+      `[mars] --verify names script '${scriptName}' which does not exist in ` +
+      `${cwdDesc} package.json and was not found in any other package.json in the repo.`
+    )
+  }
+
+  return null
+}
+
+/**
+ * Load all `package.json` scripts maps from the repo root and top-level
+ * subdirectories (excluding `node_modules` and hidden dirs).
+ *
+ * Returns a Map from relative dir path (e.g. `'.'`, `'orchestrator'`) to its
+ * scripts object. Directories without a `package.json` are omitted so
+ * {@link checkNpmScriptExists} can skip validation for them rather than
+ * reporting false positives.
+ */
+const loadAllPkgScripts = (repoRoot: string): Map<string, Record<string, string>> => {
+  const result = new Map<string, Record<string, string>>()
+
+  const tryLoad = (dir: string): void => {
+    const pkgPath = dir === '.' ? join(repoRoot, 'package.json') : join(repoRoot, dir, 'package.json')
+    try {
+      if (!existsSync(pkgPath)) return
+      const pkg = JSON.parse(readFileSync(pkgPath, 'utf8') as string) as Record<string, unknown>
+      if (pkg && typeof pkg.scripts === 'object' && pkg.scripts !== null) {
+        result.set(dir, pkg.scripts as Record<string, string>)
+      }
+    } catch {
+      // Malformed package.json — skip silently.
+    }
+  }
+
+  tryLoad('.')
+
+  try {
+    const entries = readdirSync(repoRoot, { withFileTypes: true })
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue
+      if (entry.name === 'node_modules' || entry.name.startsWith('.')) continue
+      tryLoad(entry.name)
+    }
+  } catch {
+    // Cannot read repo root — skip subdirectory scan.
+  }
+
+  return result
+}
+
+/**
+ * I/O wrapper: loads all `package.json` scripts from the repo tree and
+ * delegates to {@link checkNpmScriptExists}.
+ *
+ * Returns `null` when `repoRoot` is empty (cannot resolve paths) or when
+ * no `npm run` invocations are found in `verifyCmd`. Returns a user-facing
+ * error string when a script does not exist in its resolved directory or
+ * when its body unconditionally passes.
+ */
+export const detectNonexistentNpmScript = (
+  verifyCmd: string,
+  repoRoot: string,
+): string | null => {
+  if (!repoRoot) return null
+  return checkNpmScriptExists(verifyCmd, loadAllPkgScripts(repoRoot))
 }

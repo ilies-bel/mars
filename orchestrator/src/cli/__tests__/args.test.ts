@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { containsAbsoluteRepoPath, hasFlag, isFullSuiteVerifyCmd, parseArgs } from '../args'
+import { checkNpmScriptExists, containsAbsoluteRepoPath, hasFlag, isFullSuiteVerifyCmd, parseArgs } from '../args'
 
 describe('boolean flags', () => {
   it('reports a supplied boolean flag even though it is not positional', () => {
@@ -249,5 +249,137 @@ describe('isFullSuiteVerifyCmd', () => {
 
   it('returns false for an empty verifyCmd', () => {
     expect(isFullSuiteVerifyCmd('')).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// checkNpmScriptExists — pure npm-script validation (no filesystem I/O)
+// ---------------------------------------------------------------------------
+
+describe('checkNpmScriptExists', () => {
+  // Simulates a mono-repo where the root has `arch` and `build`, and
+  // `orchestrator/` has `typecheck` and `knip` (with --no-exit-code).
+  const scripts = new Map<string, Record<string, string>>([
+    ['.', { arch: 'echo arch', build: 'tsc', test: 'vitest run' }],
+    [
+      'orchestrator',
+      {
+        typecheck: 'tsc --noEmit',
+        knip: 'knip --no-exit-code',
+        lint: 'eslint . || true',
+        clean: 'rm -rf dist; exit 0',
+      },
+    ],
+  ])
+
+  it('returns null for a valid scoped command', () => {
+    expect(
+      checkNpmScriptExists('cd orchestrator && npm run typecheck', scripts),
+    ).toBeNull()
+  })
+
+  it('returns null when cmd has no npm run segments', () => {
+    expect(
+      checkNpmScriptExists('npx tsc --noEmit', scripts),
+    ).toBeNull()
+  })
+
+  it('returns null when verifyCmd is empty', () => {
+    expect(checkNpmScriptExists('', scripts)).toBeNull()
+  })
+
+  it('returns null when the directory has no package.json entry in the map', () => {
+    // No package.json loaded for `packages/` — should skip silently, not error.
+    expect(
+      checkNpmScriptExists('cd packages && npm run build', scripts),
+    ).toBeNull()
+  })
+
+  it('returns an error naming the missing script and the searched directory', () => {
+    // `arch` exists in the root `.` but the command cd's into `orchestrator/`
+    const result = checkNpmScriptExists(
+      'cd orchestrator && npm run arch',
+      scripts,
+    )
+    expect(result).not.toBeNull()
+    expect(result).toContain("'arch'")
+    expect(result).toContain('orchestrator/')  // directory searched
+  })
+
+  it('tells the caller where the script actually lives when found elsewhere', () => {
+    // `arch` is in the root package.json — the error should point there.
+    const result = checkNpmScriptExists(
+      'cd orchestrator && npm run arch',
+      scripts,
+    )
+    expect(result).not.toBeNull()
+    expect(result).toContain('the repo root')  // where it was found
+  })
+
+  it('returns an error when the script does not exist anywhere in the repo', () => {
+    const result = checkNpmScriptExists(
+      'cd orchestrator && npm run nonexistent',
+      scripts,
+    )
+    expect(result).not.toBeNull()
+    expect(result).toContain("'nonexistent'")
+    expect(result).toContain('not found in any other package.json')
+  })
+
+  it('returns an error when the script body contains --no-exit-code', () => {
+    const result = checkNpmScriptExists(
+      'cd orchestrator && npm run knip',
+      scripts,
+    )
+    expect(result).not.toBeNull()
+    expect(result).toContain('--no-exit-code')
+    expect(result).toContain('unconditionally-passing')
+  })
+
+  it('returns an error when the script body contains || true', () => {
+    const result = checkNpmScriptExists(
+      'cd orchestrator && npm run lint',
+      scripts,
+    )
+    expect(result).not.toBeNull()
+    expect(result).toContain('unconditionally-passing')
+  })
+
+  it('returns an error when the script body contains ; exit 0', () => {
+    const result = checkNpmScriptExists(
+      'cd orchestrator && npm run clean',
+      scripts,
+    )
+    expect(result).not.toBeNull()
+    expect(result).toContain('unconditionally-passing')
+  })
+
+  it('handles npm test (bare) resolving to the test script', () => {
+    // `npm test` with no extra args maps to the `test` script in scope.
+    expect(checkNpmScriptExists('npm test', scripts)).toBeNull()
+  })
+
+  it('handles chained commands where cd sets context for subsequent npm run', () => {
+    // `cd orchestrator` then `npm run typecheck` — both in the same chain.
+    expect(
+      checkNpmScriptExists(
+        'cd orchestrator && npm run typecheck && npx tsc --noEmit',
+        scripts,
+      ),
+    ).toBeNull()
+  })
+
+  it('catches an error in the second segment of a chain', () => {
+    // First command is valid; second names a missing script.
+    const result = checkNpmScriptExists(
+      'cd orchestrator && npm run typecheck && npm run arch',
+      scripts,
+    )
+    expect(result).not.toBeNull()
+    expect(result).toContain("'arch'")
+  })
+
+  it('returns null when the command is from the root and the script exists there', () => {
+    expect(checkNpmScriptExists('npm run build', scripts)).toBeNull()
   })
 })

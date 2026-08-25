@@ -20,6 +20,7 @@ import {
   parseTaskSpec,
   containsAbsoluteRepoPath,
   isFullSuiteVerifyCmd,
+  detectNonexistentNpmScript,
   parseBlockedBy,
   parseTags,
   hasFlag,
@@ -271,6 +272,19 @@ const taskAdd: Command = {
         deps.err(
           `[mars] scope it to the files you touch, e.g.: --verify 'cd orchestrator && npx vitest run src/path/to/your.test.ts'`,
         )
+        return { code: 2 }
+      }
+      // Reject --verify values that name an npm script absent from the resolved
+      // package.json, or whose body unconditionally passes. A missing script
+      // (e.g. `cd orchestrator && npm run arch` when `arch` only exists in the
+      // root package.json) fails immediately with "Missing script: arch", burning
+      // a coder run and its sole recovery attempt without ever checking anything.
+      const scriptErr = detectNonexistentNpmScript(
+        specResult.value.verifyCmd,
+        deps.ctx.repoRoot,
+      )
+      if (scriptErr !== null) {
+        deps.err(scriptErr)
         return { code: 2 }
       }
     }
@@ -791,6 +805,12 @@ the command was authored without a 'cd <subdir> &&' prefix:
       deps.err(
         `[mars] scope it to the files you touch, e.g.: mars task set-verify ${id} 'cd orchestrator && npx vitest run src/path/to/your.test.ts'`,
       )
+      return { code: 2 }
+    }
+    // Same nonexistent-script rejection as `task add --verify`.
+    const scriptErrSetVerify = detectNonexistentNpmScript(cmd, deps.ctx.repoRoot)
+    if (scriptErrSetVerify !== null) {
+      deps.err(scriptErrSetVerify)
       return { code: 2 }
     }
     try {

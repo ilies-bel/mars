@@ -18,7 +18,7 @@ import {
   detectMalformedGateArgs,
   PACKAGE_RUNNER_CMDS,
 } from '../../core/lib/gate-args-validation'
-import { hasFlag } from '../args'
+import { hasFlag, detectNonexistentNpmScript } from '../args'
 import type { Command } from '../command'
 
 /** UUID v4 pattern used to distinguish gate ids from gate names. */
@@ -134,7 +134,27 @@ const verifyAdd: Command = {
       return { code: 2 }
     }
 
+    // Reject npm gates that name a script absent from the scope's package.json,
+    // or whose body unconditionally passes. Synthesise a verify-cmd string
+    // (`cd <scope> && npm <args...>`) and run it through the same validator used
+    // by `task add --verify`, so registration-time and enqueue-time share one
+    // code path.
     const required = !hasFlag(args, '--optional')
+    if (cmd === 'npm' && gateArgs.length > 0 && deps.ctx.repoRoot) {
+      const fakeCmd =
+        scope === '.'
+          ? `npm ${gateArgs.join(' ')}`
+          : `cd ${scope} && npm ${gateArgs.join(' ')}`
+      const scriptErr = detectNonexistentNpmScript(fakeCmd, deps.ctx.repoRoot)
+      if (scriptErr !== null) {
+        // Hard error when required=true (the default); warning only when optional.
+        if (required) {
+          deps.err(scriptErr)
+          return { code: 2 }
+        }
+        deps.err(`[mars] warning: ${scriptErr.replace(/^\[mars\] /, '')}`)
+      }
+    }
 
     try {
       const id = await addVerifyGate({
