@@ -1893,28 +1893,37 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
       gatesByScope.set(gate.scope, entries)
     }
 
-    // 1. Runtime tuning acks — chat_threads WHERE title = 'Steward: runtime tuning'
-    //    joined to chat_messages WHERE kind = 'acknowledgment', newest first.
+    // 1. Runtime tuning acks — steward_ledger WHERE target_kind = 'daemon-cap', newest first.
+    //    Capped at 200 rows; the table can accumulate thousands of entries on long-running daemons.
     let acks: Array<{ text: string; timestamp: string; pair: { from: number; to: number } | null }> = []
     try {
       const acksResult = await client.execute(
-        `SELECT m.content, m.created_at
-           FROM chat_messages m
-           JOIN chat_threads t ON t.id = m.thread_id
-          WHERE t.title = 'Steward: runtime tuning'
-            AND m.kind = 'acknowledgment'
-          ORDER BY m.created_at DESC`,
+        `SELECT ts, outcome, rationale
+           FROM steward_ledger
+          WHERE target_kind = 'daemon-cap'
+          ORDER BY ts DESC, id DESC
+          LIMIT 200`,
       )
       acks = acksResult.rows.map((row) => {
-        const r = row as { content: string; created_at: number | string | bigint }
-        const text = r.content
-        // Parse "from N to M" pattern defensively — free text; null on mismatch.
-        const m = /from (\d+) to (\d+)/.exec(text)
-        const pair = m ? { from: Number(m[1]), to: Number(m[2]) } : null
-        return { text, timestamp: new Date(Number(r.created_at)).toISOString(), pair }
+        const r = row as { ts: string | Date; outcome: string; rationale: string }
+        // Parse "implement cap N → M" (→ is U+2192) from the outcome column.
+        const capMatch = /implement cap (\d+) → (\d+)/.exec(r.outcome)
+        const fromN = capMatch ? Number(capMatch[1]) : null
+        const toN = capMatch ? Number(capMatch[2]) : null
+        const pair = fromN !== null && toN !== null ? { from: fromN, to: toN } : null
+        // Compose plain-language operator text; the raw rationale is preserved in the DB as evidence.
+        const verb = fromN !== null && toN !== null && fromN < toN ? 'bumped' : 'shed'
+        const text = pair
+          ? `I ${verb} implement workers from ${pair.from} to ${pair.to}.`
+          : String(r.outcome)
+        // ts is timestamptz — normalise to ISO-8601 via Date. Do NOT use Number(), which
+        // would produce garbage from a timestamp string (unlike chat_messages.created_at
+        // which was epoch-ms; this column stores ISO-8601).
+        const timestamp = new Date(String(r.ts)).toISOString()
+        return { text, timestamp, pair }
       })
     } catch {
-      // Degrade gracefully on fresh repos without chat tables.
+      // Degrade gracefully on fresh repos without the steward_ledger table.
     }
 
     // 2. Workflow patch proposals — zero rows today; table may not exist.

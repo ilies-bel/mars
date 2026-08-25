@@ -654,23 +654,6 @@ const GateHealthLane = ({
 )
 
 // ---------------------------------------------------------------------------
-// Steward status note
-// ---------------------------------------------------------------------------
-
-const StewardStatusNote = () => (
-  <aside
-    className="rounded border border-warn/30 bg-warn/5 px-4 py-3"
-    role="note"
-    data-testid="steward-status-note"
-  >
-    <p className="font-mono text-micro text-warn/90">
-      The Steward is not wired up in this build — the runtime-tuning entries below are produced by
-      a different path. Nothing on this page acts on the queue.
-    </p>
-  </aside>
-)
-
-// ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
 
@@ -729,8 +712,6 @@ export const StewardPage = () => {
           </div>
         }
       />
-
-      <StewardStatusNote />
 
       <div className="flex flex-col gap-4">
         {/* Lane 1: Runtime tuning — the only lane that actually executes */}

@@ -196,15 +196,45 @@ describe('StewardPage', () => {
     expect(html).toContain('Verify gates')
   })
 
-  it('renders a status note explaining the steward is not wired up in operator terms', () => {
+  it('does not show the not-wired-up note — the Steward is wired up and has been dialling the cap', () => {
+    // The note claimed the Steward is not wired up, but it moved the implement cap
+    // on 2026-08-25. Now that the page reads steward_ledger the blanket assertion is
+    // false and the note must be absent entirely.
     const html = renderToStaticMarkup(<StewardPage />)
-    expect(html).toContain('not wired up in this build')
-    expect(html).toContain('different path')
-    expect(html).toContain('Nothing on this page acts on the queue')
-    // Must NOT expose code-review internals to the operator
+    expect(html).not.toContain('not wired up in this build')
+    expect(html).not.toContain('Nothing on this page acts on the queue')
+    expect(html).not.toContain('steward-status-note')
+    // Must still NOT expose code-review internals to the operator
     expect(html).not.toContain('server.ts:')
     expect(html).not.toContain('investigateWorktree')
     expect(html).not.toContain('runClaudeCode')
+  })
+
+  it('renders a cap change that is minutes old as the last activity — cannot present as 24 days stale', () => {
+    // Regression guard: the page previously read chat_messages WHERE kind='acknowledgment',
+    // a dead source. The newest row there was from 2026-08-01. steward_ledger has live
+    // rows from today, so a recent cap change must appear as last activity.
+    const recentTimestamp = new Date(Date.now() - 5 * 60 * 1000).toISOString() // 5 min ago
+    vi.mocked(useStewardView).mockReturnValue({
+      data: makeStewardView({
+        runtimeTuning: {
+          ...makeStewardView().runtimeTuning,
+          acks: [
+            {
+              text: 'I bumped implement workers from 8 to 11.',
+              timestamp: recentTimestamp,
+              pair: { from: 8, to: 11 },
+            },
+          ],
+        },
+      }),
+      isLoading: false,
+      error: null,
+    })
+    const html = renderToStaticMarkup(<StewardPage />)
+    expect(html).toContain(`last activity ${formatShortDate(recentTimestamp)}`)
+    // Must NOT show any date in August 2026 that would suggest the stale source
+    expect(html).not.toContain('last activity 1 Aug')
   })
 
   // ---------------------------------------------------------------------------
