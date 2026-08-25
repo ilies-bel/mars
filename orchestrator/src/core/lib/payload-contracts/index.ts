@@ -13,6 +13,7 @@ import { REPRESENTATIVE_PAYLOADS as lifecycle } from './lifecycle'
 import { REPRESENTATIVE_PAYLOADS as proposals } from './proposals'
 import { REPRESENTATIVE_PAYLOADS as scheduling } from './scheduling'
 import { REPRESENTATIVE_PAYLOADS as sliceWorkflow } from './slice-workflow'
+import { REPRESENTATIVE_PAYLOADS as spend } from './spend'
 import { REPRESENTATIVE_PAYLOADS as validationQa } from './validation-qa'
 
 /**
@@ -29,5 +30,6 @@ export const ALL_REPRESENTATIVE_PAYLOADS: Partial<Record<ActionQueueKind, Record
   ...proposals,
   ...scheduling,
   ...sliceWorkflow,
+  ...spend,
   ...validationQa,
 }

@@ -89,6 +89,14 @@ export type {
   ReflectEvidence,
   ProposalContracts,
 } from './payload-contracts/proposals'
+export type {
+  BudgetWindowPayload,
+  BudgetArcPayload,
+  SpendControlNoticePayload,
+  ProviderRateLimitedPayload,
+  ApiOutagePayload,
+  SpendContracts,
+} from './payload-contracts/spend'
 
 import type { AwaitingHumanContracts } from './payload-contracts/awaiting-human'
 import type { GateEnrichmentContracts } from './payload-contracts/gate-enrichment'
@@ -96,6 +104,7 @@ import type { LifecycleContracts } from './payload-contracts/lifecycle'
 import type { ProposalContracts } from './payload-contracts/proposals'
 import type { SchedulingContracts } from './payload-contracts/scheduling'
 import type { SliceWorkflowContracts } from './payload-contracts/slice-workflow'
+import type { SpendContracts } from './payload-contracts/spend'
 import type { ValidationQaContracts } from './payload-contracts/validation-qa'
 
 // ── Shared shapes ─────────────────────────────────────────────────────────────
@@ -121,6 +130,7 @@ type AuditedPayloads = AwaitingHumanContracts &
   ProposalContracts &
   SchedulingContracts &
   SliceWorkflowContracts &
+  SpendContracts &
   ValidationQaContracts
 
 /**
@@ -186,20 +196,20 @@ export const ACTION_QUEUE_PAYLOAD_AUDIT = {
   'outbox-lag': 'unaudited',
   'reflect-recommended': 'typed',
   'done-with-unmerged-commits': 'typed',
-  'api-outage': 'unaudited',
+  'api-outage': 'typed',
   'workflow-install-drift': 'typed',
-  'provider-rate-limited': 'unaudited',
+  'provider-rate-limited': 'typed',
   'verify-uncovered': 'unaudited',
   'workflow-draft-pending': 'typed',
-  'budget-window': 'unaudited',
-  'budget-arc': 'unaudited',
+  'budget-window': 'typed',
+  'budget-arc': 'typed',
   'scorer-suggested': 'typed',
   'promotion-decision': 'typed',
   'tool-promotion': 'typed',
   'arc-verification-failed': 'unaudited',
   'gate-enrichment-stale': 'unaudited',
   'env-incident': 'unaudited',
-  'spend-control-notice': 'unaudited',
+  'spend-control-notice': 'typed',
   'scheduling-decision': 'typed',
   'requeue-warning': 'typed',
   'arc-superseded-on-main': 'typed',
@@ -261,12 +271,6 @@ export type UnauditedKindFamily =
  * the list is empty" does.
  */
 export const UNAUDITED_KIND_FAMILY = {
-  'budget-window': 'spend-provider',
-  'budget-arc': 'spend-provider',
-  'spend-control-notice': 'spend-provider',
-  'provider-rate-limited': 'spend-provider',
-  'api-outage': 'spend-provider',
-
   'low-disk-space': 'daemon-health',
   'daemon-outage': 'daemon-health',
   'daemon-killed': 'daemon-health',

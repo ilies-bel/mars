@@ -2624,7 +2624,7 @@ export const startDaemon = async (
         priority: 'urgent',
         title: 'Provider rate/spend limit reached — dispatch paused',
         body: `The Claude API rejected dispatched runs due to a rate or spend limit. Dispatch is paused until ${resumeIso}. Raise your spend limit at claude.ai/settings/usage if needed.`,
-        payload: { resetsAt, resumeAt: resumeIso },
+        payload: { resetsAtIso: resumeIso },
         context: {},
         raisedBy: 'daemon:quota-rejection',
         signature: 'provider-rate-limited:auto',
