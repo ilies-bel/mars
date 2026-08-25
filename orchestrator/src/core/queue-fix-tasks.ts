@@ -3,6 +3,7 @@ import {
   buildVerifyReproHint,
   type RanVerifyStep,
 } from './lib/derive-repro-command'
+import { extractFailingTestFiles } from './lib/vitest-output-parser'
 import { execFile } from 'node:child_process'
 import { constants as fsConstants } from 'node:fs'
 import { access } from 'node:fs/promises'
@@ -1694,12 +1695,60 @@ export const handleTaskFailureWithFixTask = async (
     )
   }
 
+  // ── Inline baseline probe (PRD 3b00ccd0, slice 3) ─────────────────────────────
+  // When the caller has not pre-computed a probe result and the failure is a
+  // test-assertion-error, extract the failing test files from the raw output and
+  // run them against the integration branch (repo root) to check whether they
+  // also fail there.  A non-zero probe exit means the failure is a pre-existing
+  // baseline regression — not a regression authored by this task — so the gate
+  // below will skip the fix-task spawn and preserve the code-recovery slot.
+  //
+  // An empty file list (unparseable output) is a no-op: the probe is skipped
+  // and normal fix-task spawning proceeds with no error or log noise.
+  // A probe spawn error or timeout is also caught silently — normal spawning
+  // continues.
+  //
+  // The probe runs in the main checkout (getRepoRoot()) — not a new worktree —
+  // to keep wall-clock under 10 s for a single test file.
+  let effectiveBaselineProbeResult = input.baselineProbeResult ?? null
+  if (
+    effectiveBaselineProbeResult === null &&
+    failureSignature.startsWith('verify:test/test-assertion-error')
+  ) {
+    const testFiles = extractFailingTestFiles(input.errorOutput)
+    if (testFiles.length > 0) {
+      try {
+        const repoRoot = getRepoRoot()
+        const probeArgs = ['vitest', 'run', ...testFiles]
+        let probeExitCode = 0
+        let probeOutput = ''
+        try {
+          const r = await execAsync('npx', probeArgs, { cwd: repoRoot, timeout: 30_000 })
+          probeOutput = [r.stdout, r.stderr].filter(Boolean).join('\n')
+        } catch (probeErr: unknown) {
+          const e = probeErr as { code?: number | null; stdout?: string; stderr?: string }
+          probeExitCode = typeof e.code === 'number' ? e.code : 1
+          probeOutput = [e.stdout ?? '', e.stderr ?? ''].filter(Boolean).join('\n')
+        }
+        effectiveBaselineProbeResult = {
+          failsOnMain: probeExitCode !== 0,
+          probeCommand: `npx ${probeArgs.join(' ')}`,
+          exitCode: probeExitCode,
+          output: probeOutput.slice(0, 4000),
+        }
+      } catch {
+        // Probe failed to start (e.g. npx not on PATH, repoRoot unavailable):
+        // proceed without a probe result, normal fix-task spawning continues.
+      }
+    }
+  }
+
   // ── Baseline probe gate (PRD 3b00ccd0) ────────────────────────────────────
-  // When the caller has already probed the failing test against the
-  // integration branch and the test also fails there, the failure is a
-  // pre-existing baseline regression — NOT a regression authored by this task.
-  // Skip the fix-task spawn so the code-recovery slot is NOT consumed; raise
-  // an action-queue item so the operator is aware.
+  // When the caller has already probed the failing test against the integration
+  // branch — or the inline probe above ran — and the test also fails there, the
+  // failure is a pre-existing baseline regression — NOT a regression authored by
+  // this task.  Skip the fix-task spawn so the code-recovery slot is NOT
+  // consumed; raise an action-queue item so the operator is aware.
   //
   // Ordered BEFORE the steward gate and the upsertFixTask call so a baseline
   // failure exits cleanly without minting a steward intervention record for a
@@ -1707,7 +1756,7 @@ export const handleTaskFailureWithFixTask = async (
   //
   // Implemented by: "Probe failing test against main before spawning fix task"
   // (consumer slice of PRD 3b00ccd0).
-  if (input.baselineProbeResult?.failsOnMain) {
+  if (effectiveBaselineProbeResult?.failsOnMain) {
     await markTaskFailed(
       input.taskId,
       `baseline-failure:${failureSignature}`,
@@ -1727,8 +1776,8 @@ export const handleTaskFailureWithFixTask = async (
         'This is a pre-existing baseline regression — not a regression authored by this task.',
         'No fix-task was spawned; the code-recovery slot is preserved.',
         '',
-        `Probe command: ${input.baselineProbeResult.probeCommand}`,
-        `Probe exit code: ${input.baselineProbeResult.exitCode}`,
+        `Probe command: ${effectiveBaselineProbeResult.probeCommand}`,
+        `Probe exit code: ${effectiveBaselineProbeResult.exitCode}`,
         '',
         'Fix the baseline regression on the integration branch, then restart this task with `mars restart`.',
       ].join('\n'),
@@ -1736,8 +1785,8 @@ export const handleTaskFailureWithFixTask = async (
         taskId: input.taskId,
         failingStep: input.failingStep,
         failureSignature,
-        probeCommand: input.baselineProbeResult.probeCommand,
-        probeExitCode: input.baselineProbeResult.exitCode,
+        probeCommand: effectiveBaselineProbeResult.probeCommand,
+        probeExitCode: effectiveBaselineProbeResult.exitCode,
       },
       context: { repoRoot: process.env.MARS_REPO ?? null },
       raisedBy: 'agent:fail-fix-handler',
