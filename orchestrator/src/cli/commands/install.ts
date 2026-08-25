@@ -35,6 +35,40 @@ import { listProviders } from '../../core/workers/provider-registry'
 export const installableProviderNames = (): readonly ProviderName[] =>
   listProviders().map((p) => p.name)
 
+/**
+ * Describes the onboarding task dispatched automatically by `mars init`.
+ * Surfaced in the summary card and consumed by post-init hints.
+ */
+export interface OnboardingDispatchInfo {
+  /** Task ID assigned by the orchestrator, e.g. "mars-abc12345" */
+  id: string
+  /** Short description used as the task intent/prompt */
+  description: string
+}
+
+/**
+ * One-line intent for the onboarding task. Extracted as a constant so the
+ * summary card and callers can reference it without duplicating the string.
+ */
+export const ONBOARDING_TASK_DESCRIPTION =
+  'Make the initial git commit for this Mars-initialized repository'
+
+/**
+ * Full prompt for the onboarding task dispatched by `mars init`.
+ * The task stages and commits the files scaffolded during init.
+ */
+export const ONBOARDING_TASK_PROMPT = `${ONBOARDING_TASK_DESCRIPTION}.
+
+Stage the files scaffolded by \`mars init\`:
+  git add CLAUDE.md .claude/ .mars/workflows/
+
+Include any other untracked repo files that belong under version control.
+
+Commit with the message:
+  git commit -m "chore(mars): initialize Mars framework"
+
+Save your work: verify \`git log --oneline -1\` shows the new commit before finishing.`
+
 // ---------------------------------------------------------------------------
 // Probe helpers — exported for unit testing (two call sites each: command +
 // test). All are pure/injectable so tests never touch real filesystem or env.
@@ -137,7 +171,7 @@ const init: Command = {
   path: 'init',
   summary: 'scaffold CLAUDE.md, .claude/ config, workflow templates, and databases',
   usage:
-    'usage: mars init [--force] [--dry-run] [--verbose] [--yes] [--start] [--wizard] [--wizard-off] [--skip-doctor] [--provider claude|gemini|codex]',
+    'usage: mars init [--force] [--dry-run] [--verbose] [--yes] [--wizard] [--wizard-off] [--skip-doctor] [--provider claude|gemini|codex]',
   run: async (args, deps) => {
     const { existsSync } = await import('node:fs')
 
@@ -145,7 +179,6 @@ const init: Command = {
     const dryRun = hasFlag(args, '--dry-run')
     const verbose = hasFlag(args, '--verbose')
     const yes = hasFlag(args, '--yes') || hasFlag(args, '-y')
-    const start = hasFlag(args, '--start')
     const wizardForced = hasFlag(args, '--wizard')
     const wizardOff = hasFlag(args, '--wizard-off')
     const skipDoctor = hasFlag(args, '--skip-doctor')
@@ -332,6 +365,27 @@ const init: Command = {
       // Non-fatal: daemon.json is optional config; init still succeeded.
     }
 
+    // ── Dispatch onboarding task ──────────────────────────────────────────
+    // After scaffolding, enqueue a task to commit the newly created files.
+    // Non-fatal: a failure is noted but never blocks the user — they get
+    // the standard next-commands instead of the task-specific ones.
+    let dispatchedTask: OnboardingDispatchInfo | null = null
+    try {
+      const taskResult = (await deps.daemon.sendRequest(
+        {
+          op: 'add',
+          prompt: ONBOARDING_TASK_PROMPT,
+          intent: ONBOARDING_TASK_DESCRIPTION,
+          skipTriage: true,
+          priority: 2,
+        },
+        { onSpawnNotice: () => {} },
+      )) as { id: string; status: string }
+      dispatchedTask = { id: taskResult.id, description: ONBOARDING_TASK_DESCRIPTION }
+    } catch {
+      // Non-fatal: proceed without announcing a dispatched task.
+    }
+
     // ── Summary card ──────────────────────────────────────────────────────
     const sep = '─'.repeat(40)
     deps.out('')
@@ -341,33 +395,22 @@ const init: Command = {
     deps.out(`  Repo:     ${deps.ctx.repoRoot}`)
     deps.out(`  Files:    ${(result.written ?? []).length} written`)
     deps.out(`  Provider: ${provider}`)
-    deps.out('  Daemon:   will auto-start on first use')
+    deps.out('  Daemon:   running')
+    if (dispatchedTask !== null) {
+      deps.out(`  Task:     ${dispatchedTask.id} — queued`)
+    }
     deps.out(sep)
     deps.out('')
     deps.out('Next commands:')
-    deps.out(`  mars task add "describe the task"   # enqueue your first task`)
-    deps.out(`  mars ui                              # read-only Kanban dashboard`)
-    deps.out(`  mars doctor                          # re-check prerequisites any time`)
-
-    // ── Start-now finale ──────────────────────────────────────────────────
-    // With --yes --start: print non-interactively.
-    // On a TTY without --yes: ask interactively.
-    // With --yes alone: skip (quiet completion).
-    if (start && yes) {
-      deps.out('✓ Daemon running. Open the dashboard: mars ui')
-    } else if (isTTY && !yes) {
-      const { createInterface } = await import('node:readline')
-      const rl = createInterface({ input: process.stdin, output: process.stdout })
-      const startAnswer = await new Promise<string>((res) => {
-        rl.question('\nStart Mars now? [y/N] ', (a) => {
-          rl.close()
-          res(a.trim().toLowerCase())
-        })
-      })
-      if (startAnswer === 'y' || startAnswer === 'yes') {
-        deps.out('✓ Daemon running. Open the dashboard: mars ui')
-      }
+    if (dispatchedTask !== null) {
+      deps.out(`  mars show ${dispatchedTask.id}    # watch your first task run`)
+      deps.out(`  mars list                         # see all queued work`)
+    } else {
+      deps.out(`  mars task add "describe the task" # enqueue your first task`)
+      deps.out(`  mars list                         # see all queued work`)
     }
+    deps.out(`  mars ui                           # read-only Kanban dashboard`)
+    deps.out(`  mars doctor                       # re-check prerequisites`)
 
     return { code: 0 }
   },
