@@ -21,9 +21,9 @@ import { REPRESENTATIVE_PAYLOADS as verify } from './verify'
 /**
  * One representative payload per typed action-queue kind.
  *
- * Typed as `Partial` because not every `ActionQueueKind` is typed yet — only
- * those with a family module entry are covered. The contract test asserts that
- * every kind marked `'typed'` in `ACTION_QUEUE_PAYLOAD_AUDIT` appears here.
+ * The contract test asserts that every kind marked `'typed'` in
+ * `ACTION_QUEUE_PAYLOAD_AUDIT` appears here — add a new kind's representative
+ * payload to its family module when promoting it to `'typed'`.
  */
 export const ALL_REPRESENTATIVE_PAYLOADS: Partial<Record<ActionQueueKind, Record<string, unknown>>> = {
   ...awaitingHuman,

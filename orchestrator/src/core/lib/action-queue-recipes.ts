@@ -9,28 +9,6 @@
  *
  * Every kind in ACTION_QUEUE_KINDS must have a registered recipe — the
  * exhaustiveness test enforces this.
- *
- * ## Typing the still-`unaudited` kinds
- *
- * PRD `2d84a65a-shrink-the-unaudited-list-in-action-queu` is typing the
- * still-`unaudited` kinds in `action-queue-payloads.ts` incrementally, one
- * family at a time. Each family's consumer slice touches this file too —
- * once its kinds' payload contracts land, its recipe entries below trade
- * `ctx.payload['field']` bracket access for the typed contract's fields.
- *
- * `UNAUDITED_KIND_FAMILY` in `action-queue-payloads.ts` is the single source
- * of truth for which family owns which kind — not a kind list re-copied into
- * a consumer slice's own prompt. This file mirrors that assignment with a
- * `// family: <name>` comment directly above every still-unaudited kind's
- * entry in `RECIPE_DEFINITIONS`, so a consumer slice can locate every entry
- * it owns (they are not grouped together below — the sections predate the
- * family split) without re-deriving the mapping by hand.
- *
- * The mirror is not decoration: `__tests__/action-queue-recipe-family-markers.test.ts`
- * fails if a marker is missing, names the wrong family, or is left behind on a
- * kind that has since been typed. A slice that finishes its family therefore
- * deletes its markers here in the same change that removes its kinds from
- * `UNAUDITED_KIND_FAMILY`.
  */
 
 import { classifyKind, DERIVED_KINDS, type ActionQueueClass, type ActionQueueKind } from './action-queue-kinds'
@@ -300,7 +278,6 @@ const RECIPE_DEFINITIONS = {
     verbs: [],
   },
 
-  // family: daemon-health
   'daemon-killed': {
     humanSummary: () =>
       'The background engine was stopped while tasks were running — those tasks need to be restarted.',
@@ -336,7 +313,6 @@ const RECIPE_DEFINITIONS = {
     verbs: [{ op: 'dismiss-daemon-died', label: 'Dismiss', style: 'primary' }],
   },
 
-  // family: daemon-health
   'daemon-outage': {
     humanSummary: (ctx) => {
       const outageMs = typeof ctx.payload['outageMs'] === 'number' ? ctx.payload['outageMs'] : null
@@ -458,7 +434,6 @@ const RECIPE_DEFINITIONS = {
     ],
   },
 
-  // family: slice-workflow
   'slices-dropped': {
     humanSummary: () =>
       'Some tasks were removed from the plan because they were out of scope or redundant — check what was dropped.',
@@ -471,7 +446,6 @@ const RECIPE_DEFINITIONS = {
     verbs: [],
   },
 
-  // family: slice-workflow
   'slice-failed': {
     humanSummary: () =>
       'Mars could not turn this PRD into tasks — inspect the failure, then explicitly slice it again when ready.',
@@ -483,7 +457,6 @@ const RECIPE_DEFINITIONS = {
     verbs: [],
   },
 
-  // family: slice-workflow
   'hitl-slice-needs-operator': {
     humanSummary: () =>
       'You need to take over a task in this plan — pick it up and complete the work manually.',
@@ -686,7 +659,6 @@ const RECIPE_DEFINITIONS = {
     verbs: [],
   },
 
-  // family: daemon-health
   'observability-store-oversize': {
     humanSummary: () =>
       'The observability database has grown past 500 MB — prune it to free disk space.',
@@ -724,7 +696,6 @@ const RECIPE_DEFINITIONS = {
     verbs: [{ op: 'restart', label: 'Restart', style: 'primary' }],
   },
 
-  // family: daemon-health
   'outbox-lag': {
     humanSummary: () =>
       'An internal processor is backed up and may be stuck — check its status.',
@@ -753,7 +724,6 @@ const RECIPE_DEFINITIONS = {
 
   // ── API and rate limits ────────────────────────────────────────────────────
 
-  // family: spend-provider
   'api-outage': {
     humanSummary: () =>
       'The Claude API is down — tasks are paused automatically and will resume once the API recovers.',
@@ -766,7 +736,6 @@ const RECIPE_DEFINITIONS = {
     verbs: [],
   },
 
-  // family: spend-provider
   'provider-rate-limited': {
     humanSummary: (ctx) => {
       const resetsAt = str(ctx.payload['resetsAtIso'])
@@ -940,7 +909,6 @@ const RECIPE_DEFINITIONS = {
 
   // ── Budget ────────────────────────────────────────────────────────────────
 
-  // family: spend-provider
   'budget-window': {
     humanSummary: () =>
       "Spending in the current time window has crossed the warning threshold — no tasks are paused, but keep an eye on it.",
@@ -954,7 +922,6 @@ const RECIPE_DEFINITIONS = {
     verbs: [],
   },
 
-  // family: spend-provider
   'budget-arc': {
     humanSummary: (ctx) => {
       const arcId = str(ctx.payload['arcId']) || ctx.entityId
@@ -1128,7 +1095,6 @@ const RECIPE_DEFINITIONS = {
     verbs: [],
   },
 
-  // family: spend-provider
   'spend-control-notice': {
     humanSummary: (ctx) => {
       const direction = str(ctx.payload['direction'])
@@ -1213,7 +1179,6 @@ const RECIPE_DEFINITIONS = {
     verbs: [],
   },
 
-  // family: daemon-health
   'low-disk-space': {
     humanSummary: (ctx) => {
       const freeMiB = typeof ctx.payload['freeBytes'] === 'number'
@@ -1293,7 +1258,6 @@ const RECIPE_DEFINITIONS = {
    * The `conditionKey` payload field identifies which check raised this row
    * so the Steward can close it when the condition resolves.
    */
-  // family: daemon-health
   'health-check-alert': {
     humanSummary: (ctx) => {
       const checkId = str(ctx.payload['conditionKey']) || ctx.entityId

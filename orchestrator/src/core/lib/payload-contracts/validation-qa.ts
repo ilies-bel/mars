@@ -1,7 +1,7 @@
 /**
  * Payload contracts for the validation / QA family of action-queue kinds.
  *
- * Kinds owned by this family (`UNAUDITED_KIND_FAMILY` entry: `'validation-qa'`):
+ * Kinds covered by this module:
  *   - `awaiting-validation`
  *   - `awaiting-validation-preview-gone`
  *   - `behaviour-unverified`

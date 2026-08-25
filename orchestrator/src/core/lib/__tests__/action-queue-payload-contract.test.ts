@@ -287,12 +287,9 @@ describe('payload/recipe join is checkable for every kind', () => {
     }
   })
 
-  // Retirement gate — un-skip this once every kind in ACTION_QUEUE_PAYLOAD_AUDIT
-  // reads 'typed' or 'derived-condition'. At that point also:
-  //   • remove the `'unaudited'` branch from the `satisfies` in action-queue-payloads.ts
-  //   • delete `UnauditedKind`, `UnauditedKindFamily`, and `UNAUDITED_KIND_FAMILY`
-  //   • remove the `UnauditedPayload` export (or keep as a tombstone comment)
-  it.todo('retire unaudited: every kind is typed or derived-condition')
+  it('no kind remains unaudited', () => {
+    expect(Object.values(ACTION_QUEUE_PAYLOAD_AUDIT)).not.toContain('unaudited')
+  })
 
   it('every kind renders a non-empty summary from an empty payload', () => {
     // A row with a payload the recipe cannot use must still say something.

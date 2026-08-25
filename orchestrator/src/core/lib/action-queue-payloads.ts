@@ -23,17 +23,10 @@
  * ## Adding a kind
  *
  * {@link ACTION_QUEUE_PAYLOAD_AUDIT} is total over `ActionQueueKind` via
- * `satisfies`. A new kind therefore does not compile until it is classified
- * there, which is the moment to decide whether it needs a typed contract. That
- * is deliberate: the previous guard was a test someone had to remember, and
- * forgetting it is exactly what let this recur three times.
- *
- * ## Typing the still-`unaudited` kinds
- *
- * The remaining `'unaudited'` kinds are being typed incrementally, one family
- * at a time. {@link UNAUDITED_KIND_FAMILY} assigns each of them to its family
- * — that assignment, not a kind list re-typed in each consumer's prompt, is
- * the source of truth for which kinds a given family slice owns.
+ * `satisfies`. A new kind does not compile until it is classified there as
+ * either `'typed'` or `'derived-condition'`. That is deliberate: the previous
+ * guard was a test someone had to remember, and forgetting it is exactly what
+ * let this recur three times.
  */
 
 import type { ActionQueueKind } from './action-queue-kinds'
@@ -129,11 +122,13 @@ import type { VerifyContracts } from './payload-contracts/verify'
 // ── Shared shapes ─────────────────────────────────────────────────────────────
 
 /**
- * Payload for a kind whose raiser/recipe join has not been audited yet.
+ * Fallback payload type used by {@link PayloadFor} when `K` is not in
+ * {@link AuditedPayloads}.
  *
- * Structurally identical to the old untyped `Record<string, unknown>`, so
- * declaring a kind unaudited is a no-op for its existing raisers. It is a
- * named type rather than an inline `Record` so the remaining work is greppable.
+ * Generic readers (e.g. code that deserialises a row from the database without
+ * knowing its kind) receive `UnauditedPayload` because a JSON-decoded blob has
+ * not been validated against any contract. Typed narrowly at raise and recipe
+ * sites; wide here so callers do not lie about what they know.
  */
 export type UnauditedPayload = Record<string, unknown>
 
@@ -179,7 +174,6 @@ export type PayloadFor<K extends ActionQueueKind> =
  *   - `derived-condition` — payload is built by `derived-conditions.ts` and
  *     guarded at runtime by `derived-conditions-payload-contract.test.ts`,
  *     which records the keys each recipe reads through a Proxy.
- *   - `unaudited` — no guard yet. Reduce this list; do not grow it.
  */
 export const ACTION_QUEUE_PAYLOAD_AUDIT = {
   'awaiting-human': 'typed',
@@ -243,53 +237,5 @@ export const ACTION_QUEUE_PAYLOAD_AUDIT = {
   'mockup-ready': 'typed',
   'qa-step-list-opt-in': 'typed',
   'qa-step-list-promote': 'typed',
-} as const satisfies Record<ActionQueueKind, 'typed' | 'derived-condition' | 'unaudited'>
+} as const satisfies Record<ActionQueueKind, 'typed' | 'derived-condition'>
 
-// ── Kind families ─────────────────────────────────────────────────────────────
-
-/**
- * Kinds still classified `'unaudited'` above. Derived from
- * {@link ACTION_QUEUE_PAYLOAD_AUDIT} rather than hand-listed, so this stays in
- * sync automatically as consumer slices flip entries to `'typed'`.
- */
-type UnauditedKind = {
-  [K in ActionQueueKind]: (typeof ACTION_QUEUE_PAYLOAD_AUDIT)[K] extends 'unaudited' ? K : never
-}[ActionQueueKind]
-
-/**
- * The eight families the remaining unaudited kinds are typed in, one family
- * per consumer slice of PRD `2d84a65a-shrink-the-unaudited-list-in-action-queu`.
- */
-export type UnauditedKindFamily =
-  | 'slice-workflow'
-  | 'validation-qa'
-  | 'spend-provider'
-  | 'daemon-health'
-  | 'task-lifecycle'
-  | 'verify-gate'
-  | 'proposal-promotion'
-  | 'scheduling-workflow-drift'
-
-/**
- * Assigns every still-unaudited kind to the family that will type it.
- *
- * This is the seam the eight consumer slices key off, instead of each
- * hand-copying a kind list from its own prompt into this file. `satisfies
- * Record<UnauditedKind, UnauditedKindFamily>` makes the assignment **total**
- * (every unaudited kind lands in exactly one family — TypeScript rejects a
- * missing key) and **exact** (an excess key, e.g. one a consumer slice forgot
- * to remove after flipping its kind to `'typed'`, is a compile error too).
- *
- * One entry corrects a drift already found at slicing time: the
- * validation/QA consumer slice's prompt names a kind `preview-gone`, which
- * does not exist — the real kind is `awaiting-validation-preview-gone`,
- * listed under `validation-qa` below.
- *
- * `unaudited` classification is temporary scaffolding for this PRD — once
- * every kind above reads `'typed'` or `'derived-condition'`, `UnauditedKind`
- * is `never` and this map (along with `UnauditedKindFamily`) is dead code to
- * delete, which is exactly what "Retire the `unaudited` classification once
- * the list is empty" does.
- */
-export const UNAUDITED_KIND_FAMILY = {
-} as const satisfies Record<UnauditedKind, UnauditedKindFamily>
