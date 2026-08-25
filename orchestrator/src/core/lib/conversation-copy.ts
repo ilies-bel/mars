@@ -112,11 +112,36 @@ const ack = (id = 'ack'): PreloadedResponse => ({
   target: { type: 'ack' },
 })
 
+/**
+ * "Later" — the operator defers without committing; semantically distinct from
+ * `ack` (acknowledgment) so the UI can style deferral differently from closure.
+ */
+const defer = (): PreloadedResponse => ({
+  id: 'later',
+  label: 'Later',
+  target: { type: 'ack' },
+})
+
 /** The off-switch for `lever`, worded for the behaviour it silences. */
 const silence = (lever: string, label: string, id = 'silence'): PreloadedResponse => ({
   id,
   label,
   target: { type: 'lever', name: lever, level: 'off' },
+})
+
+/**
+ * Per-instance dismissal via `notice_dismissals`. Sends `dismiss-notice` to
+ * the daemon, which records a durable dismissal keyed by `noticeKey` and
+ * resolves the action-queue row — the same logical notice will not reappear.
+ *
+ * Use this instead of `silence()` when only this specific instance should be
+ * suppressed, not the whole class. Each distinct `noticeKey` is independent:
+ * dismissing one instance does not gate any other.
+ */
+export const dismissNotice = (noticeKey: string, id = 'dismiss'): PreloadedResponse => ({
+  id,
+  label: 'Dismiss',
+  target: { type: 'verb', op: 'dismiss-notice', entityId: noticeKey },
 })
 
 /**
@@ -144,7 +169,7 @@ const REGISTRY: { [Kind in AutonomousNoticeKind]: NoticeKindEntry<Kind> } = {
         label: 'Look into it',
         target: { type: 'subject', title: `Triage: ${sentenceValue(p.cause)}` },
       },
-      ack('later'),
+      defer(),
     ],
   },
   'session.idle-proposal': {
@@ -158,8 +183,9 @@ const REGISTRY: { [Kind in AutonomousNoticeKind]: NoticeKindEntry<Kind> } = {
         label: 'Grill it',
         target: { type: 'client', op: 'open-proposal-subject', entityId: p.proposalId },
       },
-      ack('later'),
-      silence(IDLE_PROPOSAL_OFFER_LEVER, "Don't offer this", 'never'),
+      defer(),
+      // Per-instance: dismisses only this proposal's offer, not the whole class.
+      dismissNotice(`idle-proposal:${p.proposalId}`, 'never'),
     ],
   },
   'suggestion.codegraph': {
@@ -173,8 +199,8 @@ const REGISTRY: { [Kind in AutonomousNoticeKind]: NoticeKindEntry<Kind> } = {
         label: 'Install it',
         target: { type: 'subject', title: 'Install codegraph' },
       },
-      ack('later'),
-      silence(CODEGRAPH_SUGGESTION_LEVER, "Don't ask again", 'never'),
+      defer(),
+      silence(CODEGRAPH_SUGGESTION_LEVER, 'Disable codegraph suggestions', 'never'),
       {
         id: 'why',
         label: 'Why AST traversal helps',
@@ -192,7 +218,7 @@ const REGISTRY: { [Kind in AutonomousNoticeKind]: NoticeKindEntry<Kind> } = {
     lever: PUSH_HABIT_OBSERVATION_LEVER,
     offers: () => [
       ack(),
-      silence(PUSH_HABIT_OBSERVATION_LEVER, "Don't mention this again", 'never'),
+      silence(PUSH_HABIT_OBSERVATION_LEVER, 'Disable push observations', 'never'),
     ],
   },
   'trend.token-spend': {
@@ -206,8 +232,8 @@ const REGISTRY: { [Kind in AutonomousNoticeKind]: NoticeKindEntry<Kind> } = {
         label: 'Write me a report',
         target: { type: 'subject', title: 'Why token spend rose' },
       },
-      ack('later'),
-      silence(ARCHITECTURE_REPORT_LEVER, "Don't do that again", 'never'),
+      defer(),
+      silence(ARCHITECTURE_REPORT_LEVER, 'Disable spend trend alerts', 'never'),
     ],
   },
   'gate.main-broken': {
