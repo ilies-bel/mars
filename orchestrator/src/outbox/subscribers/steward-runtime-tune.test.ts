@@ -35,9 +35,6 @@ const pressure = (idlePercent: number, marsSharePercent = 5, marsProcessCount = 
   sampleMs: 1_000,
 })
 
-type Ack = ReturnType<typeof vi.fn> & ((input: unknown) => Promise<void>)
-const ackSpy = (): Ack => vi.fn().mockResolvedValue(undefined) as Ack
-
 describe('steward-runtime-tune', () => {
   const disposers: Array<() => void> = []
 
@@ -81,7 +78,6 @@ describe('steward-runtime-tune', () => {
     const bus = new EventEmitter()
     const implementSem = makeSem(cap)
     const log = vi.fn()
-    const writeChatAck = ackSpy()
     const recordCapDecision = vi.fn()
     const runOrphanSweep = vi
       .fn()
@@ -109,7 +105,6 @@ describe('steward-runtime-tune', () => {
       repoRoot: '/repo',
       getInFlightTaskIds: () => new Set<string>(),
       recordCapDecision,
-      postConversationNotice: writeChatAck,
       runOrphanSweep,
       readPressure,
       readPagingCounter,
@@ -124,8 +119,6 @@ describe('steward-runtime-tune', () => {
       bus,
       implementSem,
       log,
-      postConversationNotice: writeChatAck,
-      writeChatAck,
       recordCapDecision,
       runOrphanSweep,
       readPressure,
@@ -148,22 +141,20 @@ describe('steward-runtime-tune', () => {
 
   describe('the autonomy lever', () => {
     it('stops tuning entirely once the operator turns the lever off', async () => {
-      const { bus, implementSem, writeChatAck, recordLedger } = setup(12, {
+      const { bus, implementSem, recordLedger } = setup(12, {
         autonomyLevel: 'off',
       })
 
       bus.emit('kpi.backlog.degraded', { pending: 15, cap: 12, sustainedMs: 65_000 })
       await vi.waitFor(() => expect(implementSem.limit).toBe(12))
 
-      // Not merely silenced: the behaviour itself is off. A Notice the
-      // operator cannot act on would be worse than no Notice at all.
-      expect(writeChatAck).not.toHaveBeenCalled()
+      // Not merely silenced: the behaviour itself is off.
       expect(recordLedger).not.toHaveBeenCalled()
     })
 
     it('stops shedding too, not just bumping', async () => {
       vi.useFakeTimers()
-      const { implementSem, writeChatAck } = setup(12, {
+      const { implementSem } = setup(12, {
         pagingPps: 5_000,
         autonomyLevel: 'off',
       })
@@ -171,7 +162,6 @@ describe('steward-runtime-tune', () => {
       await primePaging()
 
       expect(implementSem.limit).toBe(12)
-      expect(writeChatAck).not.toHaveBeenCalled()
     })
 
     it('treats ask as tell: a runtime knob has nobody to ask at 3am', async () => {
@@ -251,15 +241,13 @@ describe('steward-runtime-tune', () => {
   })
 
   it('bumps implement cap on kpi.backlog.degraded', async () => {
-    const { bus, implementSem, writeChatAck } = setup(12)
+    const { bus, implementSem } = setup(12)
     expect(implementSem.limit).toBe(12)
 
     bus.emit('kpi.backlog.degraded', { pending: 15, cap: 12, sustainedMs: 65_000 })
     await vi.waitFor(() => expect(implementSem.limit).toBe(16))
 
     expect(implementSem.limit).toBe(16) // ceil(12 * 1.33) = 16
-    // Tuning events are log-only; no chat notice is posted.
-    expect(writeChatAck).not.toHaveBeenCalled()
   })
 
   it('caps at 2× baseline', async () => {
@@ -274,35 +262,31 @@ describe('steward-runtime-tune', () => {
   })
 
   it('skips when already at max cap', async () => {
-    const { bus, implementSem, log, writeChatAck } = setup(10)
+    const { bus, implementSem, log } = setup(10)
     implementSem.limit = 20 // already at 2× baseline
 
     bus.emit('kpi.backlog.degraded', { pending: 25, cap: 20, sustainedMs: 80_000 })
     await vi.waitFor(() => expect(log).toHaveBeenCalled())
 
     expect(implementSem.limit).toBe(20)
-    expect(writeChatAck).not.toHaveBeenCalled()
   })
 
   it('logs the cap bump and does not post to chat', async () => {
-    const { bus, log, writeChatAck, recordLedger } = setup(12)
+    const { bus, log, recordLedger } = setup(12)
 
     bus.emit('kpi.backlog.degraded', { pending: 15, cap: 12, sustainedMs: 60_000 })
     await vi.waitFor(() => expect(recordLedger).toHaveBeenCalledTimes(1))
 
-    // Steward tuning events are log-only — no chat notice.
-    expect(writeChatAck).not.toHaveBeenCalled()
     expect(log.mock.calls.flat().join(' ')).toContain('bumped implement cap 12 → 16')
   })
 
   it('does not raise a validation action-queue item', async () => {
-    const { bus, writeChatAck, recordLedger } = setup(12)
+    const { bus, recordLedger } = setup(12)
 
     bus.emit('kpi.backlog.degraded', { pending: 15, cap: 12, sustainedMs: 60_000 })
     await vi.waitFor(() => expect(recordLedger).toHaveBeenCalledTimes(1))
 
     // Tuning events are log-only; no action-queue item is raised.
-    expect(writeChatAck).not.toHaveBeenCalled()
   })
 
   // ── CPU guard on the bump lane ────────────────────────────────────────────
@@ -338,7 +322,7 @@ describe('steward-runtime-tune', () => {
   })
 
   it('holds when the machine is genuinely out of CPU and the sweep reaps nothing', async () => {
-    const { bus, implementSem, log, writeChatAck, runOrphanSweep, recordCapDecision } =
+    const { bus, implementSem, log, runOrphanSweep, recordCapDecision } =
       setup(12, { pressures: pressure(2, 30), sweepReaped: 0 })
 
     bus.emit('kpi.backlog.degraded', { pending: 50, cap: 12, sustainedMs: 60_000 })
@@ -346,7 +330,6 @@ describe('steward-runtime-tune', () => {
     await vi.waitFor(() => expect(log).toHaveBeenCalled())
 
     expect(implementSem.limit).toBe(12)
-    expect(writeChatAck).not.toHaveBeenCalled()
     const line = log.mock.calls.map((c) => String(c[0])).join('\n')
     // The held decision must be explainable: backlog, every pressure input,
     // and the reap outcome.
@@ -408,7 +391,6 @@ describe('steward-runtime-tune', () => {
     const bus = new EventEmitter()
     const implementSem = makeSem(12)
     const log = vi.fn()
-    const writeChatAck = ackSpy()
     const stop = startStewardRuntimeTune({
       bus,
       implementSem,
@@ -416,7 +398,6 @@ describe('steward-runtime-tune', () => {
       log,
       repoRoot: '/repo',
       getInFlightTaskIds: () => new Set<string>(),
-      postConversationNotice: writeChatAck,
       runOrphanSweep: () => Promise.reject(new Error('pgrep exploded')),
       readPressure: () => Promise.resolve(pressure(1, 40)),
       readPagingCounter: async () => 0,
@@ -454,13 +435,12 @@ describe('steward-runtime-tune', () => {
 
   it('names paging as the resource that tripped the shed', async () => {
     vi.useFakeTimers()
-    const { log, writeChatAck } = setup(12, { pagingPps: 5_000 })
+    const { log } = setup(12, { pagingPps: 5_000 })
 
     await primePaging()
 
     // The shed is log-only; paging rate and direction must be visible in the log.
     expect(log.mock.calls.flat().join(' ')).toContain('paging 5000 pages/s')
-    expect(writeChatAck).not.toHaveBeenCalled()
   })
 
   it('sheds repeatedly while paging continues, never below 1', async () => {
@@ -475,29 +455,25 @@ describe('steward-runtime-tune', () => {
 
   it('does not shed while the host is not paging', async () => {
     vi.useFakeTimers()
-    const { implementSem, writeChatAck } = setup(12, { pagingPps: 0 })
+    const { implementSem } = setup(12, { pagingPps: 0 })
 
     await vi.advanceTimersByTimeAsync(15_000 * 4)
 
     expect(implementSem.limit).toBe(12)
-    expect(writeChatAck).not.toHaveBeenCalled()
   })
 
   it('refuses to bump while the host is paging, even when CPU and backlog allow it', async () => {
     vi.useFakeTimers()
-    const { bus, implementSem, log, writeChatAck } = setup(12, { pagingPps: 5_000 })
+    const { bus, implementSem, log } = setup(12, { pagingPps: 5_000 })
 
-    // Establishing the rate also sheds 12 → 8, which legitimately acks. Clear
-    // both spies so the assertions below are about the bump lane only.
+    // Establishing the rate also sheds 12 → 8.
     await primePaging()
     log.mockClear()
-    writeChatAck.mockClear()
 
     bus.emit('kpi.backlog.degraded', { pending: 400, cap: 12, sustainedMs: 90_000 })
     await vi.advanceTimersByTimeAsync(0)
 
     expect(implementSem.limit).toBe(8) // unchanged by the bump lane
-    expect(writeChatAck).not.toHaveBeenCalled()
     expect(log.mock.calls.flat().join(' ')).toMatch(/paging 5000 pages\/s >= 500/)
   })
 
@@ -514,7 +490,6 @@ describe('steward-runtime-tune', () => {
       log: vi.fn(),
       repoRoot: '/repo',
       getInFlightTaskIds: () => new Set<string>(),
-      postConversationNotice: ackSpy(),
       readPressure: () => Promise.resolve(pressure(60)),
       readPagingCounter: async () => null,
       readProcessDensity: async () => ({ marsProcessCount: 4, cores: 10 }),
@@ -676,7 +651,6 @@ describe('steward-runtime-tune', () => {
       log: vi.fn(),
       repoRoot: '/repo',
       getInFlightTaskIds: () => new Set<string>(),
-      postConversationNotice: ackSpy(),
       readPressure: () => Promise.resolve(pressure(60)),
       readPagingCounter,
       readProcessDensity: async () => ({ marsProcessCount: 4, cores: 10 }),
@@ -797,12 +771,11 @@ describe('steward-runtime-tune', () => {
 
   it('does not recover a cap that is already at or above baseline', async () => {
     vi.useFakeTimers()
-    const { implementSem, writeChatAck } = setup(4, { pagingPps: 0, baselineCap: 4 })
+    const { implementSem } = setup(4, { pagingPps: 0, baselineCap: 4 })
 
     await vi.advanceTimersByTimeAsync(15_000 * 4)
 
     expect(implementSem.limit).toBe(4)
-    expect(writeChatAck).not.toHaveBeenCalled()
   })
 
   it('sheds then recovers when paging spikes and stops', async () => {
@@ -819,7 +792,6 @@ describe('steward-runtime-tune', () => {
       log: vi.fn(),
       repoRoot: '/repo',
       getInFlightTaskIds: () => new Set<string>(),
-      postConversationNotice: ackSpy(),
       readPressure: () => Promise.resolve(pressure(60)),
       readPagingCounter: async () => {
         const now = Date.now()

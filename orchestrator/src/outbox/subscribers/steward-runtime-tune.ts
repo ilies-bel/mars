@@ -4,7 +4,6 @@ import { readFile } from 'node:fs/promises'
 import { platform } from 'node:os'
 import { promisify } from 'node:util'
 import { setSemLimit, type Semaphore } from '../../core/daemon/semaphore.js'
-import type { ConversationNoticeInput } from '../../core/lib/conversation-delivery.js'
 import {
   sweepOrphans,
   formatSweepSummary,
@@ -144,8 +143,6 @@ export interface StewardRuntimeTuneDeps {
    * `mars daemon status` as the effective-cap explanation.
    */
   recordCapDecision?: (reason: string | null) => void
-  /** Override for testing — defaults to durable conversation Notice delivery. */
-  postConversationNotice?: (input: ConversationNoticeInput) => Promise<unknown>
   /** Override for testing — defaults to the real orphan sweep. */
   runOrphanSweep?: () => Promise<OrphanSweepSummary>
   /** Override for testing — defaults to the real machine-pressure sample. */
@@ -575,9 +572,6 @@ export function startStewardRuntimeTune(deps: StewardRuntimeTuneDeps): () => voi
         newCap,
         `sustained backlog: ${payload.pending} pending for ${Math.round(payload.sustainedMs / 1000)}s (${decision.explanation}; ${evidence})`,
       )
-      // Steward runtime-tuning events are log-only (cap change already logged
-      // above). They do not reach the chat transcript — the operator has
-      // nothing to decide here that a log line cannot communicate.
     })()
   })
 
@@ -598,7 +592,6 @@ export function startStewardRuntimeTune(deps: StewardRuntimeTuneDeps): () => voi
       log(`[steward-tune] shed implement cap ${oldCap} → ${newCap} (${detail})`)
       recordCapDecision(`steward autotune shed implement ${oldCap} → ${newCap} (${detail})`)
       await ledger('shed', oldCap, newCap, detail)
-      // Steward runtime-tuning events are log-only — see bump lane above.
       return
     }
 
@@ -671,7 +664,6 @@ export function startStewardRuntimeTune(deps: StewardRuntimeTuneDeps): () => voi
       newCap,
       `paging ${Math.round(pagingPps)} pages/s < ${PAGING_ACTIVE_PPS}, baseline ${baselineCap}`,
     )
-    // Steward runtime-tuning events are log-only — see bump lane above.
   }
 
   // Sample once immediately rather than waiting a full interval. Paging is a
