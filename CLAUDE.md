@@ -284,17 +284,30 @@ invoking — this CLAUDE.md note may lag the CLI. The inline `"<prompt>"`
 form is for genuinely single-line prompts only; use `--prompt-file <path>`
 or `-` (stdin) for multi-line prompts.
 
-**`--verify` must use relative paths.** The verify step runs inside the
-task's git worktree, not the main checkout. An absolute path like
-`(cd /abs/path/to/repo/orchestrator && npm test)` escapes worktree
-isolation: it runs against `main`'s tree, not the task branch, producing
-false-green verifies or verifies that can never pass (the fix lives in the
-worktree, not in main). `mars task add` rejects such specs at enqueue time.
-Use a path relative to the worktree root instead:
+**`--verify` must use relative paths and be scoped to specific test files.**
+The verify step runs inside the task's git worktree, not the main checkout.
+An absolute path like `(cd /abs/path/to/repo/orchestrator && npm test)`
+escapes worktree isolation: it runs against `main`'s tree, not the task
+branch, producing false-green verifies or verifies that can never pass (the
+fix lives in the worktree, not in main). `mars task add` rejects such specs
+at enqueue time. Use a path relative to the worktree root instead:
 
 ```
---verify 'cd orchestrator && npm test'          # ✓ relative
---verify '(cd /abs/path/to/repo && npm test)'  # ✗ rejected — absolute repo path
+--verify 'cd orchestrator && npx vitest run src/path/to/your.test.ts'  # ✓ scoped, relative
+--verify '(cd /abs/path/to/repo && npm test)'                          # ✗ rejected — absolute repo path
+```
+
+**Whole-suite verify commands are also rejected unconditionally.** Bare
+`npm test`, bare `npm run test`, and `vitest run` with no test-file argument
+are all rejected regardless of whether the baseline is currently passing or
+red. The check is a static string pattern — it does **not** consult live
+baseline state. The standing reason is the wall-clock budget: a full suite
+exceeds the verify step's timeout and can never pass regardless of the
+change. Always scope `--verify` to the test files your change actually
+touches, for example:
+
+```
+--verify 'cd orchestrator && npx vitest run src/core/queue.test.ts'
 ```
 
 ## Blockers
