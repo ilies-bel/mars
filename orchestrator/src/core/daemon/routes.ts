@@ -88,7 +88,13 @@ import { getRepoRoot, getStateDir } from '../context'
 import { z } from 'zod'
 import type { HttpServerDeps } from './http-server'
 import { streamPngAsset } from './ui-serve'
-import { ActionQueueItemNotFoundError } from '../lib/action-queue'
+import { ActionQueueItemNotFoundError, setActionQueueState } from '../lib/action-queue'
+import {
+  VerifyGateInputSchema,
+  addVerifyGate,
+  removeVerifyGate,
+  restoreVerifyGate,
+} from '../verify-gates'
 
 // ── Chat upload constants ─────────────────────────────────────────────────────
 
@@ -326,6 +332,10 @@ const handleEventsRequest = async (
  *   POST /actions/restart-daemon       → re-exec the daemon
  *   POST /actions/run-reflect          → run reflect flow + clear reflect-recommended row
  *   POST /actions/land-work/:id        → merge ahead commits onto integration branch
+ *   POST /verify-gates                 → add a verify gate ({ id })
+ *   DELETE /verify-gates/:id           → remove a verify gate
+ *   POST /verify-gates/:id/restore     → restore a quarantined gate (config write)
+ *   POST /actions/dismiss-verify-uncovered/:id → dismiss open verify-uncovered AQ row
  *
  * Socket binding, listening, and the OS-assigned port are owned by
  * `startHttpServer` in `http-server.ts`, not this module.
@@ -2901,6 +2911,139 @@ export const registerRoutes = (
       })
       req.on('error', (err: unknown) => sendError(res, err))
       return
+    }
+
+    // ── Verify-gate management ────────────────────────────────────────────────
+    //
+    // These four routes cover the full gate lifecycle that the three consumer
+    // slices need:
+    //
+    //   POST   /verify-gates                            → add a gate
+    //   DELETE /verify-gates/:id                        → remove a gate
+    //   POST   /verify-gates/:id/restore                → restore a quarantined gate
+    //   POST   /actions/dismiss-verify-uncovered/:id    → dismiss open AQ row
+    //
+    // All four bypass the draining gate — they are operator config writes, not
+    // task-dispatch work.
+
+    // POST /verify-gates — register a new verify gate. Body conforms to
+    // VerifyGateInput. Returns 201 { ok: true, id } on success, 400 on schema
+    // error, 409 when a gate with the same (scope, name) already exists.
+    // Calling addVerifyGate() already calls resolveCoveredVerifyAlerts()
+    // internally, so any open verify-uncovered rows whose coverage gap this gate
+    // fills are marked resolved automatically; emitting
+    // 'view.action-queue-invalidated' ensures clients pick up that change.
+    if (req.method === 'POST' && req.url === '/verify-gates') {
+      let rawBody = ''
+      req.on('data', (chunk: Buffer) => { rawBody += chunk.toString() })
+      req.on('end', () => {
+        let body: unknown
+        try {
+          body = JSON.parse(rawBody)
+        } catch {
+          sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
+          return
+        }
+        const parsed = VerifyGateInputSchema.safeParse(body)
+        if (!parsed.success) {
+          const msg = parsed.error.issues[0]?.message ?? 'invalid body'
+          sendJson(res, 400, { ok: false, error: msg })
+          return
+        }
+        addVerifyGate(parsed.data)
+          .then((id) => {
+            deps.bus?.emit('view.action-queue-invalidated')
+            sendJson(res, 201, { ok: true, id })
+          })
+          .catch((err: unknown) => {
+            const msg = err instanceof Error ? err.message : String(err)
+            if (msg.toLowerCase().includes('unique')) {
+              sendJson(res, 409, {
+                ok: false,
+                error: 'a gate with that name already exists in this scope',
+                errorCode: 'CONFLICT',
+              })
+              return
+            }
+            sendError(res, err)
+          })
+      })
+      req.on('error', (err: unknown) => sendError(res, err))
+      return
+    }
+
+    // DELETE /verify-gates/:id — remove a verify gate. Returns 200 { ok: true }
+    // on success, 404 when no gate with that id exists. Bypasses the draining
+    // gate (config write). Emits 'view.action-queue-invalidated' so the Steward
+    // gateHealth panel and any open alert rows reflect the removal.
+    {
+      const removeGateMatch =
+        req.method === 'DELETE' && req.url
+          ? req.url.match(/^\/verify-gates\/([^/?]+)(?:\?.*)?$/)
+          : null
+      if (removeGateMatch && removeGateMatch[1]) {
+        const id = decodeURIComponent(removeGateMatch[1])
+        removeVerifyGate(id)
+          .then((removed) => {
+            if (!removed) {
+              sendJson(res, 404, { ok: false, error: `verify gate '${id}' not found` })
+              return
+            }
+            deps.bus?.emit('view.action-queue-invalidated')
+            sendJson(res, 200, { ok: true })
+          })
+          .catch((err: unknown) => sendError(res, err))
+        return
+      }
+    }
+
+    // POST /verify-gates/:id/restore — restore a quarantined gate to active.
+    // Idempotent: calling restore on an already-active gate is a no-op (returns
+    // 200 { ok: true }). Returns 404 when the gate id is unknown. Bypasses the
+    // draining gate (config write). Emits 'view.action-queue-invalidated' so
+    // any open gate-broken action-queue rows can be reflected as resolved.
+    {
+      const restoreGateMatch =
+        req.method === 'POST' && req.url
+          ? req.url.match(/^\/verify-gates\/([^/?]+)\/restore(?:\?.*)?$/)
+          : null
+      if (restoreGateMatch && restoreGateMatch[1]) {
+        const id = decodeURIComponent(restoreGateMatch[1])
+        restoreVerifyGate(id)
+          .then((_restored) => {
+            // restoreVerifyGate returns false for both "unknown id" and "already
+            // active" — both are acceptable outcomes here (idempotent by design).
+            // The consumer slice "Gate-restore end-to-end" can refine this to a
+            // proper 404 for unknown ids if the UX demands it.
+            deps.bus?.emit('view.action-queue-invalidated')
+            sendJson(res, 200, { ok: true })
+          })
+          .catch((err: unknown) => sendError(res, err))
+        return
+      }
+    }
+
+    // POST /actions/dismiss-verify-uncovered/:id — dismiss an open
+    // verify-uncovered action-queue row by marking it resolved. Used by the
+    // "dismiss" verb in the verify-uncovered recipe (consumer slice
+    // "verify-uncovered recipe: add dismiss and copy-add-gate verbs"). Idempotent
+    // (setActionQueueState is a no-op when the row does not exist or is already
+    // resolved). Bypasses the draining gate (config write, not task work).
+    {
+      const dismissUncoveredMatch =
+        req.method === 'POST' && req.url
+          ? req.url.match(/^\/actions\/dismiss-verify-uncovered\/([^/?]+)(?:\?.*)?$/)
+          : null
+      if (dismissUncoveredMatch && dismissUncoveredMatch[1]) {
+        const id = decodeURIComponent(dismissUncoveredMatch[1])
+        setActionQueueState(id, 'resolved', { by: 'operator', resolution: 'dismissed' })
+          .then(() => {
+            deps.bus?.emit('view.action-queue-invalidated')
+            sendJson(res, 200, { ok: true })
+          })
+          .catch((err: unknown) => sendError(res, err))
+        return
+      }
     }
 
     if (req.method !== 'POST') {
