@@ -202,7 +202,7 @@ const REGISTRY: { [Kind in AutonomousNoticeKind]: NoticeKindEntry<Kind> } = {
         target: { type: 'subject', title: 'Install codegraph' },
       },
       ack('later', 'Later'),
-      silence(CODEGRAPH_SUGGESTION_LEVER, 'Disable codegraph suggestions', 'never'),
+      silence(CODEGRAPH_SUGGESTION_LEVER, 'Stop suggesting this', 'never'),
       {
         id: 'why',
         label: 'Why AST traversal helps',
@@ -220,7 +220,7 @@ const REGISTRY: { [Kind in AutonomousNoticeKind]: NoticeKindEntry<Kind> } = {
     lever: PUSH_HABIT_OBSERVATION_LEVER,
     offers: () => [
       ack(),
-      silence(PUSH_HABIT_OBSERVATION_LEVER, 'Disable push observations', 'never'),
+      silence(PUSH_HABIT_OBSERVATION_LEVER, 'Stop mentioning these', 'never'),
     ],
   },
   'trend.token-spend': {
