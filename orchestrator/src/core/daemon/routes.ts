@@ -213,6 +213,7 @@ type EntityOp =
   | 'prune-worktree'
   | 'dismiss'
   | 'dismiss-daemon-died'
+  | 'dismiss-uncovered'
   | 'validate'
   | 'reject'
   | 'land-work'
@@ -377,6 +378,12 @@ export const registerRoutes = (
         throw Object.assign(new Error('dismiss-daemon-died not implemented'), { code: 'NOT_IMPLEMENTED' as const })
       }
       await deps.dismissDaemonDied()
+    },
+    'dismiss-uncovered': async (id) => {
+      if (!deps.dismissUncovered) {
+        throw Object.assign(new Error('dismiss-uncovered not implemented'), { code: 'NOT_IMPLEMENTED' as const })
+      }
+      await deps.dismissUncovered(id)
     },
     validate: deps.validateTask,
     reject: deps.rejectTask,

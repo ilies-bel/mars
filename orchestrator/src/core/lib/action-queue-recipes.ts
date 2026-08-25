@@ -800,30 +800,21 @@ const RECIPE_DEFINITIONS = {
       changedPaths: ctx.payload['changedPaths'],
       recipe: str(ctx.payload['recipe']),
     }),
-    // `copy` hands the operator the exact `mars verify-gate add` command pre-filled
-    // from `proposedGate` when the raiser had enough context to encode a candidate
-    // check, or a minimal `--scope` form when it did not. Either way the operator
-    // can run or adapt the command without looking up the syntax.
-    // Dismiss is appended automatically by `getRecipeVerbs` (via GENERIC_DISMISS_KINDS)
-    // so the operator can close the row if the coverage gap is intentional.
+    // Primary verb lets the operator dismiss the coverage gap as intentional.
+    // Secondary copy verb hands the operator the pre-filled `mars verify-gate add`
+    // command so they can add a gate without looking up the syntax.
+    // Dismiss is also appended automatically by `getRecipeVerbs` (via GENERIC_DISMISS_KINDS).
     verbs: (ctx) => {
-      const scope = str(ctx.payload['scope']) || '.'
-      const proposed = ctx.payload['proposedGate'] as
-        | { name?: string; cmd?: string; args?: string[]; scope?: string }
-        | undefined
-      const hint =
-        proposed?.name && proposed?.cmd
-          ? [
-              'mars verify-gate add',
-              `--scope ${str(proposed.scope) || scope}`,
-              `--name ${proposed.name}`,
-              `--cmd ${proposed.cmd}`,
-              ...(Array.isArray(proposed.args) && proposed.args.length > 0
-                ? ['--', ...proposed.args]
-                : []),
-            ].join(' ')
-          : `mars verify-gate add --scope ${scope} --name <name> --cmd <cmd>`
-      return [{ op: 'copy', label: 'Add gate check', style: 'primary', hint }]
+      const scope = str(ctx.payload['scope']) || '<scope>'
+      return [
+        { op: 'dismiss-uncovered', label: 'No gate needed', style: 'primary' },
+        {
+          op: 'copy',
+          label: 'Copy add-gate command',
+          style: 'default',
+          hint: `mars verify-gate add --scope ${scope} --name <name> --cmd '<cmd>'`,
+        },
+      ]
     },
   },
 

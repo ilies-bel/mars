@@ -417,6 +417,15 @@ export interface HttpServerDeps {
    */
   dismissVerifyUncovered?: (id: string) => Promise<void>
   /**
+   * Resolve a `verify-uncovered` action-queue row by its entity id (the `op:
+   * 'dismiss-uncovered'` verb handler). Marks the row resolved with
+   * `resolution='dismissed'` and emits a view invalidation so it no longer
+   * appears in the open queue. Idempotent: a missing or already-resolved row
+   * is a no-op. Optional — when absent the `/actions/dismiss-uncovered/:id`
+   * endpoint returns 501 Not Implemented.
+   */
+  dismissUncovered?: (id: string) => Promise<void>
+  /**
    * Restore a quarantined verify gate: flip its state from `quarantined` →
    * `active`, clear `quarantined_at` / `quarantine_signature`, and emit a view
    * invalidation so the action-queue re-derives the `gate-broken` condition.
