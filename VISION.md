@@ -170,6 +170,7 @@ been tested where it is made.
 | DEC-2 — Mars changes its own config and workflows unprompted | Provoke a condition Mars has a configured response to, then watch without touching anything. A change Mars only ever proposes, or that waits on an operator gesture to apply, falsifies it. |
 | HR-7 — provider-agnostic | Install with the default configuration and dispatch a task. A provider SDK imported by the core, or an API key Mars must hold for that default path to work, falsifies it. |
 | DEC-6 — workflow edits apply mid-run | Edit a workflow while a run is in flight, then watch that run reach a step after the edit. A run that finishes on the definition it started with, or that pins a snapshot taken at dispatch, falsifies it. |
+| HR-9 / DEC-13 — git is concrete, not a port | Trace the core's git calls and an implement run's worktree. A VCS port the core dispatches through, a swappable non-git implementation behind it, or a run that proceeds without a worktree, falsifies it. |
 
 ## 9. Definition of done
 
