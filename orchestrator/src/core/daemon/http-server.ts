@@ -447,6 +447,17 @@ export interface HttpServerDeps {
    */
   removeGate?: (id: string) => Promise<{ removed: boolean }>
   /**
+   * Fire-and-forget gate restore triggered by the `gate-restore` recipe verb:
+   * re-runs the gate's verify command in the background, calls
+   * `appServices.restoreGate(id)` on success, and logs the failure signature
+   * on failure. A second call while a restore is already in flight for the
+   * same gate id is deduplicated (returns immediately without spawning a second
+   * run). Returns 200 immediately so the UI is not blocked. Backs the
+   * `POST /actions/gate-restore/:id` entity-op route. Optional — when absent
+   * the endpoint returns 501 Not Implemented.
+   */
+  handleGateRestore?: (id: string) => Promise<void>
+  /**
    * Promote a fully-shaped draft proposal: flip its status from `draft` →
    * `prd-ready`, run the slicer to create tasks, and return the resulting
    * task IDs. Throws when the proposal is not in `draft` status or the

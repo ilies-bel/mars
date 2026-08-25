@@ -217,6 +217,7 @@ type EntityOp =
   | 'validate'
   | 'reject'
   | 'land-work'
+  | 'gate-restore'
 
 const TRACE_EVENT_SEVERITIES: readonly TraceEventSeverity[] = [
   'info',
@@ -390,6 +391,12 @@ export const registerRoutes = (
     validate: deps.validateTask,
     reject: deps.rejectTask,
     'land-work': deps.landWork,
+    'gate-restore': async (id) => {
+      if (!deps.handleGateRestore) {
+        throw Object.assign(new Error('gate-restore not implemented'), { code: 'NOT_IMPLEMENTED' as const })
+      }
+      await deps.handleGateRestore(id)
+    },
   }
 
   // Track live sockets so close() can force-end long-lived connections (e.g.

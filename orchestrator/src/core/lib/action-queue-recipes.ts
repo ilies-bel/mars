@@ -774,14 +774,14 @@ const RECIPE_DEFINITIONS = {
       // sibling of this same defect class.
     }),
     // Restoring a gate re-runs that gate's own command — a full build or test
-    // suite that can take minutes. The daemon's `restore-gate` op handler
-    // (see app-service `restoreVerifyGate` and the `/actions/restore-gate/:id`
-    // route) runs it asynchronously and updates the gate's health state without
-    // blocking the HTTP response. Primary style: it's the row's whole reason
-    // to exist.
+    // suite that can take minutes. The daemon's `gate-restore` op handler
+    // (see HttpServerDeps.handleGateRestore and the POST /actions/gate-restore/:id
+    // route via entityHandlers) runs it asynchronously and updates the gate's
+    // health state without blocking the HTTP response. Primary style: it's the
+    // row's whole reason to exist.
     verbs: (_ctx) => [
       {
-        op: 'restore-gate',
+        op: 'gate-restore',
         label: 'Restore gate',
         style: 'primary',
       },

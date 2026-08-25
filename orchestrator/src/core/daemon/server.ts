@@ -4591,6 +4591,76 @@ export const startDaemon = async (
     }
   })()
 
+  const handleGateRestore = (() => {
+    // One active restore per gate id — a second concurrent click returns
+    // immediately (dedup) rather than spawning a concurrent re-verify run.
+    const inFlight = new Set<string>()
+
+    return async (id: string): Promise<void> => {
+      if (inFlight.has(id)) return
+      inFlight.add(id)
+
+      // Fire-and-forget: return immediately so the HTTP response goes out at 200
+      // while the verify command runs asynchronously in the background.
+      ;(async () => {
+        try {
+          const { getVerifyGate } = await import('../verify-gates.js')
+          const { resolveVerifier } = await import('../ports/verifier/registry.js')
+          const { getRepoRoot } = await import('../context.js')
+
+          const gate = await getVerifyGate(id)
+          if (!gate) {
+            log(`[gate-restore] gate ${id} not found — skipping restore`)
+            return
+          }
+          if (gate.state !== 'quarantined') {
+            log(`[gate-restore] gate ${id} (${gate.scope}/${gate.name}) is not quarantined — skipping`)
+            return
+          }
+
+          let passed = false
+          let output = '(no output captured)'
+          try {
+            const result = await resolveVerifier().run({
+              cwd: getRepoRoot(),
+              steps: [
+                {
+                  name: gate.name,
+                  gateId: gate.id,
+                  cmd: gate.cmd,
+                  args: gate.args,
+                  required: true,
+                  dir: gate.scope,
+                  tier: 'task' as const,
+                  ...(gate.timeoutMin !== null ? { timeoutMin: gate.timeoutMin } : {}),
+                },
+              ],
+            })
+            const step = result.steps.find((s) => s.gateId === gate.id) ?? result.steps[0]
+            passed = result.passed && (step?.passed ?? false)
+            output = step?.output ?? '(no output captured)'
+          } catch (runErr: unknown) {
+            passed = false
+            output = runErr instanceof Error ? runErr.message : String(runErr)
+          }
+
+          if (passed) {
+            await appServices.restoreGate(id)
+            bus.emit('view.action-queue-invalidated')
+            log(`[gate-restore] gate ${id} (${gate.scope}/${gate.name}) restored — enforcing again`)
+          } else {
+            const sig = computeFailureSignature(`verify:${gate.name}`, output)
+            log(`[gate-restore] gate ${id} (${gate.scope}/${gate.name}) still failing: ${sig}`)
+          }
+        } catch (err: unknown) {
+          log(`[gate-restore] unexpected error for gate ${id}: ${err instanceof Error ? err.message : String(err)}`)
+        } finally {
+          inFlight.delete(id)
+        }
+      })().catch(() => { /* suppress unhandled rejection */ })
+    }
+  })()
+
   // ── Network: UDS server ───────────────────────────────────────────────────
 
   // `mars release <id>` / `mars release --abort <id>`: release the worktree
@@ -5344,6 +5414,7 @@ export const startDaemon = async (
       if (result.removed) bus.emit('view.action-queue-invalidated')
       return result
     },
+    handleGateRestore,
     dismissVerifyUncovered: async (id) => {
       const { setActionQueueState } = await import('../lib/action-queue')
       await setActionQueueState(id, 'resolved', { resolution: 'dismissed', by: 'operator' })
