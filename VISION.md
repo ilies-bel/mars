@@ -92,6 +92,8 @@ Non-negotiable. Any design that violates one is wrong.
 | DEC-20 | **Mars never gives the operator feedback about their approach.** | The operator does not author tasks (the Slicer does) and does not own the baseline (the framework repairs it). With no surface on which a failure is theirs, feedback would only ever be disagreement with its owner. |
 | DEC-21 | **"The framework and the user grow together" survives as: Mars explains itself.** | When Mars dials something, quarantines a gate or picks a recovery, it says why. Growth is one-directional in code and two-directional in understanding. Transparency, never evaluation. |
 
+**DEC-2 scope narrowed:** Mars changes its own runtime configuration unprompted (Steward worker-cap dial, per ADR-0077 grant). Self-authored workflow authorship is auto-approved when the body is provably primitive-only per the `workflow-lint.ts` surface (ADR-0068, amended). Code-affecting health repairs remain proposal-gated (ADR-0093, in force). The autonomy this grants is real — Mars authors and activates its own declarative runbooks — but it does not extend to arbitrary JS at daemon privilege.
+
 ## 5. Swappability
 
 Every capability is a **module behind a port** — a service slot bound to an
@@ -168,6 +170,7 @@ been tested where it is made.
 | DEC-21 — Mars explains itself | An autonomous act whose Notice states what changed but not why. |
 | HR-2 — the UI is the main surface | Take any act Mars offers and try to complete it in the UI alone. An affordance whose only completion is a CLI command, or a slash command in another tool, falsifies it. |
 | DEC-2 — Mars changes its own config and workflows unprompted | Provoke a condition Mars has a configured response to, then watch without touching anything. A change Mars only ever proposes, or that waits on an operator gesture to apply, falsifies it. |
+| DEC-2 scope narrowed — three lanes (see §4 scope note) | For runtime configuration the test is unchanged. For workflow authorship, the falsification test is: author a workflow whose body escapes the primitive-only lint surface and observe it waiting on an operator gesture to become dispatch-eligible. |
 | HR-7 — provider-agnostic | Install with the default configuration and dispatch a **coding task**. A provider SDK imported by the core, or an API key Mars must hold for that default coding-task dispatch path to work, falsifies it. An undeclared provider dependency on any other named surface (chat, review, vcs-supervisor, etc.) also falsifies it; a deviation declared in §11 does not — declared deviations are bounded exceptions, not violations. |
 | DEC-6 — workflow edits apply mid-run | Edit a workflow while a run is in flight, then watch that run reach a step after the edit. A run that finishes on the definition it started with, or that pins a snapshot taken at dispatch, falsifies it. |
 | HR-9 / DEC-13 — git is concrete, not a port | Trace the core's git calls and an implement run's worktree. A VCS port the core dispatches through, a swappable non-git implementation behind it, or a run that proceeds without a worktree, falsifies it. |
@@ -265,3 +268,5 @@ Tracked by task `mars-9a45415b`.
 - ADR-0040 (one recovery attempt) — **not** superseded. Reaffirmed by DEC-4.
 - ADR-0104 (Alert/Notice decided by obligation) — **not** superseded.
   Reaffirmed by DEC-8, and load-bearing for DEC-9.
+
+**Amendment (DEC-2 supersession withdrawal):** The supersession of ADR-0068 claimed above is withdrawn. ADR-0068 is amended to permit auto-approval for primitive-only workflows; the approval gate for arbitrary JS stands, and the ADR is not superseded. The supersession of ADR-0093 claimed above is likewise withdrawn. ADR-0093 remains in full force: Steward health findings always enqueue, no direct-apply path.
