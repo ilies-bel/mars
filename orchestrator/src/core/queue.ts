@@ -27,51 +27,69 @@ import { raiseActionQueueItem } from './lib/action-queue'
 import { teardownDeploymentsForTask } from './lib/deployment/teardown'
 import type { SliceSpec, SubDeliverableSpec } from './slice-spec'
 
+// ADR-0101: Pure types, validators, row mappers, and getTask extracted to
+// the dependency-free leaf `queue-primitives.ts`. Re-exported here for
+// backward compatibility with ~200 existing importers.
+export {
+  type TaskStatus,
+  type TaskDropReason,
+  type TaskKind,
+  type TaskTag,
+  type FailedPhase,
+  type MergeMode,
+  type TaskSpec,
+  type TaskPlan,
+  type QaReportCriterion,
+  type QaReport,
+  type Task,
+  type EnqueueTaskOptions,
+  type DropTaskResult,
+  TERMINAL_TASK_STATUSES,
+  UNSETTLED_BLOCKER_SQL,
+  MIN_PRIORITY,
+  MAX_PRIORITY,
+  TASK_TAGS,
+  MERGE_MODES,
+  EMPTY_TASK_SPEC,
+  isTaskTag,
+  isMergeMode,
+  validatePriority,
+  deriveTaskKind,
+  assertTaskKindInvariant,
+  coerceToString,
+  IllegalTransitionError,
+  TASK_SEL,
+  ORDINARY_TASK_SQL,
+  rowToTask,
+  getTask,
+} from './lib/queue-primitives'
+
+// Local imports for functions that remain in this file
+import {
+  type TaskStatus,
+  type Task,
+  type TaskPlan,
+  type TaskKind,
+  type TaskTag,
+  type TaskDropReason,
+  type FailedPhase,
+  type MergeMode,
+  type QaReport,
+  type EnqueueTaskOptions,
+  type DropTaskResult,
+  TERMINAL_TASK_STATUSES,
+  UNSETTLED_BLOCKER_SQL,
+  IllegalTransitionError,
+  TASK_SEL,
+  ORDINARY_TASK_SQL,
+  rowToTask,
+  getTask,
+  isMergeMode,
+  coerceToString,
+  deriveTaskKind,
+} from './lib/queue-primitives'
+
 const gzipAsyncQ = promisify(gzip)
-
-export type TaskStatus =
-  | 'draft'
-  | 'triaging'
-  | 'queued'
-  | 'running'
-  | 'verifying'
-  // Parked after a clean verify: a live dev server is running off the worktree
-  // and the task waits for a human to Validate (→ merge) or Reject (→ failed)
-  // via the action queue. Like 'blocked', this is a non-dispatchable parking
-  // status; the gate is a workflow boundary (the worker returns and holds no
-  // merge lock) so it survives daemon restarts. See the awaiting-validation
-  // action-queue kind.
-  | 'awaiting-validation'
-  // Parked for operator-owned interactive work in the task's worktree. A
-  // human holds a lease (leaseOwner / leasedAt / leaseNote) and works in
-  // their own session; the pipeline resumes when the lease is released.
-  // No managed subprocess — the phantom watchdog MUST NOT sweep this status.
-  // Compatible with ADR-0063 (no-attach): the human opens their own session;
-  // the daemon never attaches to a running pty.
-  | 'awaiting-human'
-  | 'merging'
-  | 'vega-reconciling'
-  | 'done'
-  | 'failed'
-  | 'dropped'
-  | 'blocked'
-  | 'under_investigation'
-
-/** Why a Chore or operator deliberately terminally dropped a task. */
-export type TaskDropReason =
-  | 'origin-succeeded'
-  | 'superseded'
-  | 'arc-rescued'
-  | 'purged'
-  | 'slicer-rollback'
-  | 'reslice'
-  | 'slicer-preflight'
-
-export const TERMINAL_TASK_STATUSES: ReadonlySet<TaskStatus> = new Set([
-  'done',
-  'failed',
-  'dropped',
-])
 
 /**
  * The statuses at which a recovery task (`fix_for_task_id IS NOT NULL`) counts
@@ -130,15 +148,6 @@ export const SETTLED_BLOCKER_STATUSES: ReadonlySet<TaskStatus> = new Set([
 ])
 
 /**
- * SQL predicate fragment — "this blocker still gates its dependent". The
- * mirror image of {@link SETTLED_BLOCKER_STATUSES}, kept as one exported
- * string so every gating query (promote, unblock, recover, hasIncomplete,
- * listBlockers) shares a single definition and cannot drift apart. `t` must
- * be the alias bound to the BLOCKER row.
- */
-export const UNSETTLED_BLOCKER_SQL = `t.status NOT IN ('done', 'dropped')`
-
-/**
  * Transient lifecycle phase between a freshly-promoted task (draft → triaging)
  * and dispatch-eligible (`'queued'`). Triaging tasks are visible to readers
  * but the dispatcher MUST NOT dispatch them — they are awaiting deterministic
@@ -169,25 +178,6 @@ export const NON_DISPATCHABLE_STATUSES: readonly TaskStatus[] = [
 
 export const isDispatchableStatus = (status: TaskStatus): boolean =>
   status === 'queued'
-
-/**
- * Thrown by {@link updateTask} when a caller attempts to move a task out of a
- * terminal status. Terminal tasks are immutable —
- * any status write that bypasses this guard would silently corrupt lifecycle
- * invariants tracked by subscribers (Invalidator, daemon dispatcher, UI).
- */
-export class IllegalTransitionError extends Error {
-  constructor(
-    public readonly taskId: string,
-    public readonly fromStatus: string,
-    public readonly toStatus: string,
-  ) {
-    super(
-      `Illegal task status transition: task ${taskId} is in terminal status '${fromStatus}' and cannot transition to '${toStatus}'`,
-    )
-    this.name = 'IllegalTransitionError'
-  }
-}
 
 /**
  * State of a {@link Blocker} row. The Linker writes `'pending-review'` for
@@ -223,426 +213,6 @@ export interface Blocker {
   causeId: string
   state: BlockerState
   createdAt: number
-}
-
-/**
- * Distinguishes the different roles a row can play in the queue. The value
- * is mirrored by, and must agree with, the `fixForTaskId` pointer (only
- * `'fix'` may carry a non-null pointer):
- *
- *   - `'task'`     → ordinary work; `fixForTaskId` MUST be null
- *   - `'fix'`      → recovery fix-task; `fixForTaskId` MUST be non-null
- *   - `'diagnose'` → terminal investigate-only Chore. Reads heavily
- *                    without acting, records a verdict through
- *                    `mars diagnose set`, and parks the original task
- *                    behind itself. Never spawns another diagnose Chore
- *                    (see PRD 06e677fb / ADR). `fixForTaskId` MUST be
- *                    null; the link to the origin stuck task is via
- *                    `origin_id`.
- *
- * The field is declared optional on the TypeScript type for backwards
- * compatibility with existing `Task` literals in tests and fixtures; every
- * persistence path defaults `undefined` to `'task'`.
- */
-export type TaskKind = 'task' | 'fix' | 'diagnose'
-
-/**
- * Routing hint that selects which Worker implements a Task. Authored by the
- * slicer/planner (or `mars task add --tag`) and consumed by the implement
- * workflow to pick a Worker from the registry. Adding a tag never widens
- * what a Worker can do — each tag maps to a single, pinned Worker.
- *
- * Free-form string: any non-empty string is valid. Well-known values:
- *   - `'coder'` → default. Routes to the Coder Worker (sonnet, bypass,
- *                 full tool surface).
- *
- * Untagged rows default to `['coder']` at the read boundary, preserving the
- * "quick escape hatch" behaviour for hand-written `mars task add` calls.
- */
-export type TaskTag = string
-
-/** Well-known built-in tags. Not exhaustive — any string is a valid tag. */
-export const TASK_TAGS: readonly string[] = ['coder'] as const
-
-export const isTaskTag = (value: unknown): value is TaskTag =>
-  typeof value === 'string' && value.length > 0
-
-/**
- * The phase that stamped a `'failed'` task. Set on the failure transition
- * by the implement workflow and consumed by `mars continue <id>` to decide
- * which step to resume from.
- *
- * - `'setup'` — failure during worktree setup before any coder work began
- *   (e.g. dirty-integration branch). `mars continue` treats this as a
- *   pre-setup failure and degrades to restart.
- * - `'code'` — failure during the coder phase (including install errors).
- *   When the worktree exists, `mars continue` resumes; otherwise degrades.
- * - `'verify'` — failure during the verify phase. `mars continue` re-enters
- *   the coder with the recorded verify output.
- * - `'merge'` — failure during the merge phase. `mars continue` re-attempts.
- */
-export type FailedPhase = 'setup' | 'code' | 'verify' | 'merge'
-
-/**
- * Structured-task contract (gsd-executor-style). When a task ships with a
- * spec, the implementor agent receives the prompt rendered as four explicit
- * sections — `<files>` (in-scope paths), `<verify>` (verification command),
- * `<done>` (boolean done criteria), and `<merge_mode>` — instead of free prose.
- *
- * `<merge_mode>auto</merge_mode>` is the default: the agent executes end-to-end
- * and commits. `<merge_mode>gated</merge_mode>` pauses before merge for explicit
- * human verification. Direct `mars task add` rows without `--merge` default to
- * `'auto'`.
- *
- * Every field is optional on the type to preserve legacy free-form rows:
- * an empty/NULL spec degrades cleanly to the pre-existing prompt-only
- * behaviour. Slicer emissions always populate a full spec.
- */
-export type MergeMode = 'auto' | 'gated'
-
-export const MERGE_MODES: readonly MergeMode[] = ['auto', 'gated'] as const
-
-export const isMergeMode = (value: unknown): value is MergeMode =>
-  value === 'auto' || value === 'gated'
-
-export interface TaskSpec {
-  files: readonly string[]
-  verifyCmd: string | null
-  doneCriteria: readonly string[]
-  mergeMode: MergeMode
-  /**
-   * Ordered list of files the implementor should read before editing.
-   * Populated by the slicer; absent or empty on ad-hoc rows.
-   */
-  readFirst?: readonly string[]
-  /**
-   * Prescriptive action description for the implementor, may contain concrete
-   * identifiers, file paths, and code-shaped language. Absent or null on
-   * ad-hoc rows.
-   */
-  prescriptiveAction?: string | null
-  /**
-   * Slice routing kind. 'coder' (default) routes to the Coder worker;
-   * 'hitl' routes to the human operator. Populated by the slicer; absent
-   * on ad-hoc rows. Distinct from TaskKind ('task' | 'fix' | 'diagnose').
-   */
-  sliceKind?: 'coder' | 'hitl'
-  /**
-   * Coder-dispatchable sub-deliverable attached by the slicer to hitl slices.
-   * Describes the artifact (typically a verify script) the operator will use.
-   * Absent on coder slices and ad-hoc rows.
-   */
-  subDeliverable?: SubDeliverableSpec
-  /** A coordinator task owns the whole parsed slicing plan. */
-  executionMode?: 'coordinated'
-  /** Slices delegated internally by a coordinator task. */
-  slicePlan?: SliceSpec[]
-  /**
-   * Shell command that boots the app for a `reviewType: 'manual'` review step.
-   * The review primitive prefers this over `package.json` `scripts.dev` when
-   * resolving how to start the preview. Absent on ad-hoc rows.
-   */
-  previewCmd?: string | null
-}
-
-export const EMPTY_TASK_SPEC: TaskSpec = {
-  files: [],
-  verifyCmd: null,
-  doneCriteria: [],
-  mergeMode: 'auto',
-}
-
-export interface TaskPlan {
-  functional: string
-  technical: string
-}
-
-export interface QaReportCriterion {
-  criterion: string
-  verdict: 'pass' | 'fail' | 'unverifiable'
-  screenshotPath: string | null
-  note: string
-}
-
-export interface QaReport {
-  criteria: QaReportCriterion[]
-  bootReason: string | null
-  completedAt: string
-  durationMs: number | null
-}
-
-export interface Task {
-  id: string
-  prompt: string
-  status: TaskStatus
-  plan: TaskPlan | null
-  branch: string | null
-  worktreePath: string | null
-  claudeSessionId: string | null
-  /**
-   * Append-only history of every Claude session ID seen for this task,
-   * in order of arrival. The latest entry mirrors {@link claudeSessionId}
-   * (kept for backwards compatibility with callers that only want the
-   * most recent pointer). Retries append; existing entries are never
-   * dropped, so transcripts on disk remain reachable for `mars reflect`
-   * and `mars arc reflect` across the full retry chain.
-   */
-  claudeSessionIds: string[]
-  error: string | null
-  author: Author | null
-  dropReason: TaskDropReason | null
-  failureReason: string | null
-  /**
-   * Typed catalog code (e.g. `verify:typecheck`) for the failure. Companion
-   * to the loose-string `failureReason`. Slice G writes it on every failure
-   * path; the legacy column stays for forensic continuity. Null on legacy
-   * rows landed before slice G.
-   */
-  failureReasonCode: string | null
-  /**
-   * JSON-encoded coder stall diagnostics captured before a hard timeout kill.
-   * Contains stderr tail, exit code, done-signal state, and elapsed time.
-   * Null on non-stalled tasks and legacy rows.
-   */
-  stallDiagnostics: string | null
-  recoverySpawnedCount: number
-  /**
-   * Number of times this task has been auto-restarted due to an environmental
-   * failure signature (worktree pruned, timeout, etc.). Incremented by the
-   * environmental-restart path in `handleTaskFailureWithFixTask`; never resets
-   * between attempts so the cap (MAX_ENV_RESTART_ATTEMPTS) is per task-lifetime,
-   * not per episode. Zero on legacy rows or tasks that have never hit an
-   * environmental failure.
-   */
-  envRestartCount: number
-  fixForTaskId: string | null
-  failureSignature: string | null
-  /**
-   * Marker for the task's role in the queue. See {@link TaskKind}. Optional
-   * on the type but always populated at the persistence boundary; reads
-   * derive a value via {@link deriveTaskKind} when the column is missing.
-   */
-  kind?: TaskKind
-  /**
-   * Routing hints that pick the Worker. See {@link TaskTag}. Always populated
-   * at the persistence boundary (defaults to `['coder']` for tagless rows).
-   * The implement workflow uses the first element as the primary routing tag.
-   */
-  tags: TaskTag[]
-  originId: string
-  priority: number
-  /**
-   * Set on the `'failed'` transition by the implement workflow's verify
-   * and merge steps. `'code'` is reserved for setup-time failures that
-   * cannot be continued. `null` for non-failed tasks and for legacy rows
-   * that failed before this column existed.
-   */
-  failedPhase: FailedPhase | null
-  /**
-   * Structured-task contract. NULL on legacy rows where `prompt` is the
-   * complete brief. When populated, `composePrompt` renders the spec on
-   * top of `prompt` so the agent sees a typed checklist instead of free
-   * prose. Slicer emissions and `mars task add --files/--verify/--done`
-   * always populate this; ad-hoc `mars task add "..."` does not.
-   */
-  spec: TaskSpec | null
-  /**
-   * The integration-branch HEAD commit SHA captured the moment the task's
-   * worktree was created at setup time. Null for tasks dispatched before
-   * this column was added, or for resumed tasks that skip worktree creation.
-   * A populated value is always a 40-character hex string.
-   */
-  integrationHeadSha: string | null
-  /**
-   * Live URL of the preview dev server for a task parked in
-   * 'awaiting-validation' (e.g. `http://127.0.0.1:4321`). NULL whenever no
-   * preview server is running. Persisted so the action-queue row's clickable
-   * link survives a daemon restart.
-   */
-  devServerUrl: string | null
-  /**
-   * OS process id of the running preview dev server, NULL whenever none is
-   * running. Persisted so the process can be reaped on Validate/Reject or by
-   * the startup reconciler after a crash.
-   */
-  devServerPid: number | null
-  /**
-   * True once the operator clicked Validate on this task's preview gate. The
-   * merge step gates only while this is false; after Validate the daemon flips
-   * it true and re-queues, and the re-dispatched merge runs past the gate.
-   */
-  previewValidated: boolean
-  /**
-   * Recipe-specific payload preserved with a recovery task. NULL for every
-   * non-recovery row. Slice F.2 stores `{ recipe, integrationBranch }` here
-   * for `main-commiter` recoveries; later recipes that need typed sidecar
-   * state can reuse the same column with their own JSON shape. The persistence
-   * layer treats it as an opaque string; recipe code parses it.
-   */
-  recoveryPayload: string | null
-  /**
-   * One-line statement of what the task sets out to do, authored at creation
-   * time and stored verbatim. Defaults to the first sentence of `prompt` when
-   * not provided explicitly. Always a non-null string ('' on legacy rows that
-   * predate the column but have not been backfilled yet).
-   */
-  intent: string
-  /**
-   * Owner identifier for a task parked in 'awaiting-human' (e.g. a username or
-   * process label). NULL on every non-parked row and when no explicit owner was
-   * supplied.
-   */
-  leaseOwner: string | null
-  /**
-   * ISO timestamp when the current worktree lease was acquired. NULL when no
-   * active lease is held (i.e. the task is not in 'awaiting-human').
-   */
-  leasedAt: string | null
-  /**
-   * Optional human note attached to the lease describing the intended work.
-   * NULL when none was provided.
-   */
-  leaseNote: string | null
-  /**
-   * UUID of the originating Claude Code operator session that enqueued this
-   * task, captured from `CLAUDE_CODE_SESSION_ID` at the CLI boundary.
-   * `null` when the task was created outside of a Claude Code session or
-   * before this column existed.
-   */
-  originSessionId: string | null
-  /**
-   * Which user-owned pipeline runs this task: the dispatcher loads
-   * `.mars/workflows/<workflow>-workflow.js`. `null` means default-by-kind
-   * (the dispatcher resolves it to {@link kind}). Selected at enqueue via
-   * `mars task add --workflow <name>`; orthogonal to `kind` by design.
-   */
-  workflow: string | null
-  /**
-   * QA mode for the review step. `'auto'` (default) runs every configured
-   * typecheck/test/lint gate. `'manual'` parks the task for a human to exercise
-   * the running app before merge (not yet fully implemented — the review
-   * primitive currently throws on `'manual'`). Selected at enqueue via
-   * `mars task add --qa <auto|manual>`.
-   */
-  qa: 'auto' | 'manual'
-  /**
-   * The step name the task is currently parked at when status is
-   * `'awaiting-human'` (written by the manual-step park path). `null` on
-   * non-parked rows and before this column was added.
-   */
-  currentStepName: string | null
-  /**
-   * The step guide shown to the operator while the task is parked at a manual
-   * step. `null` when no guide was provided or the task is not parked.
-   */
-  currentStepGuide: string | null
-  /**
-   * Short-lived sub-phase label for an in-flight task (e.g. `merge:fast-forward`).
-   * Written by the merge and verify primitives to surface the current sub-step on
-   * the board card. `null` for queued/done/failed tasks and for tasks that predate
-   * this column. Cleared automatically when the task transitions out of in-flight
-   * status. Optional for backwards compat with test fixtures that predate this field.
-   */
-  activityDetail?: string | null
-  /**
-   * When set, this is a compensation/cleanup task for a force-purged arc. The
-   * value is the `origin_id` of the abandoned arc. `null` for all other tasks.
-   * Compensation tasks are regular tasks (not recovery/fix tasks) — they have
-   * their own arc lifecycle and appear on the board as actionable cleanup work.
-   * Optional on the type for backwards compat with test fixtures that predate
-   * this field; always populated at the persistence boundary (`null` for non-
-   * compensation rows).
-   */
-  compensatesArcId?: string | null
-  /**
-   * Epoch-millisecond timestamp set by `mars continue` (and cleared by
-   * `mars restart`) to mark the start of the current re-queue episode.
-   *
-   * The poll-fallback's {@link checkAndEscalateRequeueCeiling} uses this as
-   * the elapsed-time anchor when it is non-null, overriding the default
-   * MIN(step.startedAt) anchor. This prevents the ceiling from firing
-   * immediately on a task whose journal contains steps from a previous run
-   * that may be hours or days old — `mars continue` deliberately preserves
-   * the journal to enable checkpoint-resume, but the ceiling must not
-   * penalise the task for that preserved history.
-   *
-   * `mars restart` clears this to null so a restarted task (which also wipes
-   * the journal) falls back to the MIN(step.startedAt) anchor from the fresh
-   * run's journal entries.
-   *
-   * Optional for backwards compatibility with test fixtures that predate this
-   * field; always populated at the persistence boundary (`null` for non-continued
-   * rows and legacy rows created before this column was added).
-   */
-  requeueAnchorMs?: number | null
-  /** Cumulative dispatch uptime at the first dispatch of this re-queue episode. */
-  requeueDispatchUptimeMs?: number | null
-  /**
-   * Count of attempts where the coder never ran because the provider rejected
-   * the run before starting (rate/spend limit). The poll-fallback ceiling
-   * subtracts this from `maxAttempt` to compute the effective real-work attempt
-   * count, so a quota wall does not burn the ceiling. Defaults to 0.
-   */
-  quotaRejectedAttempts?: number
-  /**
-   * Structured QA report persisted by behaviour-verify. Contains per-criterion
-   * verdicts, screenshot paths, and timing data. Null when no behaviour-verify
-   * has run or on legacy rows.
-   */
-  qaReport?: QaReport | null
-  /**
-   * When true, the usage-aware scheduler may defer this task to a cheaper
-   * window. Set at enqueue via `mars task add --deferrable`. Defaults to
-   * false for all rows.
-   */
-  deferrable: boolean
-  createdAt: string
-  updatedAt: string
-}
-
-/**
- * Derive the canonical `kind` for a task from its `fix-for` pointer. Used
- * during backfill of old rows and as the read-time default when a row is
- * fetched before the migration has run.
- */
-export const deriveTaskKind = (fixForTaskId: string | null): TaskKind =>
-  fixForTaskId === null ? 'task' : 'fix'
-
-/**
- * Enforce the invariant that ties `kind` and `fixForTaskId` together.
- * Throws a precise message naming the bad combination; callers should let it
- * propagate so the writer sees the rejection.
- */
-export const assertTaskKindInvariant = (
-  kind: TaskKind,
-  fixForTaskId: string | null,
-): void => {
-  if (kind === 'fix' && fixForTaskId === null) {
-    throw new Error(
-      `task kind 'fix' requires a non-null fix-for pointer; got null`,
-    )
-  }
-  if (kind === 'task' && fixForTaskId !== null) {
-    throw new Error(
-      `task kind 'task' requires a null fix-for pointer; got ${fixForTaskId}`,
-    )
-  }
-  if (kind === 'diagnose' && fixForTaskId !== null) {
-    throw new Error(
-      `task kind 'diagnose' requires a null fix-for pointer; got ${fixForTaskId}`,
-    )
-  }
-}
-
-export const MIN_PRIORITY = 0
-export const MAX_PRIORITY = 3
-
-export const validatePriority = (value: number): void => {
-  if (!Number.isInteger(value) || value < MIN_PRIORITY || value > MAX_PRIORITY) {
-    throw new Error(
-      `priority must be an integer in ${MIN_PRIORITY}..${MAX_PRIORITY}; got ${value}`,
-    )
-  }
 }
 
 /**
@@ -794,336 +364,6 @@ export const getTranscript = async (
     bytes: conversationJson.length,
     recordedAt: new Date(row.timestamp).toISOString(),
   }
-}
-
-export const coerceToString = (value: unknown, label: string): string => {
-  if (typeof value === 'string') return value
-  if (value instanceof Uint8Array) return new TextDecoder('utf-8').decode(value)
-  if (value instanceof ArrayBuffer) {
-    return new TextDecoder('utf-8').decode(new Uint8Array(value))
-  }
-  if (Buffer.isBuffer(value)) return value.toString('utf8')
-  throw new TypeError(
-    `${label} must be a string; got ${value === null ? 'null' : typeof value}`,
-  )
-}
-
-/**
- * Canonical SELECT for a single task or a filtered task list.  Reads the
- * three normalised junction-table columns (claude_session_ids, files_json,
- * done_criteria_json) via correlated subqueries so that rowToTask /
- * rowToTaskSpec see the same column names as before.  Append a WHERE or
- * ORDER BY clause directly after the template literal.
- *
- * Usage:
- *   `${TASK_SEL} WHERE t.id = ?`
- *   `${TASK_SEL} WHERE t.status = ? ORDER BY t.priority DESC, t.created_at ASC`
- *   `${TASK_SEL} ORDER BY t.created_at`
- */
-export const TASK_SEL = `
-SELECT
-  t.id, t.prompt, t.status, t.plan_functional, t.plan_technical,
-  t.branch, t.worktree_path, t.claude_session_id,
-  (SELECT COALESCE(json_agg(session_id ORDER BY position)::text, '[]')
-     FROM task_claude_sessions WHERE task_id = t.id) AS claude_session_ids,
-  t.error, t.drop_reason, t.recovery_spawned_count, t.env_restart_count,
-  t.author_kind, t.author_name,
-  t.failure_reason, t.failure_reason_code, t.stall_diagnostics, t.recovery_payload,
-  t.fix_for_task_id, t.failure_signature, t.kind, t.priority, t.tag,
-  t.tags_json, t.origin_id, t.parent_proposal_id, t.slice_index,
-  t.failed_phase, t.resume_from,
-  (SELECT COALESCE(json_agg(path ORDER BY position)::text, '[]')
-     FROM task_spec_files WHERE task_id = t.id) AS files_json,
-  t.verify_cmd,
-  (SELECT COALESCE(json_agg(criterion ORDER BY position)::text, '[]')
-     FROM task_done_criteria WHERE task_id = t.id) AS done_criteria_json,
-  t.merge_mode, t.read_first_json, t.prescriptive_action, t.slice_kind,
-  t.sub_deliverable_json, t.integration_head_sha,
-  t.dev_server_url, t.dev_server_pid, t.preview_validated, t.intent,
-  t.lease_owner, t.leased_at, t.lease_note,
-  t.origin_session_id, t.workflow,
-  t.current_step_name, t.current_step_guide,
-  t.activity_detail,
-  t.compensates_arc_id,
-  t.qa,
-  t.requeue_anchor_ms,
-  t.requeue_dispatch_uptime_ms,
-  t.qa_report_json,
-  t.deferrable,
-  t.quota_rejected_attempts,
-  t.created_at, t.updated_at
-FROM tasks t`
-
-/**
- * Structured writes retain a terminal task row solely to satisfy merge-job
- * foreign keys. They are bookkeeping, never operator-visible work.
- */
-export const ORDINARY_TASK_SQL = `COALESCE(t.kind, 'task') <> 'structured-write'`
-
-export const rowToTask = (row: Record<string, unknown>): Task => {
-  const functional = (row.plan_functional as string | null) ?? null
-  const technical = (row.plan_technical as string | null) ?? null
-  const plan: TaskPlan | null =
-    functional !== null || technical !== null
-      ? { functional: functional ?? '', technical: technical ?? '' }
-      : null
-  const authorKindRaw = (row.author_kind as string | null) ?? null
-  const authorName = (row.author_name as string | null) ?? null
-  const author: Author | null =
-    authorKindRaw === 'human' || authorKindRaw === 'agent'
-      ? { kind: authorKindRaw as AuthorKind, name: authorName ?? 'unknown' }
-      : null
-  const fixForTaskId = (row.fix_for_task_id as string | null) ?? null
-  const rawKind = (row.kind as string | null) ?? null
-  const kind: TaskKind =
-    rawKind === 'fix' || rawKind === 'task' || rawKind === 'diagnose'
-      ? rawKind
-      : deriveTaskKind(fixForTaskId)
-  // Read tags from the new tags_json column. Fall back to the legacy tag
-  // column for old rows that predate the tags_json migration.
-  const rawTagsJson = (row.tags_json as string | null) ?? null
-  let tags: TaskTag[]
-  if (rawTagsJson !== null) {
-    const parsed = parseStringArray(rawTagsJson).filter(isTaskTag)
-    tags = parsed.length > 0 ? parsed : ['coder']
-  } else {
-    const rawTag = (row.tag as string | null) ?? null
-    tags = [isTaskTag(rawTag) ? rawTag : 'coder']
-  }
-  return {
-    id: row.id as string,
-    prompt: coerceToString(row.prompt, 'rowToTask: prompt'),
-    status: row.status as TaskStatus,
-    plan,
-    branch: (row.branch as string | null) ?? null,
-    worktreePath: (row.worktree_path as string | null) ?? null,
-    claudeSessionId: (row.claude_session_id as string | null) ?? null,
-    claudeSessionIds: parseClaudeSessionIds(row.claude_session_ids),
-    error: (row.error as string | null) ?? null,
-    author,
-    dropReason: (row.drop_reason as TaskDropReason | null) ?? null,
-    failureReason: (row.failure_reason as string | null) ?? null,
-    failureReasonCode: (row.failure_reason_code as string | null) ?? null,
-    stallDiagnostics: (row.stall_diagnostics as string | null) ?? null,
-    recoverySpawnedCount: Number(row.recovery_spawned_count ?? 0),
-    // MUST be present in TASK_SEL. This column is a WRITE-ONLY-looking field:
-    // the only writer is updateTask and the only reader is the environmental
-    // auto-restart cap in queue-fix-tasks.ts. When TASK_SEL omitted it,
-    // `row.env_restart_count` was `undefined` on every read, so the counter
-    // resolved to 0 forever, `envRestartCount < MAX_ENV_RESTART_ATTEMPTS` was
-    // permanently true, and the cap never fired: task mars-6cf9774f rode 35
-    // consecutive "environmental restart #1" re-queues (verify step attempt 37)
-    // while the persisted column sat at 1. A missing column here silently
-    // disables a loop bound — it does not fail a type check.
-    envRestartCount: Number(row.env_restart_count ?? 0),
-    fixForTaskId,
-    failureSignature: (row.failure_signature as string | null) ?? null,
-    kind,
-    tags,
-    originId: ((row.origin_id as string | null) ?? (row.id as string)),
-    priority: Number(row.priority ?? 0),
-    failedPhase: coerceFailedPhase(row.failed_phase),
-    spec: rowToTaskSpec(row),
-    integrationHeadSha: (row.integration_head_sha as string | null) ?? null,
-    devServerUrl: (row.dev_server_url as string | null) ?? null,
-    devServerPid:
-      row.dev_server_pid === null || row.dev_server_pid === undefined
-        ? null
-        : Number(row.dev_server_pid),
-    previewValidated: Number(row.preview_validated ?? 0) === 1,
-    recoveryPayload: (row.recovery_payload as string | null) ?? null,
-    intent: (row.intent as string | null) ?? '',
-    leaseOwner: (row.lease_owner as string | null) ?? null,
-    leasedAt: (row.leased_at as string | null) ?? null,
-    leaseNote: (row.lease_note as string | null) ?? null,
-    originSessionId: (row.origin_session_id as string | null) ?? null,
-    workflow: (row.workflow as string | null) ?? null,
-    currentStepName: (row.current_step_name as string | null) ?? null,
-    currentStepGuide: (row.current_step_guide as string | null) ?? null,
-    activityDetail: (row.activity_detail as string | null) ?? null,
-    compensatesArcId: (row.compensates_arc_id as string | null) ?? null,
-    qa: (row.qa as string | null) === 'manual' ? 'manual' : 'auto',
-    requeueAnchorMs:
-      row.requeue_anchor_ms === null || row.requeue_anchor_ms === undefined
-        ? null
-        : Number(row.requeue_anchor_ms),
-    requeueDispatchUptimeMs:
-      row.requeue_dispatch_uptime_ms === null || row.requeue_dispatch_uptime_ms === undefined
-        ? null
-        : Number(row.requeue_dispatch_uptime_ms),
-    qaReport: parseQaReport(row.qa_report_json),
-    deferrable: Number(row.deferrable ?? 0) === 1,
-    quotaRejectedAttempts: Number(row.quota_rejected_attempts ?? 0),
-    createdAt: row.created_at as string,
-    updatedAt: row.updated_at as string,
-  }
-}
-
-const parseQaReport = (raw: unknown): QaReport | null => {
-  if (raw === null || raw === undefined) return null
-  try {
-    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw
-    if (!parsed || !Array.isArray(parsed.criteria)) return null
-    return parsed as QaReport
-  } catch {
-    return null
-  }
-}
-
-const coerceFailedPhase = (raw: unknown): FailedPhase | null => {
-  if (raw === 'setup' || raw === 'code' || raw === 'verify' || raw === 'merge') return raw
-  return null
-}
-
-const parseStringArray = (raw: unknown): string[] => {
-  if (typeof raw !== 'string' || raw.length === 0) return []
-  try {
-    const parsed = JSON.parse(raw)
-    if (!Array.isArray(parsed)) return []
-    return parsed.filter((v): v is string => typeof v === 'string')
-  } catch {
-    return []
-  }
-}
-
-const rowToTaskSpec = (row: Record<string, unknown>): TaskSpec | null => {
-  const rawFiles = (row.files_json as string | null) ?? null
-  const rawVerify = (row.verify_cmd as string | null) ?? null
-  const rawDone = (row.done_criteria_json as string | null) ?? null
-  const rawType = (row.merge_mode as string | null) ?? null
-  const rawReadFirst = (row.read_first_json as string | null) ?? null
-  const rawPrescriptive = (row.prescriptive_action as string | null) ?? null
-  const rawSliceKind = (row.slice_kind as string | null) ?? null
-  const rawSubDeliverable = (row.sub_deliverable_json as string | null) ?? null
-  const anySet =
-    rawFiles !== null ||
-    rawVerify !== null ||
-    rawDone !== null ||
-    rawType !== null ||
-    rawReadFirst !== null ||
-    rawPrescriptive !== null ||
-    rawSliceKind !== null ||
-    rawSubDeliverable !== null
-  if (!anySet) return null
-  let subDeliverable: SubDeliverableSpec | undefined
-  if (rawSubDeliverable) {
-    try {
-      subDeliverable = JSON.parse(rawSubDeliverable) as SubDeliverableSpec
-    } catch {
-      subDeliverable = undefined
-    }
-  }
-  return {
-    files: parseStringArray(rawFiles),
-    verifyCmd: rawVerify,
-    doneCriteria: parseStringArray(rawDone),
-    mergeMode: isMergeMode(rawType) ? rawType : 'auto',
-    readFirst: parseStringArray(rawReadFirst),
-    prescriptiveAction: rawPrescriptive,
-    sliceKind:
-      rawSliceKind === 'coder' || rawSliceKind === 'hitl'
-        ? rawSliceKind
-        : undefined,
-    subDeliverable,
-  }
-}
-
-export interface EnqueueTaskOptions {
-  skipTriage?: boolean
-  /** Chat thread that initiated this task; persisted atomically with the task row. */
-  chatThreadId?: string
-  author?: Author
-  originId?: string
-  priority?: number
-  parentProposalId?: string
-  sliceIndex?: number
-  /**
-   * Worker-routing hints. Each element must be a non-empty string; defaults to
-   * `['coder']` when omitted. The implement workflow uses the first element as
-   * the primary routing tag; unknown tags fall back to the Coder Worker.
-   */
-  tags?: TaskTag[]
-  /**
-   * Marker for the task's role. Defaults to `'task'`. `'fix'` is set by the
-   * recovery dispatcher (must come with a non-null `fixForTaskId`).
-   * `'diagnose'` is set when the orchestrator spawns a diagnose Chore to
-   * investigate a stuck origin task — see PRD 06e677fb.
-   */
-  kind?: TaskKind
-  /**
-   * Structured-task contract. When omitted the row is stored with the
-   * legacy free-prose shape (every spec column NULL) and the implementor
-   * agent sees only `prompt`. When set, the spec is persisted alongside
-   * the prompt and {@link composePrompt} renders `<files>/<verify>/<done>`
-   * sections on top.
-   */
-  spec?: TaskSpec
-  /**
-   * One-line statement of what the task sets out to do. When omitted,
-   * defaults to the first sentence of `prompt` (split on '. ' or newline,
-   * capped at 200 chars).
-   */
-  intent?: string
-  /**
-   * UUID of the originating Claude Code operator session, captured from
-   * `CLAUDE_CODE_SESSION_ID` at the CLI boundary. Stored verbatim;
-   * null when the enqueue does not originate from a Claude Code session.
-   */
-  originSessionId?: string | null
-  /**
-   * Pipeline selection: the dispatcher loads
-   * `.mars/workflows/<workflow>-workflow.js` for this task instead of the
-   * kind-default file. Omitted/null → default-by-kind.
-   */
-  workflow?: string | null
-  /**
-   * QA mode for the review step. Defaults to `'auto'` at the SQL level.
-   * `'manual'` parks for human QA (not yet fully implemented).
-   */
-  qa?: 'auto' | 'manual'
-  /**
-   * When set, marks this task as a compensation/cleanup task for the arc
-   * identified by this `origin_id`. Stored in `compensates_arc_id`. Only set
-   * by the force-purge path — do not use this for recovery tasks.
-   */
-  /**
-   * When true, the usage-aware scheduler may defer this task to a cheaper
-   * window. Defaults to false.
-   */
-  deferrable?: boolean
-  compensatesArcId?: string
-  /**
-   * Dedup key stored in `followup_dedup_key` to prevent duplicate tasks on
-   * repeated invocations. The force-purge compensation path uses
-   * `arc-force-purge-compensation:<originId>` so that repeated force operations
-   * on the same arc do not produce multiple cleanup tasks.
-   */
-  followupDedupKey?: string
-  /**
-   * Stable health-check finding key stored in `finding_key`. Set by the
-   * Steward's scheduled health pass when enqueuing a fix task for a specific
-   * finding. The database enforces uniqueness across active tasks (status NOT
-   * IN ('done','dropped','failed')) via a partial unique index, preventing
-   * duplicate fix tasks from concurrent passes.
-   */
-  findingKey?: string
-  /**
-   * When set, this enqueue supersedes the named existing task. The supersede
-   * sequence (executed by `Arc.createOrigin`):
-   *   1. Loads the superseded task; derives `originId` from it.
-   *   2. Releases the superseded task's worktree (`git worktree remove --force`,
-   *      keepBranch=true) and clears its `worktree_path`.
-   *   3. Marks the superseded task `'dropped'`.
-   *   4. Creates a fresh worktree for the new task on the superseded branch
-   *      (at `.mars/worktrees/<newTaskId>/`).
-   *   5. Proceeds with the normal INSERT, passing `originId` and setting
-   *      `branch`/`worktreePath` to the superseded task's values.
-   *
-   * If step 4 fails after step 2 the superseded task remains `'dropped'`, no
-   * new task row is created, and an error surfaces with the branch name so the
-   * operator can retry.
-   */
-  supersedes?: string
 }
 
 /**
@@ -1649,19 +889,6 @@ export const reopenTerminalTask = async (
   store?: TaskStore,
 ): Promise<void> => Arc.reopenTerminalTask(id, reason, store)
 
-export const getTask = async (id: string, store?: TaskStore): Promise<Task | null> => {
-  const stmt = { sql: `${TASK_SEL} WHERE t.id = ?`, args: [id] }
-  let r
-  if (store) {
-    r = await store.query(stmt)
-  } else {
-    await ensureQueueSchema()
-    r = await resolveQueueClient().execute(stmt)
-  }
-  if (r.rows.length === 0) return null
-  return rowToTask(r.rows[0] as unknown as Record<string, unknown>)
-}
-
 export const listTasks = async (status?: TaskStatus): Promise<Task[]> => {
   await ensureQueueSchema()
   const r = status
@@ -1784,42 +1011,6 @@ export const setTaskVerifyCmd = async (
   id: string,
   verifyCmd: string | null,
 ): Promise<{ id: string; verifyCmd: string | null }> => Arc.setVerifyCmd(id, verifyCmd)
-
-export interface DropTaskResult {
-  taskId: string
-  previousStatus: TaskStatus
-  /**
-   * task_blockers edges deleted by the drop. `incoming` are edges where
-   * <id> appears as `blocker_task_id` (other tasks waiting on this one);
-   * `outgoing` are edges where <id> appears as `task_id` (this task
-   * waiting on others).
-   */
-  edgesRemoved: { incoming: number; outgoing: number }
-  /**
-   * Ids of fix/recovery tasks (kind='fix', fix_for_task_id = dropped id)
-   * that were cascade-deleted atomically with the origin. These tasks are
-   * GONE — not null-ed — by the time dropTask returns (ADR-0049).
-   */
-  cascadedFixTaskIds: string[]
-  /**
-   * Number of `merge_jobs` rows deleted as part of this drop (includes rows
-   * for the task itself and any cascade-deleted fix tasks). Zero when the task
-   * never reached the merge stage.
-   */
-  mergeJobsDeleted: number
-  /**
-   * Ids of non-terminal rows whose `origin_id` named the dropped task and
-   * were re-parented rather than left dangling. When the dropped task was
-   * itself an arc root (its own `origin_id` pointed at itself), each such
-   * dependent becomes its own new arc root; otherwise every dependent
-   * inherits the dropped task's own `origin_id`, preserving arc membership.
-   * Terminal rows (done/failed/dropped) and cascade-deleted fix tasks are
-   * excluded — reparenting them would rewrite inert history for no benefit.
-   * This is a separate accounting line from `edgesRemoved`: `origin_id` is
-   * not a `task_blockers` edge.
-   */
-  originsReparented: string[]
-}
 
 /**
  * Database-level drop. Thin wrapper over {@link Arc.drop} (ADR-0052): the full
