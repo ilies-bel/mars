@@ -608,7 +608,6 @@ const RECIPE_DEFINITIONS = {
     verbs: [],
   },
 
-  // family: verify-gate
   'arc-verification-failed': {
     humanSummary: () =>
       "Post-merge verification found that an arc's goals were not satisfied — investigate and fix the output or mark it resolved.",
@@ -616,8 +615,8 @@ const RECIPE_DEFINITIONS = {
       raisedAt: ctx.raisedAt,
       entityId: ctx.entityId,
       originId: str(ctx.payload['originId']),
-      failedCriteria: ctx.payload['failedCriteria'],
-      verifyOutput: str(ctx.payload['verifyOutput']),
+      findings: ctx.payload['findings'],
+      landedCommits: ctx.payload['landedCommits'],
     }),
     verbs: [{ op: 'investigate', label: 'Investigate', style: 'primary' }],
   },
@@ -826,7 +825,6 @@ const RECIPE_DEFINITIONS = {
     },
   },
 
-  // family: verify-gate
   'verify-uncovered': {
     humanSummary: (ctx) => {
       const scope = str(ctx.payload['scope']) || ctx.entityId
@@ -915,7 +913,6 @@ const RECIPE_DEFINITIONS = {
     ],
   },
 
-  // family: verify-gate
   'gate-enrichment-stale': {
     humanSummary: (ctx) => {
       const sig = str(ctx.payload['signature'])
@@ -924,12 +921,18 @@ const RECIPE_DEFINITIONS = {
         ? `Decide whether to retire the auto-added check for "${sig}" — it has passed ${count} consecutive runs and the issue may be resolved.`
         : `Decide whether to retire an auto-added check that has passed many consecutive runs — the issue it was tracking may be resolved.`
     },
-    humanDetail: (ctx) => ({
-      raisedAt: ctx.raisedAt,
-      entityId: ctx.entityId,
-      signature: str(ctx.payload['signature']),
-      passCount: ctx.payload['passCount'],
-    }),
+    humanDetail: (ctx) => {
+      const spec = ctx.payload['stepSpec']
+      return {
+        raisedAt: ctx.raisedAt,
+        entityId: ctx.entityId,
+        signature: str(ctx.payload['signature']),
+        passCount: ctx.payload['passCount'],
+        candidateCheck: spec
+          ? `${[spec.cmd, ...spec.args].join(' ')} (dir: ${spec.dir ?? '.'})`
+          : 'none',
+      }
+    },
     verbs: [
       { op: 'enrich-retire', label: 'Retire check', style: 'default' },
     ],
@@ -1046,7 +1049,6 @@ const RECIPE_DEFINITIONS = {
     ],
   },
 
-  // family: verify-gate
   'env-incident': {
     humanSummary: (ctx) => {
       const sig = str(ctx.payload['signature'])
@@ -1266,7 +1268,6 @@ const RECIPE_DEFINITIONS = {
     ],
   },
 
-  // family: verify-gate
   'dirty-integration': {
     humanSummary: (ctx) => {
       const branch = str(ctx.payload['integrationBranch']) || 'main'

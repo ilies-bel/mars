@@ -97,6 +97,14 @@ export type {
   ApiOutagePayload,
   SpendContracts,
 } from './payload-contracts/spend'
+export type {
+  VerifyUncoveredPayload,
+  GateEnrichmentStalePayload,
+  ArcVerificationFailedPayload,
+  EnvIncidentPayload,
+  DirtyIntegrationPayload,
+  VerifyContracts,
+} from './payload-contracts/verify'
 
 import type { AwaitingHumanContracts } from './payload-contracts/awaiting-human'
 import type { GateEnrichmentContracts } from './payload-contracts/gate-enrichment'
@@ -106,6 +114,7 @@ import type { SchedulingContracts } from './payload-contracts/scheduling'
 import type { SliceWorkflowContracts } from './payload-contracts/slice-workflow'
 import type { SpendContracts } from './payload-contracts/spend'
 import type { ValidationQaContracts } from './payload-contracts/validation-qa'
+import type { VerifyContracts } from './payload-contracts/verify'
 
 // ── Shared shapes ─────────────────────────────────────────────────────────────
 
@@ -131,7 +140,8 @@ type AuditedPayloads = AwaitingHumanContracts &
   SchedulingContracts &
   SliceWorkflowContracts &
   SpendContracts &
-  ValidationQaContracts
+  ValidationQaContracts &
+  VerifyContracts
 
 /**
  * The payload type for one action-queue kind.
@@ -199,23 +209,23 @@ export const ACTION_QUEUE_PAYLOAD_AUDIT = {
   'api-outage': 'typed',
   'workflow-install-drift': 'typed',
   'provider-rate-limited': 'typed',
-  'verify-uncovered': 'unaudited',
+  'verify-uncovered': 'typed',
   'workflow-draft-pending': 'typed',
   'budget-window': 'typed',
   'budget-arc': 'typed',
   'scorer-suggested': 'typed',
   'promotion-decision': 'typed',
   'tool-promotion': 'typed',
-  'arc-verification-failed': 'unaudited',
-  'gate-enrichment-stale': 'unaudited',
-  'env-incident': 'unaudited',
+  'arc-verification-failed': 'typed',
+  'gate-enrichment-stale': 'typed',
+  'env-incident': 'typed',
   'spend-control-notice': 'typed',
   'scheduling-decision': 'typed',
   'requeue-warning': 'typed',
   'arc-superseded-on-main': 'typed',
   'low-disk-space': 'unaudited',
   'daemon-outage': 'unaudited',
-  'dirty-integration': 'unaudited',
+  'dirty-integration': 'typed',
   'health-check-alert': 'unaudited',
   'fragmented-repo-layout': 'typed',
   'recovery-abandoned': 'typed',
@@ -277,10 +287,4 @@ export const UNAUDITED_KIND_FAMILY = {
   'health-check-alert': 'daemon-health',
   'observability-store-oversize': 'daemon-health',
   'outbox-lag': 'daemon-health',
-
-  'verify-uncovered': 'verify-gate',
-  'gate-enrichment-stale': 'verify-gate',
-  'arc-verification-failed': 'verify-gate',
-  'env-incident': 'verify-gate',
-  'dirty-integration': 'verify-gate',
 } as const satisfies Record<UnauditedKind, UnauditedKindFamily>

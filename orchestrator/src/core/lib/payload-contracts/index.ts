@@ -15,6 +15,7 @@ import { REPRESENTATIVE_PAYLOADS as scheduling } from './scheduling'
 import { REPRESENTATIVE_PAYLOADS as sliceWorkflow } from './slice-workflow'
 import { REPRESENTATIVE_PAYLOADS as spend } from './spend'
 import { REPRESENTATIVE_PAYLOADS as validationQa } from './validation-qa'
+import { REPRESENTATIVE_PAYLOADS as verify } from './verify'
 
 /**
  * One representative payload per typed action-queue kind.
@@ -32,4 +33,5 @@ export const ALL_REPRESENTATIVE_PAYLOADS: Partial<Record<ActionQueueKind, Record
   ...sliceWorkflow,
   ...spend,
   ...validationQa,
+  ...verify,
 }
