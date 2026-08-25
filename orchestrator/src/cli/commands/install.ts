@@ -293,18 +293,6 @@ const init: Command = {
       deps.out("  Tip: run 'mars init --wizard' for step-by-step configuration.")
       deps.out('')
 
-      const { createInterface } = await import('node:readline')
-      const rl = createInterface({ input: process.stdin, output: process.stdout })
-      const quickstartAnswer = await new Promise<string>((res) => {
-        rl.question('Initialize now? [Y/n] ', (a) => {
-          rl.close()
-          res(a.trim().toLowerCase())
-        })
-      })
-      if (quickstartAnswer === 'n' || quickstartAnswer === 'no') {
-        deps.out("Initialization cancelled. Run 'mars init --wizard' to configure manually.")
-        return { code: 0 }
-      }
     }
 
     const { runInitWizard } = await import('../../init/wizard-controller')
@@ -317,8 +305,8 @@ const init: Command = {
     for (const [k, v] of Object.entries(args.flags)) wizardFlags[k] = v
     if (hasFlag(args, '--register-project')) wizardFlags['--register-project'] = true
 
-    // In quickstart mode the confirm was already done above, so wizard runs
-    // non-interactively (flags/config/defaults only, no stdin hang).
+    // Wizard runs non-interactively in quickstart mode because runWizardPath
+    // is false, so isTTY is passed as false (flags/config/defaults only).
     const wizardChoices = await runInitWizard({
       isTTY: runWizardPath && isTTY,
       flags: wizardFlags,
@@ -395,7 +383,7 @@ const init: Command = {
     deps.out(`  Repo:     ${deps.ctx.repoRoot}`)
     deps.out(`  Files:    ${(result.written ?? []).length} written`)
     deps.out(`  Provider: ${provider}`)
-    deps.out('  Daemon:   running')
+    deps.out('  Daemon:   started')
     if (dispatchedTask !== null) {
       deps.out(`  Task:     ${dispatchedTask.id} — queued`)
     }
