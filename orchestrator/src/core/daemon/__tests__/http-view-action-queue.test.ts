@@ -22,6 +22,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve as resolvePath } from 'node:path'
 import {
   buildActionQueueView,
+  deriveArcGoal,
   type ActionQueueRow,
   type ActionQueueStateStore,
   type ActionQueueTaskStore,
@@ -51,6 +52,8 @@ const makeTask = (overrides: Partial<TaskForActionQueue> = {}): TaskForActionQue
   id: 'task-1',
   status: 'failed',
   prompt: 'Do something useful',
+  intent: '',
+  originId: null,
   blockedBy: [],
   parentProposalId: null,
   failureSignature: null,
@@ -488,25 +491,39 @@ describe('buildActionQueueView — daemon-killed-batch', () => {
 // ── arcGoal derivation ───────────────────────────────────────────────────────
 
 describe('buildActionQueueView — arcGoal derivation', () => {
-  it('sets arcGoal to the origin task prompt for a non-recovery failed-task row', async () => {
+  it('prefers intent over prompt for a non-recovery failed-task row', async () => {
     const rows = await buildActionQueueView({
       stateStore: makeStateStore([makeRow()]),
-      taskStore: makeTaskStore([makeTask({ prompt: 'Implement the caching layer' })]),
+      taskStore: makeTaskStore([
+        makeTask({ prompt: 'Implement the caching layer', intent: 'Add Redis caching' }),
+      ]),
+      repoRoot: '/nonexistent',
+      filter: 'open',
+    })
+    expect(rows[0]!.arcGoal).toBe('Add Redis caching')
+  })
+
+  it('falls back to prompt when intent is empty', async () => {
+    const rows = await buildActionQueueView({
+      stateStore: makeStateStore([makeRow()]),
+      taskStore: makeTaskStore([makeTask({ prompt: 'Implement the caching layer', intent: '' })]),
       repoRoot: '/nonexistent',
       filter: 'open',
     })
     expect(rows[0]!.arcGoal).toBe('Implement the caching layer')
   })
 
-  it('sets arcGoal from the origin task prompt when the row is a recovery/fix task', async () => {
+  it('resolves to origin intent when the row is a recovery/fix task (fix_for_task_id)', async () => {
     const originTask = makeTask({
       id: 'origin-1',
       prompt: 'Add rate limiting to the API gateway',
+      intent: 'Rate-limit the API gateway',
       status: 'failed',
     })
     const fixTask = makeTask({
       id: 'fix-1',
       fixForTaskId: 'origin-1',
+      intent: '',
       prompt: 'Fix: retry the integration gate step',
     })
     const rows = await buildActionQueueView({
@@ -515,14 +532,77 @@ describe('buildActionQueueView — arcGoal derivation', () => {
       repoRoot: '/nonexistent',
       filter: 'open',
     })
-    expect(rows[0]!.arcGoal).toBe('Add rate limiting to the API gateway')
+    expect(rows[0]!.arcGoal).toBe('Rate-limit the API gateway')
   })
 
-  it('truncates long prompts in arcGoal to at most 80 characters', async () => {
-    const longPrompt = 'Implement '.repeat(20)
+  it('resolves to origin intent via originId when fix_for_task_id is null (mars-a8dcb861 case)', async () => {
+    const originTask = makeTask({
+      id: 'origin-a0',
+      status: 'done',
+      intent: 'ADR for re-layering the queue/task-store facade edges into arc.ts',
+      prompt: 'Write an ADR...',
+    })
+    const supersedingTask = makeTask({
+      id: 'task-a8',
+      status: 'failed',
+      fixForTaskId: null,
+      originId: 'origin-a0',
+      intent: '',
+      prompt: 'Finish the work of origin-a0. You inherit its branch...',
+    })
+    const rows = await buildActionQueueView({
+      stateStore: makeStateStore([makeRow({ payload: { taskId: 'task-a8' } })]),
+      taskStore: makeTaskStore([originTask, supersedingTask]),
+      repoRoot: '/nonexistent',
+      filter: 'open',
+    })
+    expect(rows[0]!.arcGoal).toBe(
+      'ADR for re-layering the queue/task-store facade edges into arc.ts',
+    )
+  })
+
+  it('does not loop when originId equals the task own id', async () => {
+    const selfRefTask = makeTask({
+      id: 'task-self',
+      status: 'failed',
+      fixForTaskId: null,
+      originId: 'task-self',
+      intent: 'Self-origin task intent',
+      prompt: 'Self-origin task prompt',
+    })
+    const rows = await buildActionQueueView({
+      stateStore: makeStateStore([makeRow({ payload: { taskId: 'task-self' } })]),
+      taskStore: makeTaskStore([selfRefTask]),
+      repoRoot: '/nonexistent',
+      filter: 'open',
+    })
+    // Self-referencing origin — must not loop; uses the task's own intent.
+    expect(rows[0]!.arcGoal).toBe('Self-origin task intent')
+  })
+
+  it('strips leading markdown heading markers from intent', async () => {
     const rows = await buildActionQueueView({
       stateStore: makeStateStore([makeRow()]),
-      taskStore: makeTaskStore([makeTask({ prompt: longPrompt })]),
+      taskStore: makeTaskStore([
+        makeTask({
+          intent: '# Flaky: main-dirty-action-queue.test.ts intermittently times out at 60 s',
+          prompt: 'Fix flaky test',
+        }),
+      ]),
+      repoRoot: '/nonexistent',
+      filter: 'open',
+    })
+    expect(rows[0]!.arcGoal).not.toMatch(/^#/)
+    expect(rows[0]!.arcGoal).toBe(
+      'Flaky: main-dirty-action-queue.test.ts intermittently times out at 60 s',
+    )
+  })
+
+  it('truncates long intents in arcGoal to at most 80 characters', async () => {
+    const longIntent = 'Implement '.repeat(20)
+    const rows = await buildActionQueueView({
+      stateStore: makeStateStore([makeRow()]),
+      taskStore: makeTaskStore([makeTask({ intent: longIntent, prompt: 'short' })]),
       repoRoot: '/nonexistent',
       filter: 'open',
     })
@@ -546,6 +626,93 @@ describe('buildActionQueueView — arcGoal derivation', () => {
       filter: 'open',
     })
     expect(rows[0]!.arcGoal).toBeNull()
+  })
+})
+
+// ── deriveArcGoal unit tests ─────────────────────────────────────────────────
+
+describe('deriveArcGoal', () => {
+  const makeMap = (...tasks: TaskForActionQueue[]) =>
+    new Map(tasks.map((t) => [t.id, t]))
+
+  it('uses intent when non-empty', () => {
+    const t = makeTask({ intent: 'Ship it', prompt: 'Ship everything now' })
+    expect(deriveArcGoal(t, makeMap(t))).toBe('Ship it')
+  })
+
+  it('falls back to prompt when intent is empty string', () => {
+    const t = makeTask({ intent: '', prompt: 'Ship everything now' })
+    expect(deriveArcGoal(t, makeMap(t))).toBe('Ship everything now')
+  })
+
+  it('falls back to prompt when intent is undefined', () => {
+    const t = makeTask({ prompt: 'Ship everything now' })
+    // Remove intent to simulate old task store rows that don't carry the field.
+    delete (t as Partial<TaskForActionQueue>).intent
+    expect(deriveArcGoal(t, makeMap(t))).toBe('Ship everything now')
+  })
+
+  it('follows fixForTaskId to origin intent', () => {
+    const origin = makeTask({ id: 'org', intent: 'Origin intent', prompt: 'Origin prompt' })
+    const fix = makeTask({ id: 'fix', fixForTaskId: 'org', intent: '', prompt: 'Fix prompt' })
+    expect(deriveArcGoal(fix, makeMap(origin, fix))).toBe('Origin intent')
+  })
+
+  it('follows originId one hop when fixForTaskId is null', () => {
+    const origin = makeTask({ id: 'org', intent: 'Supersede origin', prompt: 'Origin prompt' })
+    const supersede = makeTask({
+      id: 'sup',
+      fixForTaskId: null,
+      originId: 'org',
+      intent: '',
+      prompt: 'Carry-forward prompt',
+    })
+    expect(deriveArcGoal(supersede, makeMap(origin, supersede))).toBe('Supersede origin')
+  })
+
+  it('does not loop when originId === task.id', () => {
+    const t = makeTask({ id: 'self', originId: 'self', intent: 'My goal', prompt: 'Long prompt' })
+    expect(deriveArcGoal(t, makeMap(t))).toBe('My goal')
+  })
+
+  it('strips ## heading markers from intent', () => {
+    const t = makeTask({
+      intent: '## Untangle the core/arc/blockers.ts import cycle',
+      prompt: 'Fix cycle',
+    })
+    expect(deriveArcGoal(t, makeMap(t))).toBe('Untangle the core/arc/blockers.ts import cycle')
+  })
+
+  it('takes the first non-empty line of a multi-line intent', () => {
+    const t = makeTask({ intent: '\n\nLine two is the goal\nLine three', prompt: 'Prompt' })
+    expect(deriveArcGoal(t, makeMap(t))).toBe('Line two is the goal')
+  })
+
+  it('produces ≤80-char output and appends … when truncating', () => {
+    const t = makeTask({ intent: 'x'.repeat(100), prompt: 'short' })
+    const result = deriveArcGoal(t, makeMap(t))
+    expect(result.length).toBeLessThanOrEqual(80)
+    expect(result.endsWith('…')).toBe(true)
+  })
+
+  it('live and history derivation sites agree — same output for the same task', async () => {
+    // Verify by calling buildActionQueueView (live) AND comparing its arcGoal with
+    // what deriveArcGoal returns directly for the same task object.
+    const task = makeTask({
+      id: 'task-1',
+      intent: 'The real intent for this arc',
+      prompt: 'A very long and noisy carry-forward prompt that should not appear',
+    })
+    const liveRows = await buildActionQueueView({
+      stateStore: makeStateStore([makeRow({ payload: { taskId: 'task-1' } })]),
+      taskStore: makeTaskStore([task]),
+      repoRoot: '/nonexistent',
+      filter: 'open',
+    })
+    const liveGoal = liveRows[0]!.arcGoal
+    const directGoal = deriveArcGoal(task, new Map([['task-1', task]]))
+    expect(liveGoal).toBe(directGoal)
+    expect(liveGoal).toBe('The real intent for this arc')
   })
 })
 

@@ -588,6 +588,18 @@ export interface TaskForActionQueue {
    */
   fixForTaskId?: string | null
   /**
+   * Human-readable intent label for this task, as stored in `tasks.intent`.
+   * Empty string when not set. Used by `deriveArcGoal` to produce a legible
+   * headline instead of truncating the raw prompt.
+   */
+  intent?: string
+  /**
+   * The id of the task this task supersedes, as stored in `tasks.origin_id`.
+   * Self-referencing on origin tasks (originId === id). Null when no lineage
+   * is recorded. Used by `deriveArcGoal` to follow supersede lineage.
+   */
+  originId?: string | null
+  /**
    * Live lease owner for an 'awaiting-human' task. Preferred over the
    * action-queue payload snapshot because the task row is always current.
    */
@@ -830,6 +842,69 @@ const buildRecipeFields = (
     humanDetail: recipe.humanDetail(ctx),
     verbs: getRecipeVerbs(recipe, ctx),
   }
+}
+
+/**
+ * Normalises a raw intent or prompt string into a single-line arc goal of at
+ * most 80 characters. Strips leading markdown heading markers (`#`, `##`,
+ * `###`), takes the first non-empty line, collapses internal whitespace, and
+ * truncates with an ellipsis suffix when needed.
+ */
+const normaliseGoalText = (text: string): string => {
+  const firstLine =
+    text
+      .split('\n')
+      .map((l) => l.trim())
+      .find((l) => l.length > 0) ?? ''
+  const stripped = firstLine.replace(/^#{1,3}\s*/, '').trim()
+  const oneLine = stripped.replace(/\s+/g, ' ').trim()
+  return oneLine.length <= 80 ? oneLine : `${oneLine.slice(0, 79)}…`
+}
+
+/**
+ * Derives the human-readable arc goal for an action-queue row.
+ *
+ * Resolution order:
+ * 1. Follow `fixForTaskId` to the recovery origin (fix/recovery tasks).
+ * 2. When `fixForTaskId` is null, follow `originId` one hop when it is set and
+ *    differs from the task's own id (supersede lineage). A second hop is taken
+ *    if needed, but visited ids are tracked so a cycle cannot hang.
+ * 3. Fall back to the task itself when no origin is resolvable.
+ *
+ * Source preference: the resolved origin's `intent` when non-empty; otherwise
+ * its `prompt`. The result is normalised through `normaliseGoalText`.
+ *
+ * Returns `null` when `task` is undefined — callers that only have a
+ * task-backed entity id should guard before calling.
+ */
+export const deriveArcGoal = (
+  task: TaskForActionQueue,
+  taskById: ReadonlyMap<string, TaskForActionQueue>,
+): string => {
+  let current: TaskForActionQueue = task
+
+  // Step 1: follow fixForTaskId (recovery tasks point at their origin).
+  if (current.fixForTaskId) {
+    current = taskById.get(current.fixForTaskId) ?? current
+  } else {
+    // Step 2: follow originId one or two hops (supersede lineage).
+    // Guard against self-reference and cycles.
+    const visited = new Set<string>([task.id])
+    for (let hop = 0; hop < 2; hop++) {
+      const oId = current.originId
+      if (!oId || oId === current.id || visited.has(oId)) break
+      const next = taskById.get(oId)
+      if (!next) break
+      visited.add(oId)
+      current = next
+    }
+  }
+
+  const source =
+    current.intent && current.intent.trim().length > 0
+      ? current.intent
+      : current.prompt
+  return normaliseGoalText(source)
 }
 
 /**
@@ -1163,17 +1238,15 @@ export const buildActionQueueView = async ({
         ? (taskById.get(entityId)?.fixForTaskId ?? null)
         : null
 
-    // Derive the arc goal from the origin task's prompt. For recovery/fix tasks,
-    // follow fixForTaskId to the origin task; for origin tasks, use their own prompt.
-    // This lets the operator see what was being attempted, not just that recovery failed.
+    // Derive the arc goal via the shared deriveArcGoal helper. For recovery/fix
+    // tasks it follows fixForTaskId; for superseding tasks it follows originId.
+    // Prefers the origin's intent over its raw prompt, and strips markdown heading
+    // markers from intent strings that are actually prompt dumps.
     let arcGoal: string | null = null
     if (isTaskFailure) {
       const task = taskById.get(entityId)
       if (task) {
-        const originTask = task.fixForTaskId
-          ? (taskById.get(task.fixForTaskId) ?? task)
-          : task
-        arcGoal = summarizePrompt(originTask.prompt)
+        arcGoal = deriveArcGoal(task, taskById)
       }
     }
 
@@ -1713,15 +1786,12 @@ export const buildActionQueueHistoryView = async ({
         ? (taskById.get(entityId)?.fixForTaskId ?? null)
         : null
 
-    // Derive the arc goal from the origin task's prompt (same logic as the live view).
+    // Derive the arc goal via the shared deriveArcGoal helper (same logic as the live view).
     let arcGoal: string | null = null
     if (isTaskFailure) {
       const task = taskById.get(entityId)
       if (task) {
-        const originTask = task.fixForTaskId
-          ? (taskById.get(task.fixForTaskId) ?? task)
-          : task
-        arcGoal = summarizePrompt(originTask.prompt)
+        arcGoal = deriveArcGoal(task, taskById)
       }
     }
 

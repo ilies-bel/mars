@@ -1144,17 +1144,21 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
               UNION
               SELECT t.id
                 FROM tasks t JOIN input_ids i ON t.fix_for_task_id = i.id
+              UNION
+              SELECT t.origin_id
+                FROM tasks t JOIN input_ids i ON t.id = i.id
+               WHERE t.origin_id IS NOT NULL AND t.origin_id != t.id
             )
-            SELECT t.id, t.status, t.prompt, t.failure_signature, t.branch,
-                   t.updated_at, t.parent_proposal_id, t.fix_for_task_id,
+            SELECT t.id, t.status, t.prompt, t.intent, t.failure_signature, t.branch,
+                   t.updated_at, t.parent_proposal_id, t.fix_for_task_id, t.origin_id,
                    t.lease_owner, t.leased_at, t.lease_note,
                    COALESCE(array_agg(b.blocker_task_id)
                      FILTER (WHERE b.blocker_task_id IS NOT NULL), '{}') AS blocked_by
               FROM tasks t
               JOIN related_ids r ON r.id = t.id
               LEFT JOIN task_blockers b ON b.task_id = t.id
-             GROUP BY t.id, t.status, t.prompt, t.failure_signature, t.branch,
-                      t.updated_at, t.parent_proposal_id, t.fix_for_task_id,
+             GROUP BY t.id, t.status, t.prompt, t.intent, t.failure_signature, t.branch,
+                      t.updated_at, t.parent_proposal_id, t.fix_for_task_id, t.origin_id,
                       t.lease_owner, t.leased_at, t.lease_note`,
       args: [entityIds],
     })
@@ -1164,12 +1168,14 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
         id: task.id as string,
         status: task.status as string,
         prompt: task.prompt as string,
+        intent: (task.intent as string | null) ?? '',
         blockedBy: (task.blocked_by as string[]) ?? [],
         parentProposalId: (task.parent_proposal_id as string | null) ?? null,
         failureSignature: (task.failure_signature as string | null) ?? null,
         branch: (task.branch as string | null) ?? null,
         updatedAt: task.updated_at as string,
         fixForTaskId: (task.fix_for_task_id as string | null) ?? null,
+        originId: (task.origin_id as string | null) ?? null,
         leaseOwner: (task.lease_owner as string | null) ?? null,
         leasedAt: (task.leased_at as string | null) ?? null,
         leaseNote: (task.lease_note as string | null) ?? null,
