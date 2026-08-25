@@ -1,0 +1,7 @@
+# Action-queue class is decided by operator obligation, and the class set is closed
+
+Context: action-queue kinds carried no operator-facing meaning. classifyKind mapped 15 kinds to condition and 5 to notice, and silently defaulted the remaining 39 to decision, so kinds that plainly report a fault the operator must fix (low-disk-space, api-outage, provider-rate-limited, env-incident, dirty-integration) rendered as choices to make, and no rule said which class a new kind belonged in.
+
+Decision: an item's class is decided by operator obligation, not by severity or by how it clears. A Notice asks nothing of the operator and exists because Mars still has an automated move and is taking it; an Alert reports that something is wrong and needs the operator, and is raised the moment the last automated move is spent, or immediately when there never was one; a Decision reports that nothing is wrong but work cannot proceed until the operator picks. The set is closed at those three, every kind is classified explicitly, and the permissive fallback is deleted so an unclassified kind fails to compile rather than defaulting.
+
+Trade-off: three operator-facing classes rather than the simpler two the operator first described, because "something broke" and "pick one" proved to be different enough moods that merging them misreads; and removing the fallback makes adding a kind strictly more work, which is the intent — the cost of a wrong class is paid by an operator misreading urgency during an incident.
