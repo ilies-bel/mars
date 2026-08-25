@@ -234,10 +234,15 @@ const REGISTRY: LeverRegistryEntry[] = [
   },
   {
     id: 'workflow.steps',
-    label: 'Workflow step definitions',
+    label: 'Workflow step definitions (user-owned .mars/workflows/*.js files)',
     family: 'workflow',
     scope: 'per-workflow',
-    readCurrent: () => '(see .mars/workflows/*.js)',
+    // Workflow definitions live in `.mars/workflows/<name>.js` — user-owned files
+    // that the operator can author and edit. The sentinel here reflects that there
+    // is no single "current value" persisted in daemon.json; the consumer slice
+    // "Fix workflow.steps lever readCurrent and metadata" will improve this to
+    // enumerate the actual workflow files on disk.
+    readCurrent: () => '(see .mars/workflows/*.js — user-owned, editable)',
     allowedValues: { type: 'freeform' },
     // Workflow step definitions live in .mars/workflows/<name>.js. The
     // `mars workflow author <name> --from <-|path>` command creates or revises
@@ -246,7 +251,12 @@ const REGISTRY: LeverRegistryEntry[] = [
     // becomes dispatch-eligible.
     gesture: 'mars workflow author <name> --from <-|path>',
     appliesWithoutRestart: true,
-    consumer: { file: 'src/core/daemon/server.ts', symbol: 'startDaemon' },
+    // The real consumer of workflow step definitions is the workflow loader —
+    // `loadWorkflowByName` reads the user-owned JS file and executes its steps.
+    consumer: {
+      file: 'src/workflows/queue-workflow-store.ts',
+      symbol: 'loadWorkflowByName',
+    },
   },
 
   // ── verify (recipes folded in from improvement-recipes.ts) ────────────────
@@ -784,6 +794,61 @@ const REGISTRY: LeverRegistryEntry[] = [
     // NOTE: self-evolve-trigger.ts does reference driftThresholdPct; the brief
     // author classified this as no-consumer, so we follow suit until
     // mars-e78e0004 resolves the wiring decision.
+  },
+  {
+    id: 'self-evolve.auto-enqueue',
+    label: 'Auto-enqueue lever (enables/disables automatic enqueueing of accepted reflection suggestions as tasks)',
+    family: 'self-evolve',
+    scope: 'global',
+    readCurrent: () => {
+      // `selfEvolve.autoEnqueue` is stored in daemon.json but stripped by the
+      // Zod schema in loadDaemonConfig(). The consumer slice "Add code-step
+      // levers to registry, config, and apply" extends the schema to expose
+      // this field; until then, return a sentinel rather than a stale default.
+      try {
+        const file = loadDaemonConfig()
+        // Access via the raw selfEvolve cast — the Zod schema strips unknown
+        // fields, so we access this as an opaque record until the schema is
+        // extended by the consumer slice.
+        const se = file.selfEvolve as Record<string, unknown>
+        const val = se.autoEnqueue
+        if (typeof val === 'boolean') return String(val)
+        return '(not set — defaults to false)'
+      } catch {
+        return null
+      }
+    },
+    allowedValues: { type: 'enum', values: ['true', 'false'] },
+    gesture: 'mars lever set self-evolve.auto-enqueue <true|false>',
+    appliesWithoutRestart: true,
+    // No consumer yet: the consumer slice "Add code-step levers to registry,
+    // config, and apply" wires autoEnqueue to the reflector's save path.
+  },
+  {
+    id: 'self-evolve.task-confidence-threshold',
+    label: 'Minimum confidence threshold (0–1) for persisting reflection suggestions as proposals',
+    family: 'self-evolve',
+    scope: 'global',
+    readCurrent: () => {
+      // `selfEvolve.taskConfidenceThreshold` is stored in daemon.json but
+      // stripped by the Zod schema in loadDaemonConfig(). The consumer slice
+      // extends the schema; until then return a sentinel.
+      try {
+        const file = loadDaemonConfig()
+        const se = file.selfEvolve as Record<string, unknown>
+        const val = se.taskConfidenceThreshold
+        if (typeof val === 'number') return String(val)
+        return '(not set — defaults to 0)'
+      } catch {
+        return null
+      }
+    },
+    allowedValues: { type: 'range', min: 0, max: 1 },
+    gesture: 'mars lever set self-evolve.task-confidence-threshold <0-1>',
+    appliesWithoutRestart: true,
+    // `persistSuggestions` in reflector.ts reads this threshold to decide
+    // whether a suggestion clears the confidence bar for proposal creation.
+    consumer: { file: 'src/core/lib/reflector.ts', symbol: 'persistSuggestions' },
   },
   // ── task-spec ─────────────────────────────────────────────────────────────
   {
