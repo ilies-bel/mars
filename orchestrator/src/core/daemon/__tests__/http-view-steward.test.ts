@@ -159,18 +159,12 @@ describe('GET /view/steward', () => {
 
     const db = getCompositionRootClient()
     await db.execute({
-      sql: `INSERT INTO chat_threads (id, title, created_at, updated_at)
-            VALUES (?, 'Steward: runtime tuning', ?, ?)`,
-      args: ['steward-thread', 1_785_578_614_014, 1_785_578_614_014],
-    })
-    await db.execute({
-      sql: `INSERT INTO chat_messages (id, thread_id, role, content, created_at, kind)
-            VALUES (?, ?, 'assistant', ?, ?, 'acknowledgment')`,
+      sql: `INSERT INTO steward_ledger (id, ts, target_kind, target_id, target_version, recipe_id, rationale, outcome)
+            VALUES (?, ?, 'daemon-cap', 'implement', 'v1', 'backlog-clear', 'backlog cleared', ?)`,
       args: [
         'steward-ack',
-        'steward-thread',
-        'I restored implement workers from 11 to 12 after the backlog cleared.',
-        1_785_578_614_014,
+        '2026-08-01T10:03:34.014Z',
+        'implement cap 11 → 12',
       ],
     })
 
@@ -187,7 +181,7 @@ describe('GET /view/steward', () => {
 
     expect(view.runtimeTuning.acks).toEqual([
       {
-        text: 'I restored implement workers from 11 to 12 after the backlog cleared.',
+        text: 'I bumped implement workers from 11 to 12.',
         timestamp: '2026-08-01T10:03:34.014Z',
         pair: { from: 11, to: 12 },
       },
