@@ -189,7 +189,7 @@ describe('notice detectors', () => {
         listCommits: async () => ['a'.repeat(40), 'b'.repeat(40), 'c'.repeat(40), 'd'.repeat(40)],
       })
 
-      expect(result).toEqual({ commits: 3, windowDays: 14, branch: 'main' })
+      expect(result).toEqual({ commits: 3, windowDays: 14, branch: 'main', marsCommits: 1 })
     })
 
     it('never accuses the operator on an empty ledger', async () => {

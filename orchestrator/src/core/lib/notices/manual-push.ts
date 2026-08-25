@@ -1,10 +1,16 @@
 /**
- * "Commits are reaching the integration branch without going through me."
+ * Commits arriving on the integration branch outside the pipeline.
  *
- * This Notice accuses the operator of a habit, so the evidence has to be
- * exact. It is built only from `merge_jobs.merged_sha` — the tips Mars itself
- * landed — and never from a heuristic on commit messages or authors, both of
- * which are the operator's own name either way.
+ * This Notice reports what Mars observed, not what the operator did wrong.
+ * HR-11 forbids evaluating the operator's method; the `marsCommits` field
+ * gives the render layer enough context to frame the finding as a factual
+ * comparison ("Mars landed N; M arrived outside") rather than a verdict.
+ *
+ * Evidence rigour: attribution is built only from `merge_jobs.merged_sha` —
+ * the branch tip after each Mars fast-forward. The `excludeTips` argument
+ * lets `listCommits` exclude all commits reachable from those tips, so every
+ * commit a multi-commit task branch contributed is correctly attributed, not
+ * just its final SHA.
  *
  * The consequence of that rigour: before any merge has recorded a SHA there
  * is no evidence at all, and the detector stays silent rather than reading
@@ -17,6 +23,13 @@ export interface ManualPushObservation {
   commits: number
   windowDays: number
   branch: string
+  /**
+   * How many commits Mars itself landed on `branch` in the same window. Lets
+   * the render layer present the finding as a factual comparison rather than
+   * treating the unaccounted count in isolation — supporting HR-11 compliance
+   * by avoiding any framing that evaluates the operator's method.
+   */
+  marsCommits: number
 }
 
 export interface DetectManualPushOptions {
@@ -26,10 +39,20 @@ export interface DetectManualPushOptions {
   threshold?: number
   now?: () => number
   /**
-   * Lists commits on `branch` in the window, newest first. Injected so the
-   * detector holds no opinion about how git is invoked.
+   * Lists commits on `branch` since `sinceMs`, newest first, excluding
+   * commits reachable from any SHA in `excludeTips`.
+   *
+   * Ancestry-aware implementations pass `excludeTips` to
+   * `git log <branch> --not <excludeTips...>` so that every commit Mars
+   * fast-forwarded into the branch is attributed correctly, regardless of
+   * how many commits a task branch contributed.
+   *
+   * Callers that do not perform ancestry exclusion may safely ignore the
+   * third argument: TypeScript's structural typing treats a two-parameter
+   * function as a valid implementation of this three-parameter type, and the
+   * post-filter inside the detector catches exact SHA matches as a fallback.
    */
-  listCommits: (branch: string, sinceMs: number) => Promise<readonly string[]>
+  listCommits: (branch: string, sinceMs: number, excludeTips: readonly string[]) => Promise<readonly string[]>
 }
 
 const DEFAULTS = { windowDays: 14, threshold: 3 } as const
@@ -37,11 +60,10 @@ const DEFAULTS = { windowDays: 14, threshold: 3 } as const
 /**
  * Count commits on the integration branch that no merge job put there.
  *
- * A Mars merge fast-forwards the branch, so one recorded tip vouches for
- * every commit up to it. Rather than walk ancestry, this treats a recorded
- * SHA as accounting for itself and relies on the *count* of unaccounted
- * commits — which is what the sentence claims — rather than on a precise
- * partition of history.
+ * Mars SHAs are passed to `listCommits` as `excludeTips` so ancestry-aware
+ * implementations can exclude all commits Mars landed in the window, not just
+ * exact tip matches. The post-filter below still catches exact matches for
+ * callers that ignore `excludeTips`, preserving backward compatibility.
  */
 export const detectManualPush = async (
   c: DbClient,
@@ -64,9 +86,9 @@ export const detectManualPush = async (
   // No evidence is not evidence of wrongdoing.
   if (marsShas.size === 0) return null
 
-  const commits = await options.listCommits(options.branch, sinceMs)
+  const commits = await options.listCommits(options.branch, sinceMs, [...marsShas])
   const unaccounted = commits.filter((sha) => !marsShas.has(sha)).length
   if (unaccounted < threshold) return null
 
-  return { commits: unaccounted, windowDays, branch: options.branch }
+  return { commits: unaccounted, windowDays, branch: options.branch, marsCommits: marsShas.size }
 }
