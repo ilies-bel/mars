@@ -53,6 +53,15 @@ export interface DetectManualPushOptions {
    * post-filter inside the detector catches exact SHA matches as a fallback.
    */
   listCommits: (branch: string, sinceMs: number, excludeTips: readonly string[]) => Promise<readonly string[]>
+  /**
+   * Returns all SHAs reachable from `to` but not from `from`
+   * (`git rev-list from..to`). When provided, the detector walks consecutive
+   * pairs of merge-tip SHAs and attributes every intermediate commit to Mars,
+   * not just the recorded tip SHA. Without this callback the detector falls
+   * back to exact tip-SHA matching, which misattributes the non-tip commits
+   * of a multi-commit task branch as unaccounted.
+   */
+  listCommitRange?: (from: string, to: string) => Promise<readonly string[]>
 }
 
 const DEFAULTS = { windowDays: 14, threshold: 3 } as const
@@ -60,10 +69,13 @@ const DEFAULTS = { windowDays: 14, threshold: 3 } as const
 /**
  * Count commits on the integration branch that no merge job put there.
  *
- * Mars SHAs are passed to `listCommits` as `excludeTips` so ancestry-aware
- * implementations can exclude all commits Mars landed in the window, not just
- * exact tip matches. The post-filter below still catches exact matches for
- * callers that ignore `excludeTips`, preserving backward compatibility.
+ * When `listCommitRange` is provided the detector walks consecutive pairs of
+ * merge-tip SHAs (oldest-commit → first-tip, first-tip → second-tip, …) and
+ * marks every SHA in each range as Mars-attributed. This correctly handles
+ * multi-commit task branches where only the tip is recorded in `merge_jobs`.
+ *
+ * Without `listCommitRange` the detector falls back to exact tip-SHA matching
+ * via the `marsShas` Set, preserving backward compatibility.
  */
 export const detectManualPush = async (
   c: DbClient,
@@ -76,19 +88,42 @@ export const detectManualPush = async (
 
   const landed = await c.execute({
     sql: `SELECT merged_sha FROM merge_jobs
-           WHERE merged_sha IS NOT NULL
-             AND finished_at >= to_timestamp(? / 1000.0)`,
+           WHERE status = 'done'
+             AND merged_sha IS NOT NULL
+             AND finished_at >= to_timestamp(? / 1000.0)
+           ORDER BY finished_at ASC`,
     args: [sinceMs],
   })
-  const marsShas = new Set(
-    (landed.rows as unknown as { merged_sha: string }[]).map((row) => row.merged_sha),
+  const orderedMarsShAs = (landed.rows as unknown as { merged_sha: string }[]).map(
+    (row) => row.merged_sha,
   )
+  const marsShas = new Set(orderedMarsShAs)
   // No evidence is not evidence of wrongdoing.
   if (marsShas.size === 0) return null
 
-  const commits = await options.listCommits(options.branch, sinceMs, [...marsShas])
-  const unaccounted = commits.filter((sha) => !marsShas.has(sha)).length
-  if (unaccounted < threshold) return null
+  const commits = await options.listCommits(options.branch, sinceMs, orderedMarsShAs)
 
+  let unaccounted: number
+  if (options.listCommitRange !== undefined && commits.length > 0) {
+    // Walk consecutive pairs of merge tips to attribute every commit in a
+    // multi-commit task branch, not just the recorded tip SHA.
+    // The oldest commit from `listCommits` (last element, newest-first) is the
+    // implicit lower bound before the first Mars merge in the window.
+    const accounted = new Set(marsShas)
+    const oldestCommit = commits[commits.length - 1]
+    // froms[i] is the lower bound for orderedMarsShAs[i]:
+    //   froms[0] = oldest commit in window
+    //   froms[i] = orderedMarsShAs[i - 1] for i > 0
+    const froms = [oldestCommit, ...orderedMarsShAs.slice(0, -1)]
+    for (let i = 0; i < orderedMarsShAs.length; i++) {
+      const range = await options.listCommitRange(froms[i], orderedMarsShAs[i])
+      for (const sha of range) accounted.add(sha)
+    }
+    unaccounted = commits.filter((sha) => !accounted.has(sha)).length
+  } else {
+    unaccounted = commits.filter((sha) => !marsShas.has(sha)).length
+  }
+
+  if (unaccounted < threshold) return null
   return { commits: unaccounted, windowDays, branch: options.branch, marsCommits: marsShas.size }
 }

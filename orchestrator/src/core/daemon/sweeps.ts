@@ -503,6 +503,14 @@ export const SWEEPS: readonly SweepSpec[] = [
             .map((line) => line.trim())
             .filter(Boolean)
         },
+        listCommitRange: async (from, to) => {
+          const { stdout } = await promisify(execFile)(
+            'git',
+            ['rev-list', `${from}..${to}`],
+            { cwd: root },
+          )
+          return stdout.trim().split('\n').filter(Boolean)
+        },
       })
       if (result.posted > 0) {
         log(`[notice-sweep] spoke ${result.posted} Notice(s)`)

@@ -216,6 +216,64 @@ describe('notice detectors', () => {
 
       expect(result).toBeNull()
     })
+
+    it('attributes intermediate task-branch commits to Mars', async () => {
+      const { db, push } = await load(repo)
+      // SHA-C is the recorded tip of a 3-commit task branch: A → B → C.
+      const shaC = 'c'.repeat(40)
+      const shaB = 'b'.repeat(40)
+      const shaA = 'a'.repeat(40)
+      // SHA-manual was already on main before the task branch started.
+      const shaManual = 'm'.repeat(40)
+      await landed(db, 'mars-1', shaC, NOW - 2 * DAY)
+
+      const result = await push.detectManualPush(db, {
+        branch: 'main',
+        threshold: 1,
+        now: () => NOW,
+        // listCommits returns all commits newest-first; shaManual is oldest.
+        listCommits: async () => [shaC, shaB, shaA, shaManual],
+        // git rev-list shaManual..shaC covers the 3 task-branch commits.
+        listCommitRange: async (from, to) => {
+          if (from === shaManual && to === shaC) return [shaC, shaB, shaA]
+          return []
+        },
+      })
+
+      // Only shaManual is unaccounted; the whole task branch is Mars-attributed.
+      expect(result).toEqual({ commits: 1, windowDays: 14, branch: 'main', marsCommits: 1 })
+    })
+
+    it('does not misattribute a manual push interleaved between two merges', async () => {
+      const { db, push } = await load(repo)
+      // SHA-X: tip of the first Mars merge (single-commit task).
+      // SHA-Z: tip of the second Mars merge (2-commit task: Y → Z).
+      // SHA-manual: landed on main between the two Mars merges.
+      const shaX = 'x'.repeat(40)
+      const shaY = 'y'.repeat(40)
+      const shaZ = 'z'.repeat(40)
+      const shaManual = 'm'.repeat(40)
+      await landed(db, 'mars-1', shaX, NOW - 4 * DAY)
+      await landed(db, 'mars-2', shaZ, NOW - 1 * DAY)
+
+      const result = await push.detectManualPush(db, {
+        branch: 'main',
+        threshold: 1,
+        now: () => NOW,
+        // Commits newest-first; shaX is oldest (it was landed first).
+        listCommits: async () => [shaZ, shaY, shaManual, shaX],
+        listCommitRange: async (from, to) => {
+          // Range before first merge: oldest==shaX, to==shaX → empty (no commits between itself).
+          if (from === shaX && to === shaX) return []
+          // Range between the two merges: shaX → shaZ covers the second task branch.
+          if (from === shaX && to === shaZ) return [shaZ, shaY]
+          return []
+        },
+      })
+
+      // shaManual falls between the two Mars ranges and must remain unaccounted.
+      expect(result).toEqual({ commits: 1, windowDays: 14, branch: 'main', marsCommits: 2 })
+    })
   })
 
   describe('detectCodegraphSuggestion', () => {

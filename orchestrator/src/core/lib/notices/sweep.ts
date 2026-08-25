@@ -32,6 +32,12 @@ export interface NoticeSweepDeps {
   integrationBranch: string
   /** Commits on a branch since an epoch-ms instant, newest first. */
   listCommits: (branch: string, sinceMs: number) => Promise<readonly string[]>
+  /**
+   * All SHAs reachable from `to` but not from `from` (git rev-list from..to).
+   * Forwarded to `detectManualPush` to attribute multi-commit task branches.
+   * Optional: when absent the detector falls back to exact tip-SHA matching.
+   */
+  listCommitRange?: (from: string, to: string) => Promise<readonly string[]>
   log?: (message: string) => void
   /** Override for testing — defaults to reading daemon.json. */
   readAutonomyLevel?: (lever: string) => string
@@ -92,6 +98,7 @@ export const runNoticeSweep = async (deps: NoticeSweepDeps): Promise<NoticeSweep
     const observation = await detectManualPush(client, {
       branch: deps.integrationBranch,
       listCommits: deps.listCommits,
+      listCommitRange: deps.listCommitRange,
     })
     if (observation) {
       await speak({ kind: 'observation.manual-push', payload: observation, priority: 'routine' })
