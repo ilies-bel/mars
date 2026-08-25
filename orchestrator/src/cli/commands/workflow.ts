@@ -53,6 +53,18 @@ const bundledKinds = (repoRoot: string): Map<string, string> =>
     ]),
   )
 
+/**
+ * Compiled built-in pipeline names that cannot be authored as user-owned
+ * workflow files. These pipelines ship as compiled TypeScript inside the
+ * orchestrator binary; a user-owned .mars/workflows/<name>-workflow.js file
+ * would shadow the entire pipeline via the loader's user-owned-first fallback
+ * rather than tuning a single step.
+ *
+ * Note: only 'implement' currently resolves in loadBuiltInWorkflow's switch;
+ * 'triage', 'plan', and 'slice' are guarded defensively for when they join it.
+ */
+const BUILT_IN_PIPELINE_NAMES = new Set(['implement', 'triage', 'plan', 'slice'])
+
 /** Absolute path to the user's `.mars/workflows/` directory. */
 const userWorkflowsDir = (stateDir: string): string =>
   resolve(stateDir, 'workflows')
@@ -570,6 +582,12 @@ const workflowAuthor: Command = {
     if (bundledKinds(deps.ctx.repoRoot).has(name)) {
       deps.err(
         `'${name}' is a reserved bundled workflow kind — authoring it would rewire the default pipeline. Pick a new name; scaffold the defaults with \`mars update\`.`,
+      )
+      return { code: 1 }
+    }
+    if (BUILT_IN_PIPELINE_NAMES.has(name)) {
+      deps.err(
+        `'${name}' is a compiled built-in pipeline — authoring a user-owned file would shadow the entire pipeline rather than tuning one step. Use per-step levers (mars operator set ...) to adjust built-in pipeline behaviour.`,
       )
       return { code: 1 }
     }
