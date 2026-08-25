@@ -1317,8 +1317,17 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput, SliceServic
     const claimed = await claimProposalForSlicing(inputData.proposalId)
     if (!claimed) {
       const current = await getProposal(inputData.proposalId)
+      const currentStatus = current?.status ?? 'missing'
+      const recovery =
+        currentStatus === 'slicing'
+          ? ` If this is a stale claim from a prior daemon run, run ` +
+            `\`mars proposal slice ${proposal.id}\` — the daemon auto-releases ` +
+            `the stale claim before re-slicing. Alternatively run \`mars sync\` ` +
+            `to sweep all stranded claims.`
+          : ''
       throw new Error(
-        `proposal ${proposal.id} is not claimable for slicing (status='${current?.status ?? 'missing'}'; already slicing or sliced)`,
+        `proposal ${proposal.id} is not claimable for slicing ` +
+          `(status='${currentStatus}'; already slicing or sliced).${recovery}`,
       )
     }
     // From this point on, every failure path must revert the claim

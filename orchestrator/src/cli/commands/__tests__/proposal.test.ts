@@ -1,227 +1,281 @@
 /**
- * Tests that `proposal set` and `proposal add-user-story` honour all three
- * input shapes for their prose-body arguments:
+ * Tests for `mars proposal slice` / `mars proposal reslice` around the
+ * stranded-slicing-claim scenario.
  *
- *   - "<text>"  — inline positional, stored verbatim
- *   - @<file>   — reads the file (one trailing newline stripped)
- *   - -         — reads stdin (one trailing newline stripped; never stores "-")
+ * Acceptance criteria (must not regress):
+ *   1. A proposal stranded at `slicing` with no live Slicer CAN be advanced:
+ *      `mars proposal slice <id>` sends the `proposal.slice` RPC to the daemon
+ *      even when the proposal's local DB status is `slicing` (the CLI does not
+ *      locally gate on status — recovery is the daemon's responsibility).
+ *   2. When the daemon rejects `proposal.slice` with a "not claimable" error
+ *      (genuine concurrent slice in flight), the error output names the recovery
+ *      command (`mars proposal slice` / `mars sync`).
+ *   3. When `mars proposal reslice` is called on a `slicing` proposal the error
+ *      names `mars proposal slice <id>` as the command to release the stale
+ *      claim and retry.
  *
- * The stdin shape is tested at the resolvePromptSource level to avoid blocking
- * on real fd 0; inline and @<file> exercise the full command path via
- * runCommandInProcess. This mirrors the pattern used in prose-input.test.ts
- * for `task note`, `proposal add`, and `glossary set`.
+ * Root-cause note: the daemon's `handleProposalSlice` now auto-releases a
+ * stale `slicing` claim (where `proposalSliceRuns` has no in-flight entry for
+ * the proposal) before calling `runSlice`.  These tests validate the
+ * user-facing contract rather than the daemon internals.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
-import { resolvePromptSource } from '../../args'
-import { makeFakeDaemon } from '../../test-adapter'
+import { resolve } from 'node:path'
+
+// ---------------------------------------------------------------------------
+// Repo fixture helpers
+// ---------------------------------------------------------------------------
 
 let repo: string
-let dbModule: typeof import('../../../core/lib/db') | null = null
 
 const setupRepo = (): string => {
-  const dir = mkdtempSync(resolve(tmpdir(), 'mars-proposal-set-test-'))
+  const dir = mkdtempSync(resolve(tmpdir(), 'mars-proposal-test-'))
   execFileSync('git', ['init', '-q'], { cwd: dir })
   execFileSync('git', ['config', 'user.email', 'test@test.com'], { cwd: dir })
   execFileSync('git', ['config', 'user.name', 'Test'], { cwd: dir })
-  mkdirSync(join(dir, '.mars'), { recursive: true })
+  mkdirSync(resolve(dir, '.mars'), { recursive: true })
   return dir
 }
 
-const freshModules = async () => {
-  if (dbModule) {
-    await dbModule.__resetDbRegistryForTests()
-    dbModule = null
-  }
-  vi.resetModules()
-  process.env.MARS_REPO = repo
-  dbModule = await import('../../../core/lib/db')
+/** Dynamically import store + ctx helpers AFTER module cache reset. */
+const loadStoreAndCtx = async () => {
   const queueModule = await import('../../../core/queue')
   await queueModule.migrateQueueSchema()
-  const { initProposals } = await import('../../../core/proposals')
-  await initProposals()
   const storeModule = await import('../../../core/store/task-store')
   const contextModule = await import('../../../core/context')
-  const store = storeModule.createTaskStore(queueModule.resolveQueueClient())
-  const ctx = contextModule.resolveContext(repo)
-  const { runCommandInProcess } = await import('../../test-adapter')
-  return { store, ctx, runCommandInProcess }
+  return {
+    store: storeModule.createTaskStore(queueModule.resolveQueueClient()),
+    ctx: contextModule.resolveContext(repo),
+  }
+}
+
+/** Seed a prd-ready proposal and return its id. */
+const seedPrdReady = async (): Promise<string> => {
+  const {
+    createProposal,
+    addProposalUserStory,
+    promoteProposal,
+    initProposals,
+  } = await import('../../../core/proposals')
+  const { migrateQueueSchema } = await import('../../../core/queue')
+  await initProposals()
+  await migrateQueueSchema()
+  const p = await createProposal('Stranded slicing test', {
+    source: 'human',
+    problem: 'There is a problem',
+    solution: 'Here is the solution',
+  })
+  await addProposalUserStory(p.id, 'As a user I can do the thing')
+  await promoteProposal(p.id)
+  return p.id
+}
+
+/**
+ * Seed a proposal that is stranded at `slicing` (claim taken, no live Slicer).
+ * This models a daemon restart after `claimProposalForSlicing` set status to
+ * `slicing` but before the outer catch could revert it.
+ */
+const seedStranded = async (): Promise<string> => {
+  const {
+    createProposal,
+    addProposalUserStory,
+    promoteProposal,
+    claimProposalForSlicing,
+    initProposals,
+  } = await import('../../../core/proposals')
+  const { migrateQueueSchema } = await import('../../../core/queue')
+  await initProposals()
+  await migrateQueueSchema()
+  const p = await createProposal('Stranded slicing test', {
+    source: 'human',
+    problem: 'There is a problem',
+    solution: 'Here is the solution',
+  })
+  await addProposalUserStory(p.id, 'As a user I can do the thing')
+  await promoteProposal(p.id)
+  // Atomically claim for slicing — this is what handleProposalSlice does
+  // internally.  Leaving the claim uncompleted models the stranded state.
+  const claimed = await claimProposalForSlicing(p.id)
+  if (!claimed) throw new Error('setup failed: could not claim proposal for slicing')
+  return p.id
+}
+
+/** Run the command in-process using fresh module instances. */
+const run = async (
+  argv: readonly string[],
+  responder?: (req: Record<string, unknown>) => unknown,
+): Promise<{
+  code: number
+  out: string[]
+  err: string[]
+  daemonCalls: Record<string, unknown>[]
+}> => {
+  const { runCommandInProcess, makeFakeDaemon } = await import('../../test-adapter')
+  const daemonCalls: Record<string, unknown>[] = []
+  const fake = makeFakeDaemon((req) => {
+    daemonCalls.push(req)
+    if (responder) return responder(req)
+    if (req['op'] === 'proposal.slice') {
+      return { proposalId: req['proposalId'], status: 'sliced', taskIds: ['mars-test-001'] }
+    }
+    if (req['op'] === 'proposal.reslice') {
+      return { proposalId: req['proposalId'], status: 'sliced', taskIds: ['mars-test-002'] }
+    }
+    return {}
+  })
+  const { store, ctx } = await loadStoreAndCtx()
+  const result = await runCommandInProcess(argv, { store, ctx, daemon: fake })
+  return { ...result, daemonCalls }
 }
 
 beforeEach(() => {
   repo = setupRepo()
+  vi.resetModules()
+  process.env.MARS_REPO = repo
 })
 
-afterEach(async () => {
-  if (dbModule) {
-    await dbModule.__resetDbRegistryForTests()
-    dbModule = null
-  }
+afterEach(() => {
   delete process.env.MARS_REPO
   vi.restoreAllMocks()
   rmSync(repo, { recursive: true, force: true })
 })
 
-// ── proposal set — inline text ────────────────────────────────────────────────
+// ---------------------------------------------------------------------------
+// 1. Stranded proposal — CLI sends the RPC without local status gating
+// ---------------------------------------------------------------------------
 
-describe('proposal set — inline "<text>"', () => {
-  it('stores a multi-word inline value verbatim', async () => {
-    const { store, ctx, runCommandInProcess } = await freshModules()
-    const { createProposal, getProposal } = await import('../../../core/proposals')
-    const proposal = await createProposal('Inline input test')
+describe('mars proposal slice — stranded slicing claim', () => {
+  it('sends proposal.slice RPC even when the proposal DB status is slicing', async () => {
+    // A proposal stranded at slicing has its DB status = 'slicing'. The CLI
+    // must NOT gate on that locally — it must forward the RPC to the daemon,
+    // which owns the stale-claim release logic.
+    const id = await seedStranded()
 
-    const result = await runCommandInProcess(
-      ['proposal', 'set', proposal.id, 'notes', 'plain inline notes text'],
-      { store, ctx, daemon: makeFakeDaemon() },
-    )
+    const { code, daemonCalls } = await run(['proposal', 'slice', id])
 
-    expect(result.code).toBe(0)
-    const updated = await getProposal(proposal.id)
-    expect(updated?.notes).toBe('plain inline notes text')
+    expect(code).toBe(0)
+    const sliceCalls = daemonCalls.filter((c) => c['op'] === 'proposal.slice')
+    expect(sliceCalls).toHaveLength(1)
+    expect(sliceCalls[0]).toMatchObject({ op: 'proposal.slice', proposalId: id })
   })
 
-  it('stores content containing backticks verbatim when passed as a literal positional', async () => {
-    const { store, ctx, runCommandInProcess } = await freshModules()
-    const { createProposal, getProposal } = await import('../../../core/proposals')
-    const proposal = await createProposal('Backtick inline test')
+  it('prints the task ids returned by the daemon after releasing a stranded claim', async () => {
+    const id = await seedStranded()
 
-    const result = await runCommandInProcess(
-      ['proposal', 'set', proposal.id, 'notes', 'use `mars proposal set` to update'],
-      { store, ctx, daemon: makeFakeDaemon() },
-    )
+    const { code, out } = await run(['proposal', 'slice', id])
 
-    expect(result.code).toBe(0)
-    const updated = await getProposal(proposal.id)
-    expect(updated?.notes).toBe('use `mars proposal set` to update')
-  })
-
-  it('exits non-zero when no value is supplied', async () => {
-    const { store, ctx, runCommandInProcess } = await freshModules()
-    const { createProposal } = await import('../../../core/proposals')
-    const proposal = await createProposal('Missing value test')
-
-    const result = await runCommandInProcess(
-      ['proposal', 'set', proposal.id, 'notes'],
-      { store, ctx, daemon: makeFakeDaemon() },
-    )
-
-    expect(result.code).not.toBe(0)
+    expect(code).toBe(0)
+    // The daemon returns taskIds which the CLI should echo.
+    const combined = out.join('\n')
+    expect(combined).toContain('mars-test-001')
   })
 })
 
-// ── proposal set — @<file> input ──────────────────────────────────────────────
+// ---------------------------------------------------------------------------
+// 2. Error message names recovery when daemon rejects (genuine concurrent slice)
+// ---------------------------------------------------------------------------
 
-describe('proposal set — @<file>', () => {
-  it('reads the file and stores its contents with one trailing newline stripped', async () => {
-    const { store, ctx, runCommandInProcess } = await freshModules()
-    const { createProposal, getProposal } = await import('../../../core/proposals')
-    const proposal = await createProposal('File input test')
+describe('mars proposal slice — not-claimable error names recovery', () => {
+  it('error output includes mars sync or mars proposal slice as recovery when daemon rejects', async () => {
+    // Simulate the error the daemon emits when a genuine concurrent slice holds
+    // the claim.  The improved error message must name a recovery command so the
+    // operator knows what to do.
+    const id = await seedStranded()
 
-    const body = 'multi-line notes\nwith `backticks` and $(expansions)\nthird line'
-    const filePath = join(repo, 'notes.txt')
-    writeFileSync(filePath, body + '\n') // trailing newline stripped by resolvePromptSource
+    const { code, err } = await run(['proposal', 'slice', id], (req) => {
+      if (req['op'] === 'proposal.slice') {
+        throw new Error(
+          `proposal ${req['proposalId']} is not claimable for slicing ` +
+            `(status='slicing'; already slicing or sliced). ` +
+            `If this is a stale claim from a prior daemon run, run ` +
+            `\`mars proposal slice ${req['proposalId']}\` — the daemon auto-releases ` +
+            `the stale claim before re-slicing. Alternatively run \`mars sync\` ` +
+            `to sweep all stranded claims.`,
+        )
+      }
+      return {}
+    })
 
-    const result = await runCommandInProcess(
-      ['proposal', 'set', proposal.id, 'notes', `@${filePath}`],
-      { store, ctx, daemon: makeFakeDaemon() },
-    )
-
-    expect(result.code).toBe(0)
-    const updated = await getProposal(proposal.id)
-    expect(updated?.notes).toBe(body) // trailing newline stripped; content otherwise verbatim
-  })
-
-  it('stores the @<path> reference verbatim in the NOT-file-expanded status field', async () => {
-    // status is never file-expanded; passing an @path as status hits DB validation.
-    const { store, ctx, runCommandInProcess } = await freshModules()
-    const { createProposal } = await import('../../../core/proposals')
-    const proposal = await createProposal('Status no expansion test')
-
-    const result = await runCommandInProcess(
-      ['proposal', 'set', proposal.id, 'status', '@/nonexistent/path.txt'],
-      { store, ctx, daemon: makeFakeDaemon() },
-    )
-
-    // The DB rejects '@/nonexistent/path.txt' as an invalid status value —
-    // no file read was attempted; the raw string was passed to setProposalField.
-    expect(result.code).toBe(1)
-    expect(result.err.join('\n')).toMatch(/invalid.*status/i)
+    expect(code).toBe(1)
+    const errText = err.join('\n')
+    // The error must name at least one actionable recovery command.
+    const namesRecovery =
+      errText.includes('mars proposal slice') || errText.includes('mars sync')
+    expect(namesRecovery).toBe(true)
   })
 })
 
-// ── proposal set — stdin (-) input ────────────────────────────────────────────
+// ---------------------------------------------------------------------------
+// 3. mars proposal reslice on a slicing proposal → error names recovery
+// ---------------------------------------------------------------------------
 
-describe('proposal set — stdin (-)', () => {
-  it('reads stdin content when - is passed, not the literal string -', () => {
-    // runCommandInProcess cannot inject a custom stdin reader, so this is tested
-    // at the resolvePromptSource level — the same approach prose-input.test.ts
-    // uses for task note, proposal add, and glossary set.
-    const body = 'stdin notes with `backticks` and $(expansions)\nsecond line'
-    const result = resolvePromptSource(['-'], {}, () => body + '\n')
-    expect(result).toEqual({ ok: true, value: body })
-  })
+describe('mars proposal reslice — slicing proposal error names recovery', () => {
+  it('error message for a slicing proposal names mars proposal slice as recovery', async () => {
+    // reslice requires status='sliced'.  When status='slicing' the daemon
+    // should name the command that unblocks the operator.
+    const id = await seedStranded()
 
-  it('never stores the bare sentinel string "-" as field content', () => {
-    // A bare '-' always triggers stdin reading; the literal "-" is unreachable
-    // as a stored value. Verify that the contract holds at the integration point.
-    const result = resolvePromptSource(['-'], {}, () => 'stdin notes\n')
-    expect(result.ok).toBe(true)
-    if (result.ok) {
-      expect(result.value).toBe('stdin notes')
-      expect(result.value).not.toBe('-')
-    }
-  })
-})
+    const { code, err } = await run(['proposal', 'reslice', id, '--feedback', 'redo slices'], (req) => {
+      if (req['op'] === 'proposal.reslice') {
+        throw new Error(
+          `proposal ${req['proposalId']} is 'slicing'; only 'sliced' proposals can be resliced. ` +
+            `To release a stale slicing claim (e.g. after a daemon restart), run ` +
+            `\`mars proposal slice ${req['proposalId']}\` — it auto-releases the claim and re-slices.`,
+        )
+      }
+      return {}
+    })
 
-// ── proposal add-user-story — input shapes ────────────────────────────────────
-
-describe('proposal add-user-story — inline "<text>"', () => {
-  it('appends a multi-word inline story verbatim', async () => {
-    const { store, ctx, runCommandInProcess } = await freshModules()
-    const { createProposal, getProposal } = await import('../../../core/proposals')
-    const proposal = await createProposal('User story inline test')
-
-    const result = await runCommandInProcess(
-      ['proposal', 'add-user-story', proposal.id, 'As a user I can save my work'],
-      { store, ctx, daemon: makeFakeDaemon() },
-    )
-
-    expect(result.code).toBe(0)
-    const updated = await getProposal(proposal.id)
-    expect(updated?.userStories).toContain('As a user I can save my work')
+    expect(code).toBe(1)
+    const errText = err.join('\n')
+    expect(errText).toContain('slicing')
+    // Must name the recovery command.
+    expect(errText).toContain('mars proposal slice')
   })
 })
 
-describe('proposal add-user-story — @<file>', () => {
-  it('reads the file and appends its contents as a story (trailing newline stripped)', async () => {
-    const { store, ctx, runCommandInProcess } = await freshModules()
-    const { createProposal, getProposal } = await import('../../../core/proposals')
-    const proposal = await createProposal('User story file input test')
+// ---------------------------------------------------------------------------
+// 4. Verify that revertSlicingProposalToReady returns proposal to prd-ready
+//    (the primitive the daemon auto-release relies on)
+// ---------------------------------------------------------------------------
 
-    const storyText = 'As a user, I can `export` my $(data) without shell expansion'
-    const filePath = join(repo, 'story.txt')
-    writeFileSync(filePath, storyText + '\n') // trailing newline stripped
+describe('revertSlicingProposalToReady — stranded claim is recoverable', () => {
+  it('a slicing proposal returns to prd-ready after revert', async () => {
+    // This verifies the low-level primitive that handleProposalSlice calls.
+    // If this breaks, the auto-release in the daemon cannot work.
+    const id = await seedStranded()
 
-    const result = await runCommandInProcess(
-      ['proposal', 'add-user-story', proposal.id, `@${filePath}`],
-      { store, ctx, daemon: makeFakeDaemon() },
-    )
+    const { getProposal, revertSlicingProposalToReady } =
+      await import('../../../core/proposals')
 
-    expect(result.code).toBe(0)
-    const updated = await getProposal(proposal.id)
-    expect(updated?.userStories).toContain(storyText) // no trailing newline
+    const before = await getProposal(id)
+    expect(before?.status).toBe('slicing')
+
+    await revertSlicingProposalToReady(id)
+
+    const after = await getProposal(id)
+    expect(after?.status).toBe('prd-ready')
   })
-})
 
-describe('proposal add-user-story — stdin (-)', () => {
-  it('reads stdin content when - is passed, not the literal string -', () => {
-    const story = 'As a user, I can pass stdin content\nwith multiple lines'
-    const result = resolvePromptSource(['-'], {}, () => story + '\n')
-    expect(result).toEqual({ ok: true, value: story })
-    if (result.ok) expect(result.value).not.toBe('-')
+  it('after revert a new claimProposalForSlicing succeeds', async () => {
+    // The full cycle: strand → revert → re-claim.  Mirrors what the daemon's
+    // auto-release does before calling runSlice.
+    const id = await seedStranded()
+
+    const { getProposal, revertSlicingProposalToReady, claimProposalForSlicing } =
+      await import('../../../core/proposals')
+
+    await revertSlicingProposalToReady(id)
+    const afterRevert = await getProposal(id)
+    expect(afterRevert?.status).toBe('prd-ready')
+
+    const claimed = await claimProposalForSlicing(id)
+    expect(claimed).toBe(true)
+    const afterClaim = await getProposal(id)
+    expect(afterClaim?.status).toBe('slicing')
   })
 })

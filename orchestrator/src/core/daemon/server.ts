@@ -3854,9 +3854,39 @@ export const startDaemon = async (
     priority?: number,
     acceptDefaults?: boolean,
   ): Promise<{ proposalId: string; status: string; taskIds: string[] }> => {
-    proposalSliceRuns.set(proposalId, (proposalSliceRuns.get(proposalId) ?? 0) + 1)
+    // Capture the count BEFORE incrementing so we can detect whether this is
+    // the sole in-flight call for this proposal (priorRunCount === 0).
+    const priorRunCount = proposalSliceRuns.get(proposalId) ?? 0
+    proposalSliceRuns.set(proposalId, priorRunCount + 1)
     try {
       assertProposalsSourceFresh(proposalsStamp)
+
+      // Self-healing stale-claim release: a proposal stranded at 'slicing'
+      // with no in-flight slice tracked by THIS daemon process holds a stale
+      // claim from a prior run or a crashed/killed attempt. Release it before
+      // calling runSlice so the atomic claim inside runSlice can succeed.
+      //
+      // Guard: only act when priorRunCount === 0 (we are the sole caller).
+      // If another call for the same proposal is already in flight (e.g. the
+      // promote auto-slice fire-and-forget is still running), that call owns
+      // the 'slicing' claim — we must not revert it.
+      if (priorRunCount === 0) {
+        const { getProposal: peekProposal, revertSlicingProposalToReady } =
+          await import('../proposals')
+        const peeked = await peekProposal(proposalId)
+        if (peeked?.status === 'slicing') {
+          await revertSlicingProposalToReady(proposalId).catch((err: unknown) =>
+            log(
+              `[handle-slice] stale-claim revert failed for ${proposalId}: ` +
+                `${(err as Error).message}`,
+            ),
+          )
+          log(
+            `[handle-slice] released stale slicing claim for proposal ` +
+              `${proposalId}; re-claiming below`,
+          )
+        }
+      }
 
       // Gate: hard-fail if the proposal's notes contain an unresolved
       // open-questions block and the caller has not explicitly opted in.
@@ -3912,8 +3942,13 @@ export const startDaemon = async (
     const proposal = await getProposal(proposalId)
     if (!proposal) throw new Error(`proposal ${proposalId} not found`)
     if (proposal.status !== 'sliced') {
+      const hint =
+        proposal.status === 'slicing'
+          ? ` To release a stale slicing claim (e.g. after a daemon restart), run ` +
+            `\`mars proposal slice ${proposalId}\` — it auto-releases the claim and re-slices.`
+          : ''
       throw new Error(
-        `proposal ${proposalId} is '${proposal.status}'; only 'sliced' proposals can be resliced`,
+        `proposal ${proposalId} is '${proposal.status}'; only 'sliced' proposals can be resliced.${hint}`,
       )
     }
 
