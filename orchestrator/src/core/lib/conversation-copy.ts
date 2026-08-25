@@ -108,9 +108,9 @@ export interface NoticeKindEntry<Kind extends AutonomousNoticeKind> {
 }
 
 /** "Noted" — the operator read it; nothing changes. */
-const ack = (id = 'ack'): PreloadedResponse => ({
+const ack = (id = 'ack', label = 'Noted'): PreloadedResponse => ({
   id,
-  label: 'Noted',
+  label,
   target: { type: 'ack' },
 })
 
@@ -185,7 +185,7 @@ const REGISTRY: { [Kind in AutonomousNoticeKind]: NoticeKindEntry<Kind> } = {
         label: 'Grill it',
         target: { type: 'client', op: 'open-proposal-subject', entityId: p.proposalId },
       },
-      defer(),
+      ack('later', 'Later'),
       // Per-instance: dismisses only this proposal's offer, not the whole class.
       dismissNotice(`idle-proposal:${p.proposalId}`, 'never'),
     ],
@@ -201,7 +201,7 @@ const REGISTRY: { [Kind in AutonomousNoticeKind]: NoticeKindEntry<Kind> } = {
         label: 'Install it',
         target: { type: 'subject', title: 'Install codegraph' },
       },
-      defer(),
+      ack('later', 'Later'),
       silence(CODEGRAPH_SUGGESTION_LEVER, 'Disable codegraph suggestions', 'never'),
       {
         id: 'why',
