@@ -1,7 +1,7 @@
 import { resolve } from 'node:path'
 import { readFile, stat, unlink, writeFile } from 'node:fs/promises'
 import { getStateDir } from '../../context'
-import { parseClaudeStreamLine, type AgentEvent } from '../claude-stream'
+import { type AgentEvent } from '../claude-stream'
 import {
   exec,
   execProbe,
@@ -14,14 +14,9 @@ import { acquireLock } from './lock'
 import { readLastSyncedSha, writeLastSyncedSha } from './last-synced-sha'
 import { attributeIntegrationDirt } from './stale-tree-attribution'
 import { autoCommitOperatorDirt as autoCommitOperatorDirtGit } from './operator-auto-commit'
-import {
-  runSubprocessStreaming,
-  resolveClaudeBin,
-  claudeStreamArgs,
-  buildWorkerEnv,
-  extractSessionIdFromConversation,
-} from '../../ports/executor/executor-helpers'
+import { extractSessionIdFromConversation } from '../../ports/executor/executor-helpers'
 import type { RunSubprocessResult } from '../../ports/executor/types'
+import { runHeadlessProvider } from '../../workers/providers'
 
 export type MergeTargetStatus =
   | { kind: 'clean' }
@@ -531,26 +526,6 @@ const loadSupervisorSpec = async (): Promise<string> => {
   )
 }
 
-const buildSupervisorPrompt = async (
-  branch: string,
-  integrationBranch: string,
-): Promise<string> => {
-  const spec = stripFrontmatter(await loadSupervisorSpec())
-  return `${spec}
-
-# Dispatch
-
-Mode: rebase
-Source: ${branch}
-Target: ${integrationBranch}
-
-A \`git rebase ${integrationBranch}\` of ${branch} just conflicted in this worktree. The rebase is in progress (\`.git/rebase-merge/\` or \`.git/rebase-apply/\` exists). Your cwd IS the worktree — do not \`cd\` elsewhere.
-
-Resolve every conflict per your protocol — read both sides, reconcile intent, never blindly pick ours/theirs. After staging each step, use \`git rebase --continue\` (NOT \`git commit\`). Repeat until the rebase finishes.
-
-End with the Completion Report block exactly as specified above.`
-}
-
 export interface InvokeSupervisorResult extends RunSubprocessResult {
   conversation: AgentEvent[]
 }
@@ -581,9 +556,11 @@ export const VCS_SUPERVISOR_TIMEOUT_MS: number = Number(
  * the same problem wherever it happens, and the prompt is written about the
  * git state, not about the merge phase.
  *
- * When `timeoutMs` elapses the subprocess is killed with SIGKILL and the
- * function returns `{ exitCode: 124, … }` — the sentinel used by callers to
- * distinguish a timed-out session from a clean zero exit.
+ * Wall-clock timeout (`timeoutMs`) is delegated to `runHeadlessProvider`, which
+ * wires its own AbortController and kills the provider subprocess when the
+ * budget elapses. The exit code returned on a timeout is whatever the killed
+ * subprocess reports (provider-specific); callers should check `stillInProgress`
+ * or other git-state probes rather than relying on a specific exit-code sentinel.
  */
 export const invokeVcsSupervisor = async (
   branch: string,
@@ -592,48 +569,39 @@ export const invokeVcsSupervisor = async (
   timeoutMs: number,
   onEvent?: (event: AgentEvent) => void | Promise<void>,
 ): Promise<InvokeSupervisorResult> => {
-  const prompt = await buildSupervisorPrompt(branch, integrationBranch)
-  const conversation: AgentEvent[] = []
-  // AbortController used to kill the subprocess when the timeout fires.
-  // Without this, the old Promise.race approach resolved the caller's promise
-  // but left the subprocess running in the background — it could still be
-  // writing to disk (conflict markers, staged hunks) while mergeBranch ran
-  // `git rebase --abort`, causing a race and corrupting worktree state.
-  let timedOut = false
-  const ac = new AbortController()
-  const timer = setTimeout(() => {
-    timedOut = true
-    ac.abort()
-  }, timeoutMs)
-  try {
-    const result = await runSubprocessStreaming(
-      resolveClaudeBin(),
-      claudeStreamArgs(prompt),
-      cwd,
-      async ({ stream, line }) => {
-        if (stream !== 'stdout') return
-        const event = parseClaudeStreamLine(line)
-        if (!event) return
-        conversation.push(event)
-        if (onEvent) await onEvent(event)
-      },
-      ac.signal,
-      buildWorkerEnv(),
-    )
-    // When the abort was triggered by our own timer, replace the subprocess's
-    // (SIGKILL'd) exit code with the conventional timeout sentinel 124 so
-    // callers don't have to inspect the abort reason separately.
-    if (timedOut) {
-      return {
-        exitCode: 124,
-        stdout: '',
-        stderr: `vcs-supervisor timed out after ${timeoutMs}ms`,
-        conversation,
-      }
-    }
-    return { ...result, conversation }
-  } finally {
-    clearTimeout(timer)
+  // The Vega conflict-resolution protocol is the system prompt — all providers
+  // receive it via the systemPrompt option.
+  const systemPrompt = stripFrontmatter(await loadSupervisorSpec())
+  // The branch-specific dispatch context is the user prompt, kept separate
+  // from the protocol so the provider can treat them as distinct roles.
+  const userPrompt = `# Dispatch
+
+Mode: rebase
+Source: ${branch}
+Target: ${integrationBranch}
+
+A \`git rebase ${integrationBranch}\` of ${branch} just conflicted in this worktree. The rebase is in progress (\`.git/rebase-merge/\` or \`.git/rebase-apply/\` exists). Your cwd IS the worktree — do not \`cd\` elsewhere.
+
+Resolve every conflict per your protocol — read both sides, reconcile intent, never blindly pick ours/theirs. After staging each step, use \`git rebase --continue\` (NOT \`git commit\`). Repeat until the rebase finishes.
+
+End with the Completion Report block exactly as specified above.`
+  // Wall-clock timeout is delegated to runHeadlessProvider, which wires its
+  // own AbortController and kills the provider subprocess when timeoutMs
+  // elapses. No local AbortController or setTimeout needed here.
+  const result = await runHeadlessProvider(userPrompt, {
+    cwd,
+    modelTier: 'flagship',
+    systemPrompt,
+    timeoutMs,
+    onEvent,
+    agent: 'vcs-supervisor',
+    permissionMode: 'acceptEdits',
+  })
+  return {
+    exitCode: result.exitCode,
+    stdout: result.stdout,
+    stderr: result.stderr,
+    conversation: result.conversation,
   }
 }
 

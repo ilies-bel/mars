@@ -211,7 +211,7 @@ const vcsSupervisor: AgentSpec = {
   displayName: 'Vega (VCS Supervisor)',
   description:
     "Git merge conflict resolution for the orchestrator's implement workflow. Analyzes both sides of a conflict and reconciles intent rather than blindly picking one side.",
-  model: 'opus',
+  model: 'flagship',
   systemPrompt: VCS_SUPERVISOR_SYSTEM_PROMPT,
   allowedTools: ['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep'],
   deniedTools: [],
