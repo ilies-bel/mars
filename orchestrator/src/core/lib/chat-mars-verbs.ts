@@ -26,6 +26,9 @@ export const SAFE_MARS_VERBS: readonly string[] = [
   // Acknowledging the daemon-died condition just deletes the crash marker file;
   // the daemon has already restarted so this is a non-destructive clear.
   'dismiss-daemon-died',
+  // Reverting an auto-commit restores the previous HEAD, so the change is
+  // recoverable by construction — no confirmation required.
+  'revert-auto-commit',
 ]
 
 /**
