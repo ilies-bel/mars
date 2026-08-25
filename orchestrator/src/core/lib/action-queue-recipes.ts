@@ -209,7 +209,7 @@ const RECIPE_DEFINITIONS = {
   failed: {
     humanSummary: (ctx) => {
       const taskId = str(ctx.payload['taskId']) || ctx.entityId
-      const base = `A task got stuck and Mars used up its retry — decide what to do with it (${taskId}).`
+      const base = `A task got stuck and Mars used up its automatic retry — nothing is fixing this now, you need to decide what to do (${taskId}).`
       // The dirty-worktree count belongs in the SUMMARY, not just the detail:
       // it is the fact that decides between `continue` and the destructive
       // verbs, and the destructive verbs sit one click away in this same row.
@@ -218,7 +218,7 @@ const RECIPE_DEFINITIONS = {
       // lines, and the alert mentioned none of them).
       const dirty = ctx.payload['worktreeDirtyCount']
       return typeof dirty === 'number' && dirty > 0
-        ? `${base} Its worktree holds ${dirty} uncommitted path(s) — Restart and Discard would destroy them; use Continue to keep them.`
+        ? `${base} Its working copy holds ${dirty} uncommitted path(s) — Restart and Discard would destroy them; use Continue to keep them.`
         : base
     },
     humanDetail: (ctx) => ({
@@ -241,7 +241,7 @@ const RECIPE_DEFINITIONS = {
 
   'steward-repeat': {
     humanSummary: (ctx) =>
-      `Steward already tried to repair ${str(ctx.payload['targetKind'])} ${str(ctx.payload['targetId'])} at this version — review it before trying again.`,
+      `The automated repair system already tried to fix ${str(ctx.payload['targetKind'])} ${str(ctx.payload['targetId'])} at this version — Mars cannot retry automatically, you need to review it.`,
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
       entityId: ctx.entityId,
@@ -318,8 +318,8 @@ const RECIPE_DEFINITIONS = {
     humanSummary: (ctx) => {
       const crashedAt = str(ctx.payload['crashDetectedAt'])
       return crashedAt
-        ? `The background engine crashed (detected at ${crashedAt}) and has already restarted automatically. Verify it is healthy, then dismiss this alert.`
-        : 'The background engine crashed unexpectedly and has already restarted automatically. Verify it is healthy, then dismiss this alert.'
+        ? `The background engine crashed (detected at ${crashedAt}) and restarted itself — Mars tried to fix this automatically, but you need to verify it is healthy and dismiss this alert.`
+        : 'The background engine crashed and restarted itself — Mars tried to fix this automatically, but you need to verify it is healthy and dismiss this alert.'
     },
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
@@ -390,7 +390,7 @@ const RECIPE_DEFINITIONS = {
 
   'worktree-ahead': {
     humanSummary: (ctx) =>
-      `A task's working copy has commits that were never merged — merge or discard them (${ctx.entityId}).`,
+      `A task's working copy has commits that were never merged (${ctx.entityId}) — nothing is fixing this automatically, you need to merge or discard them.`,
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
       entityId: ctx.entityId,
@@ -637,7 +637,7 @@ const RECIPE_DEFINITIONS = {
           ? ` (${behindBy} commit${behindBy === 1 ? '' : 's'} behind)`
           : ''
       const shaNote = running && head ? ` — ${running} → ${head}` : ''
-      return `An update is available for the background engine${behindNote}${shaNote}. Restart it to pick up your latest changes.`
+      return `An update is available for the background engine${behindNote}${shaNote} — it will not apply automatically, you need to restart the engine to pick up your latest changes.`
     },
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
@@ -706,7 +706,7 @@ const RECIPE_DEFINITIONS = {
 
   'orphaned-origin': {
     humanSummary: () =>
-      "A blocked task's origin task was deleted — the dependent is stuck and needs to be resolved manually.",
+      "A task is stuck because its parent task was deleted — nothing is fixing this automatically, you need to resolve it manually.",
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
       entityId: ctx.entityId,
@@ -795,7 +795,7 @@ const RECIPE_DEFINITIONS = {
   'gate-broken': {
     humanSummary: (ctx) => {
       const verdict = str(ctx.payload['verdict'])
-      return `A verify gate keeps failing the same way${verdict ? ` ("${verdict}")` : ''} — the gate itself may be broken, not the tasks.`
+      return `A verify gate keeps failing the same way${verdict ? ` ("${verdict}")` : ''} — the gate itself may be broken, not the tasks — nothing is fixing this automatically, you need to look at it.`
     },
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
@@ -852,9 +852,27 @@ const RECIPE_DEFINITIONS = {
     humanSummary: (ctx) => {
       const signature = str(ctx.payload['signature'])
       const count = ctx.payload['count'] ?? ctx.payload['streak']
+      // Read from ctx to determine actual dispatch state rather than claiming
+      // it is paused unconditionally. The view builder (OPERATIONAL_ALERT_COPY)
+      // owns the authoritative pause clause via live pauseState; the recipe
+      // only adds it when a raiser embeds the flag directly in the payload or
+      // context (e.g. a future raiser that captures dispatch state at raise time).
+      const isPaused =
+        ctx.payload['dispatchPaused'] === true || ctx.context['dispatchPaused'] === true
+      // The pause clause is conditional, never baked into the sentence: this
+      // row outlives the breaker, and the view builder's own resumed branch
+      // says "Dispatch has since resumed" — an unconditional "the work queue is
+      // paused" would print directly above that contradiction. Note the view
+      // builder overrides humanSummary ONLY on the Steward-escalation branch,
+      // so this sentence is what the operator actually reads in both the paused
+      // and the resumed state.
+      const pausedClause = isPaused ? ' The work queue is paused while it monitors.' : ''
+      // The signature stays out of the prose — the view builder's title already
+      // renders it verbatim, and `humanDetail` carries it for anyone who needs
+      // the raw fingerprint. It survives here only as the ternary discriminator.
       return signature
-        ? `Mars detected ${count} tasks failing with the same error pattern — the work queue is paused automatically while it monitors, no action needed from you.`
-        : 'Mars detected the same failure across multiple tasks — the work queue is paused automatically while it monitors, no action needed from you.'
+        ? `Mars detected ${count} tasks failing with the same error pattern — it is monitoring automatically, no action needed from you.${pausedClause}`
+        : `Mars detected the same failure across multiple tasks — it is monitoring automatically, no action needed from you.${pausedClause}`
     },
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
@@ -1075,16 +1093,16 @@ const RECIPE_DEFINITIONS = {
       // but the live tracker holds zero jobs, the queue isn't actually
       // saturated with real work — it's phantom in-flight rows left by a
       // prior daemon (e.g. after `mars daemon restart`). Name that cause
-      // instead of blaming the queued task or a vague "dispatcher stuck".
+      // instead of blaming the queued task or a vague "task processor stuck".
       if (
         typeof inFlightStatusCount === 'number' &&
         activeWorkerCount === 0 &&
         typeof implementCap === 'number' &&
         inFlightStatusCount >= implementCap
       ) {
-        return `Task ${taskId} has been waiting in the queue for ${ageMin} min — ${inFlightStatusCount} task(s) are stuck in an in-flight status with 0 live jobs running, saturating the worker pool. Run \`mars sync\` to re-queue the phantom rows.`
+        return `Task ${taskId} has been waiting in the queue for ${ageMin} min — ${inFlightStatusCount} task(s) are stuck in an in-flight status with 0 live jobs running, saturating the worker pool. Run \`mars sync\` to re-queue the phantom rows — nothing is fixing this automatically, you need to look at it.`
       }
-      return `Task ${taskId} has been waiting in the queue for ${ageMin} min — the worker pool may be saturated or the dispatcher may be stuck.`
+      return `Task ${taskId} has been waiting in the queue for ${ageMin} min — the worker slots may be full or the task processor may be stuck — nothing is fixing this automatically, you need to look at it.`
     },
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
@@ -1195,8 +1213,8 @@ const RECIPE_DEFINITIONS = {
       const missing = ctx.payload['missing']
       const count = Array.isArray(missing) ? missing.length : 0
       return count > 0
-        ? `E2E tooling is not set up (${count} prerequisite${count === 1 ? '' : 's'} missing) — arcs are running without a live E2E pass.`
-        : 'E2E tooling is not set up — arcs are running without a live E2E pass.'
+        ? `E2E tooling is not set up (${count} prerequisite${count === 1 ? '' : 's'} missing) — the task groups are running without end-to-end tests — nothing is fixing this automatically, you need to set it up.`
+        : 'E2E tooling is not set up — the task groups are running without end-to-end tests — nothing is fixing this automatically, you need to set it up.'
     },
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
@@ -1241,12 +1259,7 @@ const RECIPE_DEFINITIONS = {
         caughtTaskCount > 0
           ? ` — caught ${caughtTaskCount} task failure${caughtTaskCount === 1 ? '' : 's'} that would otherwise look unrelated`
           : ''
-      // The "dispatch is paused" clause is omitted here because this function
-      // has no access to live pauseState.  The OPERATIONAL_ALERT_COPY renderer
-      // in action-queue.ts owns that clause and emits it only when
-      // pauseState.reason === 'baseline' (first-cause-wins).  See row.title for
-      // the conditional form; this humanSummary is the always-accurate base.
-      return `Integration branch fails required gate "${gateName}"${caughtSuffix}.`
+      return `A check is failing on the main branch (${gateName})${caughtSuffix} — nothing is fixing this automatically, you need to look at it.`
     },
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
