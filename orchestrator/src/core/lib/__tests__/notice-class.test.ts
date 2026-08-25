@@ -17,6 +17,7 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import {
+  ACTION_QUEUE_KINDS,
   KIND_CLASS,
   classifyKind,
 } from '../action-queue-kinds'
@@ -31,21 +32,34 @@ describe('classifyKind — three-class model (ADR-0104)', () => {
     expect(classifyKind('daemon-died')).toBe('alert')
     expect(classifyKind('orphaned-origin')).toBe('alert')
     expect(classifyKind('recovery-abandoned')).toBe('alert')
+    // Reclassified from 'notice' → 'alert': operator must intervene to fix a broken state.
+    expect(classifyKind('slices-dropped')).toBe('alert')
+    expect(classifyKind('cancelled-blocker-cascade')).toBe('alert')
+    expect(classifyKind('observability-store-oversize')).toBe('alert')
+    // Reclassified from 'decision' → 'alert': something is wrong; operator must act.
+    expect(classifyKind('coder-question')).toBe('alert')
+    expect(classifyKind('budget-window')).toBe('alert')
+    expect(classifyKind('budget-arc')).toBe('alert')
   })
 
   it('classifies known notice kinds as notice', () => {
     expect(classifyKind('spend-control-notice')).toBe('notice')
-    expect(classifyKind('scheduling-decision')).toBe('notice')
     expect(classifyKind('requeue-warning')).toBe('notice')
     expect(classifyKind('arc-superseded-on-main')).toBe('notice')
     expect(classifyKind('reflect-recommended')).toBe('notice')
+    // Reclassified from 'decision' → 'notice': informational only; nothing required of operator.
+    expect(classifyKind('mockup-ready')).toBe('notice')
   })
 
   it('classifies known decision kinds as decision', () => {
     expect(classifyKind('draft-proposal')).toBe('decision')
     expect(classifyKind('awaiting-human')).toBe('decision')
-    expect(classifyKind('coder-question')).toBe('decision')
     expect(classifyKind('gate-enrichment')).toBe('decision')
+    // Reclassified from 'notice' → 'decision': operator must choose, not just be informed.
+    expect(classifyKind('scheduling-decision')).toBe('decision')
+    // Reclassified from 'alert' → 'decision': nothing is broken; operator must pick an option.
+    expect(classifyKind('gate-enrichment-stale')).toBe('decision')
+    expect(classifyKind('verify-uncovered')).toBe('decision')
   })
 
   it('KIND_CLASS notice and decision sets are disjoint', () => {
@@ -62,6 +76,19 @@ describe('classifyKind — three-class model (ADR-0104)', () => {
     const validClasses = new Set(['notice', 'alert', 'decision'])
     for (const [kind, cls] of Object.entries(KIND_CLASS)) {
       expect(validClasses.has(cls), `${kind} has unknown class ${cls}`).toBe(true)
+    }
+  })
+
+  it('classifyKind is backed by an exhaustive Record — every kind returns a valid class without a default fallback', () => {
+    // This test exercises classifyKind (the public API) rather than KIND_CLASS directly.
+    // If classifyKind were implemented with a Set-based if/else and a default fallback,
+    // an unrecognised kind would silently return the default.  A pure Record lookup
+    // either returns the explicitly declared class or undefined (TypeScript catches the
+    // latter at compile time), leaving no room for silent defaults.
+    const validClasses = new Set<string>(['notice', 'alert', 'decision'])
+    for (const kind of ACTION_QUEUE_KINDS) {
+      const cls = classifyKind(kind)
+      expect(validClasses.has(cls), `${kind} returned unexpected class: ${cls}`).toBe(true)
     }
   })
 })
