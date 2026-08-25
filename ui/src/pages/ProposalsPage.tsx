@@ -23,6 +23,7 @@ import { useState } from 'react'
 import { useProposals } from '@/entities/proposals/useProposals'
 import { proposalHash } from '@/shared/routing'
 import { relativeTime } from '@/shared/time'
+import { invokeAction } from '@/shared/api'
 import { CopyButton } from '@/components/CopyButton'
 import { ErrorState } from '@/components/ErrorState'
 import { SkeletonBlock } from '@/components/Skeleton'
@@ -54,9 +55,10 @@ const SOURCE_CHIP_CLASS: Record<string, string> = {
 
 interface ProposalRowProps {
   draft: DraftFeature
+  onDismiss: () => void
 }
 
-const ProposalRow = ({ draft }: ProposalRowProps) => {
+const ProposalRow = ({ draft, onDismiss }: ProposalRowProps) => {
   const [expanded, setExpanded] = useState(false)
   const age = relativeTime(draft.createdAt)
   const sourceLabel = SOURCE_LABEL[draft.source] ?? draft.source
@@ -68,6 +70,10 @@ const ProposalRow = ({ draft }: ProposalRowProps) => {
   // When expanded, show the original text with whitespace preserved.
   const preview = draft.problem.replace(/\s*\n\s*/g, ' ').trim()
   const grillCmd = `/mars:grill ${draft.id}`
+
+  const handleDismiss = () => {
+    void invokeAction('dismiss', draft.id).then(onDismiss)
+  }
 
   return (
     <div className="mars-card relative border-l-2 border-l-success px-4 py-3">
@@ -120,8 +126,15 @@ const ProposalRow = ({ draft }: ProposalRowProps) => {
         </div>
       )}
 
-      {/* Footer: open drawer link + grill command copy */}
+      {/* Footer: dismiss + open drawer link + grill command copy */}
       <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={handleDismiss}
+          className="rounded border border-primary/30 px-1.5 py-0.5 font-mono text-micro text-primary/70 hover:bg-primary/10 hover:text-primary"
+        >
+          Dismiss
+        </button>
         <a
           href={proposalHash(draft.id, 'proposals')}
           className="font-mono text-micro text-primary transition-colors hover:text-foreground"
@@ -228,7 +241,7 @@ export const ProposalsPage = () => {
         ) : (
           <div className="flex flex-col gap-2 p-4">
             {sorted.map((draft) => (
-              <ProposalRow key={draft.id} draft={draft} />
+              <ProposalRow key={draft.id} draft={draft} onDismiss={() => { void refetch() }} />
             ))}
           </div>
         )}
