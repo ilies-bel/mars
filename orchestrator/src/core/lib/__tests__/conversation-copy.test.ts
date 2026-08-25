@@ -69,6 +69,15 @@ describe('renderConversationNotice', () => {
       expect(body, kind).not.toMatch(/^I (increased|reduced|restored|applied|paused|wrote) /)
     }
   })
+
+  it('reflects the file count in the auto-commit notice body', () => {
+    // Contract for "Add files to auto-commit notice payload": the rendered
+    // sentence must surface how many files were captured so the operator can
+    // verify what Mars touched without opening a git log.
+    const body = bodyFor('merge.operator-auto-commit')
+    const { files } = payloads['merge.operator-auto-commit']
+    expect(body).toContain(`${files.length} uncommitted files`)
+  })
 })
 
 describe('offersForConversationNotice', () => {
@@ -108,6 +117,21 @@ describe('offersForConversationNotice', () => {
         expect(offer.target.url, kind).toMatch(/^https:\/\//)
       }
     }
+  })
+
+  it('includes a revert-commit verb offer for the auto-commit notice targeting the commit sha', () => {
+    // Contract for "Add revert offer to auto-commit notice": an offer with
+    // id 'revert' must be present, typed as a daemon verb, and carry the
+    // commitSha as the entityId so the handler knows which commit to revert.
+    const p = payloads['merge.operator-auto-commit']
+    const offers = offersForConversationNotice('merge.operator-auto-commit', p)
+    const revert = offers.find((o) => o.id === 'revert')
+    expect(revert, 'revert offer').toBeDefined()
+    expect(revert!.target).toEqual({
+      type: 'verb',
+      op: 'revert-commit',
+      entityId: p.commitSha,
+    })
   })
 })
 
