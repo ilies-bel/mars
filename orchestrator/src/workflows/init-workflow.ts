@@ -9,7 +9,11 @@ import { resolveContext } from '../core/context'
 import { initDatabases } from '../init/databases'
 import { WIZARD_DEFAULTS, type WizardChoices } from '../init/wizard'
 import { VerifyGateInputSchema } from '../core/verify-gates'
+import type { VerifyGateInput } from '../core/verify-gates'
 import { installOnboardingVerifyGates } from '../init/seed-verify-gates'
+import { computeMissingGates } from '../init/compute-missing-gates'
+import { buildGateTaskPrompt } from '../init/build-gate-task-prompt'
+import { enqueueTask } from '../core/queue'
 import {
   applyGitignoreScaffold,
   mergeMcpJson,
@@ -38,6 +42,7 @@ type InitInput = z.infer<typeof initInputSchema>
 
 interface InitWorkflowOutput {
   written: string[]
+  dispatched?: { taskId: string; gateName: string } | null
 }
 
 /**
@@ -245,12 +250,47 @@ const initWorkflow = defineWorkflow<InitInput, InitWorkflowOutput>({
     const w2c = await ctx.step('scaffold-workflows', () => runScaffoldWorkflows(w2d))
     const w3 = await ctx.step('init-databases', () => runInitDatabases(w2c))
     const w4 = await ctx.step('seed-verify-gates', async () => {
-      await installOnboardingVerifyGates(input.wizardChoices?.verifyGates ?? WIZARD_DEFAULTS.verifyGates)
-      return w3
+      const detected = input.wizardChoices?.verifyGates ?? WIZARD_DEFAULTS.verifyGates
+      const missingEntries = computeMissingGates(detected)
+      const firstMissing = missingEntries[0] ?? null
+
+      let gatesToInstall: VerifyGateInput[] = [...detected]
+      if (firstMissing?.recipe?.verifyGate) {
+        const vg = firstMissing.recipe.verifyGate
+        const missingGateInput: VerifyGateInput = {
+          name: vg.name,
+          cmd: vg.cmd,
+          args: vg.args,
+          scope: vg.scope,
+          source: 'onboarding',
+          required: true,
+          tier: 'task',
+        }
+        gatesToInstall = [...detected, missingGateInput]
+      }
+
+      await installOnboardingVerifyGates(gatesToInstall)
+      return { firstMissing }
     })
-    const written = await ctx.step('seed-recipes', () => runSeedRecipes(w4))
+
+    const w5 = await ctx.step('dispatch-first-gate', async () => {
+      if (w4.firstMissing === null) return null
+      const entry = w4.firstMissing
+      const gateName = entry.recipe!.verifyGate!.name
+      const { prompt, spec } = buildGateTaskPrompt(entry)
+      const task = await enqueueTask(prompt, undefined, {
+        skipTriage: true,
+        priority: 2,
+        tags: ['coder'],
+        spec,
+        intent: `Add missing ${gateName} verify gate`,
+      })
+      return { taskId: task.id, gateName }
+    })
+
+    const written = await ctx.step('seed-recipes', () => runSeedRecipes(w3))
     await ctx.step('activate-plugin', runActivatePlugin)
-    return { written }
+    return { written, dispatched: w5 }
   },
 })
 
@@ -272,6 +312,7 @@ export interface RunInitResult {
   status: 'ok' | 'aborted-existing' | 'aborted-conflict' | 'dry-run'
   message: string
   written?: string[]
+  dispatched?: { taskId: string; gateName: string } | null
 }
 
 export const runInit = async (opts: RunInitOptions): Promise<RunInitResult> => {
@@ -329,5 +370,6 @@ export const runInit = async (opts: RunInitOptions): Promise<RunInitResult> => {
     status: 'ok',
     message: 'init complete',
     written: result.output.written,
+    dispatched: result.output.dispatched,
   }
 }
