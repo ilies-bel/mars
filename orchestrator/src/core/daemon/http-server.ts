@@ -9,6 +9,7 @@ import type { AppServices } from '../app-services'
 import type { DispatchPauseState, PauseReason } from './pause-state'
 import type { ChatRunner } from './chat-runner'
 import type { ChatStreamHub } from './chat-contracts'
+import type { VerifyGate } from '../verify-gates'
 import { registerRoutes } from './routes'
 
 /** Wire shape for a single step span, returned by GET /view/step-spans. */
@@ -354,6 +355,15 @@ export interface DeepReflectionsListResult {
 }
 
 /**
+ * Wire shape returned by GET /view/gates — the full list of configured verify
+ * gates. Consumers (UI, CLI read paths) import this type to stay in sync with
+ * what the daemon serves.
+ */
+export interface GateListView {
+  gates: VerifyGate[]
+}
+
+/**
  * Handlers the daemon supplies for each recovery verb the local HTTP server
  * exposes. Each should throw {@link RestartTaskError} (with `code` set to
  * `'NOT_FOUND'` or `'WRONG_STATUS'`) for known validation failures; any other
@@ -396,6 +406,14 @@ export interface HttpServerDeps {
    * 501 Not Implemented (safe for test stubs that do not exercise this path).
    */
   dismissDaemonDied?: () => Promise<void>
+  /**
+   * Dismiss a `verify-uncovered` action-queue item: resolve the row so it no
+   * longer appears in the open queue. Distinct from `dismissProposal` — a
+   * `verify-uncovered` item tracks an uncovered verify gate, not a draft
+   * proposal. Throws when the id does not resolve to an open `verify-uncovered`
+   * row. Optional — when absent the endpoint returns 501 Not Implemented.
+   */
+  dismissVerifyUncovered?: (id: string) => Promise<void>
   /**
    * Promote a fully-shaped draft proposal: flip its status from `draft` →
    * `prd-ready`, run the slicer to create tasks, and return the resulting
