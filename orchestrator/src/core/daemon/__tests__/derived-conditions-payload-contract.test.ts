@@ -262,6 +262,36 @@ describe('derived condition payload / recipe contract', { timeout: 60_000 }, () 
     }
   })
 
+  it('baseline-broken payload carries gateOutput and recipe exposes it in humanDetail', async () => {
+    const gateStdout = 'FAIL src/core/lib/__tests__/foo.test.ts\n  × it blows up\n\nTest Suites: 1 failed, 1 total\nTests: 1 failed, 1 total'
+    const source = createConditionItemsSource({
+      getClient: () => client,
+      isBaselinePoisoned: () => true,
+      baselineDetail: () => ({ failingGateName: 'tests', output: gateStdout }),
+    })
+    const rows = await source.derive({ kinds: new Set(['baseline-broken']) })
+    expect(rows).toHaveLength(1)
+    const row = rows[0]!
+    // The payload must carry gateOutput (the tail-trimmed excerpt).
+    expect(typeof row.payload['gateOutput']).toBe('string')
+    expect((row.payload['gateOutput'] as string)).toContain('FAIL src/core/lib/__tests__/foo.test.ts')
+    // The recipe must expose it in humanDetail so the UI can render it.
+    const recipe = lookupRecipe('baseline-broken')
+    const detail = recipe.humanDetail({
+      kind: 'baseline-broken',
+      entityId: row.id,
+      payload: row.payload,
+      context: row.context,
+      title: row.title,
+      body: row.body,
+      raisedAt: new Date(row.raisedAt).toISOString(),
+    })
+    expect(detail['gateOutput']).toContain('FAIL src/core/lib/__tests__/foo.test.ts')
+    expect(detail['gateOutput']).toContain('Tests: 1 failed, 1 total')
+    // The full output stays in body for `mars action-queue show`.
+    expect(row.body).toContain('FAIL src/core/lib/__tests__/foo.test.ts')
+  })
+
   it('daemon-code-drift renders the running and head shas via its recipe', async () => {
     const source = createConditionItemsSource({
       getClient: () => client,

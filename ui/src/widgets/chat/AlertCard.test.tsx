@@ -323,6 +323,57 @@ describe('AlertCard – goal line', () => {
 })
 
 // ---------------------------------------------------------------------------
+// baseline-broken gate output excerpt
+// ---------------------------------------------------------------------------
+
+describe('AlertCard – baseline-broken gate output', () => {
+  it('renders verify output toggle for baseline-broken card with gateOutput (no goal)', () => {
+    // When a baseline-broken card carries gateOutput but no goal, the
+    // VerifyExcerpt "Output ▸" toggle must be rendered so the operator can
+    // see the failing-test summary without dropping to a terminal.
+    const html = render({
+      kind: 'baseline-broken',
+      summary: 'Integration branch fails required gate "tests"',
+      verbs: [],
+      detail: {
+        gateOutput: [
+          'FAIL src/core/lib/__tests__/foo.test.ts',
+          '  × it blows up',
+          '',
+          'Test Suites: 1 failed, 1 total',
+          'Tests: 1 failed, 1 total',
+        ].join('\n'),
+      },
+    })
+    expect(html).toContain('data-testid="alert-verify-output-toggle"')
+  })
+
+  it('does not render verify output toggle for baseline-broken card without gateOutput', () => {
+    const html = render({
+      kind: 'baseline-broken',
+      summary: 'Integration branch fails required gate "tests"',
+      verbs: [],
+      detail: { failingGateName: 'tests' } as Record<string, unknown> as Parameters<typeof render>[0]['detail'],
+    })
+    expect(html).not.toContain('data-testid="alert-verify-output-toggle"')
+  })
+
+  it('does not render verify output toggle for non-baseline-broken card with gateOutput', () => {
+    // gateOutput on a task-failure card (with goal) does NOT trigger the output
+    // panel — that path only uses errorExcerpt/rawError.
+    const html = render({
+      kind: 'failed',
+      goal: 'Implement the caching layer',
+      detail: {
+        gateOutput: 'FAIL src/foo.test.ts\nTests: 1 failed',
+      },
+    })
+    // goal present but no errorExcerpt/rawError → no toggle from either path
+    expect(html).not.toContain('data-testid="alert-verify-output-toggle"')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Entity id navigation
 // ---------------------------------------------------------------------------
 

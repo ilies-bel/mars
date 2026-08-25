@@ -102,6 +102,30 @@ export interface ConditionsDeps {
 /** Max chars of `tasks.error` carried into the alert's `errorExcerpt`. */
 const ERROR_EXCERPT_MAX = 600
 
+/**
+ * Max chars of gate probe output carried into the payload's `gateOutput` key.
+ *
+ * Tail-trimmed (not head): the vitest summary and failing-test lines appear at
+ * the END of the output, so taking the last N chars keeps the actionable lines
+ * while discarding verbose early output.  The full (head-trimmed) output also
+ * lives in the row's `body` field for `mars action-queue show`.
+ *
+ * Trade-off: this excerpt is included in the payload of every action-queue
+ * read, not only behind `mars action-queue show`.  That is acceptable because
+ * (a) `baseline-broken` is at most one row at a time, so the overhead is a
+ * bounded ~2 KB per read, (b) the action-queue list is not a hot path, and
+ * (c) the operator benefit — actionable context without a terminal drop — is
+ * significant.
+ */
+const GATE_OUTPUT_EXCERPT_MAX = 2000
+
+const trimGateOutput = (output: string): string => {
+  const trimmed = output.trim()
+  return trimmed.length > GATE_OUTPUT_EXCERPT_MAX
+    ? `…${trimmed.slice(-GATE_OUTPUT_EXCERPT_MAX)}`
+    : trimmed
+}
+
 /** Newest-first cap on how many failed rows get a live dirty-worktree probe. */
 const MAX_DIRTY_PROBES = 40
 
@@ -617,6 +641,10 @@ function deriveBaselineBrokenConditions(
     failingGateName === 'dependency install' && output.length > 0
       ? `setup:install/${classifyError(output)}`
       : null
+  // Tail-trimmed excerpt for the card payload.  The full output lives in
+  // `body` for `mars action-queue show`; the payload carries only enough
+  // to render a VerifyExcerpt on the triage card.
+  const gateOutput = trimGateOutput(output)
   const caughtTaskIds = Array.from(baselineCaughtTaskIds).sort()
   const title =
     caughtTaskIds.length > 0
@@ -631,7 +659,7 @@ function deriveBaselineBrokenConditions(
       body: output,
       payload: {
         failingGateName,
-        output,
+        gateOutput,
         installSignature,
         caughtTaskCount: caughtTaskIds.length,
         caughtTaskIds,

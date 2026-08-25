@@ -333,9 +333,13 @@ export const AlertCard = ({
   const cause = goal ? deriveCause(detail) : undefined
 
   // Derive verify output tail for the expandable section.
+  // - When a task goal is present: show the last ~3 lines of the error excerpt
+  //   (enough context for a continue-vs-restart decision in place).
+  // - When no goal: show the gate output excerpt for baseline-broken cards so
+  //   the operator can see the failing-test summary without a terminal.
   const verifyOutputTail = goal
     ? verifyTail(detail?.errorExcerpt ?? detail?.rawError)
-    : undefined
+    : (detail?.gateOutput?.trim() || undefined)
 
   const handleAction = async (op: string) => {
     if (pendingOp !== null) return

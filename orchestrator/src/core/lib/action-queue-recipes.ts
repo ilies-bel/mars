@@ -1234,6 +1234,9 @@ const RECIPE_DEFINITIONS = {
       installSignature: ctx.payload['installSignature'],
       caughtTaskCount: ctx.payload['caughtTaskCount'],
       caughtTaskIds: ctx.payload['caughtTaskIds'],
+      // Tail-trimmed gate output excerpt for the VerifyExcerpt panel on the
+      // triage card.  Full output is behind `mars action-queue show` (body).
+      gateOutput: ctx.payload['gateOutput'],
     }),
     verbs: [
       {

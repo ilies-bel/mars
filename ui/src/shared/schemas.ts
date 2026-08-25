@@ -311,6 +311,13 @@ export const alertHumanDetailSchema = z.object({
   errorExcerpt: z.string().optional(),
   /** Rendered as markdown on update-kind alerts. */
   changelog: z.string().optional(),
+  /**
+   * Tail-trimmed excerpt of the failing gate's combined stdout/stderr.
+   * Populated by the 'baseline-broken' recipe; rendered by AlertCard as a
+   * collapsible "Output ▸" section using VerifyExcerpt so the operator can
+   * see the failing-test summary without dropping to a terminal.
+   */
+  gateOutput: z.string().optional(),
 })
 
 export const actionDescriptorSchema = z.object({
