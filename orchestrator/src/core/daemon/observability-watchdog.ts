@@ -84,7 +84,7 @@ export const checkObservabilityStoreSize = async (
     priority: 'high',
     title: `Observability store oversize: ${sizeMb} MB (threshold: 500 MB)`,
     body: buildOversizeBody(sizeBytes),
-    payload: { sizeBytes, sizeMb: Number(sizeMb) },
+    payload: { sizeBytes, sizeMb: Number(sizeMb), thresholdMb: OVERSIZE_THRESHOLD_BYTES / (1024 * 1024) },
     context: { dbTarget },
     raisedBy: 'daemon:observability-watchdog',
     signature: OVERSIZE_SIGNATURE,

@@ -8,6 +8,7 @@
 
 import type { ActionQueueKind } from '../action-queue-kinds'
 import { REPRESENTATIVE_PAYLOADS as awaitingHuman } from './awaiting-human'
+import { REPRESENTATIVE_PAYLOADS as daemonHealth } from './daemon-health'
 import { REPRESENTATIVE_PAYLOADS as gateEnrichment } from './gate-enrichment'
 import { REPRESENTATIVE_PAYLOADS as lifecycle } from './lifecycle'
 import { REPRESENTATIVE_PAYLOADS as proposals } from './proposals'
@@ -26,6 +27,7 @@ import { REPRESENTATIVE_PAYLOADS as verify } from './verify'
  */
 export const ALL_REPRESENTATIVE_PAYLOADS: Partial<Record<ActionQueueKind, Record<string, unknown>>> = {
   ...awaitingHuman,
+  ...daemonHealth,
   ...gateEnrichment,
   ...lifecycle,
   ...proposals,

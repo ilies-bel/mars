@@ -307,8 +307,8 @@ const RECIPE_DEFINITIONS = {
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
       entityId: ctx.entityId,
-      affectedTaskIds: ctx.payload['affectedTaskIds'],
-      killedAt: str(ctx.payload['killedAt']),
+      branch: str(ctx.payload['branch']),
+      error: str(ctx.payload['error']),
     }),
     verbs: [
       {
@@ -733,7 +733,7 @@ const RECIPE_DEFINITIONS = {
       entityId: ctx.entityId,
       lag: ctx.payload['lag'],
       threshold: ctx.payload['threshold'],
-      oldestCursor: str(ctx.payload['oldestCursor']),
+      subscriber: str(ctx.payload['subscriber']),
     }),
     verbs: [],
   },

@@ -105,8 +105,18 @@ export type {
   DirtyIntegrationPayload,
   VerifyContracts,
 } from './payload-contracts/verify'
+export type {
+  LowDiskSpacePayload,
+  DaemonOutagePayload,
+  DaemonKilledPayload,
+  HealthCheckAlertPayload,
+  ObservabilityStoreOversizePayload,
+  OutboxLagPayload,
+  DaemonHealthContracts,
+} from './payload-contracts/daemon-health'
 
 import type { AwaitingHumanContracts } from './payload-contracts/awaiting-human'
+import type { DaemonHealthContracts } from './payload-contracts/daemon-health'
 import type { GateEnrichmentContracts } from './payload-contracts/gate-enrichment'
 import type { LifecycleContracts } from './payload-contracts/lifecycle'
 import type { ProposalContracts } from './payload-contracts/proposals'
@@ -134,6 +144,7 @@ export type UnauditedPayload = Record<string, unknown>
  * Each family adds exactly one intersection term here.
  */
 type AuditedPayloads = AwaitingHumanContracts &
+  DaemonHealthContracts &
   GateEnrichmentContracts &
   LifecycleContracts &
   ProposalContracts &
@@ -192,7 +203,7 @@ export const ACTION_QUEUE_PAYLOAD_AUDIT = {
 
   'cancelled-blocker-cascade': 'typed',
   'diagnose-inconclusive': 'typed',
-  'daemon-killed': 'unaudited',
+  'daemon-killed': 'typed',
   'coder-question': 'typed',
   'prerequisite-failed': 'typed',
   'draft-proposal': 'typed',
@@ -202,8 +213,8 @@ export const ACTION_QUEUE_PAYLOAD_AUDIT = {
   'awaiting-validation': 'typed',
   'awaiting-validation-preview-gone': 'typed',
   'behaviour-unverified': 'typed',
-  'observability-store-oversize': 'unaudited',
-  'outbox-lag': 'unaudited',
+  'observability-store-oversize': 'typed',
+  'outbox-lag': 'typed',
   'reflect-recommended': 'typed',
   'done-with-unmerged-commits': 'typed',
   'api-outage': 'typed',
@@ -223,10 +234,10 @@ export const ACTION_QUEUE_PAYLOAD_AUDIT = {
   'scheduling-decision': 'typed',
   'requeue-warning': 'typed',
   'arc-superseded-on-main': 'typed',
-  'low-disk-space': 'unaudited',
-  'daemon-outage': 'unaudited',
+  'low-disk-space': 'typed',
+  'daemon-outage': 'typed',
   'dirty-integration': 'typed',
-  'health-check-alert': 'unaudited',
+  'health-check-alert': 'typed',
   'fragmented-repo-layout': 'typed',
   'recovery-abandoned': 'typed',
   'mockup-ready': 'typed',
@@ -281,10 +292,4 @@ export type UnauditedKindFamily =
  * the list is empty" does.
  */
 export const UNAUDITED_KIND_FAMILY = {
-  'low-disk-space': 'daemon-health',
-  'daemon-outage': 'daemon-health',
-  'daemon-killed': 'daemon-health',
-  'health-check-alert': 'daemon-health',
-  'observability-store-oversize': 'daemon-health',
-  'outbox-lag': 'daemon-health',
 } as const satisfies Record<UnauditedKind, UnauditedKindFamily>
