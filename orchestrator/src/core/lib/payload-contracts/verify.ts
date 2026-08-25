@@ -4,6 +4,7 @@ export interface VerifyUncoveredPayload {
   scope: string
   changedPaths: string[]
   recipe: string | null
+  proposedGate?: { name: string; cmd: string; args: string[]; scope: string; evidence: string }
 }
 
 export interface GateEnrichmentStalePayload {
@@ -44,6 +45,7 @@ export const REPRESENTATIVE_PAYLOADS: Record<keyof VerifyContracts, Record<strin
     scope: 'orchestrator/src/core/queue.ts',
     changedPaths: ['orchestrator/src/core/queue.ts'],
     recipe: null,
+    proposedGate: { name: 'lint', cmd: 'pnpm', args: ['run', 'lint'], scope: 'ui', evidence: 'package.json script "lint"' },
   },
   'gate-enrichment-stale': {
     signature: 'verify:build:tsc',

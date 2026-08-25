@@ -18,6 +18,7 @@
 
 import { createHash } from 'node:crypto'
 import { raiseActionQueueItem } from './action-queue.js'
+import type { VerifyUncoveredPayload } from './payload-contracts/verify.js'
 
 /** Normalise, sort and deduplicate a list of changed paths. */
 const normalizePaths = (paths: string[]): string[] =>
@@ -77,6 +78,7 @@ const deriveScope = (sortedPaths: string[]): string => {
 export const reportUncoveredVerifyCoverage = async (args: {
   changedPaths: string[]
   taskId?: string
+  proposedGate?: VerifyUncoveredPayload['proposedGate']
 }): Promise<void> => {
   const normalized = normalizePaths(args.changedPaths)
   if (normalized.length === 0) return // Nothing changed — nothing to report.
@@ -99,6 +101,7 @@ export const reportUncoveredVerifyCoverage = async (args: {
       scope,
       changedPaths: normalized,
       recipe: null,
+      ...(args.proposedGate ? { proposedGate: args.proposedGate } : {}),
     },
     context: args.taskId != null ? { taskId: args.taskId } : {},
     raisedBy: 'verify:no-gate-coverage',
