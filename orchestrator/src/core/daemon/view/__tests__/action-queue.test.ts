@@ -148,10 +148,10 @@ describe('buildActionQueueView — failure-kind title/body derivation', () => {
     })
 
     expect(rows).toHaveLength(1)
-    // The title carries every discriminator that exists: the signature, the
-    // warm reason, and the failed task's short id.
+    // The title carries every discriminator that exists: the signature and the
+    // warm reason. The [task …] suffix is dropped — arcGoal carries the goal.
     expect(rows[0]!.title).toBe(
-      'setup:install/install-frozen-lockfile — The coding environment could not be set up [task task-1]',
+      'setup:install/install-frozen-lockfile — The coding environment could not be set up',
     )
   })
 
@@ -206,7 +206,7 @@ describe('buildActionQueueView — failure-kind title/body derivation', () => {
       filter: 'open',
     })
 
-    expect(rows[0]!.title).toBe('A verification check did not pass [task task-1]')
+    expect(rows[0]!.title).toBe('A verification check did not pass')
     expect(rows[0]!.body).toContain('Failure signature: verify:test/unclassified.')
   })
 
@@ -223,7 +223,8 @@ describe('buildActionQueueView — failure-kind title/body derivation', () => {
     expect(rows[0]!.title).toContain('The changes could not be merged')
     expect(rows[0]!.title).not.toContain('merge:unknown/unclassified')
     expect(rows[0]!.body).toContain('Failure signature: merge:unknown/unclassified.')
-    expect(rows[0]!.title).toContain('[task task-1]')
+    // [task …] suffix dropped — arcGoal carries the goal; title keeps the warm reason only.
+    expect(rows[0]!.title).not.toContain('[task')
   })
 
   it('two failures with different signatures produce two distinguishable titles', async () => {
@@ -270,7 +271,7 @@ describe('buildActionQueueView — failure-kind title/body derivation', () => {
     })
 
     expect(rows[0]!.title).toBe(
-      'Mars could not determine why this task failed: ENOSPC: no space left on device, write [task task-1]',
+      'Mars could not determine why this task failed: ENOSPC: no space left on device, write',
     )
   })
 
@@ -284,7 +285,7 @@ describe('buildActionQueueView — failure-kind title/body derivation', () => {
       filter: 'open',
     })
 
-    expect(rows[0]!.title).toBe('Mars could not determine why this task failed [task task-1]')
+    expect(rows[0]!.title).toBe('Mars could not determine why this task failed')
   })
 
   it('keeps a purpose-built persisted title on a failed row with no signature', async () => {
@@ -553,14 +554,15 @@ describe('buildActionQueueView — daemon-killed batch row', () => {
 
     // Only 1 daemon-killed row → no batch synthesis, just the individual row.
     // daemon-killed is a structured task failure, so the registry owns its
-    // copy — rendered with the signature and the task id like any other.
+    // copy — rendered with the signature. [task …] suffix is dropped; the
+    // arcGoal field carries the task's goal as the operator-facing headline.
     const taskRow = rows.find((r) => r.entityId === 'task-1')
     expect(taskRow).toBeDefined()
     expect(taskRow!.title).toContain(
       'Mars was shut down while this task was still running',
     )
     expect(taskRow!.title).toContain(DAEMON_KILLED_SIGNATURE)
-    expect(taskRow!.title).toContain('[task task-1]')
+    expect(taskRow!.title).not.toContain('[task')
   })
 
   it('exposes continue-all-daemon-killed on the synthetic batch row', async () => {
@@ -1298,5 +1300,114 @@ describe('buildActionQueueView — condition-derived items', () => {
     // Both paths must produce the same row id and kind.
     expect(rowsViaSource.map((r) => r.id)).toEqual(rowsViaStore.map((r) => r.id))
     expect(rowsViaSource.map((r) => r.kind)).toEqual(rowsViaStore.map((r) => r.kind))
+  })
+})
+
+// ── arcGoal: operator-facing goal sentence (§7 primary headline) ──────────────
+//
+// arcGoal replaces the dropped [task …] suffix as the primary disambiguation
+// field. It is derived from the task's intent (preferred) or prompt, normalised
+// to a single line of at most 80 characters. Non-task-backed rows get null.
+
+describe('buildActionQueueView — arcGoal derivation', () => {
+  it('derives arcGoal from task prompt for a task-backed failed row', async () => {
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([makeRow()]),
+      taskStore: makeTaskStore([makeTask({ prompt: 'Refactor the authentication module' })]),
+    })
+    expect(rows[0]!.arcGoal).toBe('Refactor the authentication module')
+  })
+
+  it('prefers intent over prompt when both are present', async () => {
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([makeRow()]),
+      taskStore: makeTaskStore([
+        makeTask({
+          prompt: 'A long verbose multi-line prompt with lots of detail\nand more lines',
+          intent: 'Refactor auth',
+        }),
+      ]),
+    })
+    expect(rows[0]!.arcGoal).toBe('Refactor auth')
+  })
+
+  it('follows fixForTaskId to derive arcGoal from the origin task', async () => {
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([makeRow({ id: 'row-fix', payload: { taskId: 'fix-task' } })]),
+      taskStore: makeTaskStore([
+        makeTask({ id: 'origin', status: 'failed', prompt: 'Build the widget' }),
+        makeTask({
+          id: 'fix-task',
+          status: 'failed',
+          fixForTaskId: 'origin',
+          prompt: 'Fix the broken widget build',
+          failureSignature: 'verify:test/unclassified',
+        }),
+      ]),
+    })
+    const fixRow = rows.find((r) => r.entityId === 'fix-task')
+    // arcGoal of a recovery task should reflect the *origin* task's goal.
+    expect(fixRow!.arcGoal).toBe('Build the widget')
+  })
+
+  it('arcGoal is null for a non-task-backed draft-proposal row', async () => {
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([
+        makeRow({ kind: 'draft-proposal', payload: { proposalId: 'prop-1' }, context: {} }),
+      ]),
+      taskStore: makeTaskStore([]),
+    })
+    const dpRow = rows.find((r) => r.kind === 'draft-proposal')
+    expect(dpRow!.arcGoal).toBeNull()
+  })
+
+  it('arcGoal is null for a non-task-backed signature-storm row', async () => {
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([
+        makeRow({
+          kind: 'signature-storm',
+          payload: { signature: 'verify:typecheck/unclassified', streak: 3 },
+          signature: 'signature-storm:verify:typecheck/unclassified',
+        }),
+      ]),
+      taskStore: makeTaskStore([]),
+    })
+    const stormRow = rows.find((r) => r.kind === 'signature-storm')
+    expect(stormRow!.arcGoal).toBeNull()
+  })
+
+  it('truncates an arcGoal longer than 80 characters with an ellipsis', async () => {
+    const longPrompt = 'Implement the full OAuth2 PKCE authorisation flow with refresh-token rotation ' +
+      'and audit logging across every REST endpoint'
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([makeRow()]),
+      taskStore: makeTaskStore([makeTask({ prompt: longPrompt })]),
+    })
+    // normaliseGoalText caps at 80 chars: 79 content chars + one ellipsis character.
+    expect(rows[0]!.arcGoal!.length).toBe(80)
+    expect(rows[0]!.arcGoal!.endsWith('…')).toBe(true)
+  })
+
+  it('daemon-killed synthetic batch row has arcGoal null (no single goal applies)', async () => {
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([
+        makeRow({ id: 'row-1', kind: 'daemon-killed', payload: { taskId: 'task-1' } }),
+        makeRow({ id: 'row-2', kind: 'daemon-killed', payload: { taskId: 'task-2' } }),
+      ]),
+      taskStore: makeTaskStore([
+        makeTask({ id: 'task-1', failureSignature: DAEMON_KILLED_SIGNATURE }),
+        makeTask({ id: 'task-2', failureSignature: DAEMON_KILLED_SIGNATURE }),
+      ]),
+    })
+    const batchRow = rows.find((r) => r.entityId === '__daemon-killed-batch__')
+    expect(batchRow).toBeDefined()
+    expect(batchRow!.arcGoal).toBeNull()
   })
 })
