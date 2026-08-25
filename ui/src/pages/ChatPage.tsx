@@ -49,7 +49,7 @@ import {
 } from '@/shared/api'
 import { collectOpenOffers, matchOffer } from '@/widgets/chat/offerMatch'
 import { useFocusedProjectId, useFocusedProject } from '@/shared/useFocusedProject'
-import type { ChatThread, ChatSegmentAttachment, ActionQueueItem, ChatFeedback, ChatThreadDetail, GlossaryTerm, SubthreadBoundary, DraftFeature } from '@/shared/schemas'
+import type { ChatThread, ChatSegmentAttachment, ActionQueueItem, ChatFeedback, ChatThreadDetail, GlossaryTerm, SubjectBoundary, DraftFeature } from '@/shared/schemas'
 import type { MarsUIMessage } from '@/shared/marsChatTransport'
 import { useMarsChat } from '@/shared/useMarsChat'
 import { chatMessageToUIMessage, transcriptSignature } from '@/shared/chatMessageMapping'
@@ -104,7 +104,7 @@ import { resolveMediaKind, fileMediaKind, smartTitle } from './chatPageUtils'
 import { ChatGreeting } from '@/widgets/chat/ChatGreeting'
 import { ConversationTimeline } from '@/widgets/chat/ConversationTimeline'
 import { CompactionNotice } from '@/widgets/chat/CompactionNotice'
-import { SubthreadBoundaryLine } from '@/widgets/chat/SubthreadBoundaryLine'
+import { SubjectBoundaryLine } from '@/widgets/chat/SubjectBoundaryLine'
 import { useTasks } from '@/hooks/useTasks'
 import { useStatusCounts } from '@/hooks/useStatusCounts'
 import { SkeletonList } from '@/components/Skeleton'
@@ -1099,7 +1099,7 @@ export const LiveAssistantBubble = ({ buffer, terms = [] }: { buffer: LiveBuffer
 
 interface ChatConversationProps {
   threadId: string
-  boundary?: SubthreadBoundary
+  boundary?: SubjectBoundary
   projectId?: string
   /** Prefill flowing into the composer (chip / slash / discuss). */
   prefill?: string
@@ -1350,7 +1350,7 @@ const ChatConversation = ({
 
   return (
     <>
-      {boundary && <SubthreadBoundaryLine boundary={boundary} position="start" />}
+      {boundary && <SubjectBoundaryLine boundary={boundary} position="start" />}
       <Conversation className="flex-1">
         <ConversationContent>
           {showWelcome ? (
@@ -2752,7 +2752,7 @@ export const ChatPage = () => {
     memoryStartsAfterSeq: 0,
     memoryCutAt: null,
     memoryCutReason: null,
-  } } = useQuery({
+  }, error: conversationError } = useQuery({
     queryKey: ['chat-conversation', projectId],
     queryFn: () => fetchChatConversation(projectId),
   })
@@ -3186,6 +3186,7 @@ export const ChatPage = () => {
                   activeThreadId={activeConversationThreadId}
                   projectId={projectId}
                   composerHeight={composerHeight}
+                  loadError={conversationError ?? undefined}
                   onResponseComplete={(threadId) => {
                     void qc.invalidateQueries({ queryKey: ['chat-threads'] })
                     void qc.invalidateQueries({ queryKey: ['chat-conversation'] })
@@ -3211,7 +3212,7 @@ export const ChatPage = () => {
                   <ChatConversation
                     key={activeConversationThreadId}
                     threadId={activeConversationThreadId}
-                    boundary={conversation.boundaries.find((boundary) => boundary.subthreadId === activeConversationThreadId)}
+                    boundary={conversation.boundaries.find((boundary) => boundary.subjectId === activeConversationThreadId)}
                     projectId={projectId}
                     prefill={prefill}
                     onPrefillConsumed={() => setPrefill(undefined)}

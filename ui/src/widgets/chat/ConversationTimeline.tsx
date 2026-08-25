@@ -1,17 +1,17 @@
 import { Fragment, useRef } from 'react'
-import type { ChatConversationEntry, PreloadedResponse, SubthreadBoundary } from '@/shared/schemas'
+import type { ChatConversationEntry, PreloadedResponse, SubjectBoundary } from '@/shared/schemas'
 import { MemoryBoundaryLine } from './MemoryBoundaryLine'
 import { PreloadedResponses } from './PreloadedResponses'
-import { SubthreadBoundaryLine } from './SubthreadBoundaryLine'
+import { SubjectBoundaryLine } from './SubjectBoundaryLine'
 import { TypedBody, markRevealed } from './TypedBody'
 
 export interface ConversationTimelineProps {
   entries: ChatConversationEntry[]
-  /** Subthread seams and final aggregate token weight from the conversation API. */
-  boundaries?: SubthreadBoundary[]
+  /** Subject seams and final aggregate token weight from the conversation API. */
+  boundaries?: SubjectBoundary[]
   /** The last durable message outside Mars's current readable memory. */
   memoryStartsAfterSeq?: number
-  /** The active Subthread is rendered by ChatConversation so streamed state has one owner. */
+  /** The active Subject is rendered by ChatConversation so streamed state has one owner. */
   activeThreadId?: string | null
   projectId?: string
   onResponseComplete?: (threadId?: string) => void
@@ -25,6 +25,13 @@ export interface ConversationTimelineProps {
    * spacer tracks a growing multi-line textarea automatically.
    */
   composerHeight?: number
+  /**
+   * When set, the conversation failed to load. Renders an error state instead
+   * of a blank timeline so the operator can distinguish "no messages yet" from
+   * "messages failed to load". Use the raw thrown value from the fetch error;
+   * a description is derived from the error's kind at render time.
+   */
+  loadError?: unknown
 }
 
 const isTextSegment = (segment: unknown): segment is { type: 'text'; text: string } =>
@@ -40,20 +47,20 @@ const isOfferSegment = (
   Array.isArray((segment as { responses?: unknown }).responses)
 
 /**
- * One collapsed row standing in for all messages of a closed subthread.
+ * One collapsed row standing in for all messages of a closed subject.
  *
  * The full content remains accessible through history and search; it is not
- * replayed in the main transcript so that closed subthreads stop adding noise
+ * replayed in the main transcript so that closed subjects stop adding noise
  * to the operator's conversation view.
  */
-const ClosedSubthreadBreadcrumb = ({
+const ClosedSubjectBreadcrumb = ({
   title,
   messageCount,
   boundary,
 }: {
   title: string
   messageCount: number
-  boundary?: SubthreadBoundary
+  boundary?: SubjectBoundary
 }) => (
   <div
     data-testid="closed-subthread-breadcrumb"
@@ -80,9 +87,10 @@ export const ConversationTimeline = ({
   onResponseComplete,
   onClientResolve,
   composerHeight = 0,
+  loadError,
 }: ConversationTimelineProps) => {
   const visibleEntries = entries.filter((entry) => entry.threadId !== activeThreadId)
-  const boundariesBySubthread = new Map(boundaries.map((boundary) => [boundary.subthreadId, boundary]))
+  const boundariesBySubject = new Map(boundaries.map((boundary) => [boundary.subjectId, boundary]))
 
   // Everything present on the first render is backlog, not arrival. Marking it
   // during render (before any child effect runs) is what stops a page load
@@ -93,49 +101,70 @@ export const ConversationTimeline = ({
     markRevealed(visibleEntries.map((entry) => entry.id))
   }
 
-  // Group entries by subthread, preserving chronological order of first appearance.
-  // Closed subthreads collapse to one breadcrumb row; open subthreads render their
+  // Group entries by subject, preserving chronological order of first appearance.
+  // Closed subjects collapse to one breadcrumb row; open subjects render their
   // messages individually so streamed content stays live.
-  const subthreadOrder: string[] = []
-  const subthreadGroups = new Map<string, ChatConversationEntry[]>()
+  const subjectOrder: string[] = []
+  const subjectGroups = new Map<string, ChatConversationEntry[]>()
   for (const entry of visibleEntries) {
-    if (!subthreadGroups.has(entry.subthreadId)) {
-      subthreadOrder.push(entry.subthreadId)
-      subthreadGroups.set(entry.subthreadId, [])
+    if (!subjectGroups.has(entry.subjectId)) {
+      subjectOrder.push(entry.subjectId)
+      subjectGroups.set(entry.subjectId, [])
     }
-    subthreadGroups.get(entry.subthreadId)!.push(entry)
+    subjectGroups.get(entry.subjectId)!.push(entry)
+  }
+
+  // When the fetch failed and there is nothing to render, surface the failure
+  // explicitly so the operator can distinguish "no messages yet" from "messages
+  // failed to load". An empty timeline with no explanation reads as intentional
+  // silence; a schema mismatch or network error requires operator action.
+  if (loadError !== undefined && visibleEntries.length === 0) {
+    const message = loadError instanceof Error
+      ? loadError.message
+      : 'Unknown error loading conversation.'
+    return (
+      <section aria-label="Conversation timeline" data-testid="conversation-timeline" className="space-y-4">
+        <p
+          role="alert"
+          data-testid="conversation-load-error"
+          className="font-mono text-label text-error"
+        >
+          {message}
+        </p>
+      </section>
+    )
   }
 
   return (
     <section aria-label="Conversation timeline" data-testid="conversation-timeline" className="space-y-4">
-      {subthreadOrder.map((subthreadId) => {
-        const subthreadEntries = subthreadGroups.get(subthreadId)!
-        const isClosed = subthreadEntries[0]!.subthreadClosed
-        const boundary = boundariesBySubthread.get(subthreadId)
+      {subjectOrder.map((subjectId) => {
+        const subjectEntries = subjectGroups.get(subjectId)!
+        const isClosed = subjectEntries[0]!.subjectClosed
+        const boundary = boundariesBySubject.get(subjectId)
 
         if (isClosed) {
-          // Closed subthreads collapse to one breadcrumb. The memory cut may
-          // fall within the subthread's entries — if so, place the boundary
+          // Closed subjects collapse to one breadcrumb. The memory cut may
+          // fall within the subject's entries — if so, place the boundary
           // marker immediately after the breadcrumb.
           const hasMemoryCut =
             memoryStartsAfterSeq > 0 &&
-            subthreadEntries.some((e) => e.seq === memoryStartsAfterSeq)
+            subjectEntries.some((e) => e.seq === memoryStartsAfterSeq)
 
-          // A single-message closed subthread with no active thread shows its
+          // A single-message closed subject with no active thread shows its
           // message inline below the breadcrumb. The operator has full context
           // at a glance and there is nothing meaningful to collapse. Multi-message
-          // subthreads, or those rendered while an active thread is open, fold
+          // subjects, or those rendered while an active thread is open, fold
           // to a breadcrumb so noise is not replayed into the working view.
-          const showInline = subthreadEntries.length === 1 && activeThreadId == null
+          const showInline = subjectEntries.length === 1 && activeThreadId == null
           if (showInline) {
-            const entry = subthreadEntries[0]!
+            const entry = subjectEntries[0]!
             const segmentText = entry.segments.filter(isTextSegment).map((segment) => segment.text).join('\n')
             const body = segmentText || entry.content
             const isNotice = entry.kind === 'notice'
             return (
-              <Fragment key={subthreadId}>
-                <ClosedSubthreadBreadcrumb
-                  title={entry.subthreadTitle}
+              <Fragment key={subjectId}>
+                <ClosedSubjectBreadcrumb
+                  title={entry.subjectTitle}
                   messageCount={1}
                   boundary={boundary}
                 />
@@ -149,7 +178,7 @@ export const ConversationTimeline = ({
                     {isNotice ? (
                       <span className="text-primary">Mars</span>
                     ) : (
-                      <span>{entry.subthreadTitle || 'Untitled subthread'}</span>
+                      <span>{entry.subjectTitle || 'Untitled subject'}</span>
                     )}
                     {!isNotice && <span>closed</span>}
                     <span>{entry.role} · {entry.kind}</span>
@@ -174,10 +203,10 @@ export const ConversationTimeline = ({
           }
 
           return (
-            <Fragment key={subthreadId}>
-              <ClosedSubthreadBreadcrumb
-                title={subthreadEntries[0]!.subthreadTitle}
-                messageCount={subthreadEntries.length}
+            <Fragment key={subjectId}>
+              <ClosedSubjectBreadcrumb
+                title={subjectEntries[0]!.subjectTitle}
+                messageCount={subjectEntries.length}
                 boundary={boundary}
               />
               {hasMemoryCut && <MemoryBoundaryLine />}
@@ -185,10 +214,10 @@ export const ConversationTimeline = ({
           )
         }
 
-        // Open subthread: render each entry with boundary seams and memory marker.
-        return subthreadEntries.map((entry, index) => {
-          const isFirstSubthreadMessage = index === 0
-          const isFinalSubthreadMessage = index === subthreadEntries.length - 1
+        // Open subject: render each entry with boundary seams and memory marker.
+        return subjectEntries.map((entry, index) => {
+          const isFirstSubjectMessage = index === 0
+          const isFinalSubjectMessage = index === subjectEntries.length - 1
           const segmentText = entry.segments.filter(isTextSegment).map((segment) => segment.text).join('\n')
           const body = segmentText || entry.content
           // A Notice is Mars speaking unprompted. It gets a card and a reveal;
@@ -198,7 +227,7 @@ export const ConversationTimeline = ({
 
           return (
             <Fragment key={entry.id}>
-              {boundary && isFirstSubthreadMessage && <SubthreadBoundaryLine boundary={boundary} position="start" />}
+              {boundary && isFirstSubjectMessage && <SubjectBoundaryLine boundary={boundary} position="start" />}
               <article
                 data-thread-id={entry.threadId}
                 data-message-kind={entry.kind}
@@ -209,9 +238,9 @@ export const ConversationTimeline = ({
                   {isNotice ? (
                     <span className="text-primary">Mars</span>
                   ) : (
-                    <span>{entry.subthreadTitle || 'Untitled subthread'}</span>
+                    <span>{entry.subjectTitle || 'Untitled subject'}</span>
                   )}
-                  {!isNotice && <span>{entry.subthreadClosed ? 'closed' : 'open'}</span>}
+                  {!isNotice && <span>{entry.subjectClosed ? 'closed' : 'open'}</span>}
                   <span>{entry.role} · {entry.kind}</span>
                   {entry.backingEntityId && <span>{entry.backingEntityId}</span>}
                   {entry.resolution === 'resolved' && (
@@ -239,7 +268,7 @@ export const ConversationTimeline = ({
                   />
                 ))}
               </article>
-              {boundary && boundary.closedAt !== null && isFinalSubthreadMessage && <SubthreadBoundaryLine boundary={boundary} position="end" />}
+              {boundary && boundary.closedAt !== null && isFinalSubjectMessage && <SubjectBoundaryLine boundary={boundary} position="end" />}
               {memoryStartsAfterSeq > 0 && entry.seq === memoryStartsAfterSeq && <MemoryBoundaryLine />}
             </Fragment>
           )

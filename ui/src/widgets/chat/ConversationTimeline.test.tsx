@@ -1,19 +1,20 @@
 import { describe, expect, it } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
+import { chatConversationEntrySchema } from '@/shared/schemas'
 import { ConversationTimeline } from './ConversationTimeline'
 
 describe('ConversationTimeline', () => {
-  it('collapses a closed subthread into one breadcrumb row instead of its messages', () => {
+  it('collapses a closed subject into one breadcrumb row instead of its messages', () => {
     const html = renderToStaticMarkup(
       <ConversationTimeline
         entries={[
           {
-            id: 'msg1', seq: 1, threadId: 'closed-sub', subthreadId: 'closed-sub', subthreadTitle: 'Finished task', subthreadClosed: true,
+            id: 'msg1', seq: 1, threadId: 'closed-sub', subjectId: 'closed-sub', subjectTitle: 'Finished task', subjectClosed: true,
             role: 'assistant', content: 'First message.', segments: [],
             createdAt: '2026-01-01T00:00:00.000Z', kind: 'acknowledgment', backingEntityId: null, resolution: null,
           },
           {
-            id: 'msg2', seq: 2, threadId: 'closed-sub', subthreadId: 'closed-sub', subthreadTitle: 'Finished task', subthreadClosed: true,
+            id: 'msg2', seq: 2, threadId: 'closed-sub', subjectId: 'closed-sub', subjectTitle: 'Finished task', subjectClosed: true,
             role: 'assistant', content: 'Second message.', segments: [],
             createdAt: '2026-01-01T00:01:00.000Z', kind: 'acknowledgment', backingEntityId: null, resolution: null,
           },
@@ -36,17 +37,17 @@ describe('ConversationTimeline', () => {
       <ConversationTimeline
         entries={[
           {
-            id: 'before-cut', seq: 41, threadId: 'subthread-earlier', subthreadId: 'subthread-earlier', subthreadTitle: 'Earlier subthread', subthreadClosed: true,
+            id: 'before-cut', seq: 41, threadId: 'subthread-earlier', subjectId: 'subthread-earlier', subjectTitle: 'Earlier subthread', subjectClosed: true,
             role: 'assistant', content: 'Mars no longer reads this.', segments: [],
             createdAt: '2026-01-01T00:00:00.000Z', kind: 'acknowledgment', backingEntityId: null, resolution: null,
           },
           {
-            id: 'at-cut', seq: 42, threadId: 'subthread-earlier', subthreadId: 'subthread-earlier', subthreadTitle: 'Earlier subthread', subthreadClosed: true,
+            id: 'at-cut', seq: 42, threadId: 'subthread-earlier', subjectId: 'subthread-earlier', subjectTitle: 'Earlier subthread', subjectClosed: true,
             role: 'assistant', content: 'This is the final unreadable message.', segments: [],
             createdAt: '2026-01-01T00:01:00.000Z', kind: 'acknowledgment', backingEntityId: null, resolution: null,
           },
           {
-            id: 'after-cut', seq: 43, threadId: 'subthread-current', subthreadId: 'subthread-current', subthreadTitle: 'Current subthread', subthreadClosed: false,
+            id: 'after-cut', seq: 43, threadId: 'subthread-current', subjectId: 'subthread-current', subjectTitle: 'Current subthread', subjectClosed: false,
             role: 'user', content: 'Mars reads from here onward.', segments: [],
             createdAt: '2026-01-01T00:02:00.000Z', kind: 'acknowledgment', backingEntityId: null, resolution: null,
           },
@@ -55,12 +56,12 @@ describe('ConversationTimeline', () => {
       />,
     )
 
-    // Closed subthread collapses to one breadcrumb — no individual message content
+    // Closed subject collapses to one breadcrumb — no individual message content
     expect(html).toContain('data-testid="closed-subthread-breadcrumb"')
     expect(html).toContain('Earlier subthread')
     expect(html).not.toContain('Mars no longer reads this.')
     expect(html).not.toContain('This is the final unreadable message.')
-    // Memory boundary placed after the closed subthread breadcrumb
+    // Memory boundary placed after the closed subject breadcrumb
     expect(html).toContain('Mars can read from here')
     expect(html).toContain('Mars reads from here onward.')
     expect(html.indexOf('closed-subthread-breadcrumb')).toBeLessThan(html.indexOf('Mars can read from here'))
@@ -71,7 +72,7 @@ describe('ConversationTimeline', () => {
     const html = renderToStaticMarkup(
       <ConversationTimeline
         entries={[{
-          id: 'only-message', seq: 1, threadId: 'subthread', subthreadId: 'subthread', subthreadTitle: 'Subthread', subthreadClosed: false,
+          id: 'only-message', seq: 1, threadId: 'subthread', subjectId: 'subthread', subjectTitle: 'Subthread', subjectClosed: false,
           role: 'assistant', content: 'Everything is readable.', segments: [],
           createdAt: '2026-01-01T00:00:00.000Z', kind: 'acknowledgment', backingEntityId: null, resolution: null,
         }]}
@@ -82,15 +83,15 @@ describe('ConversationTimeline', () => {
     expect(html).not.toContain('Mars can read from here')
   })
 
-  it('keeps the server-selected marker in the same place when the active Subthread layout changes', () => {
+  it('keeps the server-selected marker in the same place when the active Subject layout changes', () => {
     const entries = [
       {
-        id: 'before-cut', seq: 9, threadId: 'closed-subthread', subthreadId: 'closed-subthread', subthreadTitle: 'Closed subthread', subthreadClosed: true,
+        id: 'before-cut', seq: 9, threadId: 'closed-subthread', subjectId: 'closed-subthread', subjectTitle: 'Closed subthread', subjectClosed: true,
         role: 'assistant' as const, content: 'Older message.', segments: [],
         createdAt: '2026-01-01T00:00:00.000Z', kind: 'acknowledgment' as const, backingEntityId: null, resolution: null,
       },
       {
-        id: 'after-cut', seq: 10, threadId: 'active-subthread', subthreadId: 'active-subthread', subthreadTitle: 'Active subthread', subthreadClosed: false,
+        id: 'after-cut', seq: 10, threadId: 'active-subthread', subjectId: 'active-subthread', subjectTitle: 'Active subthread', subjectClosed: false,
         role: 'user' as const, content: 'Current message.', segments: [],
         createdAt: '2026-01-01T00:01:00.000Z', kind: 'acknowledgment' as const, backingEntityId: null, resolution: null,
       },
@@ -104,23 +105,23 @@ describe('ConversationTimeline', () => {
     )
 
     for (const html of [withActiveTail, withoutActiveTail]) {
-      // Closed subthread breadcrumb appears before the memory cut marker
+      // Closed subject breadcrumb appears before the memory cut marker
       expect(html.indexOf('closed-subthread-breadcrumb')).toBeLessThan(html.indexOf('Mars can read from here'))
       expect(html).toContain('data-testid="memory-boundary-line"')
     }
   })
 
-  it('keeps earlier Subthread messages visible with their persisted context when the active Subthread changes', () => {
+  it('keeps earlier Subject messages visible with their persisted context when the active Subject changes', () => {
     const html = renderToStaticMarkup(
       <ConversationTimeline
         entries={[
           {
-            id: 'earlier', seq: 1, threadId: 'subthread-earlier', subthreadId: 'subthread-earlier', subthreadTitle: 'Earlier subthread', subthreadClosed: true,
+            id: 'earlier', seq: 1, threadId: 'subthread-earlier', subjectId: 'subthread-earlier', subjectTitle: 'Earlier subthread', subjectClosed: true,
             role: 'assistant', content: 'This was persisted before opening another subthread.', segments: [],
             createdAt: '2026-01-01T00:00:00.000Z', kind: 'validation', backingEntityId: 'task-42', resolution: null,
           },
           {
-            id: 'active', seq: 2, threadId: 'subthread-active', subthreadId: 'subthread-active', subthreadTitle: 'Active subthread', subthreadClosed: false,
+            id: 'active', seq: 2, threadId: 'subthread-active', subjectId: 'subthread-active', subjectTitle: 'Active subthread', subjectClosed: false,
             role: 'user', content: 'Handled by the live tail.', segments: [],
             createdAt: '2026-01-01T00:01:00.000Z', kind: 'acknowledgment', backingEntityId: null, resolution: null,
           },
@@ -129,56 +130,106 @@ describe('ConversationTimeline', () => {
       />,
     )
 
-    // The closed subthread is represented as a breadcrumb with its title
+    // The closed subject is represented as a breadcrumb with its title
     expect(html).toContain('Earlier subthread')
     expect(html).toContain('data-testid="closed-subthread-breadcrumb"')
     // Individual message details are not replayed in the main transcript
     expect(html).not.toContain('This was persisted before opening another subthread.')
-    // Active subthread is rendered by the live tail, not here
+    // Active subject is rendered by the live tail, not here
     expect(html).not.toContain('Handled by the live tail.')
   })
 
-  it('places Subthread seams around open Subthread messages while leaving closed Subthreads as breadcrumbs', () => {
+  it('places Subject seams around open Subject messages while leaving closed Subjects as breadcrumbs', () => {
     const html = renderToStaticMarkup(
       <ConversationTimeline
         entries={[
           {
-            id: 'situation', seq: 1, threadId: 'closed-subthread', subthreadId: 'closed-subthread', subthreadTitle: 'Completed subthread', subthreadClosed: true,
-            role: 'assistant', content: 'Situation: this Subthread starts here.', segments: [],
+            id: 'situation', seq: 1, threadId: 'closed-subthread', subjectId: 'closed-subthread', subjectTitle: 'Completed subthread', subjectClosed: true,
+            role: 'assistant', content: 'Situation: this Subject starts here.', segments: [],
             createdAt: '2026-01-01T00:00:00.000Z', kind: 'situation', backingEntityId: null, resolution: null,
           },
           {
-            id: 'final', seq: 2, threadId: 'closed-subthread', subthreadId: 'closed-subthread', subthreadTitle: 'Completed subthread', subthreadClosed: true,
+            id: 'final', seq: 2, threadId: 'closed-subthread', subjectId: 'closed-subthread', subjectTitle: 'Completed subthread', subjectClosed: true,
             role: 'assistant', content: 'The last completed message.', segments: [],
             createdAt: '2026-01-01T00:01:00.000Z', kind: 'acknowledgment', backingEntityId: null, resolution: null,
           },
           {
-            id: 'open-situation', seq: 3, threadId: 'open-subthread', subthreadId: 'open-subthread', subthreadTitle: 'Open subthread', subthreadClosed: false,
+            id: 'open-situation', seq: 3, threadId: 'open-subthread', subjectId: 'open-subthread', subjectTitle: 'Open subthread', subjectClosed: false,
             role: 'assistant', content: 'Situation: this one remains open.', segments: [],
             createdAt: '2026-01-01T00:02:00.000Z', kind: 'situation', backingEntityId: null, resolution: null,
           },
         ]}
         boundaries={[
-          { subthreadId: 'closed-subthread', startedAt: '2026-01-01T00:00:00.000Z', closedAt: '2026-01-01T00:02:00.000Z', producedTokens: 350, carriedTokens: 180 },
-          { subthreadId: 'open-subthread', startedAt: '2026-01-01T00:02:00.000Z', closedAt: null, producedTokens: 100, carriedTokens: 90 },
+          { subjectId: 'closed-subthread', startedAt: '2026-01-01T00:00:00.000Z', closedAt: '2026-01-01T00:02:00.000Z', producedTokens: 350, carriedTokens: 180 },
+          { subjectId: 'open-subthread', startedAt: '2026-01-01T00:02:00.000Z', closedAt: null, producedTokens: 100, carriedTokens: 90 },
         ]}
         memoryStartsAfterSeq={2}
       />,
     )
 
-    // Closed subthread collapses to a breadcrumb with its token summary
+    // Closed subject collapses to a breadcrumb with its token summary
     expect(html).toContain('data-testid="closed-subthread-breadcrumb"')
     expect(html).toContain('350 produced')
     expect(html).toContain('180 carried')
-    expect(html).not.toContain('Situation: this Subthread starts here.')
+    expect(html).not.toContain('Situation: this Subject starts here.')
     expect(html).not.toContain('The last completed message.')
 
-    // Memory boundary placed after the closed-subthread breadcrumb
+    // Memory boundary placed after the closed-subject breadcrumb
     expect(html).toContain('data-testid="memory-boundary-line"')
 
-    // Open subthread still gets a start boundary seam (no end since not closed)
+    // Open subject still gets a start boundary seam (no end since not closed)
     expect(html.match(/data-testid="subthread-boundary-start"/g)).toHaveLength(1)
     expect(html).not.toContain('data-testid="subthread-boundary-end"')
     expect(html).toContain('Situation: this one remains open.')
+  })
+
+  it('renders an entry parsed from the daemon wire shape (subject* field names through chatConversationEntrySchema)', () => {
+    // This test asserts against the wire shape — the exact field names the daemon
+    // emits. It is the regression guard for the Subthread→Subject rename: had a
+    // test like this existed before, the schema mismatch would have been caught
+    // the moment it shipped, not discovered via a blank conversation pane.
+    const wirePayload = {
+      id: 'notice-1',
+      seq: 1,
+      threadId: 'subject-abc',
+      subjectId: 'subject-abc',
+      subjectTitle: 'Worker pool steward',
+      subjectClosed: false,
+      role: 'assistant',
+      content: 'I increased implement workers from 3 to 4 because queue depth exceeded the threshold.',
+      segments: [],
+      createdAt: '2026-08-25T12:01:23.000Z',
+      kind: 'notice',
+      backingEntityId: null,
+      resolution: null,
+    }
+
+    // Parse through the schema exactly as the UI does at runtime.
+    const result = chatConversationEntrySchema.safeParse(wirePayload)
+    expect(result.success).toBe(true)
+    if (!result.success) return // type-narrow; the expect above already fails the test
+
+    const html = renderToStaticMarkup(
+      <ConversationTimeline entries={[result.data]} />,
+    )
+
+    // The notice content must be visible.
+    expect(html).toContain('I increased implement workers from 3 to 4')
+    expect(html).toContain('data-testid="conversation-timeline"')
+    // A notice renders with a notice card.
+    expect(html).toContain('data-testid="notice-card-notice-1"')
+  })
+
+  it('renders an error state instead of a blank pane when loadError is set and entries are empty', () => {
+    const error = new Error('GET /api/chat/conversation → response failed schema validation')
+    const html = renderToStaticMarkup(
+      <ConversationTimeline entries={[]} loadError={error} />,
+    )
+
+    expect(html).toContain('data-testid="conversation-timeline"')
+    expect(html).toContain('data-testid="conversation-load-error"')
+    expect(html).toContain('response failed schema validation')
+    // Must NOT look like an empty conversation — no spacer-only output
+    expect(html).not.toContain('data-testid="composer-scroll-spacer"')
   })
 })
