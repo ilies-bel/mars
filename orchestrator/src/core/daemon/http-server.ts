@@ -518,8 +518,9 @@ export interface HttpServerDeps {
    * Snooze an action-queue item until the given ISO-8601 timestamp.
    * While snoozed the item is excluded from the open view and chat segments.
    * Once the timestamp is in the past the item reappears automatically.
-   * No-op when the item does not exist. Throws when `until` is not a valid
-   * ISO-8601 string.
+   * Throws `ActionQueueItemNotFoundError` when the id does not resolve to a
+   * stored row (derived condition kinds have no stored row). Throws when
+   * `until` is not a valid ISO-8601 string.
    */
   snoozeItem: (id: string, until: string) => Promise<void>
   /**

@@ -1295,6 +1295,18 @@ export const listResolvedActionQueueItems = async ({
 }
 
 /**
+ * Thrown by `snoozeActionQueueItem` when the id (or prefix) does not resolve
+ * to any stored action-queue row. Derived condition kinds have no stored row,
+ * so passing their synthetic id always produces this error.
+ */
+export class ActionQueueItemNotFoundError extends Error {
+  constructor(idOrPrefix: string) {
+    super(`action-queue item not found: ${idOrPrefix}`)
+    this.name = 'ActionQueueItemNotFoundError'
+  }
+}
+
+/**
  * Snooze an action-queue item until `until` (ISO-8601 timestamp).
  *
  * While snoozed the row is excluded from the open view and chat segments.
@@ -1305,8 +1317,9 @@ export const listResolvedActionQueueItems = async ({
  * Presets (e.g. "1 hour", "tomorrow") are handled client-side — the API
  * accepts only an absolute ISO-8601 timestamp.
  *
- * No-op when the item does not exist (prefix-match fallback as per
- * `setActionQueueState`). Throws if `until` is not a valid ISO-8601 string.
+ * Throws `ActionQueueItemNotFoundError` when the id (or prefix) does not
+ * resolve to a stored row — derived condition kinds have no stored row and
+ * will always throw. Throws if `until` is not a valid ISO-8601 string.
  */
 export const snoozeActionQueueItem = async (
   idOrPrefix: string,
@@ -1335,7 +1348,7 @@ export const snoozeActionQueueItem = async (
       resolvedId = (pref.rows[0] as unknown as { id: string }).id
     }
   }
-  if (!resolvedId) return
+  if (!resolvedId) throw new ActionQueueItemNotFoundError(idOrPrefix)
 
   await c.execute({
     sql: `UPDATE action_queue_items SET snoozed_until = ? WHERE id = ?`,

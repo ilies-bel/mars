@@ -18,7 +18,7 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { buildAlertSegment, type RaiseActionQueueItem } from './action-queue'
-import { ACTION_QUEUE_KINDS } from './action-queue-kinds'
+import { ACTION_QUEUE_KINDS, DERIVED_KINDS } from './action-queue-kinds'
 import {
   lookupRecipe,
   getRecipeVerbs,
@@ -76,14 +76,27 @@ describe('action-queue recipe registry — exhaustiveness', () => {
     expect(detail.raisedAt).toBe('2026-06-01T12:00:00.000Z')
   })
 
-  it.each(ACTION_QUEUE_KINDS)('kind "%s" getRecipeVerbs always ends with Snooze', (kind) => {
-    const recipe = lookupRecipe(kind)
-    const ctx = makeCtx({ kind })
-    const verbs = getRecipeVerbs(recipe, ctx)
-    expect(verbs.length).toBeGreaterThanOrEqual(1)
-    const last = verbs[verbs.length - 1]
-    expect(last).toMatchObject({ op: 'snooze', label: 'Snooze' })
-  })
+  it.each(ACTION_QUEUE_KINDS.filter((k) => !DERIVED_KINDS.has(k)))(
+    'stored kind "%s" getRecipeVerbs ends with Snooze (style: snooze)',
+    (kind) => {
+      const recipe = lookupRecipe(kind)
+      const ctx = makeCtx({ kind })
+      const verbs = getRecipeVerbs(recipe, ctx)
+      expect(verbs.length).toBeGreaterThanOrEqual(1)
+      const last = verbs[verbs.length - 1]
+      expect(last).toMatchObject({ op: 'snooze', label: 'Snooze', style: 'snooze' })
+    },
+  )
+
+  it.each(ACTION_QUEUE_KINDS.filter((k) => DERIVED_KINDS.has(k)))(
+    'derived kind "%s" getRecipeVerbs does NOT include Snooze',
+    (kind) => {
+      const recipe = lookupRecipe(kind)
+      const ctx = makeCtx({ kind })
+      const verbs = getRecipeVerbs(recipe, ctx)
+      expect(verbs.every((v) => v.op !== 'snooze')).toBe(true)
+    },
+  )
 
   it.each(ACTION_QUEUE_KINDS)('kind "%s" carries the generic dismiss verb only when the daemon can act on it', (kind) => {
     // The daemon's entity handler maps the generic `dismiss` op to proposal
@@ -231,12 +244,13 @@ describe('snooze lifecycle', () => {
     ).rejects.toThrow(/Invalid snooze timestamp/)
   })
 
-  it('snoozeActionQueueItem is a no-op for an unknown id', async () => {
+  it('snoozeActionQueueItem throws for an unknown id (reports failure not success)', async () => {
     const { snoozeActionQueueItem } = await import('./action-queue')
-    // Should not throw
+    // A row that does not exist (including all derived condition kinds) must
+    // produce a rejection — not a silent 200-with-no-effect.
     await expect(
       snoozeActionQueueItem('nonexistent-id-xyz', new Date(Date.now() + 3600_000).toISOString()),
-    ).resolves.toBeUndefined()
+    ).rejects.toThrow(/not found/)
   })
 })
 
@@ -418,10 +432,14 @@ describe('buildAlertSegment — registered kinds use recipe verbs', () => {
     expect(segment.actions.filter((a) => a.label === 'Dismiss')).toHaveLength(1)
   })
 
-  it('daemon-died alert segment has Snooze appended last', () => {
+  it('daemon-died alert segment does NOT include Snooze (derived kind)', () => {
+    // daemon-died is a derived condition kind — no stored row, so Snooze is
+    // not appended. The segment ends with the kind-specific dismiss verb.
     const segment = buildAlertSegment(makeDaemonDiedItem(), 'test-item-id')
+    expect(segment.actions.every((a) => a.op !== 'snooze')).toBe(true)
+    // The only action should be the kind-specific dismiss-daemon-died.
     const last = segment.actions[segment.actions.length - 1]
-    expect(last).toMatchObject({ op: 'snooze', label: 'Snooze', style: 'default' })
+    expect(last).toMatchObject({ op: 'dismiss-daemon-died', label: 'Dismiss' })
   })
 
   it('awaiting-validation reject verb (danger in recipe) maps to destructive style in segment', () => {

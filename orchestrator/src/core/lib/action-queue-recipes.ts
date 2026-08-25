@@ -33,7 +33,7 @@
  * `UNAUDITED_KIND_FAMILY`.
  */
 
-import { classifyKind, type ActionQueueClass, type ActionQueueKind } from './action-queue-kinds'
+import { classifyKind, DERIVED_KINDS, type ActionQueueClass, type ActionQueueKind } from './action-queue-kinds'
 
 export type { ActionQueueClass } from './action-queue-kinds'
 import {
@@ -90,7 +90,7 @@ export type RecipeVerb = {
    * and `humanDetail`. The queue rendered those rows with a bare title and no
    * cause at all. Keep one vocabulary; do not reintroduce a translation layer.
    */
-  style: 'primary' | 'destructive' | 'default'
+  style: 'primary' | 'destructive' | 'default' | 'snooze'
   /**
    * Text the client copies to the clipboard for an `op: 'copy'` verb — the
    * runnable command behind a deliberate operator gesture. Ignored for every
@@ -164,7 +164,7 @@ const str = (v: unknown): string =>
   typeof v === 'string' ? v : ''
 
 const DISMISS: RecipeVerb = { op: 'dismiss', label: 'Dismiss', style: 'default' }
-const SNOOZE: RecipeVerb = { op: 'snooze', label: 'Snooze', style: 'default' }
+const SNOOZE: RecipeVerb = { op: 'snooze', label: 'Snooze', style: 'snooze' }
 
 /**
  * Kinds whose rows the generic `dismiss` op can actually act on. The daemon's
@@ -173,13 +173,18 @@ const SNOOZE: RecipeVerb = { op: 'snooze', label: 'Snooze', style: 'default' }
  * ("proposal <id> not found"). Derived condition kinds clear through their own
  * operation (e.g. `dismiss-daemon-died` deletes the crash marker) or by the
  * condition ceasing to hold; stored operator-decision kinds resolve atomically
- * through their own verbs. Snooze remains the universal suppression verb.
+ * through their own verbs.
  */
 const GENERIC_DISMISS_KINDS = new Set<string>(['draft-proposal'])
 
 /**
  * Return the full verb list for a recipe: kind-specific verbs, then Dismiss
- * only where the generic dismiss op can function, then Snooze for every kind.
+ * only where the generic dismiss op can function, then Snooze only for kinds
+ * that have a stored row (i.e. not derived condition kinds).
+ *
+ * Derived condition kinds have no stored row, so the snooze UPDATE would match
+ * zero rows and silently report success. Consistent with the Dismiss fix
+ * (which already applies the same guard), Snooze is omitted for DERIVED_KINDS.
  */
 export const getRecipeVerbs = (
   recipe: Recipe,
@@ -187,9 +192,11 @@ export const getRecipeVerbs = (
 ): RecipeVerb[] => {
   const base =
     typeof recipe.verbs === 'function' ? recipe.verbs(ctx) : recipe.verbs
-  return GENERIC_DISMISS_KINDS.has(ctx.kind)
-    ? [...base, DISMISS, SNOOZE]
-    : [...base, SNOOZE]
+  const isDerived = DERIVED_KINDS.has(ctx.kind as ActionQueueKind)
+  if (GENERIC_DISMISS_KINDS.has(ctx.kind)) {
+    return isDerived ? [...base, DISMISS] : [...base, DISMISS, SNOOZE]
+  }
+  return isDerived ? [...base] : [...base, SNOOZE]
 }
 
 /** Return the daemon operations available as preloaded Notice response chips. */

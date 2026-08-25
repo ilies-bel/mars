@@ -88,6 +88,7 @@ import { getRepoRoot, getStateDir } from '../context'
 import { z } from 'zod'
 import type { HttpServerDeps } from './http-server'
 import { streamPngAsset } from './ui-serve'
+import { ActionQueueItemNotFoundError } from '../lib/action-queue'
 
 // ── Chat upload constants ─────────────────────────────────────────────────────
 
@@ -158,6 +159,10 @@ const sendError = (
   res: import('node:http').ServerResponse,
   err: unknown,
 ): void => {
+  if (err instanceof ActionQueueItemNotFoundError) {
+    sendJson(res, 404, { ok: false, error: err.message })
+    return
+  }
   if (isRestartTaskError(err)) {
     if (err.code === 'NOT_FOUND') {
       sendJson(res, 404, { ok: false, error: err.message, errorCode: 'NOT_FOUND' })
