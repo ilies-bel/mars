@@ -33,7 +33,9 @@
  * `UNAUDITED_KIND_FAMILY`.
  */
 
-import type { ActionQueueKind } from './action-queue-kinds'
+import { classifyKind, type ActionQueueClass, type ActionQueueKind } from './action-queue-kinds'
+
+export type { ActionQueueClass } from './action-queue-kinds'
 import {
   awaitingHumanSituation,
   type LeaseExpiredPayload,
@@ -127,6 +129,19 @@ export type RecipeContext<K extends ActionQueueKind = ActionQueueKind> = {
 
 /** A complete recipe for one action-queue kind. */
 export type Recipe<K extends ActionQueueKind = ActionQueueKind> = {
+  /**
+   * Structural class of this kind — mirrors `classifyKind(kind)` from
+   * `action-queue-kinds.ts` but stored on the recipe so renderers and chat
+   * adapters read it directly without a second import.
+   *
+   * - `condition` — derived on read from live state; operator must act.
+   * - `decision`  — row-backed; operator must decide.
+   * - `notice`    — row-backed; operator acknowledges; Mars is handling it.
+   *
+   * Populated automatically by the registry (see REGISTRY construction below);
+   * individual recipe definitions in RECIPE_DEFINITIONS do not declare it.
+   */
+  kindClass: ActionQueueClass
   /** One plain sentence a non-expert understands. */
   humanSummary: (ctx: RecipeContext<K>) => string
   /** Structured detail fields for the expandable section. */
@@ -1379,7 +1394,7 @@ const RECIPE_DEFINITIONS = {
       { op: 'reject', label: 'Keep as arc artefact only', style: 'default' },
     ],
   },
-} satisfies { [K in ActionQueueKind]: Omit<Recipe<K>, 'preloadedResponses'> }
+} satisfies { [K in ActionQueueKind]: Omit<Recipe<K>, 'preloadedResponses' | 'kindClass'> }
 
 /**
  * The Alert verbs are the existing source of truth for each recipe's available
@@ -1393,11 +1408,14 @@ const REGISTRY: Record<ActionQueueKind, Recipe> = Object.fromEntries(
     // Erasing to it here is the same widening the outer cast already performs:
     // callers reach recipes through `lookupRecipe(kind)`, which hands back a
     // row's unvalidated `Record<string, unknown>` payload either way.
-    const [kind, recipe] = entry as [ActionQueueKind, Omit<Recipe, 'preloadedResponses'>]
+    const [kind, recipe] = entry as [ActionQueueKind, Omit<Recipe, 'preloadedResponses' | 'kindClass'>]
     return [
       kind,
       {
         ...recipe,
+        // Derived here rather than declared per-entry so definitions stay
+        // compact and the classification stays in sync with action-queue-kinds.ts.
+        kindClass: classifyKind(kind),
         preloadedResponses: (ctx: RecipeContext) =>
           (typeof recipe.verbs === 'function' ? recipe.verbs(ctx) : recipe.verbs)
             .filter(({ op }) => classifyMarsVerb(op) === 'safe')
