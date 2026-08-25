@@ -122,4 +122,104 @@ describe('POST /chat/messages/:messageId/responses/:responseId', () => {
     expect(openSubthread).toHaveBeenCalledWith({ title: 'Review task-42', acknowledgment: 'Review task' })
     expect(sendMessage).not.toHaveBeenCalled()
   })
+
+  it('calls revertAutoCommit and writes a kind:acknowledgment message on success', async () => {
+    process.env.MARS_REPO = repo
+    const chatStore = await import('../../lib/chat-store')
+    await chatStore.initChatStore()
+    const subthread = await chatStore.createThread('Auto-commit notice')
+    const entityId = JSON.stringify({ commitSha: 'abc1234', files: ['src/foo.ts', 'src/bar.ts'] })
+    const notice = await chatStore.appendMessage(
+      subthread.id,
+      'assistant',
+      'Mars auto-committed your edits.',
+      [{
+        type: 'preloaded_responses',
+        responses: [{
+          id: 'revert-wip',
+          label: 'Revert',
+          target: { type: 'verb', op: 'revert-auto-commit', entityId },
+        }],
+      }],
+      { kind: 'notice', contextScope: 'main' },
+    )
+    const revertAutoCommit = vi.fn().mockResolvedValue({ reverted: true })
+    const sendMessage = vi.fn()
+    const { startHttpServer } = await import('../http-server')
+    server = await startHttpServer({
+      chatRunner: { sendMessage } as unknown as ChatRunner,
+      restartTask: async () => {}, continueTask: async () => {}, remergeTask: async () => {}, unblockTask: async () => {},
+      purgeTask: async () => {}, pruneWorktree: async () => {}, dismissProposal: async () => {},
+      promoteProposal: async () => ({ taskIds: [] }), validateTask: async () => {}, rejectTask: async () => {},
+      landWork: async () => {}, investigateWorktree: async () => ({ explanation: '' }),
+      diagnoseFailure: async () => ({ diagnosis: '' }), restartDaemon: async () => {},
+      continueAllDaemonKilled: async () => ({ continued: [], degraded: [], skipped: [] }), isAcceptingWork: () => true, inFlightCount: () => 0,
+      selfUpdate: async () => {}, runReflect: async () => ({ proposalsRaised: 0 }), stepDone: async () => ({ next: null as string | null }),
+      snoozeItem: async () => {}, recipeCatalog: nullRecipeCatalog, traceStore: nullTraceStore,
+      appServices: stubAppServices(),
+      revertAutoCommit,
+    })
+
+    const response = await fetch(
+      `http://127.0.0.1:${server.port}/chat/messages/${notice.id}/responses/revert-wip`,
+      { method: 'POST' },
+    )
+
+    expect(response.status).toBe(200)
+    expect(revertAutoCommit).toHaveBeenCalledWith({ commitSha: 'abc1234', files: ['src/foo.ts', 'src/bar.ts'] })
+    expect(sendMessage).not.toHaveBeenCalled()
+    const stored = await chatStore.getThread(subthread.id)
+    const ackMsg = stored?.messages[1]
+    expect(ackMsg?.kind).toBe('acknowledgment')
+    expect(ackMsg?.content).toBe('Restored 2 files as uncommitted edits')
+  })
+
+  it('writes a failure acknowledgment when revertAutoCommit reports the commit is not found', async () => {
+    process.env.MARS_REPO = repo
+    const chatStore = await import('../../lib/chat-store')
+    await chatStore.initChatStore()
+    const subthread = await chatStore.createThread('Auto-commit notice')
+    const entityId = JSON.stringify({ commitSha: 'deadbeef', files: ['src/gone.ts'] })
+    const notice = await chatStore.appendMessage(
+      subthread.id,
+      'assistant',
+      'Mars auto-committed your edits.',
+      [{
+        type: 'preloaded_responses',
+        responses: [{
+          id: 'revert-gone',
+          label: 'Revert',
+          target: { type: 'verb', op: 'revert-auto-commit', entityId },
+        }],
+      }],
+      { kind: 'notice', contextScope: 'main' },
+    )
+    const revertAutoCommit = vi.fn().mockResolvedValue({ reverted: false, reason: 'commit not found' })
+    const { startHttpServer } = await import('../http-server')
+    server = await startHttpServer({
+      chatRunner: { sendMessage: vi.fn() } as unknown as ChatRunner,
+      restartTask: async () => {}, continueTask: async () => {}, remergeTask: async () => {}, unblockTask: async () => {},
+      purgeTask: async () => {}, pruneWorktree: async () => {}, dismissProposal: async () => {},
+      promoteProposal: async () => ({ taskIds: [] }), validateTask: async () => {}, rejectTask: async () => {},
+      landWork: async () => {}, investigateWorktree: async () => ({ explanation: '' }),
+      diagnoseFailure: async () => ({ diagnosis: '' }), restartDaemon: async () => {},
+      continueAllDaemonKilled: async () => ({ continued: [], degraded: [], skipped: [] }), isAcceptingWork: () => true, inFlightCount: () => 0,
+      selfUpdate: async () => {}, runReflect: async () => ({ proposalsRaised: 0 }), stepDone: async () => ({ next: null as string | null }),
+      snoozeItem: async () => {}, recipeCatalog: nullRecipeCatalog, traceStore: nullTraceStore,
+      appServices: stubAppServices(),
+      revertAutoCommit,
+    })
+
+    const response = await fetch(
+      `http://127.0.0.1:${server.port}/chat/messages/${notice.id}/responses/revert-gone`,
+      { method: 'POST' },
+    )
+
+    expect(response.status).toBe(200)
+    expect(revertAutoCommit).toHaveBeenCalledWith({ commitSha: 'deadbeef', files: ['src/gone.ts'] })
+    const stored = await chatStore.getThread(subthread.id)
+    const ackMsg = stored?.messages[1]
+    expect(ackMsg?.kind).toBe('acknowledgment')
+    expect(ackMsg?.content).toBe('Revert could not be applied: commit not found')
+  })
 })

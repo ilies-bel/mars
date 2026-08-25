@@ -622,6 +622,17 @@ export interface HttpServerDeps {
    * absent the endpoint returns 501 Not Implemented (safe for test stubs).
    */
   raiseTaskQuestion?: (id: string, question: string) => Promise<void>
+  /**
+   * Restore the operator's uncommitted edits from an auto-commit back to the
+   * working tree as unstaged modifications.  Called when the operator clicks the
+   * revert chip on an auto-commit Notice.  The dep implementation captures
+   * `repoRoot` in its closure so the HTTP layer does not need to know it.
+   *
+   * Returns `{ reverted: true }` on success or `{ reverted: false, reason }` on
+   * failure (e.g. the commit was garbage-collected).  Optional — when absent the
+   * `revert-auto-commit` verb returns a descriptive error acknowledgment.
+   */
+  revertAutoCommit?: (opts: { commitSha: string; files: string[] }) => Promise<{ reverted: boolean; reason?: string }>
 }
 
 export interface HttpServerHandle {

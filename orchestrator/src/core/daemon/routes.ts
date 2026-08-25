@@ -2586,6 +2586,7 @@ export const registerRoutes = (
                 sendJson(res, 400, { ok: false, error: `response verb is not safe: ${response.target.op}` })
                 return
               }
+              let ackLabel = response.label
               if (response.target.op === 'run-reflect') {
                 await deps.runReflect()
               } else if (response.target.op === 'diagnose') {
@@ -2597,6 +2598,16 @@ export const registerRoutes = (
               } else if (response.target.op === 'unarchive-subthread') {
                 if (!response.target.entityId) throw new Error('unarchive-subthread response requires an entityId')
                 await unarchiveSubthread(response.target.entityId)
+              } else if (response.target.op === 'revert-auto-commit') {
+                if (!response.target.entityId) throw new Error('revert-auto-commit response requires an entityId')
+                if (!deps.revertAutoCommit) throw new Error('revertAutoCommit not available')
+                const { commitSha, files } = JSON.parse(response.target.entityId) as { commitSha: string; files: string[] }
+                const result = await deps.revertAutoCommit({ commitSha, files })
+                if (result.reverted) {
+                  ackLabel = `Restored ${files.length} file${files.length === 1 ? '' : 's'} as uncommitted edits`
+                } else {
+                  ackLabel = `Revert could not be applied: ${result.reason ?? 'unknown reason'}`
+                }
               } else {
                 const handler = entityHandlers[response.target.op as EntityOp]
                 if (!handler || !response.target.entityId) {
@@ -2608,8 +2619,8 @@ export const registerRoutes = (
               await appendMessage(
                 message.thread_id,
                 'user',
-                response.label,
-                [{ type: 'text', text: response.label }],
+                ackLabel,
+                [{ type: 'text', text: ackLabel }],
                 { kind: 'acknowledgment', contextScope: 'main' },
               )
               deps.bus?.emit('view.chat-invalidated')
