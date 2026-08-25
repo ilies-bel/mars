@@ -4,8 +4,9 @@ import { load as loadYaml } from 'js-yaml'
 import { VerifyGateInputSchema, type VerifyGateInput } from '../core/verify-gates'
 
 /** All VerifyGateInput fields with non-optional defaults applied, except for
- * `timeoutMin` which remains optional (null = use the process-wide default). */
-type NormalizedVerifyGateInput = Required<Omit<VerifyGateInput, 'timeoutMin'>> &
+ * `timeoutMin` which remains optional (null = use the process-wide default) and
+ * `evidence` which is discovery metadata intentionally omitted at normalization time. */
+type NormalizedVerifyGateInput = Required<Omit<VerifyGateInput, 'timeoutMin' | 'evidence'>> &
   Pick<VerifyGateInput, 'timeoutMin'>
 
 export interface DetectedVerifyGate extends NormalizedVerifyGateInput {
