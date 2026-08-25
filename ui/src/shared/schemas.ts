@@ -567,6 +567,42 @@ const taskFailureItemSchema = actionQueueBaseSchema.extend({
   kind: z.enum(taskFailureKinds),
 })
 
+/**
+ * Kinds whose action-queue items are informational notices the operator
+ * acknowledges with "I have read this." Mirrors NOTICE_KINDS in
+ * orchestrator/src/core/lib/action-queue-kinds.ts — kept as a local literal
+ * list for the same reason proposalSourceSchema is: importing orchestrator
+ * modules into the browser bundle pulls in node-only dependencies.
+ */
+const noticeKinds = [
+  'spend-control-notice',
+  'scheduling-decision',
+  'requeue-warning',
+  'arc-superseded-on-main',
+  'mockup-ready',
+] as const
+
+/**
+ * An informational notice raised by the daemon that the operator acknowledges
+ * by reading. Unlike condition-kind rows, notice rows are stored and closed
+ * atomically when dismissed via `noticeKey`. They carry a `humanSummary` and
+ * optional `humanDetail` for display, and a `noticeKey` used to record the
+ * dismissal durably (via `notice_dismissals`).
+ *
+ * Notice-kind rows are parsed by this schema rather than falling through to
+ * `taskFailureItemSchema`, so `noticeKey` is preserved in the parsed output
+ * and available to downstream consumers (e.g. the acknowledge verb handler).
+ */
+export const noticeItemSchema = actionQueueBaseSchema.extend({
+  kind: z.enum(noticeKinds),
+  /**
+   * Stable key used to record a durable dismissal via `notice_dismissals`.
+   * The daemon checks for a prior record keyed by this value before re-raising,
+   * so a dismissed notice is never re-shown.
+   */
+  noticeKey: z.string(),
+})
+
 const staleWorktreeItemSchema = actionQueueBaseSchema.extend({
   kind: z.literal('stale-worktree'),
   /**
@@ -664,6 +700,11 @@ export const actionQueueItemSchema = z.union([
   awaitingHumanItemSchema,
   reflectRecommendedItemSchema,
   scorerSuggestedItemSchema,
+  // noticeItemSchema must come before taskFailureItemSchema: notice kinds are
+  // also in taskFailureKinds (the daemon's complement includes them), so without
+  // this ordering a notice row would parse via taskFailureItemSchema and lose
+  // its noticeKey field.
+  noticeItemSchema,
   taskFailureItemSchema,
 ])
 
@@ -1105,6 +1146,7 @@ export type ActionQueueHistoryResponse = z.infer<typeof actionQueueHistoryRespon
 
 export type Decision = z.infer<typeof zDecision>
 export type ActionQueueItem = z.infer<typeof actionQueueItemSchema>
+export type NoticeItem = z.infer<typeof noticeItemSchema>
 export type ActionDescriptor = z.infer<typeof actionDescriptorSchema>
 export type AlertChainNode = z.infer<typeof alertChainNodeSchema>
 export type DagNode = z.infer<typeof dagNodeSchema>
