@@ -101,11 +101,14 @@ describe('action-queue recipe registry — exhaustiveness', () => {
   it.each(ACTION_QUEUE_KINDS)('kind "%s" carries the generic dismiss verb only when the daemon can act on it', (kind) => {
     // The daemon's entity handler maps the generic `dismiss` op to proposal
     // dismissal and nothing else; on any other kind the button would 500.
+    // `verify-uncovered` is also in GENERIC_DISMISS_KINDS — dismissing a coverage
+    // gap is a valid operator resolution (the daemon handler covers this kind).
+    const GENERIC_DISMISS_KINDS = new Set(['draft-proposal', 'verify-uncovered'])
     const recipe = lookupRecipe(kind)
     const ctx = makeCtx({ kind })
     const verbs = getRecipeVerbs(recipe, ctx)
     const hasGenericDismiss = verbs.some((v) => v.op === 'dismiss')
-    expect(hasGenericDismiss).toBe(kind === 'draft-proposal')
+    expect(hasGenericDismiss).toBe(GENERIC_DISMISS_KINDS.has(kind))
   })
 })
 
@@ -272,25 +275,20 @@ describe('compound verb mapping', () => {
     expect(verbs[0]).toMatchObject({ op: 'dismiss-daemon-died', label: 'Dismiss', style: 'primary' })
   })
 
-  it('gate-broken offers a Restore gate verb carrying the runnable restore command', () => {
+  it('gate-broken offers a restore-gate primary verb', () => {
     const recipe = lookupRecipe('gate-broken')
     const ctx = makeCtx({ kind: 'gate-broken', payload: { gate: 'gate-abc123' } })
     const verbs = getRecipeVerbs(recipe, ctx)
     const primary = verbs.find((v) => v.style === 'primary')
-    expect(primary).toMatchObject({
-      op: 'copy',
-      label: 'Restore gate',
-      hint: 'mars verify-gate restore gate-abc123',
-    })
+    expect(primary).toMatchObject({ op: 'restore-gate', label: 'Restore gate' })
   })
 
-  it('every gate-broken verb op is one the client or daemon actually handles', () => {
-    // A bespoke op (e.g. 'restore-gate') renders a button that POSTs to
-    // /actions/<op>/:id and 404s with "Unknown action op" — indistinguishable
-    // to the operator from a restore that refused.
+  it('every gate-broken verb op is one the daemon actually handles', () => {
+    // restore-gate POSTs to /actions/restore-gate/:id — the handler runs the
+    // gate's command asynchronously via restoreVerifyGate (app-service).
     const recipe = lookupRecipe('gate-broken')
     const ctx = makeCtx({ kind: 'gate-broken', payload: { gate: 'gate-abc123' } })
-    const handled = new Set(['copy', 'dismiss', 'snooze'])
+    const handled = new Set(['restore-gate', 'dismiss', 'snooze'])
     for (const verb of getRecipeVerbs(recipe, ctx)) {
       expect(handled).toContain(verb.op)
     }
@@ -303,6 +301,54 @@ describe('compound verb mapping', () => {
     const ops = verbs.map((v) => v.op)
     expect(ops).toContain('restart')
     expect(ops).toContain('purge')
+  })
+
+  it('verify-uncovered has a copy verb pre-filled from proposedGate when present', () => {
+    const recipe = lookupRecipe('verify-uncovered')
+    const ctx = makeCtx({
+      kind: 'verify-uncovered',
+      payload: {
+        scope: 'orchestrator/src',
+        changedPaths: ['orchestrator/src/core/queue.ts'],
+        recipe: null,
+        proposedGate: {
+          name: 'typecheck',
+          cmd: 'npx',
+          args: ['tsc', '--noEmit'],
+          scope: 'orchestrator',
+          evidence: 'tsconfig.json',
+        },
+      },
+    })
+    const verbs = getRecipeVerbs(recipe, ctx)
+    const copyVerb = verbs.find((v) => v.op === 'copy')
+    expect(copyVerb).toMatchObject({ label: 'Add gate check', style: 'primary' })
+    expect(copyVerb?.hint).toBe(
+      'mars verify-gate add --scope orchestrator --name typecheck --cmd npx -- tsc --noEmit',
+    )
+  })
+
+  it('verify-uncovered falls back to a minimal scope hint when no proposedGate', () => {
+    const recipe = lookupRecipe('verify-uncovered')
+    const ctx = makeCtx({
+      kind: 'verify-uncovered',
+      payload: { scope: 'ui/src', changedPaths: ['ui/src/index.ts'], recipe: null },
+    })
+    const verbs = getRecipeVerbs(recipe, ctx)
+    const copyVerb = verbs.find((v) => v.op === 'copy')
+    expect(copyVerb?.hint).toBe('mars verify-gate add --scope ui/src --name <name> --cmd <cmd>')
+  })
+
+  it('verify-uncovered auto-appends Dismiss and Snooze (stored row, in GENERIC_DISMISS_KINDS)', () => {
+    const recipe = lookupRecipe('verify-uncovered')
+    const ctx = makeCtx({
+      kind: 'verify-uncovered',
+      payload: { scope: 'orchestrator', changedPaths: [], recipe: null },
+    })
+    const verbs = getRecipeVerbs(recipe, ctx)
+    const ops = verbs.map((v) => v.op)
+    expect(ops).toContain('dismiss')
+    expect(ops).toContain('snooze')
   })
 
   it('awaiting-validation has Validate+merge (primary) and Reject (danger)', () => {
@@ -388,11 +434,11 @@ describe('compound verb mapping', () => {
     })
   })
 
-  it('scorer-suggested humanSummary uses workflowName from payload', () => {
+  it('scorer-suggested humanSummary uses workflow from payload', () => {
     const recipe = lookupRecipe('scorer-suggested')
     const ctx = makeCtx({
       kind: 'scorer-suggested',
-      payload: { workflowName: 'implement' },
+      payload: { workflow: 'implement' },
     })
     expect(recipe.humanSummary(ctx)).toContain('implement')
   })

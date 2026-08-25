@@ -152,8 +152,12 @@ const SNOOZE: RecipeVerb = { op: 'snooze', label: 'Snooze', style: 'snooze' }
  * operation (e.g. `dismiss-daemon-died` deletes the crash marker) or by the
  * condition ceasing to hold; stored operator-decision kinds resolve atomically
  * through their own verbs.
+ *
+ * `verify-uncovered` is included because it is a stored operator-decision row
+ * and the operator may choose to dismiss the coverage gap rather than add a
+ * gate — dismissal is a valid resolution alongside adding a check.
  */
-const GENERIC_DISMISS_KINDS = new Set<string>(['draft-proposal'])
+const GENERIC_DISMISS_KINDS = new Set<string>(['draft-proposal', 'verify-uncovered'])
 
 /**
  * Return the full verb list for a recipe: kind-specific verbs, then Dismiss
@@ -770,28 +774,18 @@ const RECIPE_DEFINITIONS = {
       // sibling of this same defect class.
     }),
     // Restoring a gate re-runs that gate's own command — a full build or test
-    // suite that can take minutes. That does not belong inside a daemon HTTP
-    // request, so this is a `copy` verb handing the operator the exact runnable
-    // command, the same gesture `scorer-suggested` and `workflow-draft-pending`
-    // use for their deliberate mutations. Primary style: it's the row's whole
-    // reason to exist.
-    //
-    // The op MUST be one the daemon (or the client) actually handles. A bespoke
-    // `restore-gate` op renders an identical-looking button that POSTs to
-    // `/actions/restore-gate/:id` and 404s with `Unknown action op` — a dead
-    // button is worse than no button, since the operator reads it as "I tried
-    // to restore and it refused".
-    verbs: (ctx) => {
-      const gate = str(ctx.payload['gate'])
-      return [
-        {
-          op: 'copy',
-          label: 'Restore gate',
-          style: 'primary',
-          hint: `mars verify-gate restore ${gate || '<gate-id>'}`,
-        },
-      ]
-    },
+    // suite that can take minutes. The daemon's `restore-gate` op handler
+    // (see app-service `restoreVerifyGate` and the `/actions/restore-gate/:id`
+    // route) runs it asynchronously and updates the gate's health state without
+    // blocking the HTTP response. Primary style: it's the row's whole reason
+    // to exist.
+    verbs: (_ctx) => [
+      {
+        op: 'restore-gate',
+        label: 'Restore gate',
+        style: 'primary',
+      },
+    ],
   },
 
   'verify-uncovered': {
@@ -806,7 +800,31 @@ const RECIPE_DEFINITIONS = {
       changedPaths: ctx.payload['changedPaths'],
       recipe: str(ctx.payload['recipe']),
     }),
-    verbs: [],
+    // `copy` hands the operator the exact `mars verify-gate add` command pre-filled
+    // from `proposedGate` when the raiser had enough context to encode a candidate
+    // check, or a minimal `--scope` form when it did not. Either way the operator
+    // can run or adapt the command without looking up the syntax.
+    // Dismiss is appended automatically by `getRecipeVerbs` (via GENERIC_DISMISS_KINDS)
+    // so the operator can close the row if the coverage gap is intentional.
+    verbs: (ctx) => {
+      const scope = str(ctx.payload['scope']) || '.'
+      const proposed = ctx.payload['proposedGate'] as
+        | { name?: string; cmd?: string; args?: string[]; scope?: string }
+        | undefined
+      const hint =
+        proposed?.name && proposed?.cmd
+          ? [
+              'mars verify-gate add',
+              `--scope ${str(proposed.scope) || scope}`,
+              `--name ${proposed.name}`,
+              `--cmd ${proposed.cmd}`,
+              ...(Array.isArray(proposed.args) && proposed.args.length > 0
+                ? ['--', ...proposed.args]
+                : []),
+            ].join(' ')
+          : `mars verify-gate add --scope ${scope} --name <name> --cmd <cmd>`
+      return [{ op: 'copy', label: 'Add gate check', style: 'primary', hint }]
+    },
   },
 
   'signature-storm': {
