@@ -166,6 +166,103 @@ export const autoCommitOperatorDirt = async (
   return { committed: true, sha: rev.stdout.trim(), files }
 }
 
+export interface RevertAutoCommitArgs {
+  /** Repo root where the integration branch is checked out. */
+  repoRoot: string
+  /**
+   * The SHA of the auto-commit to revert.  Must be a commit that still exists
+   * in the repo (i.e. has not been garbage-collected).  If it no longer exists,
+   * the function returns `{ reverted: false, reason: 'commit not found' }`.
+   */
+  commitSha: string
+  /**
+   * The paths that were captured in the auto-commit.  Only these paths are
+   * restored to the working tree and unstaged; every other path in the repo is
+   * left exactly as it is.  Callers should source this list from the
+   * `AutoCommitOperatorDirtResult.files` that was recorded in the Notice.
+   */
+  files: string[]
+  traceCtx?: TraceCtx
+}
+
+export type RevertAutoCommitResult = { reverted: true } | { reverted: false; reason: string }
+
+/**
+ * Restore the operator's uncommitted edits from an auto-commit back to the
+ * working tree as unstaged modifications, without rewriting history.
+ *
+ * Two-step mechanics:
+ *
+ *   1. `git checkout <sha> -- <files>` — restores the committed content to
+ *      both the index and the working tree (i.e. "as if you just staged and
+ *      committed those edits by hand").
+ *   2. `git reset <sha>~1 -- <files>` — resets the index for those paths to
+ *      the parent commit's state, leaving the working tree untouched.
+ *
+ * Result: the index holds the pre-edit content and the working tree holds the
+ * operator's edits, so `git status` shows the files as *unstaged* modifications
+ * — indistinguishable from a fresh hand-edit.  The auto-commit remains intact
+ * in the log (history is never rewritten).
+ *
+ * Returns `{ reverted: false, reason }` rather than throwing on any git
+ * failure so the caller can surface the failure in the Notice without crashing
+ * the merge path.
+ */
+export const revertAutoCommit = async (
+  args: RevertAutoCommitArgs,
+): Promise<RevertAutoCommitResult> => {
+  const git = resolveGitBin()
+  const { repoRoot, commitSha, files, traceCtx } = args
+
+  if (files.length === 0) {
+    return { reverted: false, reason: 'no files specified' }
+  }
+
+  // Step 0: verify the commit still exists.
+  const catFile = await execProbe(
+    git,
+    ['cat-file', '-t', commitSha],
+    { cwd: repoRoot },
+    traceCtx,
+  )
+  if (catFile.exitCode !== 0 || catFile.stdout.trim() !== 'commit') {
+    return { reverted: false, reason: 'commit not found' }
+  }
+
+  // Step 1: restore the committed content to both index and working tree.
+  const checkout = await execProbe(
+    git,
+    ['checkout', commitSha, '--', ...files],
+    { cwd: repoRoot },
+    traceCtx,
+  )
+  if (checkout.exitCode !== 0) {
+    const detail = [checkout.stderr.trim(), checkout.stdout.trim()].filter(Boolean).join(' | ')
+    return {
+      reverted: false,
+      reason: `git checkout failed: ${detail || `(exit ${checkout.exitCode})`}`,
+    }
+  }
+
+  // Step 2: reset the index for those paths to the parent commit, leaving
+  // the working tree unchanged so the files appear as unstaged modifications.
+  const reset = await execProbe(
+    git,
+    ['reset', `${commitSha}~1`, '--', ...files],
+    { cwd: repoRoot },
+    traceCtx,
+  )
+  if (reset.exitCode !== 0) {
+    const detail = [reset.stderr.trim(), reset.stdout.trim()].filter(Boolean).join(' | ')
+    return {
+      reverted: false,
+      reason: `git reset failed: ${detail || `(exit ${reset.exitCode})`}`,
+    }
+  }
+
+  return { reverted: true }
+}
+
 /**
  * Wall-clock ceiling for {@link probeMainTypecheck}. A typecheck that has not
  * answered in two minutes is not a cheap detector any more, and the merge lock
