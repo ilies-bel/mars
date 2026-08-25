@@ -555,13 +555,13 @@ const RECIPE_DEFINITIONS = {
           const p = ctx.payload as Partial<LeaseParkPayload>
           const owner = str(p.leaseOwner) || 'someone'
           const step = str(p.stepName)
-          return `Pick up this task — it is paused${step ? ` at step '${step}'` : ' at an interactive step'} for ${owner} to complete. Signal done when the step is finished.`
+          return `${owner} is working interactively on this task${step ? ` (step '${step}')` : ''} — signal done when the step is finished.`
         }
         case 'lease-expired': {
           const p = ctx.payload as Partial<LeaseExpiredPayload>
           const owner = str(p.leaseOwner) || 'someone'
-          const age = typeof p.ageMinutes === 'number' ? ` for ${p.ageMinutes} min` : ''
-          return `Decide what to do — ${owner}'s session has been idle${age} with no progress. Continue in the worktree or release this task.`
+          const age = typeof p.ageMinutes === 'number' ? ` ${p.ageMinutes} min` : ''
+          return `${owner}'s session has been idle${age} — nobody is working on this task. Continue in the worktree or release it.`
         }
         case 'escalation': {
           // The escalating agent's own words are the only accurate summary
