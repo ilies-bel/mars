@@ -269,10 +269,15 @@ const REGISTRY: { [Kind in AutonomousNoticeKind]: NoticeKindEntry<Kind> } = {
     offers: (p) => [
       {
         id: 'revert',
-        label: 'Revert it',
+        label: 'Undo this commit',
         // `verb` target: the daemon resolves this by running `git revert`
-        // against the named commit sha. The consumer slice wires the handler.
-        target: { type: 'verb', op: 'revert-commit', entityId: p.commitSha },
+        // against the named commit. The entityId encodes both the sha and the
+        // affected files so the handler can report exactly what it reverted.
+        target: {
+          type: 'verb',
+          op: 'revert-auto-commit',
+          entityId: JSON.stringify({ commitSha: p.commitSha, files: p.files }),
+        },
       },
       {
         id: 'stop',

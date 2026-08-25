@@ -129,19 +129,23 @@ describe('offersForConversationNotice', () => {
     }
   })
 
-  it('includes a revert-commit verb offer for the auto-commit notice targeting the commit sha', () => {
-    // Contract for "Add revert offer to auto-commit notice": an offer with
-    // id 'revert' must be present, typed as a daemon verb, and carry the
-    // commitSha as the entityId so the handler knows which commit to revert.
+  it('includes a revert-auto-commit verb offer for the auto-commit notice encoding commitSha and files', () => {
+    // Contract for "Add revert offer to auto-commit notice" (DEC-3): an offer
+    // with id 'revert' must be present, typed as a daemon verb with
+    // op='revert-auto-commit', and carry a JSON-serialised { commitSha, files }
+    // entityId so the handler knows exactly which commit to revert and can
+    // surface the affected paths to the operator.
     const p = payloads['merge.operator-auto-commit']
     const offers = offersForConversationNotice('merge.operator-auto-commit', p)
     const revert = offers.find((o) => o.id === 'revert')
     expect(revert, 'revert offer').toBeDefined()
-    expect(revert!.target).toEqual({
-      type: 'verb',
-      op: 'revert-commit',
-      entityId: p.commitSha,
-    })
+    expect(revert!.label).toBe('Undo this commit')
+    expect(revert!.target.type).toBe('verb')
+    // Narrow to verb target so TS knows `op` and `entityId` exist.
+    if (revert!.target.type !== 'verb') throw new Error('not a verb target')
+    expect(revert!.target.op).toBe('revert-auto-commit')
+    const decoded = JSON.parse(revert!.target.entityId as string)
+    expect(decoded).toEqual({ commitSha: p.commitSha, files: p.files })
   })
 })
 
