@@ -137,6 +137,7 @@ import {
   removeVerifyGate,
   restoreVerifyGate,
   listVerifyGates,
+  getVerifyGate,
   type VerifyGate,
   type VerifyGateInput,
 } from './verify-gates'
@@ -381,12 +382,13 @@ export interface AppServices {
    */
   viewGates: () => Promise<{ gates: VerifyGate[] }>
   /**
-   * Add a new verify gate. Returns the generated id.
+   * Add a new verify gate. Returns the newly created gate row.
    *
+   * Throws a validation error when name, cmd, or scope (if supplied) is empty.
    * Throws (UNIQUE constraint violation) if a gate with the same (scope, name)
    * already exists.
    */
-  addGate: (input: VerifyGateInput) => Promise<{ id: string }>
+  addGate: (input: VerifyGateInput) => Promise<VerifyGate>
   /**
    * Remove a verify gate by id or (scope, name) pair.
    * Returns `{ removed: true }` when a row was deleted, `{ removed: false }` when
@@ -2052,8 +2054,13 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
   }
 
   const addGate: AppServices['addGate'] = async (input) => {
+    if (!input.name?.trim()) throw new Error('name is required')
+    if (!input.cmd?.trim()) throw new Error('cmd is required')
+    if (input.scope !== undefined && !input.scope.trim()) throw new Error('scope must not be empty when provided')
     const id = await addVerifyGate(input)
-    return { id }
+    const gate = await getVerifyGate(id)
+    if (!gate) throw new Error(`gate '${id}' not found after insertion`)
+    return gate
   }
 
   const removeGate: AppServices['removeGate'] = async (idOrRef) => {

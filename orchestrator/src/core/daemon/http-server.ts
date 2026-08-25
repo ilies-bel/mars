@@ -9,7 +9,7 @@ import type { AppServices } from '../app-services'
 import type { DispatchPauseState, PauseReason } from './pause-state'
 import type { ChatRunner } from './chat-runner'
 import type { ChatStreamHub } from './chat-contracts'
-import type { VerifyGate } from '../verify-gates'
+import type { VerifyGate, VerifyGateInput } from '../verify-gates'
 import { registerRoutes } from './routes'
 
 /** Wire shape for a single step span, returned by GET /view/step-spans. */
@@ -433,6 +433,19 @@ export interface HttpServerDeps {
    * the endpoint returns 501 Not Implemented.
    */
   restoreGate?: (id: string) => Promise<{ restored: boolean }>
+  /**
+   * Add a new verify gate and return the created gate row.
+   * Backs `POST /gates`. Throws on validation failure or duplicate (scope, name).
+   * Optional — when absent the endpoint returns 501 Not Implemented.
+   */
+  addGate?: (input: VerifyGateInput) => Promise<VerifyGate>
+  /**
+   * Remove a verify gate by id.
+   * Backs `DELETE /gates/:id`. Returns `{ removed: false }` when no gate
+   * with that id exists; the route maps that to a 404.
+   * Optional — when absent the endpoint returns 501 Not Implemented.
+   */
+  removeGate?: (id: string) => Promise<{ removed: boolean }>
   /**
    * Promote a fully-shaped draft proposal: flip its status from `draft` →
    * `prd-ready`, run the slicer to create tasks, and return the resulting

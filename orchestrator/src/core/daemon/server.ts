@@ -5334,6 +5334,16 @@ export const startDaemon = async (
       bus.emit('view.action-queue-invalidated')
       return result
     },
+    addGate: async (input) => {
+      const gate = await appServices.addGate(input)
+      bus.emit('view.action-queue-invalidated')
+      return gate
+    },
+    removeGate: async (id) => {
+      const result = await appServices.removeGate(id)
+      if (result.removed) bus.emit('view.action-queue-invalidated')
+      return result
+    },
     dismissVerifyUncovered: async (id) => {
       const { setActionQueueState } = await import('../lib/action-queue')
       await setActionQueueState(id, 'resolved', { resolution: 'dismissed', by: 'operator' })

@@ -341,6 +341,8 @@ const handleEventsRequest = async (
  *   DELETE /verify-gates/:id           → remove a verify gate
  *   POST /verify-gates/:id/restore     → restore a quarantined gate (config write)
  *   POST /actions/dismiss-verify-uncovered/:id → dismiss open verify-uncovered AQ row
+ *   POST /gates                        → add a gate via app-service layer ({ ok, gate })
+ *   DELETE /gates/:id                  → remove a gate via app-service layer
  *
  * Socket binding, listening, and the OS-assigned port are owned by
  * `startHttpServer` in `http-server.ts`, not this module.
@@ -3062,6 +3064,91 @@ export const registerRoutes = (
         const id = decodeURIComponent(dismissUncoveredMatch[1])
         setActionQueueState(id, 'resolved', { by: 'operator', resolution: 'dismissed' })
           .then(() => {
+            deps.bus?.emit('view.action-queue-invalidated')
+            sendJson(res, 200, { ok: true })
+          })
+          .catch((err: unknown) => sendError(res, err))
+        return
+      }
+    }
+
+    // ── /gates — app-service layer gate management ────────────────────────────
+    //
+    // These two routes mirror /verify-gates but delegate through the app-service
+    // layer (deps.addGate / deps.removeGate) and return the full gate row on
+    // creation. Both bypass the draining gate — they are operator config writes.
+    //
+    //   POST   /gates      → add a gate, returns 201 { ok, gate }
+    //   DELETE /gates/:id  → remove a gate, returns 200 { ok } or 404
+
+    // POST /gates — register a new verify gate via the app-service layer.
+    // Body conforms to VerifyGateInput (validated via VerifyGateInputSchema).
+    // Returns 201 { ok: true, gate } on success, 400 on validation failure,
+    // 409 when a gate with the same (scope, name) already exists.
+    if (req.method === 'POST' && req.url === '/gates') {
+      if (!deps.addGate) {
+        sendJson(res, 501, { ok: false, error: 'addGate not implemented' })
+        return
+      }
+      let rawBody = ''
+      req.on('data', (chunk: Buffer) => { rawBody += chunk.toString() })
+      req.on('end', () => {
+        let body: unknown
+        try {
+          body = JSON.parse(rawBody)
+        } catch {
+          sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
+          return
+        }
+        const parsed = VerifyGateInputSchema.safeParse(body)
+        if (!parsed.success) {
+          const msg = parsed.error.issues[0]?.message ?? 'invalid body'
+          sendJson(res, 400, { ok: false, error: msg })
+          return
+        }
+        deps.addGate!(parsed.data)
+          .then((gate) => {
+            deps.bus?.emit('view.action-queue-invalidated')
+            sendJson(res, 201, { ok: true, gate })
+          })
+          .catch((err: unknown) => {
+            const msg = err instanceof Error ? err.message : String(err)
+            if (msg.toLowerCase().includes('unique')) {
+              sendJson(res, 409, {
+                ok: false,
+                error: 'a gate with that name already exists in this scope',
+                errorCode: 'CONFLICT',
+              })
+              return
+            }
+            sendError(res, err)
+          })
+      })
+      req.on('error', (err: unknown) => sendError(res, err))
+      return
+    }
+
+    // DELETE /gates/:id — remove a verify gate via the app-service layer.
+    // Returns 200 { ok: true } on success, 404 when the gate does not exist.
+    // Bypasses the draining gate (config write). Emits view invalidation so
+    // the Steward gateHealth panel reflects the removal.
+    {
+      const removeGateMatch =
+        req.method === 'DELETE' && req.url
+          ? req.url.match(/^\/gates\/([^/?]+)(?:\?.*)?$/)
+          : null
+      if (removeGateMatch && removeGateMatch[1]) {
+        if (!deps.removeGate) {
+          sendJson(res, 501, { ok: false, error: 'removeGate not implemented' })
+          return
+        }
+        const id = decodeURIComponent(removeGateMatch[1])
+        deps.removeGate(id)
+          .then(({ removed }) => {
+            if (!removed) {
+              sendJson(res, 404, { ok: false, error: `gate '${id}' not found` })
+              return
+            }
             deps.bus?.emit('view.action-queue-invalidated')
             sendJson(res, 200, { ok: true })
           })
