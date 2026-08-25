@@ -154,6 +154,7 @@ export type GateHealthEntry = Pick<
   | 'required'
   | 'state'
   | 'source'
+  | 'evidence'
   | 'quarantinedAt'
   | 'quarantineSignature'
   | 'lastFailureSignature'
@@ -1917,6 +1918,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
         required: gate.required,
         state: gate.state,
         source: gate.source,
+        evidence: gate.evidence,
         command: { cmd: gate.cmd, args: gate.args },
         quarantinedAt: gate.quarantinedAt,
         quarantineSignature: gate.quarantineSignature,

@@ -617,6 +617,10 @@ const GateHealthLane = ({
                   <code className="mt-1 block break-all font-mono text-micro text-foreground">
                     {gate.command.cmd}{gate.command.args.length > 0 ? ` ${gate.command.args.join(' ')}` : ''}
                   </code>
+                  <div className="mt-1 font-mono text-micro text-muted-foreground">
+                    <p>Source: {gate.source}</p>
+                    {gate.evidence !== null && <p>Evidence: {gate.evidence}</p>}
+                  </div>
                   {gate.state === 'quarantined' && (
                     <div className="mt-2 space-y-1 font-mono text-micro text-error">
                       <p>

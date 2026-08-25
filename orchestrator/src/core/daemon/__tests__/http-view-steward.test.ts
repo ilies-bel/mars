@@ -250,6 +250,88 @@ describe('GET /view/steward', () => {
     }
   })
 
+  it('includes evidence on gate health entries in the response', async () => {
+    const { httpServer } = await loadModules(repo)
+
+    const gateWithEvidence = {
+      id: 'gate-1',
+      scope: '.',
+      name: 'typecheck',
+      tier: 'task',
+      required: true,
+      state: 'active' as const,
+      source: 'onboarding',
+      evidence: 'package.json script "typecheck"',
+      command: { cmd: 'npm', args: ['run', 'typecheck'] },
+      quarantinedAt: null,
+      quarantineSignature: null,
+      lastFailureSignature: null,
+      lastFailureOriginId: null,
+      lastFailureAt: null,
+    }
+
+    const { port, close } = await httpServer.startHttpServer(
+      makeDeps({
+        viewSteward: async () => ({
+          ...(await stubAppServices().viewSteward({ liveCap: 8, baselineCap: 4, isPaused: false })),
+          gateHealth: { scopes: [{ scope: '.', gates: [gateWithEvidence] }] },
+        }),
+      }),
+    )
+
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/view/steward`)
+      expect(res.status).toBe(200)
+      const body = (await res.json()) as { gateHealth: { scopes: Array<{ scope: string; gates: Array<{ evidence: string | null }> }> } }
+      const gate = body.gateHealth.scopes[0]?.gates[0]
+      expect(gate).toBeDefined()
+      expect(gate?.evidence).toBe('package.json script "typecheck"')
+    } finally {
+      await close()
+    }
+  })
+
+  it('returns null evidence when a gate has no recorded evidence', async () => {
+    const { httpServer } = await loadModules(repo)
+
+    const gateWithoutEvidence = {
+      id: 'gate-2',
+      scope: '.',
+      name: 'lint',
+      tier: 'task',
+      required: false,
+      state: 'active' as const,
+      source: 'operator',
+      evidence: null,
+      command: { cmd: 'npm', args: ['run', 'lint'] },
+      quarantinedAt: null,
+      quarantineSignature: null,
+      lastFailureSignature: null,
+      lastFailureOriginId: null,
+      lastFailureAt: null,
+    }
+
+    const { port, close } = await httpServer.startHttpServer(
+      makeDeps({
+        viewSteward: async () => ({
+          ...(await stubAppServices().viewSteward({ liveCap: 8, baselineCap: 4, isPaused: false })),
+          gateHealth: { scopes: [{ scope: '.', gates: [gateWithoutEvidence] }] },
+        }),
+      }),
+    )
+
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/view/steward`)
+      expect(res.status).toBe(200)
+      const body = (await res.json()) as { gateHealth: { scopes: Array<{ scope: string; gates: Array<{ evidence: string | null }> }> } }
+      const gate = body.gateHealth.scopes[0]?.gates[0]
+      expect(gate).toBeDefined()
+      expect(gate?.evidence).toBeNull()
+    } finally {
+      await close()
+    }
+  })
+
   it('returns 500 when viewSteward throws', async () => {
     const { httpServer } = await loadModules(repo)
 

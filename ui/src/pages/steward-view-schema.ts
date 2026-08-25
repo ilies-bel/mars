@@ -14,6 +14,7 @@ const GateHealthEntrySchema = z.object({
   required: z.boolean(),
   state: z.enum(['active', 'quarantined']),
   source: z.string(),
+  evidence: z.string().nullable(),
   command: z.object({
     cmd: z.string(),
     args: z.array(z.string()),
