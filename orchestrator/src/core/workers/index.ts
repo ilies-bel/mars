@@ -32,6 +32,7 @@ import {
   resolveProviderName,
   reportsContextOccupancy,
 } from './providers'
+import { isCliProvider } from './provider-registry'
 import { contextGuardMode } from '../lib/claude-usage'
 import { runPtySession } from './run-pty-session'
 import {
@@ -676,8 +677,15 @@ const buildWorker = (config: WorkerConfig): Worker => {
             `check (input side) and the window/arc token ceilings ('mars operator'), which bound SPEND after each run.`,
         )
       }
-      return config.runtime === 'pty'
-        ? runPtySession({
+      if (config.runtime === 'pty') {
+        if (!isCliProvider(provider)) {
+          throw new Error(
+            `Worker '${config.name}': runtime 'pty' requires a CLI subprocess provider, ` +
+              `but '${config.provider}' is not one (no spawnArgv). ` +
+              `Use a CliSubprocessProvider or switch to runtime 'headless'.`,
+          )
+        }
+        return runPtySession({
             provider,
             prompt,
             cwd: options.cwd,
@@ -692,7 +700,8 @@ const buildWorker = (config: WorkerConfig): Worker => {
             agent: config.agent,
             appendSystemPrompt: config.appendSystemPrompt,
           })
-        : provider.headless.run(
+      }
+      return provider.headless.run(
             prompt,
             {
               cwd: options.cwd,

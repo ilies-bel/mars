@@ -11,7 +11,8 @@ import fs from 'node:fs'
 import pathMod from 'node:path'
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest'
 import type { PtyHandle } from '../../lib/pty/spawn'
-import type { Provider } from '../provider-types'
+import type { CliSubprocessProvider } from '../provider-types'
+import { type CliProviderDescriptor } from '../provider-registry'
 
 // ---------------------------------------------------------------------------
 // Module-level stubs. vi.mock is hoisted; the factories must be self-contained.
@@ -65,7 +66,7 @@ const makeFakeHandle = (): PtyHandle & { _exitListeners: Array<(code: number, si
 
 const makeProvider = (
   doneSignalWait: (sessionId: string, cwd: string, signal: AbortSignal) => Promise<void>,
-): Provider => ({
+): CliSubprocessProvider => ({
   name: 'claude',
   conversationMemory: () => PTY_TEST_CONVERSATION_MEMORY,
   spawnArgv: ({ model, sessionId }: { model?: string; sessionId?: string } = {}) => [
@@ -262,7 +263,7 @@ describe('runPtySession — no doneSignal (process-exit fallback)', () => {
   })
 
   it('resolves with exitCode 0 when the pty process exits naturally', async () => {
-    const providerNoSignal: Provider = {
+    const providerNoSignal: CliSubprocessProvider = {
       name: 'claude',
       conversationMemory: () => PTY_TEST_CONVERSATION_MEMORY,
       spawnArgv: () => ['claude'],
@@ -536,7 +537,7 @@ describe('runPtySession — provider.prepare hook', () => {
       return fakeHandle
     })
 
-    const provider: Provider = {
+    const provider: CliSubprocessProvider = {
       name: 'claude',
       conversationMemory: () => PTY_TEST_CONVERSATION_MEMORY,
       spawnArgv: () => ['claude'],
@@ -569,7 +570,7 @@ describe('runPtySession — provider.prepare hook', () => {
     // non-undefined string is valid here.
     const prepareSpy = vi.fn()
 
-    const provider: Provider = {
+    const provider: CliSubprocessProvider = {
       name: 'claude',
       conversationMemory: () => PTY_TEST_CONVERSATION_MEMORY,
       spawnArgv: () => ['claude'],
@@ -596,7 +597,7 @@ describe('runPtySession — provider.prepare hook', () => {
   it('does not call provider.prepare when sessionId is absent', async () => {
     const prepareSpy = vi.fn()
 
-    const provider: Provider = {
+    const provider: CliSubprocessProvider = {
       name: 'claude',
       conversationMemory: () => PTY_TEST_CONVERSATION_MEMORY,
       spawnArgv: () => ['claude'],
@@ -620,7 +621,7 @@ describe('runPtySession — provider.prepare hook', () => {
   it('PROVIDERS.claude.prepare writes the Stop hook into <cwd>/.claude/settings.json', () => {
     const sessionId = 'claude-prepare-hook-sess'
 
-    PROVIDERS.claude.prepare?.(tmpDir, sessionId)
+    ;(PROVIDERS.claude as CliProviderDescriptor).prepare?.(tmpDir, sessionId)
 
     const settingsPath = pathMod.join(tmpDir, '.claude', 'settings.json')
     expect(fs.existsSync(settingsPath)).toBe(true)
@@ -755,7 +756,7 @@ describe('runPtySession — readiness gate', () => {
     }
     vi.mocked(spawnPty).mockReturnValue(handle as unknown as ReturnType<typeof makeFakeHandle>)
 
-    const provider: Provider = {
+    const provider: CliSubprocessProvider = {
       name: 'claude',
       conversationMemory: () => PTY_TEST_CONVERSATION_MEMORY,
       spawnArgv: () => ['claude'],
@@ -810,7 +811,7 @@ describe('runPtySession — readiness gate', () => {
     }
     vi.mocked(spawnPty).mockReturnValue(handle as unknown as ReturnType<typeof makeFakeHandle>)
 
-    const provider: Provider = {
+    const provider: CliSubprocessProvider = {
       name: 'claude',
       conversationMemory: () => PTY_TEST_CONVERSATION_MEMORY,
       spawnArgv: () => ['claude'],
@@ -875,7 +876,7 @@ describe('runPtySession — codex provider (prompt-scan done signal)', () => {
     vi.mocked(spawnPty).mockReturnValue(codexHandle as unknown as ReturnType<typeof makeFakeHandle>)
 
     const runPromise = runPtySession({
-      provider: PROVIDERS.codex,
+      provider: PROVIDERS.codex as CliProviderDescriptor,
       prompt: 'scaffold the feature',
       cwd: tmpDir,
       sessionId: 'codex-integration-sess',

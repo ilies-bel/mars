@@ -22,22 +22,52 @@
  */
 
 import { createServiceRegistry, type Disposer } from '@mars/workflow'
-import type { Provider, ProviderModelTier, ProviderModels, ProviderName } from './provider-types'
+import type {
+  CliHeadlessAdapter,
+  CliSubprocessProvider,
+  ProviderCore,
+  ProviderModelTier,
+  ProviderModels,
+  ProviderName,
+} from './provider-types'
 
 /**
- * A registered provider's full descriptor: everything the old `Provider`
- * interface carried, plus the provider-native model-tier table that used to
- * live in the separate `PROVIDER_MODELS` record, and the (optional) binary
- * resolution overrides that used to live in `provider-bin.ts`'s
- * `PROVIDER_BIN_ENV` / `PROVIDER_BIN_NAME` records.
+ * Transport-neutral registered provider descriptor. Any provider kind can be
+ * registered: CLI subprocess, key-backed HTTP, or a future transport. Only the
+ * core members (name, models, conversationMemory, headless) are required.
+ *
+ * Optional `binEnvVar` / `binName` are kept here (rather than on
+ * CliProviderDescriptor) so provider-bin.ts can read them through the common
+ * getProvider() return type without a type guard.
  */
-export interface ProviderDescriptor extends Provider {
+export interface ProviderDescriptor extends ProviderCore {
   readonly models: ProviderModels
   /** Env var consulted to override this provider's binary path. Defaults to `MARS_<NAME>_BIN`. */
   readonly binEnvVar?: string
   /** Bare executable name searched on PATH when no override is set. Defaults to the provider name. */
   readonly binName?: string
 }
+
+/**
+ * CLI-subprocess provider descriptor — the kind the three shipped providers
+ * (claude, gemini, codex) register as. Extends both ProviderDescriptor (core +
+ * models) and CliSubprocessProvider (spawnArgv, feedPrompt, etc.), and narrows
+ * `headless` to CliHeadlessAdapter so readOutput is available.
+ */
+export interface CliProviderDescriptor extends ProviderDescriptor, CliSubprocessProvider {
+  readonly headless: CliHeadlessAdapter
+}
+
+/**
+ * Type guard: true when the descriptor implements the CLI-subprocess extension
+ * (has a `spawnArgv` function). Use this before passing a provider to
+ * runPtySession or any other site that requires CliSubprocessProvider.
+ */
+export const isCliProvider = (p: ProviderDescriptor): p is CliProviderDescriptor =>
+  // Double-cast through `unknown` because ProviderDescriptor.headless (HeadlessAdapter)
+  // and CliSubprocessProvider.headless (CliHeadlessAdapter) differ structurally —
+  // TypeScript rejects a direct cast. The intent is purely a runtime presence check.
+  typeof (p as unknown as Partial<CliSubprocessProvider>).spawnArgv === 'function'
 
 type ProviderMap = Record<ProviderName, ProviderDescriptor>
 

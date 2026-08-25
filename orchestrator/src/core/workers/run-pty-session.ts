@@ -8,14 +8,14 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { spawnPty } from '../lib/pty/spawn'
-import type { Provider } from './provider-types'
+import type { CliSubprocessProvider } from './provider-types'
 import { buildWorkerEnv } from '../ports/executor/executor-helpers'
 import type { AgentEffort, AgentPermissionMode, RunAgentResult } from '../ports/executor/types'
 import type { AgentEvent } from '../lib/claude-stream'
 import { watchPromptScan } from './prompt-scan-done'
 
 export interface RunPtySessionArgs {
-  readonly provider: Provider
+  readonly provider: CliSubprocessProvider
   readonly prompt: string
   readonly cwd: string
   readonly sessionId?: string
