@@ -84,6 +84,10 @@ const KIND_LABEL: Record<string, string> = {
   'gate-broken': 'gate broken',
   'recovery-abandoned': 'recovery abandoned',
   'scorer-suggested': 'scorer',
+  'baseline-broken': 'baseline broken',
+  'daemon-code-drift': 'daemon drift',
+  'signature-storm': 'storm',
+  'dirty-integration': 'dirty integration',
 }
 
 /** Left accent bar color per kind. */
@@ -91,8 +95,12 @@ const KIND_ACCENT: Record<string, string> = {
   failed: 'border-l-error',
   'daemon-killed': 'border-l-error',
   'arc-failed': 'border-l-error',
+  'baseline-broken': 'border-l-error',
   'stale-queued': 'border-l-warn',
   'stale-worktree': 'border-l-warn',
+  'dirty-integration': 'border-l-warn',
+  'daemon-code-drift': 'border-l-warn',
+  'signature-storm': 'border-l-warn',
   'awaiting-validation': 'border-l-trace-mars',
   'draft-proposal': 'border-l-success',
   'awaiting-human': 'border-l-primary',
@@ -103,8 +111,12 @@ const KIND_CHIP_CLASS: Record<string, string> = {
   failed: 'text-error border-error/40',
   'daemon-killed': 'text-error border-error/40',
   'arc-failed': 'text-error border-error/40',
+  'baseline-broken': 'text-error border-error/40',
   'stale-queued': 'text-warn border-warn/40',
   'stale-worktree': 'text-warn border-warn/40',
+  'dirty-integration': 'text-warn border-warn/40',
+  'daemon-code-drift': 'text-warn border-warn/40',
+  'signature-storm': 'text-warn border-warn/40',
   'awaiting-validation': 'text-trace-mars border-trace-mars/40',
   'draft-proposal': 'text-success border-success/40',
 }
