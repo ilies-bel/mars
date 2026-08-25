@@ -38,7 +38,6 @@ import {
 } from './failure-signature'
 import { hasRecipe } from './fix-recipes'
 import { DAEMON_KILLED_SIGNATURE } from './retry-budget'
-import { shortId } from './short-id'
 
 /**
  * The verbs a recovery action can ask the daemon to perform. Each maps to a
@@ -1117,36 +1116,36 @@ const titleSignature = (signature: string): string =>
 /**
  * Compose the operator-facing action-queue title for a FAILED task.
  *
- * A queue of sixteen failures is only triageable if each row says WHICH task
- * failed and WHAT the failure was, so the title always carries every
- * discriminator that exists:
+ * A queue of sixteen failures is only triageable if each row says WHAT the
+ * failure was. The task id is no longer included in the title — the
+ * entity-id chip on the action-queue card already carries it, making a
+ * `[task …]` suffix in the title redundant visual noise. Signature and
+ * captured-error still discriminate rows of the same kind:
  *
- *   `<signature> — <warm reason> [task <id8>]`
+ *   `<signature> — <warm reason>`
  *
- * and, when no structured signature was written at failure time, degrades to
- * the next-best discriminator — the first line of the captured error:
+ * and, when no structured signature was written at failure time:
  *
- *   `<warm reason>: <first line of the error> [task <id8>]`
+ *   `<warm reason>: <first line of the error>`
  *
  * The bare warm reason (`Mars could not determine why this task failed`) is emitted ONLY
- * when there is genuinely nothing else to say: no signature, no captured
- * error, no task id. A signature with no `FAILURE_KINDS` record uses the
- * step-family's plain-English label; the action-queue detail retains the
- * technical signature as the drill-down key.
+ * when there is genuinely nothing else to say: no signature and no captured
+ * error. A signature with no `FAILURE_KINDS` record uses the step-family's
+ * plain-English label; the action-queue detail retains the technical
+ * signature as the drill-down key.
  */
 export const failedTaskTitle = (args: {
   /** `tasks.failure_signature` as written at failure time, or null. */
   signature: string | null
-  /** The failed task's id — rendered short. Omit/null when not task-backed. */
+  /** Accepted for call-site compatibility; no longer included in the title. */
   taskId?: string | null
   /** Captured stderr/stdout from the failing step; used only as a fallback. */
   capturedError?: string
 }): string => {
-  const { signature, taskId = null, capturedError = '' } = args
-  // `shortId`, not a slice: a slice counts the `mars-` prefix and leaves three
-  // hex chars, so three different tasks all tagged `[task mars-634]`.
-  const idPart =
-    taskId !== null && taskId.length > 0 ? ` [task ${shortId(taskId)}]` : ''
+  const { signature, capturedError = '' } = args
+  // The [task …] suffix was removed: the entity-id chip on the action-queue
+  // card already carries the task id, making a suffix in the title redundant.
+  const idPart = ''
 
   if (signature !== null && signature.length > 0) {
     const kind = lookupFailureKind(signature)
