@@ -58,7 +58,7 @@ describe('installOnboardingVerifyGates', () => {
 
     const result = await installOnboardingVerifyGates(detectedGates)
 
-    expect(result).toEqual({ inserted: 2, skipped: false })
+    expect(result).toEqual({ inserted: 2, proposed: 0, skipped: false })
     expect(await listVerifyGates()).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -89,7 +89,7 @@ describe('installOnboardingVerifyGates', () => {
     const { installOnboardingVerifyGates } = await import('../seed-verify-gates.js')
     const { listVerifyGates } = await import('../../core/verify-gates.js')
 
-    expect(await installOnboardingVerifyGates([])).toEqual({ inserted: 0, skipped: false })
+    expect(await installOnboardingVerifyGates([])).toEqual({ inserted: 0, proposed: 0, skipped: false })
     expect(await listVerifyGates()).toEqual([])
   })
 
@@ -105,7 +105,7 @@ describe('installOnboardingVerifyGates', () => {
     })
     const before = await listVerifyGates()
 
-    expect(await installOnboardingVerifyGates(detectedGates)).toEqual({ inserted: 0, skipped: true })
+    expect(await installOnboardingVerifyGates(detectedGates)).toEqual({ inserted: 0, proposed: 0, skipped: true })
     expect(await listVerifyGates()).toEqual(before)
   })
 })
