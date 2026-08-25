@@ -21,9 +21,6 @@ import type { PreloadedResponse } from './chat-store'
 
 /** Kinds of autonomous, template-authored conversation Notices. */
 export const AutonomousNoticeKindSchema = z.enum([
-  'steward.worker-bumped',
-  'steward.worker-reduced',
-  'steward.worker-restored',
   'recipe.auto-applied',
   'failure.batch',
   'session.idle-proposal',
@@ -47,15 +44,6 @@ export const PUSH_HABIT_OBSERVATION_LEVER = 'push_habit_observation' as const
 export const ARCHITECTURE_REPORT_LEVER = 'architecture_report' as const
 
 export interface AutonomousNoticePayloads {
-  'steward.worker-bumped': {
-      from: number
-      to: number
-      pending: number
-      threshold: number
-      sustainedSeconds: number
-  }
-  'steward.worker-reduced': { from: number; to: number; pagingPps: number }
-  'steward.worker-restored': { from: number; to: number }
   'recipe.auto-applied': { recipeId: string; failureKind: string; targetTaskId: string }
   'failure.batch': { taskCount: number; cause: string }
   /** Nothing is in flight and a draft proposal is waiting to be shaped. */
@@ -138,51 +126,6 @@ const silence = (lever: string, label: string, id = 'silence'): PreloadedRespons
 const ackOnly = (): PreloadedResponse[] => [ack()]
 
 const REGISTRY: { [Kind in AutonomousNoticeKind]: NoticeKindEntry<Kind> } = {
-  'steward.worker-bumped': {
-    act: 'announcement',
-    render: (p) =>
-      `I increased implement workers from ${p.from} to ${p.to} because ${p.pending} tasks stayed above the ${p.threshold}-task backlog threshold for ${p.sustainedSeconds}s.`,
-    lever: STEWARD_RUNTIME_TUNE_LEVER,
-    offers: (p) => [
-      ack(),
-      {
-        id: 'revert',
-        label: `Put it back to ${p.from}`,
-        target: { type: 'verb', op: 'steward-restore-worker-cap', entityId: String(p.from) },
-      },
-      silence(STEWARD_RUNTIME_TUNE_LEVER, 'Stop doing this automatically'),
-    ],
-  },
-  'steward.worker-reduced': {
-    act: 'announcement',
-    render: (p) =>
-      `I reduced implement workers from ${p.from} to ${p.to} because the host was swapping at ${p.pagingPps} pages/s.`,
-    lever: STEWARD_RUNTIME_TUNE_LEVER,
-    offers: (p) => [
-      ack(),
-      {
-        id: 'revert',
-        label: `Put it back to ${p.from}`,
-        target: { type: 'verb', op: 'steward-restore-worker-cap', entityId: String(p.from) },
-      },
-      silence(STEWARD_RUNTIME_TUNE_LEVER, 'Stop doing this automatically'),
-    ],
-  },
-  'steward.worker-restored': {
-    act: 'announcement',
-    render: (p) =>
-      `I restored implement workers from ${p.from} to ${p.to} because host pressure cleared.`,
-    lever: STEWARD_RUNTIME_TUNE_LEVER,
-    offers: (p) => [
-      ack(),
-      {
-        id: 'revert',
-        label: `Put it back to ${p.from}`,
-        target: { type: 'verb', op: 'steward-restore-worker-cap', entityId: String(p.from) },
-      },
-      silence(STEWARD_RUNTIME_TUNE_LEVER, 'Stop doing this automatically'),
-    ],
-  },
   'recipe.auto-applied': {
     act: 'announcement',
     render: (p) =>
@@ -335,28 +278,3 @@ export const leverForConversationNotice = (kind: AutonomousNoticeKind): string |
 export const speechActForConversationNotice = (kind: AutonomousNoticeKind): NoticeSpeechAct =>
   REGISTRY[kind].act
 
-/**
- * Steward runtime-tuning kinds. These reflect autonomous machine-level
- * decisions (cap bumps, sheds, restores) that the operator does not need to
- * act on. They are log lines, not chat events: posting them to the
- * conversation wastes transcript height without adding decision surface.
- */
-const STEWARD_RUNTIME_TUNE_KINDS: ReadonlySet<AutonomousNoticeKind> = new Set([
-  'steward.worker-bumped',
-  'steward.worker-reduced',
-  'steward.worker-restored',
-] satisfies AutonomousNoticeKind[])
-
-/**
- * True for notice kinds that are purely operational log entries.
- *
- * The gate is operator-actionability: a notice only belongs in chat when it
- * changes the operator's decision surface (asks for a decision, requires
- * action, records a decision, or carries reusable context). Steward
- * runtime-tuning events (cap bumps/sheds/restores, swap pressure, backlog
- * threshold adjustments) do not meet that bar — Mars already decided, there
- * is no prompt the operator needs to read or act on, and posting them
- * repeatedly degrades the signal-to-noise ratio of the conversation.
- */
-export const isStewardRuntimeTuneKind = (kind: AutonomousNoticeKind): boolean =>
-  STEWARD_RUNTIME_TUNE_KINDS.has(kind)

@@ -137,24 +137,19 @@ describe('conversation notice delivery', () => {
     ])
   })
 
-  it('carries an autonomous Notice’s Offer set through instead of flattening it to text', async () => {
+  it(`carries an autonomous Notice's Offer set through instead of flattening it to text`, async () => {
     const { chat, delivery } = await loadStores(repo)
 
     await delivery.postConversationNotice({
-      kind: 'steward.worker-reduced',
-      payload: { from: 12, to: 3, pagingPps: 900 },
+      kind: 'recipe.auto-applied',
+      payload: { recipeId: 'recipe-1', failureKind: 'verify-failed', targetTaskId: 'task-1' },
       priority: 'urgent',
       segments: [
-        { type: 'text', text: 'I reduced implement workers from 12 to 3.' },
+        { type: 'text', text: 'I applied recipe recipe-1 to task task-1.' },
         {
           type: 'preloaded_responses',
           responses: [
             { id: 'noted', label: 'Noted', target: { type: 'verb', op: 'ack' } },
-            {
-              id: 'stop',
-              label: 'Stop doing this automatically',
-              target: { type: 'lever', name: 'steward.worker-tuning', level: 'off' },
-            },
           ],
         },
       ],
@@ -163,17 +158,13 @@ describe('conversation notice delivery', () => {
     const detail = await chat.getThread(MAIN_THREAD_ID)
     // The body still comes from the copy registry; only the segments are the
     // caller's.
-    expect(detail?.messages[0]?.content).toContain('I reduced implement workers from 12 to 3')
+    expect(detail?.messages[0]?.content).toContain('I applied recipe recipe-1')
     expect(detail?.messages[0]?.segments).toEqual([
-      { type: 'text', text: 'I reduced implement workers from 12 to 3.' },
+      { type: 'text', text: 'I applied recipe recipe-1 to task task-1.' },
       expect.objectContaining({
         type: 'preloaded_responses',
         responses: [
           expect.objectContaining({ id: 'noted' }),
-          expect.objectContaining({
-            id: 'stop',
-            target: { type: 'lever', name: 'steward.worker-tuning', level: 'off' },
-          }),
         ],
       }),
     ])
@@ -218,8 +209,8 @@ describe('conversation notice delivery', () => {
     const { chat, delivery } = await loadStores(repo)
 
     const result = await delivery.postConversationNotice({
-      kind: 'steward.worker-restored',
-      payload: { from: 1, to: 2 },
+      kind: 'recipe.auto-applied',
+      payload: { recipeId: 'recipe-1', failureKind: 'verify-failed', targetTaskId: 'task-1' },
       priority: 'routine',
       hasActiveRuns: () => false,
     })

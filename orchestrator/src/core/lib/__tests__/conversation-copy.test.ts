@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
   AutonomousNoticeKindSchema,
-  isStewardRuntimeTuneKind,
   leverForConversationNotice,
   offersForConversationNotice,
   renderConversationNotice,
@@ -17,15 +16,6 @@ import { PreloadedResponseSchema } from '../chat-store.js'
  * option list and this table can never drift apart silently.
  */
 const payloads: { [K in AutonomousNoticeKind]: AutonomousNoticePayloads[K] } = {
-  'steward.worker-bumped': {
-    from: 2,
-    to: 3,
-    pending: 8,
-    threshold: 2,
-    sustainedSeconds: 60,
-  },
-  'steward.worker-reduced': { from: 3, to: 2, pagingPps: 800 },
-  'steward.worker-restored': { from: 2, to: 3 },
   'recipe.auto-applied': {
     recipeId: 'recipe-1',
     failureKind: 'verify-failed',
@@ -121,66 +111,3 @@ describe('offersForConversationNotice', () => {
   })
 })
 
-describe('steward.worker-* revert offer (DEC-3 / HR-4)', () => {
-  const stewardKinds = [
-    'steward.worker-bumped',
-    'steward.worker-reduced',
-    'steward.worker-restored',
-  ] as const
-
-  it('each kind carries a revert offer whose target is steward-restore-worker-cap', () => {
-    for (const kind of stewardKinds) {
-      const offers = offersForConversationNotice(kind, payloads[kind])
-      const revert = offers.find((o) => o.id === 'revert')
-      expect(revert, `${kind} must have a revert offer`).toBeDefined()
-      expect(revert!.target, kind).toMatchObject({ type: 'verb', op: 'steward-restore-worker-cap' })
-    }
-  })
-
-  it('each revert offer carries the payload from value as entityId', () => {
-    for (const kind of stewardKinds) {
-      const p = payloads[kind]
-      const offers = offersForConversationNotice(kind, p)
-      const revert = offers.find((o) => o.id === 'revert')
-      expect(revert, `${kind} must have a revert offer`).toBeDefined()
-      expect(revert!.target).toMatchObject({ entityId: String(p.from) })
-    }
-  })
-
-  it('ack and silence offers are still present on all three kinds', () => {
-    for (const kind of stewardKinds) {
-      const offers = offersForConversationNotice(kind, payloads[kind])
-      const ackOffer = offers.find((o) => o.target.type === 'ack')
-      const silenceOffer = offers.find((o) => o.target.type === 'lever')
-      expect(ackOffer, `${kind} must still have an ack offer`).toBeDefined()
-      expect(silenceOffer, `${kind} must still have a silence offer`).toBeDefined()
-    }
-  })
-
-  it('revert offer label names the target value explicitly', () => {
-    for (const kind of stewardKinds) {
-      const p = payloads[kind]
-      const offers = offersForConversationNotice(kind, p)
-      const revert = offers.find((o) => o.id === 'revert')
-      expect(revert, `${kind} must have a revert offer`).toBeDefined()
-      expect(revert!.label, kind).toContain(String(p.from))
-    }
-  })
-})
-
-describe('isStewardRuntimeTuneKind', () => {
-  it('returns true for all three runtime-tuning kinds', () => {
-    expect(isStewardRuntimeTuneKind('steward.worker-bumped')).toBe(true)
-    expect(isStewardRuntimeTuneKind('steward.worker-reduced')).toBe(true)
-    expect(isStewardRuntimeTuneKind('steward.worker-restored')).toBe(true)
-  })
-
-  it('returns false for every other notice kind', () => {
-    const nonTuneKinds = AutonomousNoticeKindSchema.options.filter(
-      (k) => !k.startsWith('steward.'),
-    )
-    for (const kind of nonTuneKinds) {
-      expect(isStewardRuntimeTuneKind(kind), kind).toBe(false)
-    }
-  })
-})
