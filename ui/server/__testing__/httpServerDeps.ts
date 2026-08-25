@@ -29,8 +29,6 @@ export const makeHttpServerDeps = (
 ): HttpServerDeps => ({
   chatRunner: stubChatRunner(),
   runReflect: async () => ({ proposalsRaised: 0 }),
-  enableAutoReflect: async () => {},
-  disableAutoReflect: async () => {},
   restartTask: async () => {},
   continueTask: async () => {},
   remergeTask: async () => {},

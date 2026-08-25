@@ -50,7 +50,7 @@ import { listAlerts, showAlert, type Alert, type AlertSources } from './lib/aler
 import type { RaiseActionQueueItem } from './lib/action-queue'
 import { loadRecentTaskCorpus, type ReflectCorpus, type LoadCorpusOptions } from './lib/reflect-query'
 import { listDeepReflectArcCandidates, type ArcCandidate } from './lib/deep-reflect-query'
-import { readControlLevers, loadDaemonConfig } from './daemon/config'
+import { readControlLevers } from './daemon/config'
 import {
   computeScorerTrend,
   listScorerResults,
