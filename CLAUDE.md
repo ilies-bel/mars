@@ -121,6 +121,13 @@ silently wrong result:
   Format: `to_char(to_timestamp(raised_at / 1000.0), 'MM-DD HH24:MI')`.
   Example: `SELECT id, kind, status, to_char(to_timestamp(raised_at/1000.0),'MM-DD HH24:MI') AS raised FROM action_queue_items LIMIT 5;`
 
+- `proposals.created_at` / `proposals.updated_at` — **`bigint` epoch-milliseconds**.
+  Format: `to_char(to_timestamp(created_at / 1000.0), 'MM-DD HH24:MI')`.
+  Example: `SELECT id, status, to_char(to_timestamp(created_at/1000.0),'MM-DD HH24:MI') AS created FROM proposals LIMIT 5;`
+  ⚠️ Using the `tasks` pattern (`to_char(updated_at,'HH24:MI:SS')`) on `proposals`
+  gives a misleading `ERROR: cannot use "S" and "PL"/"MI"/"SG"/"PR" together` —
+  the real cause is passing a `bigint` where a `timestamp` was assumed.
+
 - `task_blockers.state` — legitimately named `state` (a distinct domain concept:
   blocker confirmation state). Do not confuse it with the lifecycle `status` columns.
 
@@ -749,8 +756,11 @@ tables. Always use the right expression for the table you are querying:
 | `tasks` | `created_at`, `updated_at` | `timestamptz` | `to_char(created_at, 'MM-DD HH24:MI')` |
 | `chat_threads` | `created_at`, `updated_at` | `bigint` epoch-ms | `to_char(to_timestamp(created_at / 1000.0), 'MM-DD HH24:MI')` |
 | `action_queue_items` | `raised_at` | `bigint` epoch-ms | `to_char(to_timestamp(raised_at / 1000.0), 'MM-DD HH24:MI')` |
+| `proposals` | `created_at`, `updated_at` | `bigint` epoch-ms | `to_char(to_timestamp(created_at / 1000.0), 'MM-DD HH24:MI')` |
 
 Note: `action_queue_items` has **no** `created_at` column — use `raised_at`.
+Note: `proposals.created_at`/`updated_at` are `bigint`, **not** `timestamptz` —
+applying the `tasks` display pattern gives a misleading format-mask error.
 
 **Column naming conventions:**
 

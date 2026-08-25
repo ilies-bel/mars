@@ -50,11 +50,20 @@
  *     Display: to_char(to_timestamp(raised_at / 1000.0), 'MM-DD HH24:MI')
  *     Lifecycle: WHERE status = 'open' / WHERE status = 'resolved'
  *
+ *   proposals.created_at / proposals.updated_at
+ *     Type: bigint epoch-milliseconds
+ *     Display: to_char(to_timestamp(created_at / 1000.0), 'MM-DD HH24:MI')
+ *     Note: using the tasks pattern (to_char(updated_at,'HH24:MI:SS')) on this
+ *     table gives ERROR: cannot use "S" and "PL"/"MI"/"SG"/"PR" together —
+ *     an actively misleading error whose real cause is passing a bigint where
+ *     a timestamp was assumed.
+ *
  * The mixed encoding is intentional: tasks.created_at predates the bigint
  * convention and carries timezone-aware data; migrating it would change the
  * Task.createdAt TypeScript type and cascade into UI code. The columns
- * chat_threads.created_at and action_queue_items.raised_at were always
- * epoch-millisecond integers. See CLAUDE.md "Querying the database directly".
+ * chat_threads.created_at, action_queue_items.raised_at, and
+ * proposals.created_at/updated_at were always epoch-millisecond integers.
+ * See CLAUDE.md "Querying the database directly".
  *
  * Note: task_blockers.state, verify_gates.state, and
  * action_queue_history.from_state/to_state are different domain concepts
