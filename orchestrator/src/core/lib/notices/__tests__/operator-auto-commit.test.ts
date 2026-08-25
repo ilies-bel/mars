@@ -37,7 +37,7 @@ describe('speakOperatorAutoCommitNotice', () => {
     expect(notice).toMatchObject({
       kind: 'merge.operator-auto-commit',
       priority: 'urgent',
-      payload: { taskId: 'mars-abc123', branch: 'main', commitSha: SHA, fileCount: 2 },
+      payload: { taskId: 'mars-abc123', branch: 'main', commitSha: SHA, files: ['operator.txt', 'notes.md'] },
     })
   })
 })
@@ -48,7 +48,7 @@ describe('the auto-commit Notice copy', () => {
       taskId: 'mars-abc123',
       branch: 'main',
       commitSha: SHA,
-      fileCount: 2,
+      files: ['operator.txt', 'notes.md'],
     })
 
     expect(body).toContain(SHA.slice(0, 9))
@@ -61,7 +61,7 @@ describe('the auto-commit Notice copy', () => {
       taskId: 'mars-abc123',
       branch: 'main',
       commitSha: SHA,
-      fileCount: 2,
+      files: ['operator.txt', 'notes.md'],
     }).map((offer) => offer.label.toLowerCase())
     expect(labels).toContain('stop auto-committing')
   })

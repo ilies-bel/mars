@@ -45,7 +45,7 @@ export const speakOperatorAutoCommitNotice = async (
       taskId: input.taskId,
       branch: input.branch,
       commitSha: input.commitSha,
-      fileCount: input.files.length,
+      files: input.files,
     },
     // Urgent, not routine: this reports a commit made out of the operator's
     // own uncommitted work. Holding it until the next pause risks them

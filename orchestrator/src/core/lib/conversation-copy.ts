@@ -67,13 +67,15 @@ export interface AutonomousNoticePayloads {
   /**
    * Mars committed the operator's own uncommitted edits on the integration
    * branch so a merge could land (ADR-0100). The sha is the whole point: it
-   * is how the operator finds work they did not commit themselves.
+   * is how the operator finds work they did not commit themselves. `files` is
+   * the list of paths that were staged and committed — surfaced so the
+   * operator can verify exactly what was captured.
    */
   'merge.operator-auto-commit': {
     taskId: string
     branch: string
     commitSha: string
-    fileCount: number
+    files: readonly string[]
   }
 }
 
@@ -254,7 +256,7 @@ const REGISTRY: { [Kind in AutonomousNoticeKind]: NoticeKindEntry<Kind> } = {
   'merge.operator-auto-commit': {
     act: 'announcement',
     render: (p) => {
-      const files = p.fileCount === 1 ? '1 uncommitted file' : `${p.fileCount} uncommitted files`
+      const files = p.files.length === 1 ? '1 uncommitted file' : `${p.files.length} uncommitted files`
       return (
         `I committed ${files} of yours on ${sentenceValue(p.branch)} as ` +
         `${sentenceValue(p.commitSha).slice(0, 9)} because they were blocking the merge of ` +
@@ -268,6 +270,13 @@ const REGISTRY: { [Kind in AutonomousNoticeKind]: NoticeKindEntry<Kind> } = {
     // offering one would be a button that changes nothing. The reply is the
     // honest gesture, so the Offer opens a Subject to carry it out.
     offers: (p) => [
+      {
+        id: 'revert',
+        label: 'Revert it',
+        // `verb` target: the daemon resolves this by running `git revert`
+        // against the named commit sha. The consumer slice wires the handler.
+        target: { type: 'verb', op: 'revert-commit', entityId: p.commitSha },
+      },
       {
         id: 'stop',
         label: 'Stop auto-committing',

@@ -34,7 +34,7 @@ const payloads: { [K in AutonomousNoticeKind]: AutonomousNoticePayloads[K] } = {
     taskId: 'mars-abc123',
     branch: 'main',
     commitSha: '0123456789abcdef0123456789abcdef01234567',
-    fileCount: 2,
+    files: ['operator.txt', 'notes.md'],
   },
 }
 
