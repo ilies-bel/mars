@@ -22,6 +22,8 @@ import {
   writeControlLever,
   persistSelfEvolvePatch,
   persistScoringPatch,
+  persistVerifyStepPatch,
+  persistCodeStepPatch,
   type ControlLeverValue,
 } from '../daemon/config'
 import { writeBudgetConfig, parseDurationToMs } from './spend-meter'
@@ -239,6 +241,27 @@ export const applyLeverValue = (id: string, value: string): ApplyLeverResult => 
     writeBudgetConfig({ windowTokens: Number(value) })
   } else if (id === 'budget.arc-tokens') {
     writeBudgetConfig({ arcTokens: Number(value) })
+  } else if (id === 'verify.retry-budget' || id === 'verify.timeout-min') {
+    // Verify-step config levers. Note: `verify.add-*` recipe entries share
+    // the same family but are NOT handled here — they fall through to the
+    // NOT_SETTABLE throw below. Only daemon.json-backed levers are listed
+    // explicitly here to avoid accidentally catching recipe entries.
+    persistVerifyStepPatch(
+      id === 'verify.retry-budget'
+        ? { retryBudget: Number(value) }
+        : { timeoutMin: Number(value) },
+    )
+  } else if (id.startsWith('code.')) {
+    // Code-step config levers. All code.* levers are daemon.json-backed;
+    // no recipe-style code entries exist, so startsWith is safe here.
+    if (id === 'code.checkpoint-interval-ms') {
+      persistCodeStepPatch({ checkpointIntervalMs: Number(value) })
+    } else {
+      throw new LeverApplyError(
+        `lever '${id}' cannot be applied via this endpoint; use: ${entry.gesture}`,
+        'NOT_SETTABLE',
+      )
+    }
   } else {
     throw new LeverApplyError(
       `lever '${id}' cannot be applied via this endpoint; use: ${entry.gesture}`,

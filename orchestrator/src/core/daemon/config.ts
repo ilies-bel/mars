@@ -175,6 +175,47 @@ export interface ScoringConfig {
 }
 
 /**
+ * Runtime knobs for the verify step, persisted in daemon.json under the
+ * `verifyStep` key. All fields are set via `mars lever set verify.*` and
+ * read back by the verify runner on each invocation.
+ *
+ * Lever registry entries: `verify.timeout-min`, `verify.retry-budget`.
+ * Persist helper: `persistVerifyStepPatch`.
+ */
+export interface VerifyStepConfig {
+  /**
+   * Maximum minutes a single verify run may take before it is killed and
+   * retried (or failed). Default 15, matching `MARS_VERIFY_TIMEOUT_MIN`.
+   * Gesture: `mars lever set verify.timeout-min <minutes>`.
+   */
+  timeoutMin: number
+  /**
+   * Maximum number of times the verify runner retries after an
+   * infrastructure-class failure (timeout, OOM, port collision) before
+   * marking the task failed. Default 1. Set to 0 to disable retries.
+   * Gesture: `mars lever set verify.retry-budget <n>`.
+   */
+  retryBudget: number
+}
+
+/**
+ * Runtime knobs for the code step, persisted in daemon.json under the
+ * `codeStep` key. All fields are set via `mars lever set code.*` and read
+ * back by the code runner on each invocation.
+ *
+ * Lever registry entries: `code.checkpoint-interval-ms`.
+ * Persist helper: `persistCodeStepPatch`.
+ */
+export interface CodeStepConfig {
+  /**
+   * Interval in milliseconds between code-step progress checkpoints.
+   * Default 180000 (3 min), matching `MARS_CODE_CHECKPOINT_INTERVAL_MS`.
+   * Gesture: `mars lever set code.checkpoint-interval-ms <ms>`.
+   */
+  checkpointIntervalMs: number
+}
+
+/**
  * Zod schema for the raw `.mars/daemon.json` file on disk (before env/default
  * resolution). Every field is optional/partial because daemon.json is a
  * merge-patched, hand-editable file — a field that is entirely absent must
@@ -251,6 +292,19 @@ export const daemonConfigSchema = z
     paused: z.boolean().optional(),
     lastReflectRanAt: z.string().optional(),
     proposalExpiryDays: z.number().optional(),
+    verifyStep: z
+      .object({
+        timeoutMin: z.number().optional(),
+        retryBudget: z.number().int().min(0).optional(),
+      })
+      .partial()
+      .optional(),
+    codeStep: z
+      .object({
+        checkpointIntervalMs: z.number().optional(),
+      })
+      .partial()
+      .optional(),
   })
   .partial()
   .passthrough()
@@ -369,6 +423,18 @@ export interface DaemonConfig {
    * auto-expired. Set via daemon.json key `proposalExpiryDays`. Default 14.
    */
   proposalExpiryDays: number
+  /**
+   * Verify-step runtime knobs. Persisted under `verifyStep` in daemon.json.
+   * Read by the verify runner; always fully resolved (defaults applied).
+   * Set via `mars lever set verify.*`.
+   */
+  verifyStep: VerifyStepConfig
+  /**
+   * Code-step runtime knobs. Persisted under `codeStep` in daemon.json.
+   * Read by the code runner; always fully resolved (defaults applied).
+   * Set via `mars lever set code.*`.
+   */
+  codeStep: CodeStepConfig
 }
 
 /**
@@ -399,6 +465,17 @@ export const DEFAULT_SCORING: ScoringConfig = {
   autoTrigger: false,
   lowTrendThreshold: 0.5,
   lowTrendWindow: 5,
+}
+
+/** Exported for lever registry `readCurrent()` implementations — see {@link VerifyStepConfig}. */
+export const DEFAULT_VERIFY_STEP: VerifyStepConfig = {
+  timeoutMin: 15,
+  retryBudget: 1,
+}
+
+/** Exported for lever registry `readCurrent()` implementations — see {@link CodeStepConfig}. */
+export const DEFAULT_CODE_STEP: CodeStepConfig = {
+  checkpointIntervalMs: 3 * 60 * 1000,
 }
 
 /** Exported for `src/core/config/registry.ts` — see {@link DEFAULTS}. */
@@ -473,6 +550,38 @@ export const persistScoringPatch = (patch: Partial<ScoringConfig>): void => {
       ? (existing.scoring as Record<string, unknown>)
       : {}
   patchDaemonConfigFile({ scoring: { ...existingSc, ...patch } })
+}
+
+/**
+ * Persist a verify-step patch to daemon.json, merging into the existing
+ * `verifyStep` block. Any fields not in `patch` are preserved. Called by
+ * `applyLeverValue` for `verify.timeout-min` and `verify.retry-budget`.
+ */
+export const persistVerifyStepPatch = (patch: Partial<VerifyStepConfig>): void => {
+  const existing = readDaemonConfigFileLenient()
+  const existingVs =
+    existing.verifyStep !== null &&
+    typeof existing.verifyStep === 'object' &&
+    !Array.isArray(existing.verifyStep)
+      ? (existing.verifyStep as Record<string, unknown>)
+      : {}
+  patchDaemonConfigFile({ verifyStep: { ...existingVs, ...patch } })
+}
+
+/**
+ * Persist a code-step patch to daemon.json, merging into the existing
+ * `codeStep` block. Any fields not in `patch` are preserved. Called by
+ * `applyLeverValue` for `code.*` levers.
+ */
+export const persistCodeStepPatch = (patch: Partial<CodeStepConfig>): void => {
+  const existing = readDaemonConfigFileLenient()
+  const existingCs =
+    existing.codeStep !== null &&
+    typeof existing.codeStep === 'object' &&
+    !Array.isArray(existing.codeStep)
+      ? (existing.codeStep as Record<string, unknown>)
+      : {}
+  patchDaemonConfigFile({ codeStep: { ...existingCs, ...patch } })
 }
 
 /**
@@ -872,6 +981,9 @@ export const loadDaemonConfig = (): DaemonConfig => {
   let fileDefaultProvider: ProviderName | undefined
   let fileLastReflectRanAt: string | undefined
   let fileProposalExpiryDays: number | undefined
+  let fileVerifyStepTimeoutMin: number | undefined
+  let fileVerifyStepRetryBudget: number | undefined
+  let fileCodeStepCheckpointIntervalMs: number | undefined
 
   try {
     const raw = readFileSync(daemonConfigPath(), 'utf8')
@@ -936,6 +1048,32 @@ export const loadDaemonConfig = (): DaemonConfig => {
     ) {
       fileProposalExpiryDays = rawExpiryDays
     }
+    const rawVs = (parsed as Record<string, unknown>).verifyStep
+    if (rawVs !== null && typeof rawVs === 'object' && !Array.isArray(rawVs)) {
+      const vs = rawVs as Record<string, unknown>
+      if (typeof vs.timeoutMin === 'number' && Number.isFinite(vs.timeoutMin) && vs.timeoutMin > 0) {
+        fileVerifyStepTimeoutMin = vs.timeoutMin
+      }
+      if (
+        typeof vs.retryBudget === 'number' &&
+        Number.isFinite(vs.retryBudget) &&
+        Number.isInteger(vs.retryBudget) &&
+        vs.retryBudget >= 0
+      ) {
+        fileVerifyStepRetryBudget = vs.retryBudget
+      }
+    }
+    const rawCs = (parsed as Record<string, unknown>).codeStep
+    if (rawCs !== null && typeof rawCs === 'object' && !Array.isArray(rawCs)) {
+      const cs = rawCs as Record<string, unknown>
+      if (
+        typeof cs.checkpointIntervalMs === 'number' &&
+        Number.isFinite(cs.checkpointIntervalMs) &&
+        cs.checkpointIntervalMs > 0
+      ) {
+        fileCodeStepCheckpointIntervalMs = cs.checkpointIntervalMs
+      }
+    }
   } catch {
     // No file, unreadable, or invalid JSON — fall back to env+defaults.
   }
@@ -961,5 +1099,12 @@ export const loadDaemonConfig = (): DaemonConfig => {
     controlLevers: readControlLevers(),
     lastReflectRanAt: fileLastReflectRanAt,
     proposalExpiryDays: fileProposalExpiryDays ?? DEFAULT_PROPOSAL_EXPIRY_DAYS,
+    verifyStep: {
+      timeoutMin: fileVerifyStepTimeoutMin ?? DEFAULT_VERIFY_STEP.timeoutMin,
+      retryBudget: fileVerifyStepRetryBudget ?? DEFAULT_VERIFY_STEP.retryBudget,
+    },
+    codeStep: {
+      checkpointIntervalMs: fileCodeStepCheckpointIntervalMs ?? DEFAULT_CODE_STEP.checkpointIntervalMs,
+    },
   }
 }
