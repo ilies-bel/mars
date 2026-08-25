@@ -5329,6 +5329,16 @@ export const startDaemon = async (
       log('[dismiss-daemon-died] crash marker cleared by operator')
       bus.emit('view.action-queue-invalidated')
     },
+    restoreGate: async (id) => {
+      const result = await appServices.restoreGate(id)
+      bus.emit('view.action-queue-invalidated')
+      return result
+    },
+    dismissVerifyUncovered: async (id) => {
+      const { setActionQueueState } = await import('../lib/action-queue')
+      await setActionQueueState(id, 'resolved', { resolution: 'dismissed', by: 'operator' })
+      bus.emit('view.action-queue-invalidated')
+    },
     promoteProposal: async (id) => {
       // Flip draft → prd-ready, then await the slicer so the HTTP caller
       // receives the created task IDs. Unlike the socket-RPC path

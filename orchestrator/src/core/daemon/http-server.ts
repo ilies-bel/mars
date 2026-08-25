@@ -407,13 +407,23 @@ export interface HttpServerDeps {
    */
   dismissDaemonDied?: () => Promise<void>
   /**
-   * Dismiss a `verify-uncovered` action-queue item: resolve the row so it no
-   * longer appears in the open queue. Distinct from `dismissProposal` — a
-   * `verify-uncovered` item tracks an uncovered verify gate, not a draft
-   * proposal. Throws when the id does not resolve to an open `verify-uncovered`
-   * row. Optional — when absent the endpoint returns 501 Not Implemented.
+   * Dismiss a `verify-uncovered` action-queue row by its action-queue item id:
+   * resolve the stored row with `resolution='dismissed'` and emit a view
+   * invalidation so it no longer appears in the open queue. Distinct from
+   * `dismissProposal` — a `verify-uncovered` item tracks an uncovered verify
+   * gate, not a draft proposal. Idempotent: a missing or already-resolved row
+   * is a no-op. Optional — when absent the endpoint returns 501 Not
+   * Implemented.
    */
   dismissVerifyUncovered?: (id: string) => Promise<void>
+  /**
+   * Restore a quarantined verify gate: flip its state from `quarantined` →
+   * `active`, clear `quarantined_at` / `quarantine_signature`, and emit a view
+   * invalidation so the action-queue re-derives the `gate-broken` condition.
+   * The `id` parameter is the gate UUID (not a task id). Optional — when absent
+   * the endpoint returns 501 Not Implemented.
+   */
+  restoreGate?: (id: string) => Promise<{ restored: boolean }>
   /**
    * Promote a fully-shaped draft proposal: flip its status from `draft` →
    * `prd-ready`, run the slicer to create tasks, and return the resulting
