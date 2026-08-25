@@ -1137,6 +1137,79 @@ describe('buildActionQueueView — signature-storm pause-state projection', () =
   })
 })
 
+// ── baseline-broken pause-state projection ─────────────────────────────────────
+
+describe('buildActionQueueView — baseline-broken pause-state projection', () => {
+  const baselineRow = makeRow({
+    id: 'baseline',
+    kind: 'baseline-broken',
+    payload: { failingGateName: 'test', caughtTaskCount: 1, caughtTaskIds: ['task-abc'] },
+  })
+
+  it('does NOT claim dispatch is paused when pauseState is null', async () => {
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([baselineRow]),
+      taskStore: makeTaskStore([]),
+      // pauseState omitted — defaults to null (unknown / unpaused)
+    })
+    const row = rows.find((r) => r.id === 'baseline')!
+    expect(row.title).not.toContain('dispatch is paused')
+  })
+
+  it('does NOT claim dispatch is paused when dispatch is running', async () => {
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([baselineRow]),
+      taskStore: makeTaskStore([]),
+      pauseState: { paused: false, reason: null, since: null, detail: null },
+    })
+    const row = rows.find((r) => r.id === 'baseline')!
+    expect(row.title).not.toContain('dispatch is paused')
+  })
+
+  it('does NOT claim dispatch is paused when paused for a reason other than baseline', async () => {
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([baselineRow]),
+      taskStore: makeTaskStore([]),
+      pauseState: { paused: true, reason: 'operator', since: '2026-08-06T00:00:00.000Z', detail: null },
+    })
+    const row = rows.find((r) => r.id === 'baseline')!
+    expect(row.title).not.toContain('dispatch is paused')
+  })
+
+  it('DOES claim dispatch is paused when paused with reason baseline', async () => {
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([baselineRow]),
+      taskStore: makeTaskStore([]),
+      pauseState: { paused: true, reason: 'baseline', since: '2026-08-06T00:00:00.000Z', detail: null },
+    })
+    const row = rows.find((r) => r.id === 'baseline')!
+    expect(row.title).toContain('dispatch is paused')
+  })
+
+  it('includes the gate name and caught-task count regardless of pause state', async () => {
+    const runningRows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([baselineRow]),
+      taskStore: makeTaskStore([]),
+      pauseState: { paused: false, reason: null, since: null, detail: null },
+    })
+    const pausedRows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([baselineRow]),
+      taskStore: makeTaskStore([]),
+      pauseState: { paused: true, reason: 'baseline', since: '2026-08-06T00:00:00.000Z', detail: null },
+    })
+    expect(runningRows.find((r) => r.id === 'baseline')!.title).toContain('"test"')
+    expect(runningRows.find((r) => r.id === 'baseline')!.title).toContain('caught 1 task failure')
+    expect(pausedRows.find((r) => r.id === 'baseline')!.title).toContain('"test"')
+    expect(pausedRows.find((r) => r.id === 'baseline')!.title).toContain('caught 1 task failure')
+  })
+})
+
 // ── Condition-derived items ────────────────────────────────────────────────────
 // Condition kinds are computed on read from live state; no row need be stored.
 // buildActionQueueView accepts an optional conditionsSource that contributes

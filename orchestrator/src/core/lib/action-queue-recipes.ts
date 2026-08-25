@@ -1202,7 +1202,11 @@ const RECIPE_DEFINITIONS = {
       const freeMiB = typeof ctx.payload['freeBytes'] === 'number'
         ? Math.round((ctx.payload['freeBytes'] as number) / (1024 * 1024))
         : '?'
-      return `Low disk space: only ${freeMiB} MiB free — dispatch is paused until space is reclaimed.`
+      // Disk-guard rows never pause dispatch via the PauseController (the guard
+      // refuses individual dispatches, not the whole queue).  Omit any
+      // "dispatch is paused" clause; the OPERATIONAL_ALERT_COPY renderer in
+      // action-queue.ts owns that phrasing and has access to live pauseState.
+      return `Low disk space: only ${freeMiB} MiB free — dispatches refused until space is reclaimed.`
     },
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
@@ -1225,7 +1229,12 @@ const RECIPE_DEFINITIONS = {
         caughtTaskCount > 0
           ? ` — caught ${caughtTaskCount} task failure${caughtTaskCount === 1 ? '' : 's'} that would otherwise look unrelated`
           : ''
-      return `Integration branch fails required gate "${gateName}"${caughtSuffix} — dispatch is paused until the baseline is fixed.`
+      // The "dispatch is paused" clause is omitted here because this function
+      // has no access to live pauseState.  The OPERATIONAL_ALERT_COPY renderer
+      // in action-queue.ts owns that clause and emits it only when
+      // pauseState.reason === 'baseline' (first-cause-wins).  See row.title for
+      // the conditional form; this humanSummary is the always-accurate base.
+      return `Integration branch fails required gate "${gateName}"${caughtSuffix}.`
     },
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,

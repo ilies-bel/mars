@@ -480,16 +480,42 @@ const OPERATIONAL_ALERT_COPY: Record<
   'requeue-warning': null,
   'arc-superseded-on-main': null,
   'e2e-tooling-missing': null,
-  'low-disk-space': null,
+  'low-disk-space': (row, _pauseState) => {
+    const freeMiB =
+      typeof row.payload['freeBytes'] === 'number'
+        ? Math.round((row.payload['freeBytes'] as number) / (1024 * 1024))
+        : '?'
+    // Dispatch is never actually paused via the PauseController for disk issues —
+    // the disk guard refuses individual dispatches, not the whole queue. Omit
+    // any "dispatch is paused" clause unconditionally.
+    return {
+      title: `Low disk space: only ${freeMiB} MiB free — dispatches refused until space is reclaimed`,
+      body: row.body,
+    }
+  },
   'dirty-integration': null,
   'health-check-alert': null,
-  'baseline-broken': (row) => {
+  'baseline-broken': (row, pauseState) => {
     const gateName =
       typeof row.payload.failingGateName === 'string'
         ? row.payload.failingGateName
         : 'unknown gate'
+    const caughtTaskCount =
+      typeof row.payload.caughtTaskCount === 'number' ? row.payload.caughtTaskCount : 0
+    const caughtSuffix =
+      caughtTaskCount > 0
+        ? ` — caught ${caughtTaskCount} task failure${caughtTaskCount === 1 ? '' : 's'} that would otherwise look unrelated`
+        : ''
+    // Emit the dispatch-paused clause only when the live pause reason is 'baseline'.
+    // First-cause-wins means a baseline break while dispatch is already paused for
+    // 'operator' or 'quota' must not claim credit for that pause.
+    const dispatchPausedByBaseline =
+      pauseState !== null && pauseState.paused && pauseState.reason === 'baseline'
+    const pauseSuffix = dispatchPausedByBaseline
+      ? ' — dispatch is paused until the baseline is fixed'
+      : ''
     return {
-      title: `Integration branch fails required gate: ${gateName}`,
+      title: `Integration branch fails required gate "${gateName}"${caughtSuffix}${pauseSuffix}`,
       body: typeof row.payload.output === 'string' ? row.payload.output : '',
     }
   },
