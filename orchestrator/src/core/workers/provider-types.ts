@@ -1,26 +1,6 @@
 // Shared provider contract — deliberately independent from the provider
 // registry and concrete adapters. Keeping these declarations in a leaf module
 // lets adapters depend on the contract without depending on their registry.
-//
-// ADR-0097 reshape: the seam is split into two layers.
-//
-//   ProviderCore           — transport-neutral. Any backend (CLI subprocess,
-//                            key-backed HTTP, future transports) implements this.
-//                            No subprocess-specific members.
-//
-//   CliSubprocessProvider  — CLI-subprocess extension of ProviderCore. Only
-//                            providers that drive a local binary (claude, gemini,
-//                            codex) implement this. spawnArgv, feedPrompt,
-//                            isReady, doneSignal, prepare all live here.
-//
-//   HeadlessAdapter        — transport-neutral headless-run contract (run +
-//                            capabilities). No stdout decoding.
-//
-//   CliHeadlessAdapter     — CLI extension: adds readOutput(stdout) for
-//                            normalising a subprocess's captured stdout.
-//
-// Provider = ProviderCore is kept as a backward-compatible alias so existing
-// imports that only need the core members continue to compile without edits.
 
 import type {
   AgentEffort,
@@ -143,9 +123,10 @@ export interface HeadlessRunContext {
   onPid?: (pid: number) => void
 }
 
-// Adapter for headless (non-interactive) dispatch of a Provider's agent.
-// Transport-neutral: any backend (CLI subprocess, key-backed HTTP) implements
-// this interface.
+// Adapter for headless (non-interactive subprocess) dispatch of a Provider's
+// agent CLI. A Provider that supports headless dispatch implements this
+// interface; one that does not provides a stub that throws so callers fail
+// fast at runtime rather than silently falling back to an unintended path.
 //
 // The `capabilities` descriptor advertises which result fields the adapter
 // populates, and HOW its usage numbers must be read, so dispatch and telemetry
@@ -156,20 +137,13 @@ export interface HeadlessRunContext {
 // see ProviderUsageSemantics in ../lib/claude-usage.
 export interface HeadlessAdapter {
   run(prompt: string, opts: HeadlessRunOpts, ctx?: HeadlessRunContext): Promise<RunAgentResult>
+  /** Decode this provider's complete stdout into normalized stream events. */
+  readOutput(stdout: string): AgentEvent[]
   readonly capabilities: {
     readonly usageSemantics: ProviderUsageSemantics
     readonly quotaRejected: boolean
     readonly sessionId: boolean
   }
-}
-
-// CLI-subprocess extension of HeadlessAdapter. Adds stdout decoding, which is
-// meaningful only when the provider drives a subprocess with capturable stdout.
-// A key-backed HTTP adapter normalises the vendor's response body directly
-// inside its `run()` implementation and has no stdout to decode here.
-export interface CliHeadlessAdapter extends HeadlessAdapter {
-  /** Decode this provider's complete stdout into normalized stream events. */
-  readOutput(stdout: string): AgentEvent[]
 }
 
 export type RunHeadlessProviderOpts = Omit<HeadlessRunOpts, 'model'> &
@@ -229,42 +203,33 @@ export interface PromptScanDoneSignal {
 
 export type ProviderDoneSignal = StatusFileDoneSignal | PromptScanDoneSignal
 
-// ProviderCore — transport-neutral provider contract. Any backend implements
-// this: a CLI subprocess, a key-backed HTTP adapter, or a future transport.
-// No subprocess-specific members live here.
-export interface ProviderCore {
-  readonly name: ProviderName
-  conversationMemory(model: string): ConversationMemoryFacts
-  // Headless dispatch adapter. Required on every Provider so buildWorker's
-  // headless branch can call it uniformly.
-  readonly headless: HeadlessAdapter
-}
-
-// CliSubprocessProvider — CLI-subprocess extension of ProviderCore. Only
-// providers that drive a local binary (claude, gemini, codex) implement this.
-//
+// Descriptor for a single agent CLI. Bundles:
 //   - spawnArgv  : build the argv array used to launch the process;
 //   - feedPrompt : write the task prompt into a running process handle;
 //   - doneSignal : optional descriptor that tells the orchestrator how to
 //                  detect session completion beyond a normal process exit;
 //   - prepare    : optional pre-spawn setup — called with (cwd, sessionId)
-//                  before the process is launched;
+//                  before the process is launched. Providers that require
+//                  side-effects before the process starts (e.g. writing a
+//                  Stop hook for the claude status-file done-signal) implement
+//                  this; providers that need no setup omit it.
 //   - isReady    : optional readiness predicate. When present, runPtySession
 //                  polls the ANSI-stripped pty buffer on a ~250 ms interval
 //                  before calling feedPrompt, proceeding only once this returns
-//                  true or a 30 s timeout elapses.
-export interface CliSubprocessProvider extends ProviderCore {
-  // Narrows the base HeadlessAdapter to the CLI-specific variant that can
-  // decode stdout. CLI providers always carry readOutput.
-  readonly headless: CliHeadlessAdapter
+//                  true or a 30 s timeout elapses (with a logged warning). This
+//                  prevents keystrokes from landing before the TUI input box has
+//                  rendered.
+export interface Provider {
+  readonly name: ProviderName
+  conversationMemory(model: string): ConversationMemoryFacts
   spawnArgv(opts: SpawnOpts): readonly string[]
   feedPrompt(handle: ProcessHandle, prompt: string): Promise<void>
   readonly doneSignal?: ProviderDoneSignal
   prepare?(cwd: string, sessionId: string): void
   readonly isReady?: (strippedBuffer: string) => boolean
+  // Headless dispatch adapter. Required on every Provider so buildWorker's
+  // headless branch can call it uniformly. Providers that do not yet have a
+  // real headless implementation must fail explicitly rather than silently
+  // falling back to a different provider.
+  readonly headless: HeadlessAdapter
 }
-
-// Provider — backward-compatible alias for ProviderCore. Existing imports that
-// only consume the transport-neutral members continue to compile unchanged.
-// Code that needs CLI-subprocess members should use CliSubprocessProvider.
-export type Provider = ProviderCore

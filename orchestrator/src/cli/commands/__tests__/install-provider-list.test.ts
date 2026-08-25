@@ -7,20 +7,19 @@ import { registerProvider, type ProviderDescriptor } from '../../../core/workers
 // the suite.
 import '../../../core/workers/providers'
 
-// FAKE_PROVIDER is a minimal key-backed descriptor: it implements only the
-// transport-neutral ProviderDescriptor (name, models, conversationMemory,
-// headless) with no CLI-subprocess members. This proves that registerProvider
-// accepts any adapter kind, not just CLI subprocess providers.
 const FAKE_PROVIDER: ProviderDescriptor = {
   name: 'fake-provider',
   models: { flagship: 'fake-big', balanced: 'fake-mid', fast: 'fake-small' },
   conversationMemory: () => {
     throw new Error('unused in this test')
   },
+  spawnArgv: () => [],
+  feedPrompt: async () => {},
   headless: {
     run: async () => {
       throw new Error('unused in this test')
     },
+    readOutput: () => [],
     capabilities: {
       usageSemantics: 'per-request',
       quotaRejected: false,

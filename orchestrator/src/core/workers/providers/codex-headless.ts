@@ -19,7 +19,7 @@ import {
 } from '../../ports/executor/executor-helpers'
 import type { RunAgentResult } from '../../ports/executor/types'
 import type { AgentEvent } from '../../lib/claude-stream'
-import type { CliHeadlessAdapter, HeadlessRunContext, HeadlessRunOpts } from '../provider-types'
+import type { HeadlessAdapter, HeadlessRunContext, HeadlessRunOpts } from '../provider-types'
 import { providerBinPath } from '../provider-bin'
 
 const isObject = (v: unknown): v is Record<string, unknown> =>
@@ -235,7 +235,7 @@ export const readCodexOutput = (stdout: string): AgentEvent[] =>
     .map((line) => parseCodexEventLine(line))
     .filter((event): event is AgentEvent => event !== null)
 
-export const codexHeadless: CliHeadlessAdapter = {
+export const codexHeadless: HeadlessAdapter = {
   capabilities: {
     usageSemantics: 'cumulative',
     // Codex DOES surface rate/spend rejections — as an `error` / `turn.failed`

@@ -28,7 +28,6 @@ import {
   registerProvider,
   requireProvider,
   listProviders,
-  type CliProviderDescriptor,
   type ProviderDescriptor,
 } from './provider-registry'
 // Re-exported for the many existing `from './providers'` / `from '../workers/providers'`
@@ -105,9 +104,7 @@ const CODEX_MODELS: ProviderDescriptor['models'] = {
 
 // The three built-in providers, self-registered into the open provider
 // registry below (register/get/require/list — see provider-registry.ts).
-// Typed as CliProviderDescriptor so TypeScript enforces the CLI-subprocess
-// members (spawnArgv, feedPrompt, readOutput, etc.) on each object.
-const CLAUDE_PROVIDER: CliProviderDescriptor = {
+const CLAUDE_PROVIDER: ProviderDescriptor = {
     name: 'claude',
     models: CLAUDE_MODELS,
     conversationMemory: conversationMemoryFor('claude', CLAUDE_CONVERSATION_MEMORY),
@@ -222,7 +219,7 @@ const CLAUDE_PROVIDER: CliProviderDescriptor = {
     },
 }
 
-const GEMINI_PROVIDER: CliProviderDescriptor = {
+const GEMINI_PROVIDER: ProviderDescriptor = {
     name: 'gemini',
     models: GEMINI_MODELS,
     conversationMemory: conversationMemoryFor('gemini', GEMINI_CONVERSATION_MEMORY),
@@ -252,7 +249,7 @@ const GEMINI_PROVIDER: CliProviderDescriptor = {
     headless: geminiHeadless,
 }
 
-const CODEX_PROVIDER: CliProviderDescriptor = {
+const CODEX_PROVIDER: ProviderDescriptor = {
     name: 'codex',
     models: CODEX_MODELS,
     conversationMemory: conversationMemoryFor('codex', CODEX_CONVERSATION_MEMORY),

@@ -1,6 +1,6 @@
 import { extractLastStreamText } from './claude-stream'
 import { PROVIDERS } from '../workers/providers'
-import type { CliHeadlessAdapter, ProviderName } from '../workers/provider-types'
+import type { ProviderName } from '../workers/provider-types'
 
 const extractJsonObject = (raw: string): string | null => {
   const start = raw.indexOf('{')
@@ -28,14 +28,6 @@ export const parseWorkerJsonResult = (provider: ProviderName, stdout: string): u
   }
 }
 
-/** Read the final model text through the selected provider's stdout reader.
- *
- * readOutput is a CLI-subprocess concern (decoding a captured stdout) and lives
- * on CliHeadlessAdapter. All three shipped providers carry it; the cast is safe
- * in production. A key-backed provider that reaches this path at runtime would
- * throw, which is the intended fail-fast behaviour.
- */
+/** Read the final model text through the selected provider's stdout reader. */
 export const readWorkerOutputText = (provider: ProviderName, stdout: string): string | null =>
-  extractLastStreamText(
-    (PROVIDERS[provider].headless as CliHeadlessAdapter).readOutput(stdout),
-  )
+  extractLastStreamText(PROVIDERS[provider].headless.readOutput(stdout))

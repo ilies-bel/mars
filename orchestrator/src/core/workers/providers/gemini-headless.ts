@@ -13,7 +13,7 @@ import {
 } from '../../ports/executor/executor-helpers'
 import type { RunAgentResult } from '../../ports/executor/types'
 import type { AgentEvent } from '../../lib/claude-stream'
-import type { CliHeadlessAdapter, HeadlessRunContext, HeadlessRunOpts } from '../provider-types'
+import type { HeadlessAdapter, HeadlessRunContext, HeadlessRunOpts } from '../provider-types'
 import { providerBinPath } from '../provider-bin'
 
 /**
@@ -45,7 +45,7 @@ const readGeminiOutput = (stdout: string): AgentEvent[] =>
     .map((line) => parseGeminiEventLine(line))
     .filter((event): event is AgentEvent => event !== null)
 
-export const geminiHeadless: CliHeadlessAdapter = {
+export const geminiHeadless: HeadlessAdapter = {
   capabilities: {
     usageSemantics: 'none',
     quotaRejected: false,
