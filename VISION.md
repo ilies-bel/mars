@@ -233,6 +233,20 @@ must clear. A reader applying §8's falsification test to HR-4 and finding no
 per-adjustment Notice for the dial should treat this carve-out as deliberate, not
 a gap.
 
+**Append 2 — DEC-12's key-backed clause is not met as of 2026-08-26.** The
+provider seam admits only a local CLI subprocess: `Provider` requires
+`spawnArgv` and `feedPrompt(handle)`, `HeadlessAdapter` requires
+`readOutput(stdout)`, and a provider descriptor is identified by a binary on
+PATH. No API-key, base-URL or auth field exists anywhere in the seam, and
+none ever has. So "borrowing a coding CLI" is currently the architecture,
+not one adapter kind among several, and the stated consequence is inverted:
+"no API keys, no per-token bill" is today a property of Mars rather than of
+one configuration. DEC-12 stands as the intent; ADR-0097 already mandates
+the reshape that would make it true, and only part of that reshape has
+landed (`HeadlessRunOpts` was made serializable; `spawnArgv`, `feedPrompt`
+and `readOutput(stdout)`, named in the same ADR consequence, were not).
+Tracked by task `mars-9a45415b`.
+
 ## 12. What this supersedes
 
 - `docs/knowledge/vision.md` — deleted. Its non-goals "no write surface in the
