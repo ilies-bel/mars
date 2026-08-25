@@ -11,12 +11,14 @@
  * the agent registry but has zero dispatch sites in production code.
  */
 
+import { useState } from 'react'
 import { FallbackSurface } from '@/components/FallbackSurface'
 import { CollapsibleSection } from '@/components/CollapsibleSection'
 import { useStewardView } from './useStewardView'
 import type { StewardView } from './useStewardView'
 import { PageHeader, SectionLabel } from '@/widgets/primitives/DensityPrimitives'
 import { formatAbsoluteDateTime, formatShortDate } from '@/shared/time'
+import { invokeAction } from '@/shared/api'
 
 export type { StewardView }
 export { useStewardView }
@@ -566,96 +568,128 @@ const GateHealthLane = ({
   data: StewardView['gateHealth'] | undefined
   isLoading?: boolean
   error?: Error | null
-}) => (
-  <article className={laneCardClass(true)} data-testid="lane-gate-health">
-    <header className="mb-4">
-      <div className={laneHeaderClass(true)}>
-        <StatusDot active={true} />
-        <span>Verify gates</span>
-        <span className="ml-auto rounded bg-success/20 px-1.5 py-0.5 text-micro text-success">
-          standing registry
-        </span>
-      </div>
-      <p className="mt-1 font-mono text-micro text-muted-foreground">
-        Read-only health of the registered verification gates. Repair approval remains in chat or the CLI.
-      </p>
-    </header>
+}) => {
+  const [restoringGateIds, setRestoringGateIds] = useState<Set<string>>(new Set())
 
-    {isLoading ? (
-      <p className="font-mono text-micro text-muted-foreground" role="status">
-        Loading verify gates…
-      </p>
-    ) : error !== null ? (
-      <div role="alert">
-        <p className="font-mono text-micro text-error">Daemon error while loading verify gates.</p>
-        <FallbackSurface error={error} of="verify gates" variant="pane" />
-      </div>
-    ) : data === undefined || data.scopes.length === 0 ? (
-      <p className="font-mono text-micro text-muted-foreground" data-testid="gate-health-empty-state">
-        No verify gates are registered.
-      </p>
-    ) : (
-      <div className="space-y-4">
-        {data.scopes.map((scope) => (
-          <section key={scope.scope} aria-label={`Verify gates for ${scope.scope}`}>
-            <div className="mb-2"><SectionLabel>Scope: {scope.scope}</SectionLabel></div>
-            <ul className="space-y-2">
-              {scope.gates.map((gate) => (
-                <li key={gate.id} className="rounded border border-border/40 bg-muted/10 px-3 py-2">
-                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                    <span className="font-mono text-label font-semibold text-foreground">{gate.name}</span>
-                    <span
-                      className={`rounded px-1.5 py-0.5 font-mono text-micro ${gate.state === 'active' ? 'bg-success/20 text-success' : 'bg-error/20 text-error'}`}
-                      aria-label={`Gate status: ${gate.state === 'active' ? 'Active' : 'Quarantined'}`}
-                    >
-                      {gate.state === 'active' ? 'Active' : 'Quarantined'}
-                    </span>
-                    <span className="font-mono text-micro text-muted-foreground">
-                      {gate.tier} · {gate.required ? 'required' : 'optional'}
-                    </span>
-                  </div>
-                  <code className="mt-1 block break-all font-mono text-micro text-foreground">
-                    {gate.command.cmd}{gate.command.args.length > 0 ? ` ${gate.command.args.join(' ')}` : ''}
-                  </code>
-                  <div className="mt-1 font-mono text-micro text-muted-foreground">
-                    <p>Source: {gate.source}</p>
-                    {gate.evidence !== null && <p>Evidence: {gate.evidence}</p>}
-                  </div>
-                  {gate.state === 'quarantined' && (
-                    <div className="mt-2 space-y-1 font-mono text-micro text-error">
-                      <p>
-                        This check was temporarily disabled
-                        {gate.quarantinedAt !== null
-                          ? ` on ${formatAbsoluteDateTime(gate.quarantinedAt)}`
-                          : ''}{' '}
-                        after failing repeatedly.
-                      </p>
-                      <CollapsibleSection label="Technical details">
-                        <p>Signature: {gate.quarantineSignature ?? 'Unavailable'}</p>
-                      </CollapsibleSection>
+  const handleRestore = async (gateId: string): Promise<void> => {
+    setRestoringGateIds((prev) => new Set(prev).add(gateId))
+    try {
+      await invokeAction('gate-restore', gateId)
+    } finally {
+      setRestoringGateIds((prev) => {
+        const next = new Set(prev)
+        next.delete(gateId)
+        return next
+      })
+    }
+  }
+
+  return (
+    <article className={laneCardClass(true)} data-testid="lane-gate-health">
+      <header className="mb-4">
+        <div className={laneHeaderClass(true)}>
+          <StatusDot active={true} />
+          <span>Verify gates</span>
+          <span className="ml-auto rounded bg-success/20 px-1.5 py-0.5 text-micro text-success">
+            standing registry
+          </span>
+        </div>
+        <p className="mt-1 font-mono text-micro text-muted-foreground">
+          Health of the registered verification gates. Quarantined gates can be restored from this page.
+        </p>
+      </header>
+
+      {isLoading ? (
+        <p className="font-mono text-micro text-muted-foreground" role="status">
+          Loading verify gates…
+        </p>
+      ) : error !== null ? (
+        <div role="alert">
+          <p className="font-mono text-micro text-error">Daemon error while loading verify gates.</p>
+          <FallbackSurface error={error} of="verify gates" variant="pane" />
+        </div>
+      ) : data === undefined || data.scopes.length === 0 ? (
+        <p className="font-mono text-micro text-muted-foreground" data-testid="gate-health-empty-state">
+          No verify gates are registered.
+        </p>
+      ) : (
+        <div className="space-y-4">
+          {data.scopes.map((scope) => (
+            <section key={scope.scope} aria-label={`Verify gates for ${scope.scope}`}>
+              <div className="mb-2"><SectionLabel>Scope: {scope.scope}</SectionLabel></div>
+              <ul className="space-y-2">
+                {scope.gates.map((gate) => (
+                  <li key={gate.id} className="rounded border border-border/40 bg-muted/10 px-3 py-2">
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                      <span className="font-mono text-label font-semibold text-foreground">{gate.name}</span>
+                      <span
+                        className={`rounded px-1.5 py-0.5 font-mono text-micro ${gate.state === 'active' ? 'bg-success/20 text-success' : 'bg-error/20 text-error'}`}
+                        aria-label={`Gate status: ${gate.state === 'active' ? 'Active' : 'Quarantined'}`}
+                      >
+                        {gate.state === 'active' ? 'Active' : 'Quarantined'}
+                      </span>
+                      <span className="font-mono text-micro text-muted-foreground">
+                        {gate.tier} · {gate.required ? 'required' : 'optional'}
+                      </span>
                     </div>
-                  )}
-                  {(gate.lastFailureSignature !== null || gate.lastFailureOriginId !== null || gate.lastFailureAt !== null) && (
-                    <div className="mt-2 border-t border-border/30 pt-2 font-mono text-micro text-muted-foreground">
-                      <p>
-                        Last failed
-                        {gate.lastFailureAt !== null ? ` on ${formatAbsoluteDateTime(gate.lastFailureAt)}` : ''}.
-                      </p>
-                      <CollapsibleSection label="Technical details">
-                        {gate.lastFailureSignature !== null && <p>Signature: {gate.lastFailureSignature}</p>}
-                        {gate.lastFailureOriginId !== null && <p>Origin task: {gate.lastFailureOriginId}</p>}
-                      </CollapsibleSection>
+                    <code className="mt-1 block break-all font-mono text-micro text-foreground">
+                      {gate.command.cmd}{gate.command.args.length > 0 ? ` ${gate.command.args.join(' ')}` : ''}
+                    </code>
+                    <div className="mt-1 font-mono text-micro text-muted-foreground">
+                      <p>Source: {gate.source}</p>
+                      {gate.evidence !== null && <p>Evidence: {gate.evidence}</p>}
                     </div>
-                  )}
-                </li>
-              ))}
-            </ul>
-          </section>
-        ))}
-      </div>
-    )}
-  </article>
-)
+                    {gate.state === 'quarantined' && (
+                      <div className="mt-2 space-y-1 font-mono text-micro text-error">
+                        <p>
+                          This check was temporarily disabled
+                          {gate.quarantinedAt !== null
+                            ? ` on ${formatAbsoluteDateTime(gate.quarantinedAt)}`
+                            : ''}{' '}
+                          after failing repeatedly.
+                        </p>
+                        <CollapsibleSection label="Technical details">
+                          <p>Signature: {gate.quarantineSignature ?? 'Unavailable'}</p>
+                        </CollapsibleSection>
+                        <button
+                          type="button"
+                          disabled={restoringGateIds.has(gate.id)}
+                          onClick={() => { void handleRestore(gate.id) }}
+                          className="mt-1 flex items-center gap-1 rounded border border-error/40 bg-error/10 px-2 py-1 font-mono text-micro text-error hover:bg-error/20 disabled:cursor-not-allowed disabled:opacity-50"
+                          data-testid={`gate-restore-${gate.id}`}
+                        >
+                          {restoringGateIds.has(gate.id) && (
+                            <span
+                              aria-hidden="true"
+                              className="inline-block h-3 w-3 animate-spin rounded-full border border-current border-t-transparent"
+                            />
+                          )}
+                          Restore
+                        </button>
+                      </div>
+                    )}
+                    {(gate.lastFailureSignature !== null || gate.lastFailureOriginId !== null || gate.lastFailureAt !== null) && (
+                      <div className="mt-2 border-t border-border/30 pt-2 font-mono text-micro text-muted-foreground">
+                        <p>
+                          Last failed
+                          {gate.lastFailureAt !== null ? ` on ${formatAbsoluteDateTime(gate.lastFailureAt)}` : ''}.
+                        </p>
+                        <CollapsibleSection label="Technical details">
+                          {gate.lastFailureSignature !== null && <p>Signature: {gate.lastFailureSignature}</p>}
+                          {gate.lastFailureOriginId !== null && <p>Origin task: {gate.lastFailureOriginId}</p>}
+                        </CollapsibleSection>
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ))}
+        </div>
+      )}
+    </article>
+  )
+}
 
 // ---------------------------------------------------------------------------
 // Page
