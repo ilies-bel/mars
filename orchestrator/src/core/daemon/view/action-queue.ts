@@ -220,11 +220,19 @@ export interface ActionQueueRow {
   conditionKey?: string | null
   /**
    * Structural class of this item (three-class model):
-   *   - `condition` — derived view of live state; cannot be dismissed.
-   *   - `decision`  — row-backed; closed atomically by a resolving mutation; has verbs.
-   *   - `notice`    — row-backed; closed by the user saying "I have read this."
+   *   - `notice`   — Mars has an automated move and is taking it; asks nothing
+   *                  of the operator. Raised to inform, not to request.
+   *   - `alert`    — Something is wrong and the operator is needed; raised the
+   *                  moment the last automated move is spent, or immediately when
+   *                  there never was one.
+   *   - `decision` — Nothing is wrong, but work cannot proceed until the operator
+   *                  picks. Raised to gate on a human choice.
    *
-   * The UI renders a Dismiss control ONLY when class === 'notice'.
+   * The class is derived from {@link ACTION_QUEUE_KINDS} via {@link classifyKind}
+   * and may be adjusted at render time when live context changes the obligation
+   * (e.g. an automated repair exhausting its budget shifts a `notice` to `alert`).
+   *
+   * The UI renders a Dismiss chip ONLY when class === 'notice'.
    */
   class: ActionQueueClass
   /**
@@ -274,10 +282,16 @@ const formatOperationalDuration = (milliseconds: number): string => {
  * without choosing whether it needs a specialised renderer (and adding one)
  * or deliberately preserving its persisted copy. That keeps a new operational
  * alert from silently falling back to the generic task-failure message.
+ *
+ * Renderers may optionally return `humanSummary` — a single plain-language
+ * sentence for a non-expert. When present it overrides the recipe registry's
+ * computed `humanSummary`, which is derived from the kind alone without access
+ * to the live pause-state or escalation context the renderer sees. Kinds whose
+ * renderer returns `null` (no override) continue to use the recipe's sentence.
  */
 const OPERATIONAL_ALERT_COPY: Record<
   ActionQueueKind,
-  ((row: PersistedActionQueueRow, pauseState: DispatchPauseState | null) => { title: string; body: string }) | null
+  ((row: PersistedActionQueueRow, pauseState: DispatchPauseState | null) => { title: string; body: string; humanSummary?: string }) | null
 > = {
   failed: null,
   'steward-repeat': null,
@@ -422,6 +436,11 @@ const OPERATIONAL_ALERT_COPY: Record<
           `pause/Steward/resume against a cause the Steward cannot reach only burns worktrees. Tasks keep ` +
           `dispatching and keep failing until the shared cause is fixed. Inspect \`.mars/watch.log\` and the ` +
           `\`steward_ledger\` rows for target '${signature}'.`,
+        // Overrides the recipe's generic "N tasks failed with signature …" sentence:
+        // the Steward budget is spent and Mars is no longer handling this automatically,
+        // so the operator is now on the hook — that context belongs in the summary.
+        humanSummary:
+          `${attempts} automatic fix attempt${attempts === 1 ? '' : 's'} all failed for the repeating "${signature}" failure — Mars will no longer pause dispatch for it. Fix the root cause manually to stop the failures.`,
       }
     }
     // Derive the "dispatch is paused" clause from current state, not the
@@ -536,7 +555,7 @@ const OPERATIONAL_ALERT_COPY: Record<
 const renderOperationalAlertCopy = (
   row: PersistedActionQueueRow,
   pauseState: DispatchPauseState | null,
-): { title: string; body: string } | null =>
+): { title: string; body: string; humanSummary?: string } | null =>
   isActionQueueKind(row.kind) ? OPERATIONAL_ALERT_COPY[row.kind]?.(row, pauseState) ?? null : null
 
 /** Narrow task shape `buildActionQueueView` needs — a subset of the queue Task. */
@@ -1240,6 +1259,11 @@ export const buildActionQueueView = async ({
     })()
 
     const recipeFields = buildRecipeFields(row, entityId, title, body)
+    // When the operational alert renderer supplies a humanSummary, it overrides
+    // the recipe's generic sentence. The recipe computes humanSummary from the
+    // kind alone; operational renderers also see the live pause-state and
+    // escalation context, so their sentence is more accurate when present.
+    const humanSummary = operationalCopy?.humanSummary ?? recipeFields.humanSummary
 
     // Extract conditionKey for health-check-alert rows. Used by the Steward
     // to auto-close open rows when the associated condition is gone.
@@ -1249,9 +1273,27 @@ export const buildActionQueueView = async ({
         : null
 
     // Structural class and notice key for the three-class model.
-    const itemClass: ActionQueueClass = isActionQueueKind(row.kind)
+    let itemClass: ActionQueueClass = isActionQueueKind(row.kind)
       ? classifyKind(row.kind)
       : 'decision'
+    // Context-aware override: a notice-class condition's automated repair may be
+    // exhausted at render time, shifting the operator-obligation from notice to alert.
+    // classifyKind assigns based on the kind's nominal contract (KIND_CLASS); this
+    // adjusts for live context the kind alone cannot encode.
+    //
+    // Rule: if the nominal class is `notice` AND the payload signals that Mars's
+    // last automated move is spent, reclassify as `alert` so the UI surfaces the
+    // item as actionable rather than informational.
+    if (itemClass === 'notice' && row.kind === 'signature-storm') {
+      // The escalation variant carries `stewardAttempts`: the Steward budget is
+      // spent and Mars has stopped auto-pausing for this signature. No automated
+      // move remains — the operator is now on the hook.
+      const stewardAttempts =
+        typeof row.payload.stewardAttempts === 'number' ? row.payload.stewardAttempts : null
+      if (stewardAttempts !== null) {
+        itemClass = 'alert'
+      }
+    }
     // noticeKey: for notice items, read from the payload (set by the raiser),
     // falling back to the kind itself for notice kinds without a per-instance key.
     const noticeKey: string | null = itemClass === 'notice'
@@ -1310,7 +1352,7 @@ export const buildActionQueueView = async ({
       conditionKey,
       class: itemClass,
       noticeKey,
-      humanSummary: recipeFields.humanSummary,
+      humanSummary,
       humanDetail: recipeFields.humanDetail,
       verbs: recipeFields.verbs,
     })
@@ -1668,10 +1710,21 @@ export const buildActionQueueHistoryView = async ({
         : null
 
     const historyRecipeFields = buildRecipeFields(row, entityId, title, body)
+    // Apply the same operationalCopy humanSummary override as the live view
+    // (see the matching comment in buildActionQueueView above).
+    const historyHumanSummary = operationalCopy?.humanSummary ?? historyRecipeFields.humanSummary
 
-    const historyItemClass: ActionQueueClass = isActionQueueKind(row.kind)
+    let historyItemClass: ActionQueueClass = isActionQueueKind(row.kind)
       ? classifyKind(row.kind)
       : 'decision'
+    // Context-aware override — same rule as buildActionQueueView.
+    if (historyItemClass === 'notice' && row.kind === 'signature-storm') {
+      const stewardAttempts =
+        typeof row.payload.stewardAttempts === 'number' ? row.payload.stewardAttempts : null
+      if (stewardAttempts !== null) {
+        historyItemClass = 'alert'
+      }
+    }
     const historyNoticeKey: string | null = historyItemClass === 'notice'
       ? (typeof row.payload.noticeKey === 'string'
           ? row.payload.noticeKey
@@ -1703,7 +1756,7 @@ export const buildActionQueueHistoryView = async ({
       resolution,
       class: historyItemClass,
       noticeKey: historyNoticeKey,
-      humanSummary: historyRecipeFields.humanSummary,
+      humanSummary: historyHumanSummary,
       humanDetail: historyRecipeFields.humanDetail,
       verbs: [], // Resolved rows are read-only; no action verbs.
     })
