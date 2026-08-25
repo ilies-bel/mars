@@ -440,7 +440,6 @@ const RECIPE_DEFINITIONS = {
 
   // ── Proposals and planning ─────────────────────────────────────────────────
 
-  // family: proposal-promotion
   'draft-proposal': {
     humanSummary: (ctx) => {
       const title = str(ctx.payload['title']) || ctx.title
@@ -742,15 +741,13 @@ const RECIPE_DEFINITIONS = {
 
   // ── Reflection and evolution ───────────────────────────────────────────────
 
-  // family: proposal-promotion
   'reflect-recommended': {
     humanSummary: () =>
       'Mars spotted patterns in recent work worth reviewing — this is informational, no action needed from you.',
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
       entityId: ctx.entityId,
-      signals: ctx.payload['signals'],
-      windowStart: str(ctx.payload['windowStart']),
+      evidence: ctx.payload['evidence'],
     }),
     verbs: [{ op: 'run-reflect', label: 'Run reflection', style: 'primary' }],
   },
@@ -972,18 +969,16 @@ const RECIPE_DEFINITIONS = {
 
   // ── Quality and workflows ─────────────────────────────────────────────────
 
-  // family: proposal-promotion
   'scorer-suggested': {
     humanSummary: (ctx) => {
-      const workflow = str(ctx.payload['workflowName']) || ctx.entityId
+      const workflow = str(ctx.payload['workflow']) || ctx.entityId
       return `You have a suggestion to consider — a quality scorer for "${workflow}" is proposed. Accept it to start tracking quality automatically, or dismiss it.`
     },
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
       entityId: ctx.entityId,
-      workflowName: str(ctx.payload['workflowName']),
+      workflow: str(ctx.payload['workflow']),
       scorerId: str(ctx.payload['scorerId']),
-      rationale: str(ctx.payload['rationale']),
     }),
     verbs: [
       { op: 'scorer-accept', label: 'Accept scorer', style: 'primary' },
@@ -991,14 +986,13 @@ const RECIPE_DEFINITIONS = {
     ],
   },
 
-  // family: proposal-promotion
   'promotion-decision': {
     humanSummary: (ctx) => {
-      const verdict = str(ctx.payload['verdict'])
-      const workflow = str(ctx.payload['workflowName']) || ctx.entityId
-      if (verdict === 'promote') {
+      const decision = str(ctx.payload['decision'])
+      const workflow = str(ctx.payload['workflow']) || ctx.entityId
+      if (decision === 'promote') {
         return `Decide whether to promote "${workflow}" to the default — it is performing better than before.`
-      } else if (verdict === 'retire') {
+      } else if (decision === 'retire') {
         return `Decide whether to retire "${workflow}" — it is performing worse than before.`
       }
       return `You need to decide what to do with "${workflow}" — review the benchmark results and choose.`
@@ -1006,10 +1000,9 @@ const RECIPE_DEFINITIONS = {
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
       entityId: ctx.entityId,
-      workflowName: str(ctx.payload['workflowName']),
-      verdict: str(ctx.payload['verdict']),
+      workflow: str(ctx.payload['workflow']),
+      decision: str(ctx.payload['decision']),
       ledgerId: str(ctx.payload['ledgerId']),
-      benchmarkSummary: ctx.payload['benchmarkSummary'],
     }),
     verbs: [
       { op: 'promote-workflow', label: 'Promote', style: 'primary' },
@@ -1034,7 +1027,6 @@ const RECIPE_DEFINITIONS = {
     ],
   },
 
-  // family: proposal-promotion
   'tool-promotion': {
     humanSummary: (ctx) => {
       const helperKey = str(ctx.payload['helperKey']) || ctx.entityId
@@ -1045,8 +1037,8 @@ const RECIPE_DEFINITIONS = {
       entityId: ctx.entityId,
       helperKey: str(ctx.payload['helperKey']),
       attemptId: str(ctx.payload['attemptId']),
-      benchmarkBefore: ctx.payload['benchmarkBefore'],
-      benchmarkAfter: ctx.payload['benchmarkAfter'],
+      before: ctx.payload['before'],
+      after: ctx.payload['after'],
     }),
     verbs: [
       { op: 'approve-tool', label: 'Promote helper', style: 'primary' },

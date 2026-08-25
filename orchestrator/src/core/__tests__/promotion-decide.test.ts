@@ -535,13 +535,23 @@ describe('runPromotionDecision (integration)', () => {
     const ledgerId = payload.ledgerId as string
 
     // Re-raise with the same signature — should be idempotent.
+    // Payload must satisfy PromotionDecisionPayload; only the signature matters
+    // for the dedup check, so placeholder values are fine for unused fields.
     await aq.raiseActionQueueItem({
       kind: 'promotion-decision',
       category: 'daemon',
       priority: 'normal',
       title: 'Promotion decision: task',
       body: 'duplicate raise',
-      payload: { ledgerId },
+      payload: {
+        ledgerId,
+        workflow: 'task',
+        candidateVersionId: 'wfc-v2',
+        incumbentVersionId: 'wfc-v1',
+        candidateScore: null,
+        incumbentScore: null,
+        decision: 'promote' as const,
+      },
       context: {},
       raisedBy: 'test',
       signature: `promotion-decision:${ledgerId}`,

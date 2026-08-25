@@ -80,10 +80,20 @@ export type {
   QaStepListPromotePayload,
   ValidationQaContracts,
 } from './payload-contracts/validation-qa'
+export type {
+  DraftProposalPayload,
+  ScorerSuggestedPayload,
+  PromotionDecisionPayload,
+  ToolPromotionPayload,
+  ReflectRecommendedPayload,
+  ReflectEvidence,
+  ProposalContracts,
+} from './payload-contracts/proposals'
 
 import type { AwaitingHumanContracts } from './payload-contracts/awaiting-human'
 import type { GateEnrichmentContracts } from './payload-contracts/gate-enrichment'
 import type { LifecycleContracts } from './payload-contracts/lifecycle'
+import type { ProposalContracts } from './payload-contracts/proposals'
 import type { SchedulingContracts } from './payload-contracts/scheduling'
 import type { SliceWorkflowContracts } from './payload-contracts/slice-workflow'
 import type { ValidationQaContracts } from './payload-contracts/validation-qa'
@@ -108,6 +118,7 @@ export type UnauditedPayload = Record<string, unknown>
 type AuditedPayloads = AwaitingHumanContracts &
   GateEnrichmentContracts &
   LifecycleContracts &
+  ProposalContracts &
   SchedulingContracts &
   SliceWorkflowContracts &
   ValidationQaContracts
@@ -164,7 +175,7 @@ export const ACTION_QUEUE_PAYLOAD_AUDIT = {
   'daemon-killed': 'unaudited',
   'coder-question': 'typed',
   'prerequisite-failed': 'typed',
-  'draft-proposal': 'unaudited',
+  'draft-proposal': 'typed',
   'slices-dropped': 'typed',
   'slice-failed': 'typed',
   'hitl-slice-needs-operator': 'typed',
@@ -173,7 +184,7 @@ export const ACTION_QUEUE_PAYLOAD_AUDIT = {
   'behaviour-unverified': 'typed',
   'observability-store-oversize': 'unaudited',
   'outbox-lag': 'unaudited',
-  'reflect-recommended': 'unaudited',
+  'reflect-recommended': 'typed',
   'done-with-unmerged-commits': 'typed',
   'api-outage': 'unaudited',
   'workflow-install-drift': 'typed',
@@ -182,9 +193,9 @@ export const ACTION_QUEUE_PAYLOAD_AUDIT = {
   'workflow-draft-pending': 'typed',
   'budget-window': 'unaudited',
   'budget-arc': 'unaudited',
-  'scorer-suggested': 'unaudited',
-  'promotion-decision': 'unaudited',
-  'tool-promotion': 'unaudited',
+  'scorer-suggested': 'typed',
+  'promotion-decision': 'typed',
+  'tool-promotion': 'typed',
   'arc-verification-failed': 'unaudited',
   'gate-enrichment-stale': 'unaudited',
   'env-incident': 'unaudited',
@@ -268,11 +279,4 @@ export const UNAUDITED_KIND_FAMILY = {
   'arc-verification-failed': 'verify-gate',
   'env-incident': 'verify-gate',
   'dirty-integration': 'verify-gate',
-
-  'draft-proposal': 'proposal-promotion',
-  'scorer-suggested': 'proposal-promotion',
-  'promotion-decision': 'proposal-promotion',
-  'tool-promotion': 'proposal-promotion',
-  'reflect-recommended': 'proposal-promotion',
-
 } as const satisfies Record<UnauditedKind, UnauditedKindFamily>
