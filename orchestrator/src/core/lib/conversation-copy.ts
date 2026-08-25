@@ -186,6 +186,8 @@ const REGISTRY: { [Kind in AutonomousNoticeKind]: NoticeKindEntry<Kind> } = {
         target: { type: 'client', op: 'open-proposal-subject', entityId: p.proposalId },
       },
       ack('later', 'Later'),
+      // Class-level off-switch: turns off idle-proposal offers entirely.
+      silence(IDLE_PROPOSAL_OFFER_LEVER, 'Stop suggesting proposals', 'stop'),
       // Per-instance: dismisses only this proposal's offer, not the whole class.
       dismissNotice(`idle-proposal:${p.proposalId}`, 'never'),
     ],
