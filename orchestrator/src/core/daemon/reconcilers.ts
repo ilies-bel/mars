@@ -937,6 +937,30 @@ const stalledProposalSlice: Reconciler = {
           log(
             `[reconcile-slice] proposal ${proposal.id} skipped after failed slice: ${proposal.lastSliceError}`,
           )
+          // Re-raise the slice-failed action queue item so a prd-ready proposal
+          // with a recorded slice failure is never a silent resting state.
+          // raiseActionQueueItem is idempotent: it bumps seen_count when an open
+          // row already exists, and inserts a fresh row when the original was
+          // lost (e.g. the daemon died before the outbox subscriber drained).
+          const { raiseActionQueueItem } = await import('../lib/action-queue')
+          await raiseActionQueueItem({
+            kind: 'slice-failed',
+            category: 'orchestrator',
+            priority: 'high',
+            title: `Slicer failed for PRD ${proposal.id}`,
+            body:
+              `PRD ${proposal.id} (${proposal.title}) could not be sliced: ${proposal.lastSliceError}. ` +
+              `Inspect the PRD and run \`mars proposal slice ${proposal.id}\` to retry explicitly.`,
+            payload: { proposalId: proposal.id, error: proposal.lastSliceError },
+            context: {},
+            raisedBy: 'startup-reconcile:stalled-proposal-slice',
+            signature: proposal.id,
+            originTaskId: proposal.id,
+          }).catch((aqErr: unknown) => {
+            log(
+              `[reconcile-slice] proposal ${proposal.id} could not raise action-queue item: ${(aqErr as Error).message}`,
+            )
+          })
           continue
         }
         if (handleProposalSlice !== null) {

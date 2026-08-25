@@ -346,6 +346,37 @@ describe('runStartupReconcile — stalled proposal slicing', { timeout: 120_000 
     expect(logs.join('\n')).toContain('invalid slice references')
   })
 
+  it('raises a slice-failed action queue item for a prd-ready proposal with lastSliceError', async () => {
+    // Regression: a prd-ready proposal with a recorded slice failure must never
+    // be a silent resting state. The reconciler must (re-)raise the slice-failed
+    // action-queue item so the operator sees the stall even if the original item
+    // was lost when the daemon died.
+    const { q, reconcile } = await loadModules(repo)
+    const proposals = (await import('../../proposals')) as unknown as ProposalsModule
+    const proposal = await proposals.createProposal('Silent failure proposal', { source: 'human' })
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE proposals
+            SET status = 'prd-ready', last_slice_error = 'slicer LLM refused', last_slice_failed_at = ?
+            WHERE id = ?`,
+      args: [Date.now(), proposal.id],
+    })
+
+    const logs: string[] = []
+    await reconcile.runStartupReconcile({
+      ...makeDeps(),
+      log: (line) => logs.push(line),
+      handleProposalSlice: vi.fn(),
+    })
+
+    // The action queue must have an open slice-failed item for this proposal.
+    const { listActionQueueItems } = await import('../../lib/action-queue')
+    const items = await listActionQueueItems('open', { kind: 'slice-failed' })
+    const forThisProposal = items.filter(
+      (item) => item.payload['proposalId'] === proposal.id,
+    )
+    expect(forThisProposal.length, `logs: ${logs.join('\n')}`).toBeGreaterThan(0)
+  })
+
   it('dispatches a ready proposal that has no recorded slice failure', async () => {
     const { reconcile } = await loadModules(repo)
     const proposals = (await import('../../proposals')) as unknown as ProposalsModule

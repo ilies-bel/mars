@@ -182,7 +182,7 @@ describe('proposal promote — non-skill-forge routes to daemon', () => {
     expect(fake.calls).toHaveLength(1)
     expect((fake.calls[0] as { op: string }).op).toBe('proposal.promote')
     expect(fake.calls[0]).toMatchObject({ coordinated: false })
-    expect(r.out.join('\n')).toContain('tasks will be enqueued automatically when slicing completes')
+    expect(r.out.join('\n')).toContain('slicing requested')
 
     // No skill file should have been written.
     const skillsDir = join(repo, 'orchestrator/src/init/templates/claude/skills')
@@ -206,6 +206,6 @@ describe('proposal promote — non-skill-forge routes to daemon', () => {
 
     expect(r.code).toBe(0)
     expect(fake.calls[0]).toMatchObject({ coordinated: true })
-    expect(r.out.join('\n')).toContain('tasks will be enqueued automatically')
+    expect(r.out.join('\n')).toContain('slicing requested')
   })
 })

@@ -357,7 +357,7 @@ const proposalPromote: Command = {
         { onSpawnNotice: spawnNoticeErr(deps.err) },
       )) as { proposalId: string; status: string }
       deps.out(
-        `proposal ${r.proposalId} marked ${r.status}; tasks will be enqueued automatically when slicing completes`,
+        `proposal ${r.proposalId} marked ${r.status}; slicing requested — run 'mars proposal slice ${r.proposalId}' to check progress or retry if tasks do not appear`,
       )
       if (!(await isDaemonReachable(deps.ctx.stateDir))) {
         deps.err(

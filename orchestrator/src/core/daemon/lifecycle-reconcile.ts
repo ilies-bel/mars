@@ -10,8 +10,15 @@ import type { SupersedeReason } from '../lib/action-queue'
  * Kinds whose `origin_task_id` points to a row in `proposals`, not `tasks`.
  * Extend this list when a new proposal-origin kind is added; the orphan checks
  * below automatically route to the correct origin table.
+ *
+ * - `draft-proposal` — an agent-suggested draft proposal waiting for operator review.
+ * - `slice-failed`   — the slicer failed to decompose a PRD; proposal stays prd-ready
+ *                      for the operator to fix and retry. Must be here because the
+ *                      slice workflow raises this with originTaskId=proposal.id (not a
+ *                      task id), so the (b-task) orphan sweep would otherwise incorrectly
+ *                      resolve it when it finds the id absent from the tasks table.
  */
-const PROPOSAL_ORIGIN_KINDS = ['draft-proposal'] as const
+const PROPOSAL_ORIGIN_KINDS = ['draft-proposal', 'slice-failed'] as const
 
 /**
  * Kinds whose `origin_task_id` points to a row in `scorers`, not `tasks`.
