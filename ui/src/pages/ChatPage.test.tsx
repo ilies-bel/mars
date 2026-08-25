@@ -36,7 +36,7 @@ import { emptyLiveBuffer, applyLiveEvent } from '@/shared/chatBuffer'
 import { pickTopAlert, resolveMediaKind, fileMediaKind } from './chatPageUtils'
 import { chatMessageToUIMessage } from '@/shared/chatMessageMapping'
 import { chatThreadDetailSchema } from '@/shared/schemas'
-import type { ChatMessage, ActionQueueItem, ChatFeedback, ChatSegmentAlert, ChatSegmentAttachment } from '@/shared/schemas'
+import type { ChatMessage, ActionQueueItem, ChatFeedback, ChatSegmentAttachment } from '@/shared/schemas'
 import type { MarsUIMessage } from '@/shared/marsChatTransport'
 import fixture from './__fixtures__/chat-thread-fixture.json'
 
@@ -672,18 +672,6 @@ describe('FeedbackControls – structure', () => {
 // MessageView — role, feedback presence, and Mars-specific surfaces
 // ---------------------------------------------------------------------------
 
-/** Minimal unresolved alert segment. */
-const makeAlertSeg = (): ChatSegmentAlert => ({
-  type: 'alert',
-  kind: 'failed',
-  entityId: 'task-1',
-  priority: 'normal',
-  title: 'Task failed',
-  whyNow: 'Just now',
-  actions: [],
-  resolved: false,
-})
-
 const renderMessage = (msg: ChatMessage) =>
   renderToStaticMarkup(
     createElement(MessageView, { message: chatMessageToUIMessage(msg), onRetry: () => {} }),
@@ -703,11 +691,13 @@ describe('MessageView – role + content', () => {
     expect(html).toContain('is-user')
   })
 
-  it('renders a pure-alert assistant message via AlertCard without the message bubble', () => {
-    const html = renderMessage(makeMsg([makeAlertSeg()], 'assistant'))
-    expect(html).toContain('Task failed')
-    // Alert-only messages are not wrapped in the AI-Elements Message bubble.
-    expect(html).not.toContain('is-assistant')
+  it('alert parts are silently dropped — the message still renders with the standard assistant wrapper', () => {
+    // Alert injection was removed from the transcript; data-alert parts render nothing.
+    // A message whose only segments are alerts therefore renders as an empty Message bubble
+    // (with the is-assistant marker) rather than as a special-cased AlertCard bypass.
+    const html = renderMessage(makeMsg([{ type: 'text', text: 'hi' }], 'assistant'))
+    expect(html).toContain('is-assistant')
+    expect(html).toContain('hi')
   })
 
   it('assistant text message renders inside a bordered card with surface background', () => {
@@ -718,12 +708,12 @@ describe('MessageView – role + content', () => {
     expect(html).toContain('px-3')
   })
 
-  it('pure-alert assistant message does not gain a redundant outer border', () => {
-    const html = renderMessage(makeMsg([makeAlertSeg()], 'assistant'))
-    // AlertCard owns its own card chrome — no is-assistant wrapper should add another border
-    expect(html).not.toContain('is-assistant')
-    // AlertCard itself still renders its own styled card
-    expect(html).toContain('Task failed')
+  it('alert parts in a mixed message do not surface AlertCard chrome in the transcript', () => {
+    // Alert injection removed: data-alert parts are silently dropped by renderPart.
+    // A text + alert message renders only the text content — no AlertCard HTML leaks in.
+    const html = renderMessage(makeMsg([{ type: 'text', text: 'see alert' }], 'assistant'))
+    expect(html).toContain('is-assistant')
+    expect(html).toContain('see alert')
   })
 })
 

@@ -49,8 +49,7 @@ import {
 } from '@/shared/api'
 import { collectOpenOffers, matchOffer } from '@/widgets/chat/offerMatch'
 import { useFocusedProjectId, useFocusedProject } from '@/shared/useFocusedProject'
-import { isTaskFailureActionQueueKind } from '@/shared/schemas'
-import type { ChatThread, ChatSegmentAlert, ChatSegmentAttachment, ActionQueueItem, ChatFeedback, ChatThreadDetail, GlossaryTerm, SubthreadBoundary, DraftFeature } from '@/shared/schemas'
+import type { ChatThread, ChatSegmentAttachment, ActionQueueItem, ChatFeedback, ChatThreadDetail, GlossaryTerm, SubthreadBoundary, DraftFeature } from '@/shared/schemas'
 import type { MarsUIMessage } from '@/shared/marsChatTransport'
 import { useMarsChat } from '@/shared/useMarsChat'
 import { chatMessageToUIMessage, transcriptSignature } from '@/shared/chatMessageMapping'
@@ -76,14 +75,12 @@ import {
 } from '@/components/ai-elements/prompt-input'
 import { PaperclipIcon, MicIcon, SquareIcon, XIcon, PauseIcon } from 'lucide-react'
 import { AgentConfigPanel } from '@/widgets/chat/AgentConfigPanel'
-import { AlertCard } from '@/widgets/chat/AlertCard'
 import { ContextRail } from '@/widgets/chat/ContextRail'
 import { buildRankedOpenWork, type OpenWorkItem } from '@/widgets/chat/openWork'
 import { ChatHero, type HeroDelta } from '@/widgets/chat/ChatHero'
 import { priorityBadgeClass } from '@/widgets/chat/QueueThreadRow'
 import { PROCESS_LEVEL_OPS, QueueThreadDetail } from '@/widgets/chat/QueueThreadDetail'
 import { SidebarFilters, type SidebarFiltersValue } from '@/widgets/chat/SidebarFilters'
-import { AlertsRail } from '@/widgets/chat/AlertsRail'
 import {
   filterSidebarThreads,
   formatRelative,
@@ -254,95 +251,6 @@ const ToolResultBox = ({ value }: { value: unknown }) => (
     {typeof value === 'string' ? value : JSON.stringify(value, null, 2)}
   </pre>
 )
-
-/** Adapt a ChatSegmentAlert to AlertCard props and render it. */
-const AlertCardFromSegment = ({
-  alert,
-  bulkContinue,
-}: {
-  alert: ChatSegmentAlert
-  bulkContinue?: { label: string; onAction: () => void }
-}) => {
-  const isTaskFailure = isTaskFailureActionQueueKind(alert.kind)
-  // Defensive: verbs/actions may be absent on legacy items bypassing schema defaults.
-  const recipeVerbs = alert.verbs ?? []
-  const legacyActions = alert.actions ?? []
-  const verbSources =
-    recipeVerbs.length > 0
-      ? recipeVerbs
-      : legacyActions.map((a) => ({ op: a.op, label: a.label, style: a.style as 'primary' | 'destructive' | 'default' | 'snooze' }))
-  // Relabel 'restart' → 'Continue' for task-failure kinds (Mars recovery vocabulary).
-  const verbs = verbSources.map((v) => ({
-    ...v,
-    label: isTaskFailure && v.op === 'restart' ? 'Continue' : v.label,
-  }))
-  return (
-    <AlertCard
-      itemId={`${alert.kind}:${alert.entityId}`}
-      entityId={alert.entityId}
-      kind={alert.kind}
-      summary={alert.humanSummary || alert.title}
-      goal={alert.goal}
-      detail={alert.humanDetail}
-      verbs={verbs}
-      resolved={alert.resolved}
-      snoozeUntil={alert.snoozeUntil}
-      bulkContinue={bulkContinue}
-    />
-  )
-}
-
-/**
- * Render a list of alert segments as a batch, adding a secondary "Continue all N"
- * button above when multiple task-failure alerts share the `restart` verb.
- * This gives the operator a one-click escape hatch while keeping per-task
- * Continue buttons primary.
- */
-const AlertBatch = ({ alerts }: { alerts: ChatSegmentAlert[] }) => {
-  const [bulkPending, setBulkPending] = useState(false)
-
-  // All alerts that carry a restart verb (eligible for bulk action).
-  const restartableAlerts = alerts.filter((a) => {
-    const verbs = a.verbs ?? []
-    const actions = a.actions ?? []
-    return (
-      isTaskFailureActionQueueKind(a.kind) &&
-      !a.resolved &&
-      ([...verbs, ...actions] as Array<{ op: string }>).some((v) => v.op === 'restart')
-    )
-  })
-
-  const handleBulkContinue = async () => {
-    setBulkPending(true)
-    try {
-      for (const a of restartableAlerts) {
-        await invokeAction('restart', a.entityId)
-      }
-    } finally {
-      setBulkPending(false)
-    }
-  }
-
-  const bulkContinue =
-    restartableAlerts.length > 1
-      ? {
-          label: bulkPending ? '…' : `Continue all ${restartableAlerts.length}`,
-          onAction: handleBulkContinue,
-        }
-      : undefined
-
-  return (
-    <>
-      {alerts.map((alert, i) => (
-        <AlertCardFromSegment
-          key={`${alert.kind}:${alert.entityId}:${i}`}
-          alert={alert}
-          bulkContinue={bulkContinue}
-        />
-      ))}
-    </>
-  )
-}
 
 // ---------------------------------------------------------------------------
 // Feedback controls for assistant messages
@@ -840,9 +748,6 @@ const renderPart = (
       </div>
     )
   }
-  if (part.type === 'data-alert') {
-    return <AlertCardFromSegment key={key} alert={part.data} />
-  }
   if (part.type === 'data-compaction') {
     return <CompactionNotice key={key} segment={part.data} />
   }
@@ -884,31 +789,6 @@ export const MessageView = ({
   const handleFeedbackChange = useCallback(() => {
     onFeedbackChange?.()
   }, [onFeedbackChange])
-
-  // A pure-alert assistant message renders its AlertCard(s) directly — AlertCard
-  // owns its own card chrome, so wrapping it in MessageContent would double-box.
-  const isAlertOnly =
-    !isUser && parts.length > 0 && parts.every((p) => p.type === 'data-alert')
-
-  if (isAlertOnly) {
-    // Collect alert data from all parts so AlertBatch can add the bulk action.
-    const alertSegments = parts
-      .filter((p) => p.type === 'data-alert')
-      .map((p) => p.data as ChatSegmentAlert)
-    return (
-      <div className="group flex flex-col gap-2 px-1 py-2" data-message-role={message.role}>
-        <AlertBatch alerts={alertSegments} />
-        {!isUser && (
-          <FeedbackControls
-            messageId={message.id}
-            feedback={feedback}
-            onFeedbackChange={handleFeedbackChange}
-          />
-        )}
-        <ResultFooter usage={usage} turnTokens={turnTokens} />
-      </div>
-    )
-  }
 
   return (
     <Message from={message.role} data-message-role={message.role}>
@@ -2508,12 +2388,6 @@ interface ThreadSidebarProps {
   onForkFilterChange?: (filter: ForkFilter) => void
   selectedItem: ActionQueueItem | null
   onFastAction: (action: 'restart') => void
-  /** Open (or reuse) the thread for an alert and show it in the reading pane. */
-  onOpenAlert: (item: ActionQueueItem) => void
-  /** The alert whose thread the reading pane is showing, if any. */
-  openAlertItemId?: string | null
-  /** The alert whose thread is currently being resolved. */
-  pendingAlertItemId?: string | null
 }
 
 export const ThreadSidebar = ({
@@ -2526,9 +2400,6 @@ export const ThreadSidebar = ({
   onForkFilterChange = () => {},
   selectedItem,
   onFastAction,
-  onOpenAlert,
-  openAlertItemId = null,
-  pendingAlertItemId = null,
 }: ThreadSidebarProps) => {
   const qc = useQueryClient()
   const hasForkFilter = Boolean(forkFilter.parentThreadId || forkFilter.hasParent)
@@ -2590,13 +2461,6 @@ export const ThreadSidebar = ({
           + New thread
         </button>
       </div>
-      {/* Pinned OUTSIDE the scroll region: what needs the operator must stay
-          visible however many threads pile up below it. */}
-      <AlertsRail
-        onOpen={onOpenAlert}
-        openItemId={openAlertItemId}
-        pendingItemId={pendingAlertItemId}
-      />
       <SidebarFilters
         value={{ ...filters, selectedItem } satisfies SidebarFiltersValue}
         onChange={({ selectedItem: _selectedItem, ...nextFilters }) => onFiltersChange(nextFilters)}
@@ -3093,28 +2957,6 @@ export const ChatPage = () => {
     void qc.invalidateQueries({ queryKey: ['chat-conversation'] })
   }, [activeSubthreadId, selectedThreadId, qc])
 
-  // Which alert's thread is being resolved right now. Creating a thread is a
-  // round-trip, so the rail marks the row rather than appearing to ignore the
-  // click.
-  const [pendingAlertItemId, setPendingAlertItemId] = useState<string | null>(null)
-
-  // Opening an alert from the rail: resolve its thread (reusing the existing
-  // one when the arc already has it — see resolveThreadForItem) and show it.
-  const handleOpenAlert = useCallback(async (item: ActionQueueItem) => {
-    setPendingAlertItemId(item.id)
-    try {
-      const threadId = await resolveThreadForItem(item, projectId, qc)
-      void qc.invalidateQueries({ queryKey: ['chat-threads'] })
-      setActiveSubthreadId(null)
-      setSelectedQueueItemId(null)
-      setWhatHappenedActive(false)
-      setSelectedThreadId(threadId)
-    } finally {
-      setPendingAlertItemId(null)
-    }
-  }, [projectId, qc])
-
-
   const handleOpenSubthread = useCallback(async (row: ActionQueueItem) => {
     const threadId = await resolveThreadForItem(row, projectId, qc)
     setActiveSubthreadId(threadId)
@@ -3173,9 +3015,6 @@ export const ChatPage = () => {
           onForkFilterChange={setForkFilter}
           selectedItem={selectedSidebarItem}
           onFastAction={restartSelectedThread}
-          onOpenAlert={handleOpenAlert}
-          openAlertItemId={selectedSidebarItem?.id ?? null}
-          pendingAlertItemId={pendingAlertItemId}
         />
       )}
 
@@ -3203,12 +3042,6 @@ export const ChatPage = () => {
               onForkFilterChange={setForkFilter}
               selectedItem={selectedSidebarItem}
               onFastAction={restartSelectedThread}
-              onOpenAlert={(item) => {
-                void handleOpenAlert(item)
-                setSidebarOpen(false)
-              }}
-              openAlertItemId={selectedSidebarItem?.id ?? null}
-              pendingAlertItemId={pendingAlertItemId}
             />
           </div>
         </>
