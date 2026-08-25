@@ -1403,6 +1403,17 @@ const preloadedAckTargetSchema = z.object({
   type: z.literal('ack'),
 })
 
+/**
+ * Records a durable per-instance dismissal keyed on `noticeKey`. The daemon
+ * inserts a row into `notice_dismissals`; subsequent `isNoticeDismissed` calls
+ * for that key return true. Use instead of `lever` when only this specific
+ * instance should be suppressed, not the whole class.
+ */
+const preloadedDismissNoticeTargetSchema = z.object({
+  type: z.literal('dismiss-notice'),
+  noticeKey: z.string(),
+})
+
 export const preloadedResponseSchema = z.object({
   id: z.string(),
   label: z.string(),
@@ -1413,6 +1424,7 @@ export const preloadedResponseSchema = z.object({
     preloadedLeverTargetSchema,
     preloadedReferenceTargetSchema,
     preloadedAckTargetSchema,
+    preloadedDismissNoticeTargetSchema,
   ]),
 })
 

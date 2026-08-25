@@ -46,6 +46,14 @@ const ALIASES: Partial<Record<PreloadedResponse['target']['type'], readonly stri
     'never ask again',
     'never again',
   ],
+  'dismiss-notice': [
+    'stop asking me that',
+    'stop asking',
+    'kill this',
+    'kill it',
+    'never this one',
+    'dismiss this',
+  ],
 }
 
 /**

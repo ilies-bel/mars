@@ -379,6 +379,18 @@ const PreloadedAckTargetSchema = z.object({
   type: z.literal('ack'),
 })
 
+/**
+ * A one-tap target that writes a durable per-instance dismissal to
+ * `notice_dismissals` keyed on `noticeKey`. Subsequent calls to
+ * `isNoticeDismissed` with the same key return `true`. Use instead of
+ * `silence()` when only this specific instance should be suppressed, not the
+ * whole class.
+ */
+const PreloadedDismissNoticeTargetSchema = z.object({
+  type: z.literal('dismiss-notice'),
+  noticeKey: z.string().trim().min(1),
+})
+
 /** A stable, template-authored response offered below a Notice. */
 export const PreloadedResponseSchema = z.object({
   id: z.string().trim().min(1),
@@ -390,6 +402,7 @@ export const PreloadedResponseSchema = z.object({
     PreloadedLeverTargetSchema,
     PreloadedReferenceTargetSchema,
     PreloadedAckTargetSchema,
+    PreloadedDismissNoticeTargetSchema,
   ]),
 })
 export type PreloadedResponse = z.infer<typeof PreloadedResponseSchema>

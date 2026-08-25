@@ -1484,6 +1484,32 @@ export const isNoticeDismissed = async (noticeKey: string): Promise<boolean> => 
 }
 
 /**
+ * Write a durable per-instance dismissal record for a notice key.
+ *
+ * This is the low-level primitive shared by `dismissNoticeItem` (which also
+ * resolves an `action_queue_items` row) and the `dismiss-notice` preloaded-
+ * response handler (which operates on chat-based notices that have no queue
+ * row). Idempotent via `ON CONFLICT … DO UPDATE`.
+ *
+ * @param noticeKey  Stable identity of the notice.
+ * @param by         Optional identifier of who dismissed it.
+ */
+export const recordNoticeDismissal = async (
+  noticeKey: string,
+  by?: string | null,
+): Promise<void> => {
+  const c = stateClient()
+  await c.execute({
+    sql: `INSERT INTO notice_dismissals (notice_key, dismissed_at, dismissed_by)
+          VALUES (?, ?, ?)
+          ON CONFLICT (notice_key)
+          DO UPDATE SET dismissed_at = excluded.dismissed_at,
+                        dismissed_by = excluded.dismissed_by`,
+    args: [noticeKey, Date.now(), by ?? null],
+  })
+}
+
+/**
  * Dismiss a Notice-kind action-queue item.
  *
  * Two things happen atomically in sequence:
@@ -1507,15 +1533,7 @@ export const dismissNoticeItem = async (
   // 1. Resolve the action-queue row.
   await setActionQueueState(id, 'resolved', { resolution: 'dismissed', by })
   // 2. Write the durable dismissal record so re-raises are suppressed.
-  const c = stateClient()
-  await c.execute({
-    sql: `INSERT INTO notice_dismissals (notice_key, dismissed_at, dismissed_by)
-          VALUES (?, ?, ?)
-          ON CONFLICT (notice_key)
-          DO UPDATE SET dismissed_at = excluded.dismissed_at,
-                        dismissed_by = excluded.dismissed_by`,
-    args: [noticeKey, Date.now(), by ?? null],
-  })
+  await recordNoticeDismissal(noticeKey, by)
 }
 
 export interface NoticeDismissal {

@@ -131,6 +131,7 @@ interface NoticeModule {
   isNoticeDismissed: typeof import('../action-queue').isNoticeDismissed
   dismissNoticeItem: typeof import('../action-queue').dismissNoticeItem
   listDismissedNotices: typeof import('../action-queue').listDismissedNotices
+  recordNoticeDismissal: typeof import('../action-queue').recordNoticeDismissal
 }
 
 const setupRepo = (): string => {
@@ -307,5 +308,24 @@ describe('Notice class — raise, list, dismiss, stays dismissed', () => {
     // No dismissals written for non-notice kinds.
     const records = await m.listDismissedNotices()
     expect(records).toHaveLength(0)
+  })
+
+  it('dismiss-notice target round-trip: recordNoticeDismissal → isNoticeDismissed returns true', async () => {
+    const m = await loadModule(repo)
+
+    // Before dismissal the key is unknown.
+    expect(await m.isNoticeDismissed('idle-proposal:abc-123')).toBe(false)
+
+    // Simulate processing a dismiss-notice preloaded-response target.
+    // This is the same operation the daemon performs in routes.ts when
+    // target.type === 'dismiss-notice': it calls recordNoticeDismissal
+    // without touching any action_queue_items row.
+    await m.recordNoticeDismissal('idle-proposal:abc-123')
+
+    // After the dismissal the key must be durably recorded.
+    expect(await m.isNoticeDismissed('idle-proposal:abc-123')).toBe(true)
+
+    // An unrelated key is unaffected.
+    expect(await m.isNoticeDismissed('idle-proposal:other-456')).toBe(false)
   })
 })

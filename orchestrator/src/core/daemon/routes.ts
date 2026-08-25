@@ -88,7 +88,11 @@ import { getRepoRoot, getStateDir } from '../context'
 import { z } from 'zod'
 import type { HttpServerDeps } from './http-server'
 import { streamPngAsset } from './ui-serve'
-import { ActionQueueItemNotFoundError, setActionQueueState } from '../lib/action-queue'
+import {
+  ActionQueueItemNotFoundError,
+  recordNoticeDismissal,
+  setActionQueueState,
+} from '../lib/action-queue'
 import {
   VerifyGateInputSchema,
   addVerifyGate,
@@ -2631,6 +2635,19 @@ export const registerRoutes = (
                 'user',
                 ackLabel,
                 [{ type: 'text', text: ackLabel }],
+                { kind: 'acknowledgment', contextScope: 'main' },
+              )
+              deps.bus?.emit('view.chat-invalidated')
+              sendJson(res, 200, { ok: true })
+              return
+            }
+            if (response.target.type === 'dismiss-notice') {
+              await recordNoticeDismissal(response.target.noticeKey, null)
+              await appendMessage(
+                message.thread_id,
+                'user',
+                response.label,
+                [{ type: 'text', text: response.label }],
                 { kind: 'acknowledgment', contextScope: 'main' },
               )
               deps.bus?.emit('view.chat-invalidated')
