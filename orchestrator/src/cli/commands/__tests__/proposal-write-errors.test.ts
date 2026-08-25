@@ -140,7 +140,8 @@ describe('proposal write commands', () => {
     expect(result.code).toBe(0)
     const updated = await getProposal(proposal.id)
     // The stored title must be the file contents, not the raw @<path> reference.
-    expect(updated?.title).toBe('Record each arc behaviour verification\n')
+    // resolvePromptSource strips one trailing newline for consistency with siblings.
+    expect(updated?.title).toBe('Record each arc behaviour verification')
   })
 
   it('stores a plain (non-@) title verbatim without attempting file reads', async () => {

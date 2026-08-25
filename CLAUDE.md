@@ -436,8 +436,9 @@ recovery-spawn path itself.
   - `-` — reads stdin verbatim (one trailing newline stripped)
   - `"<inline>"` — safe only for genuinely short, shell-neutral values
   These three shapes are accepted by: `mars task add`, `mars task note`,
-  `mars proposal add`, `mars glossary set` (definition argument), and
-  `mars adr add`. Do not use bare inline quotes for any body that may
+  `mars proposal add`, `mars proposal set` (text fields; not `status`),
+  `mars proposal add-user-story`, `mars glossary set` (definition argument),
+  and `mars adr add`. Do not use bare inline quotes for any body that may
   contain backticks, `$(...)`, newlines, or other shell metacharacters.
 
 - Bun compiles the `mars` CLI into standalone single-file binaries (the

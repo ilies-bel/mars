@@ -36,7 +36,7 @@ import { dirname, join } from 'node:path'
 import { resolveVcs } from '../../core/ports/vcs/registry'
 import type { Command, CommandDeps } from '../command'
 import { errorMessage, spawnNoticeErr } from './shared'
-import { hasFlag, parsePriority, readMaybeFile, resolvePromptSource } from '../args'
+import { hasFlag, parsePriority, resolvePromptSource } from '../args'
 
 /** Render a proposal detail body (shared by `proposal show` and `show`). */
 export const renderProposalDetail = async (
@@ -181,14 +181,15 @@ const proposalSet: Command = {
   path: 'proposal set',
   summary: 'update a single field on a proposal',
   usage:
-    'usage: mars proposal set <id> <title|problem|solution|out-of-scope|notes|status> "<text>"',
+    'usage: mars proposal set <id> <title|problem|solution|out-of-scope|notes|status> ("<text>" | @<file> | -)',
   run: async (args, deps) => {
     const id = args.positional[0]
     const field = args.positional[1]
-    const rawValue = args.positional.slice(2).join(' ')
+    const valueParts = args.positional.slice(2)
+    const rawValue = valueParts.join(' ')
     if (!id || !field || rawValue.length === 0) {
       deps.err(
-        'usage: mars proposal set <id> <title|problem|solution|out-of-scope|notes|status> "<text>"',
+        'usage: mars proposal set <id> <title|problem|solution|out-of-scope|notes|status> ("<text>" | @<file> | -)',
       )
       return { code: 2 }
     }
@@ -205,8 +206,24 @@ const proposalSet: Command = {
       )
       return { code: 2 }
     }
-    // Resolve @<path> references for text fields; status values are not file refs.
-    const value = field === 'status' ? rawValue : readMaybeFile(rawValue)
+    // status values are never file references; text fields honour @<path> and - (stdin).
+    let value: string
+    if (field === 'status') {
+      value = rawValue
+    } else {
+      const result = resolvePromptSource(valueParts, args.flags)
+      if (!result.ok) {
+        deps.err(result.message)
+        return { code: 2 }
+      }
+      if (result.value.length === 0) {
+        deps.err(
+          'usage: mars proposal set <id> <title|problem|solution|out-of-scope|notes|status> ("<text>" | @<file> | -)',
+        )
+        return { code: 2 }
+      }
+      value = result.value
+    }
     try {
       await setProposalField(id, field, value)
       deps.out(`updated ${id}`)
@@ -221,15 +238,25 @@ const proposalSet: Command = {
 const proposalAddUserStory: Command = {
   path: 'proposal add-user-story',
   summary: 'append a user story to the proposal PRD',
-  usage: 'usage: mars proposal add-user-story <id> "<text>"',
+  usage: 'usage: mars proposal add-user-story <id> ("<text>" | @<file> | -)',
   run: async (args, deps) => {
     const id = args.positional[0]
-    const rawStory = args.positional.slice(1).join(' ')
+    const storyParts = args.positional.slice(1)
+    const rawStory = storyParts.join(' ')
     if (!id || rawStory.length === 0) {
-      deps.err('usage: mars proposal add-user-story <id> "<text>"')
+      deps.err('usage: mars proposal add-user-story <id> ("<text>" | @<file> | -)')
       return { code: 2 }
     }
-    const story = readMaybeFile(rawStory)
+    const storyResult = resolvePromptSource(storyParts, args.flags)
+    if (!storyResult.ok) {
+      deps.err(storyResult.message)
+      return { code: 2 }
+    }
+    if (storyResult.value.length === 0) {
+      deps.err('usage: mars proposal add-user-story <id> ("<text>" | @<file> | -)')
+      return { code: 2 }
+    }
+    const story = storyResult.value
     try {
       const idea = await addProposalUserStory(id, story)
       deps.out(`added user story [${idea.userStories.length - 1}] to ${id}`)
