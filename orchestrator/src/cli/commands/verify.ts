@@ -85,7 +85,7 @@ const verifyAdd: Command = {
   path: 'verify add',
   summary: 'register a new verify gate',
   usage:
-    'usage: mars verify add <name> --cmd <cmd> [-- <arg>...] [--args <arg>...] [--scope <scope>] [--tier task|integration] [--optional]',
+    'usage: mars verify add <name> --cmd <cmd> [-- <arg>...] [--args <arg>...] [--scope <scope>] [--tier task|integration] [--optional] [--evidence <text>]',
   run: async (args, deps) => {
     const name = args.positional[0]
     const cmd = args.flags['--cmd']
@@ -156,6 +156,8 @@ const verifyAdd: Command = {
       }
     }
 
+    const evidence = args.flags['--evidence']
+
     try {
       const id = await addVerifyGate({
         scope,
@@ -165,6 +167,7 @@ const verifyAdd: Command = {
         required,
         tier,
         source: 'operator',
+        ...(evidence !== undefined ? { evidence } : {}),
       })
       deps.out(id)
       return { code: 0 }
