@@ -634,9 +634,16 @@ function deriveBaselineBrokenConditions(
   nowMs: number,
 ): PersistedActionQueueRow[] {
   if (!isBaselinePoisoned?.()) return []
-  const detail = baselineDetail?.() ?? {}
-  const failingGateName = detail.failingGateName ?? null
-  const output = detail.output ?? ''
+  // Belt-and-suspenders: when the checker cleared _lastDetection on recovery
+  // (baselineDetail returns null) while _poisoned is stale (true from a
+  // concurrent check race that finished after the clearing probe), do not
+  // derive the row. Stale captured gate output must not outlive the verdict
+  // that produced it. Only applies when a baselineDetail provider was wired
+  // (undefined means no checker is connected — fall through to empty payload).
+  const detail = baselineDetail !== undefined ? (baselineDetail() ?? null) : null
+  if (baselineDetail !== undefined && detail === null) return []
+  const failingGateName = detail?.failingGateName ?? null
+  const output = detail?.output ?? ''
   const installSignature =
     failingGateName === 'dependency install' && output.length > 0
       ? `setup:install/${classifyError(output)}`

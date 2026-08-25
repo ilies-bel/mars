@@ -6,6 +6,17 @@ import {
   type GateResult,
 } from '../baseline-health.js'
 import { createPauseController } from '../pause-state.js'
+import { createConditionItemsSource } from '../view/derived-conditions.js'
+import type { DbClient } from '../../lib/db.js'
+
+// Minimal DB client for tests that need createConditionItemsSource but don't
+// exercise DB-backed derivations (findBaselineCaughtTaskIds short-circuits on
+// no-baseline-pause-state and failed queries; emptyDbClient covers the rest).
+const emptyDbClient: DbClient = {
+  execute: async () => ({ rows: [], rowsAffected: 0 }),
+  batch: async () => [],
+  close: async () => {},
+}
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -483,6 +494,69 @@ describe('createBaselineHealthChecker', () => {
       await checker.check()
       expect(checker.isBaselinePoisoned()).toBe(false)
     })
+  })
+})
+
+// ─── regression: baseline-broken row lifecycle (ADR-0094 invariant) ──────────
+//
+// Incident 2026-08-25: after the integration branch was repaired and all gates
+// passed, `mars action-queue list open --kind baseline-broken` still returned
+// row bbd73920 with a FRESH at: timestamp but STALE captured gate output from
+// the old failing tests.  Root causes:
+//
+//   1. Concurrent fire-and-forget check() calls (one per task.completed event)
+//      could interleave: a slow call started when the baseline was broken could
+//      finish AFTER a fast call that proved recovery, overwriting _poisoned=false
+//      and _lastDetection=null with stale broken state.
+//
+//   2. _lastDetection was not cleared on recovery, so captured output from a
+//      prior failing probe outlived the verdict that produced it.
+//
+// The fix: serialise concurrent check() calls (deduplicate on _checkInProgress)
+// and clear _lastDetection=null when _poisoned transitions to false.  The
+// derived-conditions layer also short-circuits on null detail as a belt-and-
+// suspenders guard.
+//
+// This test drives the full transition and asserts BOTH invariants together
+// (row absent AND dispatch resumed) so they cannot drift apart again.
+describe('baseline-broken derived row lifecycle (regression guard)', () => {
+  it('row appears when gate fails and is gone when gate passes, dispatch tracks it', async () => {
+    const gate = makeGate()
+    const { deps, mocks } = makeDeps()
+    mocks.loadGates.mockResolvedValue([gate])
+
+    const checker = createBaselineHealthChecker(deps)
+    const source = createConditionItemsSource({
+      getClient: () => emptyDbClient,
+      isBaselinePoisoned: () => checker.isBaselinePoisoned(),
+      baselineDetail: () => checker.getLastDetection(),
+    })
+
+    // ── Phase 1: gate fails — row must exist and dispatch must be paused ──
+    mocks.runGate.mockResolvedValue(failingResult(gate, 'TSC error'))
+    await checker.check()
+
+    const rowsBroken = await source.derive({ kinds: new Set(['baseline-broken']) })
+    expect(rowsBroken).toHaveLength(1)
+    expect(rowsBroken[0]!.kind).toBe('baseline-broken')
+    expect(rowsBroken[0]!.payload).toMatchObject({ failingGateName: 'typecheck' })
+    expect(mocks.pause.isPaused()).toBe(true)
+    expect(mocks.pause.get().reason).toBe('baseline')
+
+    // ── Phase 2: gate passes — row must be gone AND dispatch must resume ──
+    // Both are asserted in this single block so they cannot drift apart: a
+    // row-present/dispatch-resumed or row-gone/dispatch-paused split would
+    // each violate the ADR-0094 "condition unrepresentable when not holding"
+    // invariant that the 2026-08-25 incident broke.
+    mocks.runGate.mockResolvedValue(passingResult(gate))
+    await checker.check()
+
+    const rowsRecovered = await source.derive({ kinds: new Set(['baseline-broken']) })
+    expect(rowsRecovered).toHaveLength(0)
+    expect(checker.isBaselinePoisoned()).toBe(false)
+    expect(mocks.pause.isPaused()).toBe(false)
+    // _lastDetection must be null after recovery — stale output must not survive
+    expect(checker.getLastDetection()).toBeNull()
   })
 })
 

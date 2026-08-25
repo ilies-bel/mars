@@ -212,101 +212,123 @@ export const createBaselineHealthChecker = (
   let _poisoned = false
   let _lastDetection: BaselineDetection | null = null
   let _lastGoodFingerprint: string | null = null
+  // Deduplication slot: when a check is already in flight, concurrent callers
+  // receive the same promise rather than spawning a second gate sweep.
+  // Without this, a slow check started while the baseline was broken can
+  // finish AFTER a fast check that proved recovery, overwriting the correct
+  // in-memory state with stale gate results whose subprocess had already been
+  // spawned against the old, broken code.
+  let _checkInProgress: Promise<{ poisoned: boolean }> | null = null
 
   return {
     isBaselinePoisoned: () => _poisoned,
     getLastDetection: () => _lastDetection,
 
-    async check(): Promise<{ poisoned: boolean }> {
-      let fingerprint: string | null = null
-      try {
-        fingerprint = await computeDepFingerprint(repoRoot)
-      } catch (err) {
-        // A fingerprint failure must not block the probe — fall through to a
-        // real install probe (equivalent to a fingerprint that never matches).
-        log?.(
-          `[baseline-health] could not compute dependency fingerprint (non-fatal): ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        )
-      }
+    check(): Promise<{ poisoned: boolean }> {
+      if (_checkInProgress !== null) return _checkInProgress
 
-      const skipInstallProbe =
-        !_poisoned && fingerprint !== null && fingerprint === _lastGoodFingerprint
-
-      if (skipInstallProbe) {
-        log?.(
-          '[baseline-health] dependency fingerprint unchanged since last known-good check — skipping install probe',
-        )
-      } else {
-        let install: { exitCode: number; stdout: string; stderr: string } | null = null
+      const p = (async (): Promise<{ poisoned: boolean }> => {
+        let fingerprint: string | null = null
         try {
-          install = await runInstallProbe(repoRoot)
+          fingerprint = await computeDepFingerprint(repoRoot)
         } catch (err) {
-          // An unexpected execution error (e.g. binary not found) is not the
-          // same as an install failure — treat as pass (conservative), same
-          // policy as a gate that throws in isBaselineBroken.
+          // A fingerprint failure must not block the probe — fall through to a
+          // real install probe (equivalent to a fingerprint that never matches).
           log?.(
-            `[baseline-health] install probe errored (non-fatal, treated as pass): ${
+            `[baseline-health] could not compute dependency fingerprint (non-fatal): ${
               err instanceof Error ? err.message : String(err)
             }`,
           )
         }
 
-        if (install && install.exitCode !== 0) {
-          const output = [install.stdout, install.stderr].filter(Boolean).join('\n').slice(0, 2000)
-          log?.('[baseline-health] dependency install FAILED on integration branch')
-          _lastDetection = { broken: true, failingGateName: 'dependency install', output }
-          _poisoned = true
-          pause.pause('baseline', 'dependency install fails on integration branch')
-          return { poisoned: true }
-        }
-      }
+        const skipInstallProbe =
+          !_poisoned && fingerprint !== null && fingerprint === _lastGoodFingerprint
 
-      const detection = await isBaselineBroken({ repoRoot, loadGates, runGate })
-
-      if (detection.loadError) {
-        log?.(
-          `[baseline-health] could not load gates (non-fatal): ${detection.loadError.message}`,
-        )
-        // When we cannot even read the gate list, conservatively do not change
-        // the current poison state — avoid a transient DB hiccup clearing a
-        // real poison flag.
-        return { poisoned: _poisoned }
-      }
-
-      _lastDetection = detection
-
-      if (!detection.broken) {
-        // No required gates configured, or all required gates (and the
-        // install probe, if it ran) passed. Record the fingerprint behind
-        // this healthy result so the next check() can skip the install probe
-        // if nothing changed.
-        if (fingerprint !== null) _lastGoodFingerprint = fingerprint
-        if (_poisoned) {
-          log?.('[baseline-health] all required gates pass — baseline recovered')
-          _poisoned = false
-          if (pause.get().reason === 'baseline') pause.resume()
+        if (skipInstallProbe) {
+          log?.(
+            '[baseline-health] dependency fingerprint unchanged since last known-good check — skipping install probe',
+          )
         } else {
-          log?.('[baseline-health] all required gates pass')
+          let install: { exitCode: number; stdout: string; stderr: string } | null = null
+          try {
+            install = await runInstallProbe(repoRoot)
+          } catch (err) {
+            // An unexpected execution error (e.g. binary not found) is not the
+            // same as an install failure — treat as pass (conservative), same
+            // policy as a gate that throws in isBaselineBroken.
+            log?.(
+              `[baseline-health] install probe errored (non-fatal, treated as pass): ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+            )
+          }
+
+          if (install && install.exitCode !== 0) {
+            const output = [install.stdout, install.stderr].filter(Boolean).join('\n').slice(0, 2000)
+            log?.('[baseline-health] dependency install FAILED on integration branch')
+            _lastDetection = { broken: true, failingGateName: 'dependency install', output }
+            _poisoned = true
+            pause.pause('baseline', 'dependency install fails on integration branch')
+            return { poisoned: true }
+          }
         }
-        return { poisoned: false }
-      }
 
-      // At least one required gate failed.
-      const { failingGateName = '(unknown)' } = detection
-      log?.(
-        `[baseline-health] gate "${failingGateName}" FAILED on integration branch`,
-      )
+        const detection = await isBaselineBroken({ repoRoot, loadGates, runGate })
 
-      _poisoned = true
+        if (detection.loadError) {
+          log?.(
+            `[baseline-health] could not load gates (non-fatal): ${detection.loadError.message}`,
+          )
+          // When we cannot even read the gate list, conservatively do not change
+          // the current poison state — avoid a transient DB hiccup clearing a
+          // real poison flag.
+          return { poisoned: _poisoned }
+        }
 
-      // First-cause-wins: if another reason already holds the pause, don't
-      // stomp it — but still mark the baseline as poisoned so the override
-      // callback re-classifies subsequent task failures.
-      pause.pause('baseline', `gate "${failingGateName}" fails on integration branch`)
+        if (!detection.broken) {
+          // No required gates configured, or all required gates (and the
+          // install probe, if it ran) passed. Record the fingerprint behind
+          // this healthy result so the next check() can skip the install probe
+          // if nothing changed.
+          //
+          // Clear any stale detection data: captured gate output must not
+          // outlive the verdict that produced it. Callers reading
+          // getLastDetection() after recovery must get null, not the previous
+          // failing probe's output.
+          _lastDetection = null
+          if (fingerprint !== null) _lastGoodFingerprint = fingerprint
+          if (_poisoned) {
+            log?.('[baseline-health] all required gates pass — baseline recovered')
+            _poisoned = false
+            if (pause.get().reason === 'baseline') pause.resume()
+          } else {
+            log?.('[baseline-health] all required gates pass')
+          }
+          return { poisoned: false }
+        }
 
-      return { poisoned: true }
+        // At least one required gate failed.
+        _lastDetection = detection
+        const { failingGateName = '(unknown)' } = detection
+        log?.(
+          `[baseline-health] gate "${failingGateName}" FAILED on integration branch`,
+        )
+
+        _poisoned = true
+
+        // First-cause-wins: if another reason already holds the pause, don't
+        // stomp it — but still mark the baseline as poisoned so the override
+        // callback re-classifies subsequent task failures.
+        pause.pause('baseline', `gate "${failingGateName}" fails on integration branch`)
+
+        return { poisoned: true }
+      })()
+
+      _checkInProgress = p
+      // Clear the dedup slot once the promise settles so the next independent
+      // call starts a fresh gate sweep rather than awaiting a stale promise.
+      void p.finally(() => { _checkInProgress = null })
+      return p
     },
   }
 }
