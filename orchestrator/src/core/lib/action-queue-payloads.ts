@@ -62,9 +62,19 @@ export type {
   CoderQuestionPayload,
   SchedulingContracts,
 } from './payload-contracts/scheduling'
+export type {
+  CancelledBlockerCascadePayload,
+  PrerequisiteFailedPayload,
+  RecoveryAbandonedPayload,
+  ArcSupersededOnMainPayload,
+  DoneWithUnmergedCommitsPayload,
+  DiagnoseInconclusivePayload,
+  LifecycleContracts,
+} from './payload-contracts/lifecycle'
 
 import type { AwaitingHumanContracts } from './payload-contracts/awaiting-human'
 import type { GateEnrichmentContracts } from './payload-contracts/gate-enrichment'
+import type { LifecycleContracts } from './payload-contracts/lifecycle'
 import type { SchedulingContracts } from './payload-contracts/scheduling'
 import type { SliceWorkflowContracts } from './payload-contracts/slice-workflow'
 
@@ -87,6 +97,7 @@ export type UnauditedPayload = Record<string, unknown>
  */
 type AuditedPayloads = AwaitingHumanContracts &
   GateEnrichmentContracts &
+  LifecycleContracts &
   SchedulingContracts &
   SliceWorkflowContracts
 
@@ -137,11 +148,11 @@ export const ACTION_QUEUE_PAYLOAD_AUDIT = {
   'baseline-broken': 'derived-condition',
   'e2e-tooling-missing': 'derived-condition',
 
-  'cancelled-blocker-cascade': 'unaudited',
-  'diagnose-inconclusive': 'unaudited',
+  'cancelled-blocker-cascade': 'typed',
+  'diagnose-inconclusive': 'typed',
   'daemon-killed': 'unaudited',
   'coder-question': 'typed',
-  'prerequisite-failed': 'unaudited',
+  'prerequisite-failed': 'typed',
   'draft-proposal': 'unaudited',
   'slices-dropped': 'typed',
   'slice-failed': 'typed',
@@ -152,7 +163,7 @@ export const ACTION_QUEUE_PAYLOAD_AUDIT = {
   'observability-store-oversize': 'unaudited',
   'outbox-lag': 'unaudited',
   'reflect-recommended': 'unaudited',
-  'done-with-unmerged-commits': 'unaudited',
+  'done-with-unmerged-commits': 'typed',
   'api-outage': 'unaudited',
   'workflow-install-drift': 'typed',
   'provider-rate-limited': 'unaudited',
@@ -169,13 +180,13 @@ export const ACTION_QUEUE_PAYLOAD_AUDIT = {
   'spend-control-notice': 'unaudited',
   'scheduling-decision': 'typed',
   'requeue-warning': 'typed',
-  'arc-superseded-on-main': 'unaudited',
+  'arc-superseded-on-main': 'typed',
   'low-disk-space': 'unaudited',
   'daemon-outage': 'unaudited',
   'dirty-integration': 'unaudited',
   'health-check-alert': 'unaudited',
   'fragmented-repo-layout': 'typed',
-  'recovery-abandoned': 'unaudited',
+  'recovery-abandoned': 'typed',
   'mockup-ready': 'unaudited',
   'qa-step-list-opt-in': 'unaudited',
   'qa-step-list-promote': 'unaudited',
@@ -247,13 +258,6 @@ export const UNAUDITED_KIND_FAMILY = {
   'health-check-alert': 'daemon-health',
   'observability-store-oversize': 'daemon-health',
   'outbox-lag': 'daemon-health',
-
-  'cancelled-blocker-cascade': 'task-lifecycle',
-  'prerequisite-failed': 'task-lifecycle',
-  'recovery-abandoned': 'task-lifecycle',
-  'arc-superseded-on-main': 'task-lifecycle',
-  'done-with-unmerged-commits': 'task-lifecycle',
-  'diagnose-inconclusive': 'task-lifecycle',
 
   'verify-uncovered': 'verify-gate',
   'gate-enrichment-stale': 'verify-gate',

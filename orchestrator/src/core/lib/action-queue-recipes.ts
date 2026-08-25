@@ -259,28 +259,27 @@ const RECIPE_DEFINITIONS = {
     verbs: [{ op: 'investigate', label: 'Investigate', style: 'primary' }],
   },
 
-  // family: task-lifecycle
   'cancelled-blocker-cascade': {
     humanSummary: () =>
       'A blocker task was cancelled and Mars cancelled its dependents too — review which tasks were affected.',
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
       entityId: ctx.entityId,
-      originTaskId: str(ctx.payload['originTaskId']),
-      cancelledTaskIds: ctx.payload['cancelledTaskIds'],
+      dependentTaskId: str(ctx.payload['dependentTaskId']),
+      cancelledBlockerTaskId: str(ctx.payload['cancelledBlockerTaskId']),
     }),
     verbs: [{ op: 'restart', label: 'Restart chain', style: 'primary' }],
   },
 
-  // family: task-lifecycle
   'diagnose-inconclusive': {
     humanSummary: () =>
       'Mars tried to diagnose a failure but could not find a clear root cause — manual investigation is needed.',
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
       entityId: ctx.entityId,
-      failureSignature: str(ctx.payload['failureSignature']),
-      errorExcerpt: str(ctx.payload['errorExcerpt']),
+      parentTaskId: str(ctx.payload['parentTaskId']),
+      choreId: str(ctx.payload['choreId']),
+      verdictKind: str(ctx.payload['verdictKind']),
     }),
     verbs: [{ op: 'investigate', label: 'Investigate', style: 'primary' }],
   },
@@ -413,20 +412,18 @@ const RECIPE_DEFINITIONS = {
     ],
   },
 
-  // family: task-lifecycle
   'prerequisite-failed': {
     humanSummary: () =>
       'A prerequisite check failed before a task could start — fix the underlying issue first.',
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
       entityId: ctx.entityId,
-      prerequisite: str(ctx.payload['prerequisite']),
-      errorExcerpt: str(ctx.payload['errorExcerpt']),
+      dependentTaskId: str(ctx.payload['dependentTaskId']),
+      failedBlockerTaskId: str(ctx.payload['failedBlockerTaskId']),
     }),
     verbs: [{ op: 'restart', label: 'Retry', style: 'primary' }],
   },
 
-  // family: task-lifecycle
   'done-with-unmerged-commits': {
     humanSummary: (ctx) =>
       `A task was marked done but its code was never merged into main — investigate and re-merge (${ctx.entityId}).`,
@@ -434,8 +431,7 @@ const RECIPE_DEFINITIONS = {
       raisedAt: ctx.raisedAt,
       entityId: ctx.entityId,
       branch: str(ctx.payload['branch']),
-      commitsAhead: ctx.payload['commitsAhead'],
-      failureReasonCode: str(ctx.payload['failureReasonCode']),
+      integration: str(ctx.payload['integration']),
     }),
     verbs: [
       { op: 'restart', label: 'Re-attempt merge', style: 'primary' },
@@ -1192,7 +1188,6 @@ const RECIPE_DEFINITIONS = {
     verbs: [],
   },
 
-  // family: task-lifecycle
   'arc-superseded-on-main': {
     humanSummary: (ctx) => {
       const originId = str(ctx.payload['originId']) || ctx.entityId
@@ -1342,7 +1337,6 @@ const RECIPE_DEFINITIONS = {
     verbs: [],
   },
 
-  // family: task-lifecycle
   'recovery-abandoned': {
     humanSummary: (ctx) => {
       const fixTaskId = str(ctx.payload['fixTaskId']) || 'unknown'
