@@ -477,25 +477,25 @@ describe('new catalog entries for previously-unmatched signatures', () => {
 })
 
 describe('failedTaskTitle', () => {
-  it('leads with the signature for a registered signature (no task-id suffix)', () => {
+  it('leads with the signature and tags the task for a registered signature', () => {
     expect(
       failedTaskTitle({
         signature: 'verify:typecheck/typecheck-cannot-find-name',
         taskId: 'mars-c6cab686',
       }),
     ).toBe(
-      'verify:typecheck/typecheck-cannot-find-name — The changes did not pass type-checking',
+      'verify:typecheck/typecheck-cannot-find-name — The changes did not pass type-checking [task mars-c6cab686]',
     )
   })
 
-  it('uses a plain-English title when no failure-kind record exists (no task-id suffix)', () => {
+  it('uses a plain-English title when no failure-kind record exists', () => {
     const title = failedTaskTitle({
       signature: 'verify:test/unclassified',
       taskId: 'task-1234567890',
     })
-    expect(title).toBe('A verification check did not pass')
+    expect(title).toBe('A verification check did not pass [task task-12345678]')
     expect(title).not.toContain('verify:test/unclassified')
-    expect(title).not.toContain('[task')
+    expect(title).toContain('[task task-12345678]')
   })
 
   it('falls back to the captured error head when there is no signature', () => {
@@ -506,7 +506,7 @@ describe('failedTaskTitle', () => {
         capturedError: '\n\n  ENOSPC: no space left on device\nsecond line\n',
       }),
     ).toBe(
-      'Mars could not determine why this task failed: ENOSPC: no space left on device',
+      'Mars could not determine why this task failed: ENOSPC: no space left on device [task abcdefgh]',
     )
   })
 
@@ -520,7 +520,7 @@ describe('failedTaskTitle', () => {
         capturedError:
           'recovery_failed:verify:test/test-assertion-error: recovery_failed:verify:test/test-assertion-error: expected 2 to be 3',
       }),
-    ).toBe('Mars could not determine why this task failed: expected 2 to be 3')
+    ).toBe('Mars could not determine why this task failed: expected 2 to be 3 [task task-1]')
   })
 
   it('clips a very long error head so the row stays scannable', () => {
@@ -537,9 +537,8 @@ describe('failedTaskTitle', () => {
     expect(failedTaskTitle({ signature: null })).toBe(
       'Mars could not determine why this task failed',
     )
-    // taskId is accepted for call-site compatibility but no longer in the title.
     expect(failedTaskTitle({ signature: null, taskId: 'task-1' })).toBe(
-      'Mars could not determine why this task failed',
+      'Mars could not determine why this task failed [task task-1]',
     )
   })
 
@@ -547,36 +546,36 @@ describe('failedTaskTitle', () => {
     // This is the signature coreContinueTask writes when git merge conflicts and
     // the VCS supervisor cannot resolve it. The title must carry the full
     // signature so the action-queue list is immediately scannable.
-    // The [task …] suffix is dropped — the entity-id chip on the card carries it.
     const title = failedTaskTitle({
       signature: 'continue:base-refresh-conflict/merge-conflict-unresolved',
       taskId: 'mars-5c83d931',
     })
     expect(title).toContain('continue:base-refresh-conflict/merge-conflict-unresolved')
     expect(title).not.toContain('Mars could not determine why this task failed')
-    expect(title).not.toContain('[task')
+    expect(title).toContain('[task mars-5c83d931]')
   })
 
-  it('two failures with the same signature produce the same title (entity-id chip disambiguates)', () => {
-    // The [task …] suffix was removed — the entity-id chip on the action-queue
-    // card carries the task id. Same-signature failures now share a title;
-    // different signatures still produce different titles.
+  it('keeps a task id whole so two failures of the same kind stay distinguishable', () => {
+    // Regression: the tag used to be `taskId.slice(0, 8)`, which counted the
+    // `mars-` prefix and left three hex chars. Three different tasks then all
+    // rendered `[task mars-634]` in the live action queue.
     const a = failedTaskTitle({ signature: 'code/context-exhausted', taskId: 'mars-6340b827' })
     const b = failedTaskTitle({ signature: 'code/context-exhausted', taskId: 'mars-6341f9de' })
-    expect(a).not.toContain('[task')
-    expect(b).not.toContain('[task')
-    expect(a).toBe(b)
+    expect(a).toContain('[task mars-6340b827]')
+    expect(b).toContain('[task mars-6341f9de]')
+    expect(a).not.toBe(b)
   })
 
-  it('taskId is accepted but no longer included in the title', () => {
-    // The [task …] suffix was removed. taskId is kept in the signature for
-    // call-site compatibility; the entity-id chip on the card carries the id.
-    const title = failedTaskTitle({
+  it('reduces a hex-then-slug id to its hex head', () => {
+    // `<8hex>-<slug>` ids (ideas, arcs) carry no kind prefix, so the hex head
+    // is the identifying part and the slug is prose. Keeping the whole thing
+    // would swamp the row.
+    const long = failedTaskTitle({
       signature: 'code/context-exhausted',
       taskId: '7daf8c8c-record-each-arc-s-behaviour-verification',
     })
-    expect(title).not.toContain('[task')
-    expect(title.length).toBeLessThan(160)
+    expect(long).toContain('[task 7daf8c8c]')
+    expect(long.length).toBeLessThan(160)
   })
 
   it('gives two failures with different signatures two different titles', () => {
