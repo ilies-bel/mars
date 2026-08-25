@@ -63,11 +63,25 @@ export const readWorkflowProvenance = (source: string): WorkflowProvenance => {
 
 /**
  * Prepend the agent-draft provenance header to an authored body. The result
- * is exactly what `mars workflow author` writes to disk (and what the
- * author-time dry-run validates, so validated bytes === landed bytes).
+ * carries the draft marker and is NOT dispatch-eligible until an operator
+ * runs `mars workflow approve`. Retained for backward-compatibility and for
+ * manually creating pending-approval files in tests.
  */
 export const stampAgentDraft = (body: string, author: string): string =>
   `${WORKFLOW_AUTHOR_MARKER_PREFIX} ${author}\n${WORKFLOW_DRAFT_MARKER}\n${body}`
+
+/**
+ * Prepend only the author-provenance marker (no draft marker). The result is
+ * what `mars workflow author` writes to disk when the body passes the static
+ * lint — the workflow is immediately dispatch-eligible and requires no
+ * operator approval gesture.
+ *
+ * `readWorkflowProvenance` returns `{ pendingApproval: false }` when the
+ * draft marker is absent, so `loadWorkflowByName`'s gate passes without any
+ * changes to the loader.
+ */
+export const stampAutoApproved = (body: string, author: string): string =>
+  `${WORKFLOW_AUTHOR_MARKER_PREFIX} ${author}\n${body}`
 
 /**
  * Produce the approved source: the draft marker line is removed from the

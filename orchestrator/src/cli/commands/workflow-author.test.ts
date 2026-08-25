@@ -196,56 +196,43 @@ describe('mars workflow author — validate dry-run gate', () => {
 })
 
 // ---------------------------------------------------------------------------
-// 4. Happy path: draft lands, provenance visible, NOT dispatchable
+// 4. Happy path: auto-approved workflow lands, provenance visible, dispatchable
 // ---------------------------------------------------------------------------
 
 describe('mars workflow author — agent draft lifecycle', () => {
-  it('lands a stamped draft, lists it as agent-draft (pending approval), and raises the review row', async () => {
+  it('lands an auto-approved workflow: no pending-approval line, dispatch-eligible, no AQ item', async () => {
     const opts = makeOpts(repoRoot)
     const r = await author(repoRoot, opts, 'qa-loop', VALID_BODY)
     expect(r.err).toEqual([])
     expect(r.code).toBe(0)
-    expect(r.out.join('\n')).toContain('agent draft created')
-    expect(r.out.join('\n')).toContain('mars workflow approve qa-loop')
+    expect(r.out.join('\n')).toContain('auto-approved')
+    expect(r.out.join('\n')).toContain('dispatch-eligible immediately')
 
-    // Stamped provenance header on disk.
+    // Author marker present; NO draft marker on disk.
     const source = readFileSync(workflowFilePath(repoRoot, 'qa-loop'), 'utf8')
     expect(source).toContain(`${WORKFLOW_AUTHOR_MARKER_PREFIX} agent:test`)
-    expect(source).toContain(WORKFLOW_DRAFT_MARKER)
+    expect(source).not.toContain(WORKFLOW_DRAFT_MARKER)
 
-    // `workflow list` shows the new provenance source.
+    // `workflow list` shows 'custom' (not 'agent-draft (pending approval)').
     const list = await runCommandInProcess(['workflow', 'list'], opts)
     expect(list.code).toBe(0)
-    expect(list.out.join('\n')).toContain('agent-draft (pending approval)')
+    expect(list.out.join('\n')).toContain('custom')
+    expect(list.out.join('\n')).not.toContain('agent-draft')
 
-    // The level-triggered action-queue review row exists (ADR-0048).
+    // No action-queue review item raised.
     const aq = await import('../../core/lib/action-queue')
     const open = await aq.listActionQueueItems('open')
-    const row = open.find((i) => i.kind === 'workflow-draft-pending')
-    expect(row).toBeDefined()
-    expect(row!.signature).toBe('qa-loop')
-    expect(row!.body).toContain('Declared runbook')
-    expect(row!.body).toContain('Raw JS')
+    expect(open.filter((i) => i.kind === 'workflow-draft-pending')).toEqual([])
   })
 
-  it('a pending draft is NOT dispatch-eligible: loadWorkflowByName throws pending-approval (no fallback)', async () => {
+  it('auto-approved workflow is immediately dispatch-eligible: loadWorkflowByName succeeds', async () => {
     const opts = makeOpts(repoRoot)
     const r = await author(repoRoot, opts, 'qa-loop', VALID_BODY)
     expect(r.code).toBe(0)
 
-    const { loadWorkflowByName, isWorkflowLoadError } = await import(
-      '../../workflows/queue-workflow-store'
-    )
-    let thrown: unknown = null
-    try {
-      await loadWorkflowByName('qa-loop', repoRoot)
-    } catch (err) {
-      thrown = err
-    }
-    expect(thrown).not.toBeNull()
-    expect(isWorkflowLoadError(thrown)).toBe(true)
-    expect((thrown as Error).message).toContain('pending approval')
-    expect((thrown as Error).message).toContain('mars workflow approve qa-loop')
+    const { loadWorkflowByName } = await import('../../workflows/queue-workflow-store')
+    const wf = await loadWorkflowByName('qa-loop', repoRoot)
+    expect(wf.id).toBe('qa-loop')
   })
 })
 
@@ -254,12 +241,21 @@ describe('mars workflow author — agent draft lifecycle', () => {
 // ---------------------------------------------------------------------------
 
 describe('mars workflow approve', () => {
-  it('flips agent-draft → custom, preserves the author marker, and makes the name dispatchable', async () => {
+  it('flips a manually-staged agent-draft → custom, preserves the author marker, and makes the name dispatchable', async () => {
     const opts = makeOpts(repoRoot)
-    expect((await author(repoRoot, opts, 'qa-loop', VALID_BODY)).code).toBe(0)
+    // Write a pending-draft file directly (stampAgentDraft path) to have a
+    // file with the draft marker to approve — mars workflow author no longer
+    // creates pending drafts (auto-approve path).
+    const target = workflowFilePath(repoRoot, 'qa-loop')
+    mkdirSync(resolve(repoRoot, '.mars', 'workflows'), { recursive: true })
+    const draftSource = `${WORKFLOW_AUTHOR_MARKER_PREFIX} agent:test\n${WORKFLOW_DRAFT_MARKER}\n${VALID_BODY}`
+    writeFileSync(target, draftSource)
 
     const approve = await runCommandInProcess(['workflow', 'approve', 'qa-loop'], opts)
-    expect(approve.err).toEqual([])
+    // A best-effort warning may appear if the AQ supersede finds no row (no
+    // raised item for this manually-created draft), but the command still
+    // succeeds and writes the approved file.
+    expect(approve.err.filter((e) => !e.startsWith('warning:'))).toEqual([])
     expect(approve.code).toBe(0)
     expect(approve.out.join('\n')).toContain('approved:')
 
@@ -277,16 +273,6 @@ describe('mars workflow approve', () => {
     const { loadWorkflowByName } = await import('../../workflows/queue-workflow-store')
     const wf = await loadWorkflowByName('qa-loop', repoRoot)
     expect(wf.id).toBe('qa-loop')
-
-    // The review row was superseded (level cleared).
-    const aq = await import('../../core/lib/action-queue')
-    const open = await aq.listActionQueueItems('open')
-    expect(open.filter((i) => i.kind === 'workflow-draft-pending')).toEqual([])
-    const all = await aq.listActionQueueItems('all')
-    const resolved = all.find((i) => i.kind === 'workflow-draft-pending')
-    expect(resolved).toBeDefined()
-    expect(resolved!.status).toBe('resolved')
-    expect(resolved!.resolutionNote).toContain('workflow-approved')
   })
 
   it('refuses to approve a file that is not a pending agent draft', async () => {
@@ -304,5 +290,58 @@ describe('mars workflow approve', () => {
     const r = await runCommandInProcess(['workflow', 'approve', 'ghost'], opts)
     expect(r.code).toBe(1)
     expect(r.err.join('\n')).toContain("no workflow file for 'ghost'")
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 6. Auto-approve: three spec-required test cases
+// ---------------------------------------------------------------------------
+
+describe('mars workflow author — auto-approve primitive-only body', () => {
+  it('(1) file has no pending-approval line, loadWorkflowByName succeeds, no AQ item', async () => {
+    const opts = makeOpts(repoRoot)
+    const r = await author(repoRoot, opts, 'my-flow', VALID_BODY)
+    expect(r.code).toBe(0)
+
+    // File on disk has author marker but NO draft marker.
+    const source = readFileSync(workflowFilePath(repoRoot, 'my-flow'), 'utf8')
+    expect(source).toContain(`${WORKFLOW_AUTHOR_MARKER_PREFIX} agent:test`)
+    expect(source).not.toContain(WORKFLOW_DRAFT_MARKER)
+
+    // loadWorkflowByName succeeds without any prior approve gesture.
+    // (The workflow's exported id is 'qa-loop' from VALID_BODY — that's fine;
+    // the loader resolves by file path, not by the exported id.)
+    const { loadWorkflowByName } = await import('../../workflows/queue-workflow-store')
+    const wf = await loadWorkflowByName('my-flow', repoRoot)
+    expect(wf).toBeDefined()
+
+    // No workflow-draft-pending action-queue item was raised.
+    const aq = await import('../../core/lib/action-queue')
+    const open = await aq.listActionQueueItems('open')
+    expect(open.filter((i) => i.kind === 'workflow-draft-pending')).toEqual([])
+  })
+
+  it('(2) reserved built-in name is still rejected even with a lint-clean body (ADR-0068 regression guard)', async () => {
+    // The name guard fires BEFORE lint, so even a primitive-only body that
+    // would normally auto-approve cannot rewire a compiled built-in pipeline.
+    const opts = makeOpts(repoRoot)
+    const r = await author(repoRoot, opts, 'task', VALID_BODY)
+    expect(r.code).toBe(1)
+    // Either the bundled-kind or the built-in-pipeline error fires first.
+    const combined = r.err.join('\n')
+    expect(combined).toMatch(/reserved bundled workflow kind|compiled built-in pipeline/)
+    expect(existsSync(workflowFilePath(repoRoot, 'task'))).toBe(false)
+  })
+
+  it('(3) workflowApprove on an auto-approved workflow exits with "not a pending agent draft"', async () => {
+    const opts = makeOpts(repoRoot)
+    // Author a lint-clean workflow — it lands as auto-approved (no draft marker).
+    expect((await author(repoRoot, opts, 'my-flow', VALID_BODY)).code).toBe(0)
+
+    // Approving an already-approved (no-draft-marker) file is a no-op error.
+    const r = await runCommandInProcess(['workflow', 'approve', 'my-flow'], opts)
+    expect(r.code).toBe(1)
+    expect(r.err.join('\n')).toContain('not a pending agent draft')
+    expect(r.err.join('\n')).toContain('nothing to approve')
   })
 })

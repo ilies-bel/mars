@@ -28,7 +28,7 @@ import { PRIMITIVE_DESCRIPTORS } from '../../workflows/primitives/opts-descripto
 import { planWorkflowCopies } from '../../init/scaffold-workflows'
 import {
   readWorkflowProvenance,
-  stampAgentDraft,
+  stampAutoApproved,
   approveDraftSource,
   WORKFLOW_DRAFT_ACTION_QUEUE_KIND,
 } from '../../workflows/agent-draft'
@@ -592,8 +592,10 @@ const workflowAuthor: Command = {
       return { code: 1 }
     }
 
-    // The exact bytes that would land on disk: provenance header + body.
-    const stamped = stampAgentDraft(body, author)
+    // The exact bytes that would land on disk: author marker + body.
+    // Primitive-only bodies that pass the static lint are auto-approved —
+    // no pending-approval marker, immediately dispatch-eligible.
+    const stamped = stampAutoApproved(body, author)
 
     // Gate 1 — static safety lint, BEFORE anything executes the body (the
     // dry-run below runs the author's fn; this is the pre-execution screen).
@@ -641,55 +643,17 @@ const workflowAuthor: Command = {
       }
     }
 
-    // Both gates passed: land the draft. It is on disk but NOT dispatch-
-    // eligible — loadWorkflowByName refuses pending drafts (ADR-0067/0068).
+    // Both gates passed: land the workflow. It carries only the author marker —
+    // no pending-approval draft marker — so loadWorkflowByName accepts it
+    // immediately (ADR-0067/0068 auto-approve path).
     writeFileSync(filePath, stamped)
 
-    // Raise the operator review item (level-triggered, ADR-0048: signature-
-    // keyed on the workflow name; a re-raise bumps seen_count; `workflow
-    // approve` supersedes it). Best-effort: the draft stays reviewable via
-    // `mars workflow list` even if the raise fails.
     const runbook = renderRunbookLines(steps)
-    try {
-      const { raiseActionQueueItem } = await import('../../core/lib/action-queue')
-      await raiseActionQueueItem({
-        kind: WORKFLOW_DRAFT_ACTION_QUEUE_KIND,
-        category: 'orchestrator',
-        priority: 'high',
-        title: `Self-authored workflow '${name}' awaits approval`,
-        body: [
-          `An agent (${author}) authored a new workflow pipeline. It passed the static lint and the validate dry-run but is NOT dispatch-eligible until you approve it.`,
-          '',
-          `file: ${filePath}`,
-          '',
-          'Declared runbook:',
-          ...runbook.map((l) => `  ${l}`),
-          '',
-          `Approve with: mars workflow approve ${name}`,
-          '',
-          'Raw JS:',
-          '```js',
-          stamped,
-          '```',
-        ].join('\n'),
-        payload: { workflowName: name, path: filePath, author },
-        context: {},
-        raisedBy: author,
-        signature: name,
-      })
-    } catch (err) {
-      deps.err(
-        `warning: could not raise the action-queue review item (${errorMessage(err)}) — the draft is still pending; review with \`mars workflow show ${name}\` and approve with \`mars workflow approve ${name}\``,
-      )
-    }
-
-    deps.out(`agent draft created: ${filePath}`)
+    deps.out(`workflow created and auto-approved: ${filePath}`)
     deps.out('declared runbook:')
     for (const l of runbook) deps.out(`  ${l}`)
-    deps.out(`provenance: agent-draft (pending approval) — authored by ${author}`)
-    deps.out(
-      `NOT dispatch-eligible until an operator runs: mars workflow approve ${name}`,
-    )
+    deps.out(`provenance: agent-authored (auto-approved) — authored by ${author}`)
+    deps.out('dispatch-eligible immediately')
     return { code: 0 }
   },
 }
