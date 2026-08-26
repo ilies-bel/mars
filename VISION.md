@@ -176,6 +176,7 @@ been tested where it is made.
 | HR-9 / DEC-13 — git is concrete, not a port | Trace the core's git calls and an implement run's worktree. A VCS port the core dispatches through, a swappable non-git implementation behind it, or a run that proceeds without a worktree, falsifies it. |
 | DEC-12 — borrowing a coding CLI is one adapter kind, not the architecture | Try to configure a key-backed provider adapter alongside the CLI-borrowing one. A provider port whose contract admits only a local CLI subprocess, or a key-backed path that requires changing the port rather than registering against it, falsifies it. |
 | HR-7 (sharpened) — provider-agnostic, every surface | Install with the default configuration and use every surface: dispatch a task, open chat, force a merge conflict. A vendor SDK or a hand-written vendor client in the core, a surface that only runs on one provider, or an API key Mars must hold, falsifies it. |
+| HR-3 — one API, three callers | Pick a mutation the CLI can perform and look for the matching operation in the daemon API. A CLI write that reaches the database directly, with no equivalent operation any other caller could invoke, falsifies it. |
 
 ## 9. Definition of done
 
