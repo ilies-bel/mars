@@ -372,8 +372,9 @@ Mars installs a set of `/mars:*` slash commands into your Claude Code session:
 
 ## The UI
 
-`mars ui` opens a read-only dashboard that streams live from the daemon. The
-CLI is the only write surface — the UI never mutates state.
+`mars ui` is the main operator surface — a Kanban board, live trace stream,
+and action queue where you watch tasks and take action on them.
+The CLI is the secondary surface for scripting and quick access.
 
 <!-- TODO: record a 45-60s walkthrough video of the UI:
      1. Open mars ui, show the topology view with tasks and edges
@@ -406,7 +407,7 @@ CLI is the only write surface — the UI never mutates state.
 | `mars list` | List tasks with live statuses |
 | `mars show <id>` | Print task details, plan, and trace |
 | `mars daemon start\|stop\|status\|restart` | Control the background dispatcher |
-| `mars ui` | Open the read-only dashboard |
+| `mars ui` | Open the main operator surface |
 | `mars proposal add "<idea>"` | Add a draft proposal for shaping |
 | `mars block <id> <blocker-id>` | Add a dependency edge |
 | `mars unblock <id>` | Remove blocker edges |

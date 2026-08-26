@@ -45,7 +45,7 @@ export const resolveLauncher = (): string | null => {
 export const printUiDiscoveryHint = (repoRoot: string, launcher: string | null): void => {
   if (launcher !== null) {
     process.stdout.write(
-      `[mars init] dashboard:  mars ui --repo ${repoRoot}   (read-only Kanban + trace stream at http://127.0.0.1:7777)\n`,
+      `[mars init] dashboard:  mars ui --repo ${repoRoot}   (Kanban + trace stream + action queue at http://127.0.0.1:7777)\n`,
     )
   } else {
     process.stdout.write(

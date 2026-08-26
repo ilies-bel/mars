@@ -336,13 +336,13 @@ const init: Command = {
     deps.out(sep)
     deps.out('')
     deps.out('Next commands:')
+    deps.out(`  mars ui                           # main operator surface — watch tasks and take action`)
     if (result.dispatched) {
       deps.out(`  mars show ${result.dispatched.taskId}              # watch the first task`)
     } else {
       deps.out(`  mars task add "describe the task"   # enqueue your first task`)
     }
     deps.out(`  mars list                         # see all queued work`)
-    deps.out(`  mars ui                           # read-only Kanban dashboard`)
     deps.out(`  mars doctor                       # re-check prerequisites`)
 
     return { code: 0 }

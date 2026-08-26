@@ -43,7 +43,7 @@ const where: Command = {
 
 const uiStop: Command = {
   path: 'ui stop',
-  summary: 'stop the read-only UI server',
+  summary: 'stop the UI server',
   usage: 'usage: mars ui stop',
   run: async (args) => {
     const { stopUi } = await import('../ui')
@@ -65,7 +65,7 @@ const uiStatus: Command = {
 
 const uiLaunch: Command = {
   path: 'ui',
-  summary: 'launch the read-only Kanban + trace dashboard',
+  summary: 'open the main operator surface — Kanban, trace stream, and action queue',
   usage: 'usage: mars ui [--port <n>] [--host <h>] [--dev] [--vite-port <n>]',
   flags: [
     { syntax: '--port <n>', description: 'API server HTTP port (default: 7777, fixed)' },
@@ -84,7 +84,7 @@ const uiLaunch: Command = {
       deps.out(
         'mars ui [--port <n>] [--host <h>] [--dev] [--vite-port <n>]\n' +
           '\n' +
-          'launch the read-only Kanban + trace dashboard\n' +
+          'open the main operator surface — Kanban, trace stream, and action queue\n' +
           '\n' +
           'Flags:\n' +
           '  --port <n>       API server HTTP port (default: 7777, fixed)\n' +
@@ -95,7 +95,7 @@ const uiLaunch: Command = {
           '                   [::1]:5173 does not cause a shift)\n' +
           '\n' +
           'Subcommands:\n' +
-          '  mars ui stop    stop the read-only UI server\n' +
+          '  mars ui stop    stop the UI server\n' +
           '  mars ui status  print UI server status',
       )
       return { code: 0 }

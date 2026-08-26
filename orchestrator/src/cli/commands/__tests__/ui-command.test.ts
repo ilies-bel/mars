@@ -32,7 +32,7 @@ describe('mars ui --help', () => {
     const result = await runCommandInProcess(['ui', '--help'], makeOpts())
     const out = result.out.join('\n')
     expect(out).toContain('mars ui')
-    expect(out).toContain('launch the read-only Kanban')
+    expect(out).toContain('open the main operator surface')
   })
 
   it('lists the stop subcommand so the operator knows how to undo it', async () => {
