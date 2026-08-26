@@ -773,7 +773,6 @@ const REGISTRY_TITLED_KINDS: ReadonlySet<string> = new Set([
 const failedRowCopy = (
   row: PersistedActionQueueRow,
   task: TaskForActionQueue | undefined,
-  entityId: string,
 ): { title: string; body: string } => {
   const signature = task?.failureSignature ?? null
   const capturedError = task?.lastErrorOutput ?? ''
@@ -1279,7 +1278,7 @@ export const buildActionQueueView = async ({
     let title = row.title
     let body = row.body
     if (isTaskFailure) {
-      const copy = failedRowCopy(row, taskById.get(entityId), entityId)
+      const copy = failedRowCopy(row, taskById.get(entityId))
       title = copy.title
       body = copy.body
     }
@@ -1856,7 +1855,7 @@ export const buildActionQueueHistoryView = async ({
     let title = row.title
     let body = row.body
     if (isTaskFailure) {
-      const copy = failedRowCopy(row, taskById.get(entityId), entityId)
+      const copy = failedRowCopy(row, taskById.get(entityId))
       title = copy.title
       body = copy.body
     }
