@@ -179,6 +179,7 @@ been tested where it is made.
 | HR-3 — one API, three callers | Pick a mutation the CLI can perform and look for the matching operation in the daemon API. A CLI write that reaches the database directly, with no equivalent operation any other caller could invoke, falsifies it. |
 | DEC-18 — internals stay behind a disclosure | Read an operator surface without expanding anything. A raw failure signature, captured stdout, or a machine slug rendered on the face of what the operator reads first falsifies it. |
 | DEC-9 — no explicit bound on queue size | Fill the queue past any plausible threshold and list it. A cap, a volume target, or a tail silently dropped from the open listing falsifies it; paginated resolved history and an expiring snooze do not. |
+| DEC-7 — sharpness, never alert count | Raise two rows naming the same origin task but carrying different operator obligations — one to recover a failure, one to validate a behaviour — and list the queue. A second, distinct decision folded into the first row, or a higher-priority raise inheriting a lower priority, falsifies it; folding several rows that name the same single obligation does not. |
 
 ## 9. Definition of done
 
