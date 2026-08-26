@@ -118,11 +118,15 @@ describe('action-queue', () => {
 
     const item = await actionQueue.getActionQueueItem(first)
     expect(item!.seenCount).toBe(3)
-    expect(item!.payload.occurrences).toEqual([
-      { task_id: 't1' },
-      { task_id: 't2' },
-      { task_id: 't3' },
-    ])
+    // The first raise goes through the INSERT path and stores the raw occurrence
+    // object.  Subsequent raises are collisions: the new code merges the caller's
+    // occurrence with kind/title/foldedAt so there is always evidence of what
+    // folded even when the caller passes no explicit occurrence.
+    const occs = item!.payload.occurrences as Array<Record<string, unknown>>
+    expect(occs).toHaveLength(3)
+    expect(occs[0]).toEqual({ task_id: 't1' })
+    expect(occs[1]).toMatchObject({ task_id: 't2', kind: 'failed' })
+    expect(occs[2]).toMatchObject({ task_id: 't3', kind: 'failed' })
     expect(item!.lastSeenAt >= item!.raisedAt).toBe(true)
   })
 
@@ -953,6 +957,192 @@ describe('supersedeOrphanedHitlActionQueueRows — orphan sweep', () => {
   })
 })
 
+
+describe('origin-fingerprint class-keyed dedup (DEC-7 fix)', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('failed then awaiting-validation for the same origin produce two distinct rows', async () => {
+    const actionQueue = await loadModule(repo)
+    const originId = 'dec7-probe-origin-1'
+
+    const alertId = await actionQueue.raiseActionQueueItem(
+      baseItem({
+        kind: 'failed',
+        priority: 'high',
+        title: 'DEC7 PROBE A — task failed',
+        body: 'First decision: recover or drop.',
+        signature: 'dec7-sig-A',
+        originTaskId: originId,
+        occurrence: { probe: 'A' },
+      }),
+    )
+
+    const decisionId = await actionQueue.raiseActionQueueItem(
+      baseItem({
+        kind: 'awaiting-validation',
+        priority: 'urgent',
+        title: 'DEC7 PROBE B — awaiting validation',
+        body: 'Second decision: validate the behaviour.',
+        signature: 'dec7-sig-B',
+        originTaskId: originId,
+        occurrence: { probe: 'B' },
+      }),
+    )
+
+    // The two raises must produce DIFFERENT ids.
+    expect(decisionId).not.toBe(alertId)
+
+    const open = await actionQueue.listActionQueueItems('open')
+    expect(open).toHaveLength(2)
+    expect(open.map((i) => i.id).sort()).toEqual([alertId, decisionId].sort())
+
+    // The alert-class row must not have swallowed the decision-class fields.
+    const alertRow = await actionQueue.getActionQueueItem(alertId)
+    expect(alertRow!.kind).toBe('failed')
+    expect(alertRow!.priority).toBe('high')
+
+    const decisionRow = await actionQueue.getActionQueueItem(decisionId)
+    expect(decisionRow!.kind).toBe('awaiting-validation')
+    expect(decisionRow!.priority).toBe('urgent')
+  })
+
+  it('failed then env-incident for the same origin collapse onto one alert-class row', async () => {
+    const actionQueue = await loadModule(repo)
+    const originId = 'dec7-probe-origin-2'
+
+    const firstId = await actionQueue.raiseActionQueueItem(
+      baseItem({
+        kind: 'failed',
+        signature: 'dec7-alert-1',
+        originTaskId: originId,
+      }),
+    )
+
+    const secondId = await actionQueue.raiseActionQueueItem(
+      baseItem({
+        kind: 'env-incident',
+        signature: 'dec7-alert-2',
+        originTaskId: originId,
+      }),
+    )
+
+    // Both are alert-class: they must collapse onto the SAME row.
+    expect(secondId).toBe(firstId)
+
+    const open = await actionQueue.listActionQueueItems('open')
+    expect(open).toHaveLength(1)
+    expect(open[0].seenCount).toBe(2)
+  })
+
+  it('priority-max: an urgent raise folding onto a high row updates priority to urgent', async () => {
+    const actionQueue = await loadModule(repo)
+    const originId = 'dec7-priority-origin'
+
+    const firstId = await actionQueue.raiseActionQueueItem(
+      baseItem({
+        kind: 'failed',
+        priority: 'high',
+        signature: 'dec7-prio-1',
+        originTaskId: originId,
+      }),
+    )
+
+    const firstRow = await actionQueue.getActionQueueItem(firstId)
+    expect(firstRow!.priority).toBe('high')
+
+    await actionQueue.raiseActionQueueItem(
+      baseItem({
+        kind: 'failed',
+        priority: 'urgent',
+        signature: 'dec7-prio-2',
+        originTaskId: originId,
+      }),
+    )
+
+    const afterRow = await actionQueue.getActionQueueItem(firstId)
+    expect(afterRow!.priority).toBe('urgent')
+  })
+
+  it('folded raise always records an occurrence even when caller passes no occurrence', async () => {
+    const actionQueue = await loadModule(repo)
+    const originId = 'dec7-occ-origin'
+
+    const firstId = await actionQueue.raiseActionQueueItem(
+      baseItem({
+        kind: 'failed',
+        signature: 'dec7-occ-1',
+        title: 'First raise',
+        originTaskId: originId,
+        // intentionally no occurrence on first (INSERT) raise
+      }),
+    )
+
+    await actionQueue.raiseActionQueueItem(
+      baseItem({
+        kind: 'failed',
+        signature: 'dec7-occ-2',
+        title: 'Second raise',
+        originTaskId: originId,
+        // intentionally no occurrence on second (collision) raise
+      }),
+    )
+
+    const row = await actionQueue.getActionQueueItem(firstId)
+    expect(row!.seenCount).toBe(2)
+    // The INSERT path (first raise) does not auto-record an occurrence.
+    // The collision path (second raise) always appends kind/title/foldedAt even
+    // when the caller supplies no explicit occurrence field.
+    expect(Array.isArray(row!.payload.occurrences)).toBe(true)
+    const occurrences = row!.payload.occurrences as unknown[]
+    expect(occurrences).toHaveLength(1)
+    const occ = occurrences[0] as Record<string, unknown>
+    expect(occ.kind).toBe('failed')
+    expect(occ.title).toBe('Second raise')
+    expect(typeof occ.foldedAt).toBe('string')
+  })
+
+  it('supersedeActionQueueItemsForOrigin closes ALL class variants for the origin', async () => {
+    const actionQueue = await loadModule(repo)
+    const originId = 'dec7-supersede-origin'
+
+    const alertId = await actionQueue.raiseActionQueueItem(
+      baseItem({
+        kind: 'failed',
+        signature: 'dec7-sup-alert',
+        originTaskId: originId,
+      }),
+    )
+
+    const decisionId = await actionQueue.raiseActionQueueItem(
+      baseItem({
+        kind: 'awaiting-validation',
+        signature: 'dec7-sup-decision',
+        originTaskId: originId,
+      }),
+    )
+
+    expect(decisionId).not.toBe(alertId)
+
+    const closedIds = await actionQueue.supersedeActionQueueItemsForOrigin(
+      originId,
+      'origin-done',
+    )
+    // Both rows must be closed.
+    expect(closedIds.sort()).toEqual([alertId, decisionId].sort())
+
+    const open = await actionQueue.listActionQueueItems('open')
+    expect(open).toHaveLength(0)
+  })
+})
 
 describe('ACTION_QUEUE_KINDS membership — writer kind constants', () => {
   it('every raiseActionQueueItem writer kind constant is a member of ACTION_QUEUE_KINDS', async () => {

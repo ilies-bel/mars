@@ -7,7 +7,7 @@ import { resolveOriginIdForTask } from './origin'
 import { derivedRowActions } from './derived-row-actions'
 import { lookupRecipe, getRecipeVerbs } from './action-queue-recipes'
 import { classifyMarsVerb } from './chat-mars-verbs'
-import { isActionQueueKind, type ActionQueueKind } from './action-queue-kinds'
+import { isActionQueueKind, type ActionQueueKind, KIND_CLASS } from './action-queue-kinds'
 import type { PayloadFor, UnauditedPayload } from './action-queue-payloads'
 
 // Re-exported so callers that already import from this module don't need a
@@ -15,10 +15,69 @@ import type { PayloadFor, UnauditedPayload } from './action-queue-payloads'
 // 1 import statement per boundary crossing (ADR-0056 / cli-no-orchestrator-internals).
 export { ACTION_QUEUE_KINDS, isActionQueueKind } from './action-queue-kinds'
 
+/**
+ * One-time per-process backfill: recompute `fingerprint` for every open
+ * origin-keyed row using the new `origin:<id>|class:<class>` formula. Rows
+ * already carrying the new formula are skipped. A `schema_migrations` sentinel
+ * prevents re-running the scan on subsequent boots once all rows are updated.
+ *
+ * SHA-1 is computed in TypeScript (not SQL) because PostgreSQL lacks a
+ * built-in sha1() without the pgcrypto extension.
+ */
+async function _backfillOriginFingerprints(c: DbClient): Promise<void> {
+  const MIGRATION_KEY = 'action-queue:fingerprint-class-migration:v1'
+  try {
+    const already = await c.execute({
+      sql: `SELECT 1 FROM schema_migrations WHERE version = ? LIMIT 1`,
+      args: [MIGRATION_KEY],
+    })
+    if (already.rows.length > 0) return
+
+    const rows = await c.execute({
+      sql: `SELECT id, kind, origin_task_id, fingerprint
+              FROM action_queue_items
+             WHERE status = 'open' AND origin_task_id IS NOT NULL`,
+      args: [],
+    })
+    for (const row of rows.rows) {
+      const r = row as unknown as {
+        id: string
+        kind: string
+        origin_task_id: string
+        fingerprint: string | null
+      }
+      // Inline the hash formula (same as computeOriginFingerprint) to avoid a
+      // forward reference: this function is defined before computeOriginFingerprint
+      // in module order.
+      const kind: ActionQueueKind = isActionQueueKind(r.kind) ? r.kind : 'failed'
+      const cls = KIND_CLASS[kind]
+      const expected = createHash('sha1')
+        .update(`origin:${r.origin_task_id}|class:${cls}`)
+        .digest('hex')
+      if (r.fingerprint !== expected) {
+        await c.execute({
+          sql: `UPDATE action_queue_items SET fingerprint = ? WHERE id = ?`,
+          args: [expected, r.id],
+        })
+      }
+    }
+
+    await c.execute({
+      sql: `INSERT INTO schema_migrations (version, applied_at)
+            VALUES (?, ?) ON CONFLICT (version) DO NOTHING`,
+      args: [MIGRATION_KEY, new Date().toISOString()],
+    })
+  } catch {
+    // Non-fatal: close paths fall back to origin_task_id column matching.
+  }
+}
+
 /** Idempotent PostgreSQL schema bootstrap retained for existing callers. */
 export const initActionQueue = async (): Promise<void> => {
   const { ensureSchema } = await import('./pg-schema.js')
-  await ensureSchema(resolveStateClient())
+  const c = resolveStateClient()
+  await ensureSchema(c)
+  await _backfillOriginFingerprints(c)
 }
 
 /**
@@ -85,11 +144,12 @@ export interface RaiseActionQueueItem<K extends ActionQueueKind = ActionQueueKin
   signature: string
   occurrence?: Record<string, unknown>
   /**
-   * When set, the actionQueue row is deduped on this origin task id alone —
-   * kind- and signature-agnostic. Any failure on a recovery descendant
-   * (or repeated failures on the origin) collapses into the SAME row.
-   * Yields exactly one action_queue_items row per stuck origin task regardless
-   * of how many recovery attempts have failed against it.
+   * When set, the actionQueue row is deduped on (origin task id, operator-obligation
+   * class) — signature-agnostic. Raises in the same class collapse onto one row
+   * per arc, so repeated `failed` / `env-incident` / `dirty-integration` raises
+   * yield exactly one alert-class row. A `decision`-class raise (e.g.
+   * `awaiting-validation`) on the SAME arc produces a SEPARATE row because the
+   * operator owes a different action.
    */
   originTaskId?: string
 }
@@ -308,26 +368,28 @@ const rowToActionQueueItem = (
 }
 
 /**
- * Origin-keyed fingerprint: independent of kind/signature, so any
- * failure path that names the same origin upserts the same row.
- */
-const computeOriginFingerprint = (originTaskId: string): string =>
-  sha1Hex(`origin:${originTaskId}`)
-
-/**
- * Arc-resolved origin fingerprint. Resolves `originId` to its arc root via
- * `resolveOriginIdForTask` before hashing, so sliced tasks (whose `origin_id`
- * differs from their own id) produce the SAME fingerprint as a direct lookup
- * on the arc root. Falls back to the raw id on any DB error.
+ * Origin- and class-keyed fingerprint. Raises in the same operator-obligation
+ * class (`notice | alert | decision`) collapse onto one row per arc; raises in
+ * different classes get distinct rows because the operator owes different
+ * actions. Signature-agnostic within a class, so repeated `failed` /
+ * `env-incident` / `dirty-integration` raises (all `alert`) still fold.
  *
- * Use this everywhere an `originId` that may belong to a sliced task is
- * turned into a fingerprint for lookup or eviction. This is the single source
- * of truth for raise–lookup agreement.
+ * This is the single source of truth for raise–lookup agreement. Every path
+ * that computes a fingerprint for an origin-keyed row must go through here so
+ * that raise and close always agree on which hash to write or look up.
  */
-const resolvedOriginFingerprint = async (originId: string): Promise<string> =>
-  computeOriginFingerprint(
-    await resolveOriginIdForTask(originId).catch(() => originId),
-  )
+const computeOriginFingerprint = (originTaskId: string, kind: ActionQueueKind): string => {
+  const cls = KIND_CLASS[kind]
+  return sha1Hex(`origin:${originTaskId}|class:${cls}`)
+}
+
+/** Rank used for priority-max on collision (higher = more urgent). */
+const PRIORITY_RANK: Record<ActionQueuePriority, number> = {
+  urgent: 3,
+  high: 2,
+  normal: 1,
+  low: 0,
+}
 
 // ── Alert-thread helpers ──────────────────────────────────────────────────────
 
@@ -437,37 +499,79 @@ export const raiseActionQueueItem = async <K extends ActionQueueKind>(
     : null
 
   const fingerprint = resolvedOriginId
-    ? computeOriginFingerprint(resolvedOriginId)
+    ? computeOriginFingerprint(resolvedOriginId, item.kind)
     : computeFingerprint(item.kind, item.signature)
   const now = Date.now()
 
-  const existing = await c.execute({
-    sql: `SELECT id, payload FROM action_queue_items
+  let existing = await c.execute({
+    sql: `SELECT id, payload, priority FROM action_queue_items
            WHERE fingerprint = ? AND status = 'open'
            ORDER BY raised_at ASC
            LIMIT 1`,
     args: [fingerprint],
   })
 
+  // Legacy fallback: if the primary fingerprint lookup found nothing but this
+  // raise has an origin, look for a row whose fingerprint was NULLed by the
+  // class-keyed migration (schema v0040).  Finding one means we are looking at
+  // a pre-migration row whose class matches ours; stamp it with the new
+  // fingerprint so subsequent raises hit the primary path.
+  if (existing.rows.length === 0 && resolvedOriginId) {
+    const legacy = await c.execute({
+      sql: `SELECT id, payload, priority FROM action_queue_items
+             WHERE origin_task_id = ? AND status = 'open' AND fingerprint IS NULL
+             ORDER BY raised_at ASC
+             LIMIT 1`,
+      args: [resolvedOriginId],
+    })
+    if (legacy.rows.length > 0) {
+      const legacyId = (legacy.rows[0] as unknown as { id: string }).id
+      await c.execute({
+        sql: `UPDATE action_queue_items SET fingerprint = ? WHERE id = ?`,
+        args: [fingerprint, legacyId],
+      })
+      existing = legacy
+    }
+  }
+
   if (existing.rows.length > 0) {
     const row = existing.rows[0] as unknown as {
       id: string
       payload: string | null
+      priority: string
     }
     const payload = parseJsonObject(row.payload)
-    if (item.occurrence) {
-      const prior = Array.isArray(payload.occurrences)
-        ? (payload.occurrences as unknown[])
-        : []
-      payload.occurrences = [...prior, item.occurrence]
+
+    // Always append an occurrence so a folded raise leaves evidence even when
+    // the caller supplied no occurrence.  The caller's occurrence fields are
+    // merged in when present; kind, title and foldedAt are always recorded.
+    const prior = Array.isArray(payload.occurrences)
+      ? (payload.occurrences as unknown[])
+      : []
+    const occurrenceEntry: Record<string, unknown> = {
+      ...(item.occurrence ?? {}),
+      kind: item.kind,
+      title: item.title,
+      foldedAt: new Date(now).toISOString(),
     }
+    payload.occurrences = [...prior, occurrenceEntry]
+
+    // Take the max of the existing and incoming priority so a higher-urgency
+    // raise is never silently discarded.
+    const existingPriority = row.priority as ActionQueuePriority
+    const maxPriority =
+      PRIORITY_RANK[item.priority] > PRIORITY_RANK[existingPriority]
+        ? item.priority
+        : existingPriority
+
     await c.execute({
       sql: `UPDATE action_queue_items
                SET seen_count = seen_count + 1,
                    last_seen_at = ?,
-                   payload = ?
+                   payload = ?,
+                   priority = ?
              WHERE id = ?`,
-      args: [now, JSON.stringify(payload), row.id],
+      args: [now, JSON.stringify(payload), maxPriority, row.id],
     })
     return row.id
   }
@@ -528,13 +632,13 @@ export const setRecoveryFindings = async (
   findings: string,
 ): Promise<string | null> => {
   const c = stateClient()
-  const fingerprint = await resolvedOriginFingerprint(originTaskId)
+  const resolvedOriginId = await resolveOriginIdForTask(originTaskId).catch(() => originTaskId)
   const existing = await c.execute({
     sql: `SELECT id FROM action_queue_items
-           WHERE fingerprint = ? AND status = 'open'
+           WHERE origin_task_id = ? AND status = 'open'
            ORDER BY raised_at ASC
            LIMIT 1`,
-    args: [fingerprint],
+    args: [resolvedOriginId],
   })
   if (existing.rows.length === 0) return null
   const id = (existing.rows[0] as unknown as { id: string }).id
@@ -557,13 +661,13 @@ export const patchOpenActionQueuePayload = async (
   patch: Record<string, unknown>,
 ): Promise<string | null> => {
   const c = stateClient()
-  const fingerprint = await resolvedOriginFingerprint(originTaskId)
+  const resolvedOriginId = await resolveOriginIdForTask(originTaskId).catch(() => originTaskId)
   const existing = await c.execute({
     sql: `SELECT id, payload FROM action_queue_items
-           WHERE fingerprint = ? AND status = 'open'
+           WHERE origin_task_id = ? AND status = 'open'
            ORDER BY raised_at ASC
            LIMIT 1`,
-    args: [fingerprint],
+    args: [resolvedOriginId],
   })
   if (existing.rows.length === 0) return null
   const row = existing.rows[0] as unknown as { id: string; payload: string | null }
@@ -585,15 +689,15 @@ export const demoteAwaitingValidationAction = async (
   detectedAtMs: number,
 ): Promise<string | null> => {
   const c = stateClient()
-  const fingerprint = await resolvedOriginFingerprint(taskId)
+  const resolvedOriginId = await resolveOriginIdForTask(taskId).catch(() => taskId)
   const existing = await c.execute({
     sql: `SELECT id, kind, payload FROM action_queue_items
-           WHERE fingerprint = ?
+           WHERE origin_task_id = ?
              AND status = 'open'
              AND kind IN ('awaiting-validation', 'awaiting-validation-preview-gone')
            ORDER BY raised_at ASC
            LIMIT 1`,
-    args: [fingerprint],
+    args: [resolvedOriginId],
   })
   if (existing.rows.length === 0) return null
   const row = existing.rows[0] as unknown as {
@@ -951,18 +1055,18 @@ export const supersedeActionQueueItemsForOrigin = async (
   by = 'daemon:auto-supersede',
 ): Promise<string[]> => {
   const c = stateClient()
-  // Arc-resolve so sliced tasks (origin_id ≠ own id) produce the same
-  // fingerprint as the row that was stored at raise time.
+  // Arc-resolve so sliced tasks (origin_id ≠ own id) close the same rows that
+  // were stored at raise time.  There is now one row PER operator-obligation
+  // class (alert / decision / notice) for a given origin; closing by
+  // origin_task_id matches all of them regardless of class.  The raw task id
+  // is included as a belt-and-suspenders fallback for legacy rows raised before
+  // the arc-resolution was introduced.
   const resolvedOriginId = await resolveOriginIdForTask(originTaskId).catch(() => originTaskId)
-  const fingerprint = computeOriginFingerprint(resolvedOriginId)
-  // Belt-and-suspenders: also match by origin_task_id (both the resolved arc
-  // root and the raw task id) so rows are closeable even if a fingerprint
-  // mismatch was baked in by a prior version of the raise path.
   const rows = await c.execute({
     sql: `SELECT id FROM action_queue_items
            WHERE status = 'open'
-             AND (fingerprint = ? OR origin_task_id = ? OR origin_task_id = ?)`,
-    args: [fingerprint, resolvedOriginId, originTaskId],
+             AND (origin_task_id = ? OR origin_task_id = ?)`,
+    args: [resolvedOriginId, originTaskId],
   })
   const ids: string[] = []
   for (const row of rows.rows) {
@@ -1169,22 +1273,21 @@ export const dismissAlertsOnStatusChange = async (
   newStatus: string,
 ): Promise<string[]> => {
   const c = stateClient()
-  const fingerprint = await resolvedOriginFingerprint(taskId)
+  // Arc-resolve so fix-task status changes dismiss the same rows as the origin.
+  const resolvedOriginId = await resolveOriginIdForTask(taskId).catch(() => taskId)
   // Three predicates cover all known row shapes for this task:
-  //   - fingerprint = origin-keyed hash — the normal path for rows that were
-  //     raised with originTaskId (the vast majority of current rows).
+  //   - origin_task_id = resolvedOriginId — the normal path for rows raised with
+  //     originTaskId. Matches ALL operator-obligation classes for this arc so a
+  //     status change clears both alert-class and decision-class rows.
   //   - kind IN ('failed','diagnose-inconclusive') AND signature = taskId
   //     AND origin_task_id IS NULL — signature-keyed rows created by pre-fix
-  //     raise sites. Those sites used the task id directly as the signature
-  //     value, so this predicate is safe and specific to task-owned rows.
+  //     raise sites that used the task id directly as the signature value.
   //   - kind = 'recovery-abandoned' AND signature = 'recovery-abandoned:' || taskId
   //     AND origin_task_id IS NULL — legacy rows raised before originTaskId was
-  //     populated in drainRecoveryAbandoned. These outlived their arc when the
-  //     fingerprint predicate missed them (fingerprint is derived from originTaskId,
-  //     which is NULL for these rows).
+  //     populated in drainRecoveryAbandoned.
   const rows = await c.execute({
     sql: `SELECT id FROM action_queue_items
-           WHERE (fingerprint = ?
+           WHERE (origin_task_id = ?
                   OR (kind IN ('failed', 'diagnose-inconclusive')
                       AND signature = ?
                       AND origin_task_id IS NULL)
@@ -1192,7 +1295,7 @@ export const dismissAlertsOnStatusChange = async (
                       AND signature = 'recovery-abandoned:' || ?
                       AND origin_task_id IS NULL))
              AND status = 'open'`,
-    args: [fingerprint, taskId, taskId],
+    args: [resolvedOriginId, taskId, taskId],
   })
   const ids: string[] = []
   const note = `status-changed → ${newStatus}`
