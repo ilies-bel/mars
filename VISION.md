@@ -171,10 +171,11 @@ been tested where it is made.
 | HR-2 — the UI is the main surface | Take any act Mars offers and try to complete it in the UI alone. An affordance whose only completion is a CLI command, or a slash command in another tool, falsifies it. |
 | DEC-2 — Mars changes its own config and workflows unprompted | Provoke a condition Mars has a configured response to, then watch without touching anything. A change Mars only ever proposes, or that waits on an operator gesture to apply, falsifies it. |
 | DEC-2 scope narrowed — three lanes (see §4 scope note) | For runtime configuration the test is unchanged. For workflow authorship, the falsification test is: author a workflow whose body escapes the primitive-only lint surface and observe it waiting on an operator gesture to become dispatch-eligible. |
-| HR-7 — provider-agnostic | Install with the default configuration and use every surface: dispatch a task, open chat, force a merge conflict. A vendor SDK or a hand-written vendor client in the core, a surface that only runs on one provider, or an API key Mars must hold, falsifies it. |
+| HR-7 — provider-agnostic | Install with the default configuration and dispatch a task. A provider SDK imported by the core, or an API key Mars must hold for that default path to work, falsifies it. |
 | DEC-6 — workflow edits apply mid-run | Edit a workflow while a run is in flight, then watch that run reach a step after the edit. A run that finishes on the definition it started with, or that pins a snapshot taken at dispatch, falsifies it. |
 | HR-9 / DEC-13 — git is concrete, not a port | Trace the core's git calls and an implement run's worktree. A VCS port the core dispatches through, a swappable non-git implementation behind it, or a run that proceeds without a worktree, falsifies it. |
 | DEC-12 — borrowing a coding CLI is one adapter kind, not the architecture | Try to configure a key-backed provider adapter alongside the CLI-borrowing one. A provider port whose contract admits only a local CLI subprocess, or a key-backed path that requires changing the port rather than registering against it, falsifies it. |
+| HR-7 (sharpened) — provider-agnostic, every surface | Install with the default configuration and use every surface: dispatch a task, open chat, force a merge conflict. A vendor SDK or a hand-written vendor client in the core, a surface that only runs on one provider, or an API key Mars must hold, falsifies it. |
 
 ## 9. Definition of done
 
