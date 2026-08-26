@@ -496,11 +496,34 @@ export class Arc {
         // Raw SQL bypasses the application-level terminal-status immutability
         // guard — that guard protects external callers, not this internal
         // atomic sequence where both mutations must commit or roll back together.
+        // IMPORTANT: the bypass also skips the status-transition helper's event
+        // emission, so we must emit the terminal event pair explicitly below.
+        // Omitting them is what caused the bug where dependents stayed blocked
+        // forever after a supersede: drainBlockerResolution subscribes to
+        // task.terminal and never saw the event, so it never released them.
         if (opts?.supersedes) {
           await tx.execute({
             sql: `UPDATE tasks SET status = 'dropped', drop_reason = 'superseded', worktree_path = NULL, failure_reason = ?, updated_at = ? WHERE id = ?`,
             args: [`superseded by new task ${id}`, now, opts.supersedes],
           })
+          // Emit the standard terminal pair so drainBlockerResolution can
+          // release any tasks blocked on the superseded task. These events
+          // commit in the same transaction as the UPDATE (ADR-0030: event and
+          // mutation share one commit). reason: 'dropped' (not a new
+          // 'superseded' value) — drainBlockerResolution matches on
+          // reason ∈ {'done','dropped'} and 'superseded' would not match.
+          await tx.execute(
+            buildEventInsert('task.dropped', {
+              taskId: opts.supersedes,
+              dropReason: 'superseded',
+            }),
+          )
+          await tx.execute(
+            buildEventInsert('task.terminal', {
+              taskId: opts.supersedes,
+              reason: 'dropped',
+            }),
+          )
         }
         await tx.execute({
           sql: `INSERT INTO tasks (id, prompt, status, plan_functional, plan_technical, author_kind, author_name, origin_id, priority, parent_proposal_id, slice_index, tags_json, kind, verify_cmd, merge_mode, read_first_json, prescriptive_action, slice_kind, sub_deliverable_json, intent, origin_session_id, workflow, compensates_arc_id, followup_dedup_key, finding_key, qa, "deferrable", created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
