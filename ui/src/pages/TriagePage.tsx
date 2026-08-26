@@ -38,7 +38,7 @@ import { describeFeedFailure } from '@/shared/feedFailure'
 import { postDecision, snoozeActionQueueItem } from '@/shared/api'
 import { relativeTime } from '@/shared/time'
 import { dispatchAlertVerb, resolveThreadForItem } from '@/widgets/chat/alertVerbs'
-import { deriveCause } from '@/shared/alertCause'
+import { CollapsibleSection } from '@/components/CollapsibleSection'
 import { useFocusedProjectId } from '@/shared/useFocusedProject'
 import { defaultAqUrlState, encodeAqState } from '@/shared/actionQueueUrlState'
 import { taskHash } from '@/shared/routing'
@@ -277,11 +277,12 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
   // Use relativeTime so timestamps are handled via the existing helper
   // (avoids hand-dividing epoch-ms values which can silently land at 1970).
   const age = relativeTime(item.at)
-  // Narrative hierarchy matching AlertCard: when arcGoal (prompt excerpt) is
-  // present it becomes the primary headline; humanSummary is demoted to
-  // secondary/muted text so the operator sees WHAT the task was trying to do.
-  const goal = item.arcGoal ?? null
-  const cause = goal ? deriveCause(item.humanDetail) : undefined
+  // Narrative hierarchy (§7): when operatorGoal is present it becomes the
+  // primary headline so the operator sees WHAT the task was doing; item.title
+  // (the daemon's plain-language cause phrase) is the subhead; the raw error
+  // output moves behind an "Output" disclosure. When no goal is available the
+  // humanSummary || title falls back to the sole headline.
+  const goal = item.operatorGoal ?? null
   const headline = !goal ? (item.humanSummary || item.title) : null
   const accentClass = KIND_ACCENT[item.kind] ?? 'border-l-muted'
   const kindLabel = KIND_LABEL[item.kind] ?? item.kind
@@ -425,19 +426,40 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
         </div>
       )}
 
-      {/* Headline — narrative treatment mirrors AlertCard:
-           - When goal (prompt excerpt) is present: goal is primary, cause + humanSummary secondary.
-           - Otherwise: humanSummary || title is the headline. */}
+      {/* Headline — §7 hierarchy:
+           - When operatorGoal is present: goal is primary headline, item.title
+             is the subhead (daemon's plain-language cause phrase), humanSummary
+             is tertiary, raw error output hides behind "Output" disclosure.
+           - Otherwise: humanSummary || title is the sole headline. */}
       {goal ? (
         <>
-          <p className="mb-0.5 text-title font-medium leading-snug text-foreground line-clamp-2">
+          <p
+            className="mb-0.5 text-title font-medium leading-snug text-foreground line-clamp-2"
+            data-testid="triage-goal"
+          >
             {goal.split('\n')[0]?.trim()}
           </p>
-          {cause && (
-            <p className="font-mono text-micro text-muted-foreground">{cause}</p>
-          )}
+          <p
+            className="font-mono text-micro text-muted-foreground"
+            data-testid="triage-title-subhead"
+          >
+            {item.title}
+          </p>
           {item.humanSummary && (
-            <p className="mt-0.5 font-mono text-micro text-muted-foreground/70 line-clamp-1">{item.humanSummary}</p>
+            <p className="mt-0.5 font-mono text-micro text-muted-foreground/70 line-clamp-1">
+              {item.humanSummary}
+            </p>
+          )}
+          {(item.humanDetail?.errorExcerpt ?? item.humanDetail?.rawError) != null && (
+            <CollapsibleSection
+              label="Output"
+              className="mt-1.5"
+              data-testid="triage-output-disclosure"
+            >
+              <pre className="max-h-28 overflow-y-auto rounded bg-primary/10 p-1.5 font-mono text-micro text-primary/80 whitespace-pre-wrap break-all">
+                {item.humanDetail?.errorExcerpt ?? item.humanDetail?.rawError}
+              </pre>
+            </CollapsibleSection>
           )}
         </>
       ) : (

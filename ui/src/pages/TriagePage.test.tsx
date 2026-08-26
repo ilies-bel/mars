@@ -142,6 +142,7 @@ const makeItem = (
     humanDetail: undefined,
     verbs: [],
     arcGoal: null,
+    operatorGoal: null,
     diagnosis: null,
     failureReasonCode: null,
     fixForTaskId: null,
@@ -958,6 +959,125 @@ describe('TriageRow – condition-kind verb success: row stays rendered', () => 
     })
     // Row still present — 'failed' is a condition kind.
     expect(container.querySelector('[data-testid="triage-continue"]')).not.toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// TriageRow — §7 card hierarchy: operatorGoal → title subhead → Output disclosure
+// ---------------------------------------------------------------------------
+
+describe('TriageRow – operatorGoal headline hierarchy', () => {
+  it('renders operatorGoal as the primary headline when present', () => {
+    mockItems.mockReturnValue([
+      makeItem('failed', {
+        operatorGoal: 'Remove AlertCard injection from chat transcript',
+        title: 'A verification check did not pass',
+      }),
+    ])
+    const { container } = renderPage()
+    const goalEl = container.querySelector('[data-testid="triage-goal"]')
+    expect(goalEl).not.toBeNull()
+    expect(goalEl?.textContent).toContain('Remove AlertCard injection from chat transcript')
+  })
+
+  it('renders item.title as the subhead when operatorGoal is present', () => {
+    mockItems.mockReturnValue([
+      makeItem('failed', {
+        operatorGoal: 'Remove AlertCard injection from chat transcript',
+        title: 'A verification check did not pass',
+      }),
+    ])
+    const { container } = renderPage()
+    const subheadEl = container.querySelector('[data-testid="triage-title-subhead"]')
+    expect(subheadEl).not.toBeNull()
+    expect(subheadEl?.textContent).toBe('A verification check did not pass')
+  })
+
+  it('renders raw error excerpt inside collapsed Output disclosure', () => {
+    mockItems.mockReturnValue([
+      makeItem('failed', {
+        operatorGoal: 'Remove AlertCard injection from chat transcript',
+        title: 'A verification check did not pass',
+        humanDetail: { errorExcerpt: 'error TS2345: Argument of type string' },
+      }),
+    ])
+    const { container } = renderPage()
+    const disclosure = container.querySelector('[data-testid="triage-output-disclosure"]')
+    expect(disclosure).not.toBeNull()
+    // collapsed by default — the <details> element has no `open` attribute
+    expect((disclosure as HTMLDetailsElement).open).toBe(false)
+    // content is present inside the details element even when closed
+    expect(disclosure?.textContent).toContain('error TS2345: Argument of type string')
+  })
+
+  it('renders rawError inside Output disclosure when errorExcerpt is absent', () => {
+    mockItems.mockReturnValue([
+      makeItem('failed', {
+        operatorGoal: 'Fix type error in provider',
+        title: 'A verification check did not pass',
+        humanDetail: { rawError: 'Type string is not assignable to type number' },
+      }),
+    ])
+    const { container } = renderPage()
+    const disclosure = container.querySelector('[data-testid="triage-output-disclosure"]')
+    expect(disclosure).not.toBeNull()
+    expect(disclosure?.textContent).toContain('Type string is not assignable to type number')
+  })
+
+  it('omits Output disclosure when humanDetail has no errorExcerpt or rawError', () => {
+    mockItems.mockReturnValue([
+      makeItem('failed', {
+        operatorGoal: 'Fix type error in provider',
+        title: 'A verification check did not pass',
+        humanDetail: { branch: 'task/mars-abc' },
+      }),
+    ])
+    const { container } = renderPage()
+    expect(container.querySelector('[data-testid="triage-output-disclosure"]')).toBeNull()
+  })
+
+  it('falls back to humanSummary as sole headline when operatorGoal is absent', () => {
+    mockItems.mockReturnValue([
+      makeItem('failed', {
+        operatorGoal: null,
+        humanSummary: 'Summary for failed',
+      }),
+    ])
+    const { container } = renderPage()
+    // No goal element — fallback headline rendered as an unlabelled <p>
+    expect(container.querySelector('[data-testid="triage-goal"]')).toBeNull()
+    expect(container.querySelector('[data-testid="triage-title-subhead"]')).toBeNull()
+    expect(container.textContent).toContain('Summary for failed')
+  })
+
+  it('falls back to item.title as sole headline when operatorGoal and humanSummary are both absent', () => {
+    mockItems.mockReturnValue([
+      makeItem('failed', {
+        operatorGoal: null,
+        humanSummary: undefined,
+        title: 'Title for failed',
+      }),
+    ])
+    const { container } = renderPage()
+    expect(container.querySelector('[data-testid="triage-goal"]')).toBeNull()
+    expect(container.textContent).toContain('Title for failed')
+  })
+
+  it('humanSummary renders as tertiary line when operatorGoal is present', () => {
+    mockItems.mockReturnValue([
+      makeItem('failed', {
+        operatorGoal: 'Remove AlertCard injection from chat transcript',
+        title: 'A verification check did not pass',
+        humanSummary: 'Summary for failed',
+      }),
+    ])
+    const { container } = renderPage()
+    // All three layers visible simultaneously
+    expect(container.querySelector('[data-testid="triage-goal"]')?.textContent)
+      .toContain('Remove AlertCard injection from chat transcript')
+    expect(container.querySelector('[data-testid="triage-title-subhead"]')?.textContent)
+      .toBe('A verification check did not pass')
+    expect(container.textContent).toContain('Summary for failed')
   })
 })
 
