@@ -178,6 +178,7 @@ been tested where it is made.
 | HR-7 (sharpened) — provider-agnostic, every surface | Install with the default configuration and use every surface: dispatch a task, open chat, force a merge conflict. A vendor SDK or a hand-written vendor client in the core, a surface that only runs on one provider, or an API key Mars must hold, falsifies it. |
 | HR-3 — one API, three callers | Pick a mutation the CLI can perform and look for the matching operation in the daemon API. A CLI write that reaches the database directly, with no equivalent operation any other caller could invoke, falsifies it. |
 | DEC-18 — internals stay behind a disclosure | Read an operator surface without expanding anything. A raw failure signature, captured stdout, or a machine slug rendered on the face of what the operator reads first falsifies it. |
+| DEC-9 — no explicit bound on queue size | Fill the queue past any plausible threshold and list it. A cap, a volume target, or a tail silently dropped from the open listing falsifies it; paginated resolved history and an expiring snooze do not. |
 
 ## 9. Definition of done
 
