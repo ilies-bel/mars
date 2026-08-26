@@ -10,7 +10,7 @@ import { initDatabases } from '../init/databases'
 import { WIZARD_DEFAULTS, type WizardChoices } from '../init/wizard'
 import { VerifyGateInputSchema } from '../core/verify-gates'
 import type { VerifyGateInput } from '../core/verify-gates'
-import { installOnboardingVerifyGates } from '../init/seed-verify-gates'
+import { proposeOnboardingVerifyGates } from '../init/seed-verify-gates'
 import { computeMissingGates } from '../init/compute-missing-gates'
 import { buildGateTaskPrompt } from '../init/build-gate-task-prompt'
 import { enqueueTask } from '../core/queue'
@@ -269,7 +269,7 @@ const initWorkflow = defineWorkflow<InitInput, InitWorkflowOutput>({
         gatesToInstall = [...detected, missingGateInput]
       }
 
-      await installOnboardingVerifyGates(gatesToInstall)
+      await proposeOnboardingVerifyGates(gatesToInstall)
       return { firstMissing }
     })
 

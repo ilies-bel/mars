@@ -1,57 +1,51 @@
-import { randomUUID } from 'node:crypto'
-import { withTransaction } from '../core/lib/db.js'
 import { resolveStateClient } from '../core/store/state-client.js'
 import type { VerifyGateInput } from '../core/verify-gates.js'
+import { reportUncoveredVerifyCoverage } from '../core/lib/verify-uncovered.js'
 
 /**
  * Gate input accepted by the onboarding seed path.
  *
  * Extends the standard {@link VerifyGateInput} with an optional `evidence`
  * field — the observation that justified including this gate during detection.
- * Evidence is consumed by the seed step and is not persisted in the gate
- * registry itself; consumer slices may forward it to a proposal record.
+ * Evidence is forwarded into the raised verify-uncovered payload so the
+ * operator sees why the gate was proposed.
  */
 export type OnboardingGateInput = VerifyGateInput & { evidence?: string }
 
 /**
- * Install the gate set discovered while onboarding a new repository.
+ * Propose the gate set discovered while onboarding a new repository.
  *
- * The registry becomes operator-owned after this first write. A non-empty
- * registry is consequently a complete no-op, including when the supplied
- * gate set differs from the one originally detected.
+ * Instead of inserting gates directly, this raises one `verify-uncovered`
+ * action-queue item per detected gate so the operator can accept each gate
+ * individually. The gate set starts empty and accumulates by operator
+ * confirmation.
  *
- * Returns counts for both direct installs (`inserted`) and deferred proposals
- * (`proposed`). The current implementation always installs directly; consumer
- * slices may flip to the proposal path and return `proposed > 0` instead.
+ * A non-empty registry is a complete no-op: the operator already owns the
+ * gates, so onboarding proposals are suppressed.
+ *
+ * Returns `{ proposed, skipped }` where `proposed` is the number of items
+ * raised and `skipped` is true when the registry was already non-empty.
  */
-export const installOnboardingVerifyGates = async (
+export const proposeOnboardingVerifyGates = async (
   gates: readonly OnboardingGateInput[],
-): Promise<{ inserted: number; proposed: number; skipped: boolean }> => {
+): Promise<{ proposed: number; skipped: boolean }> => {
   const client = resolveStateClient()
-  return withTransaction(client, async (tx) => {
-    const existing = await tx.execute('SELECT COUNT(*) AS count FROM verify_gates')
-    const count = Number(existing.rows[0]?.count ?? 0)
-    if (count > 0) return { inserted: 0, proposed: 0, skipped: true }
+  const existing = await client.execute('SELECT COUNT(*) AS count FROM verify_gates')
+  const count = Number(existing.rows[0]?.count ?? 0)
+  if (count > 0) return { proposed: 0, skipped: true }
 
-    for (const gate of gates) {
-      await tx.execute(
-        `INSERT INTO verify_gates
-          (id, scope, name, cmd, args_json, required, tier, source, created_at, evidence)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'onboarding', ?, ?)`,
-        [
-          randomUUID(),
-          gate.scope ?? '.',
-          gate.name,
-          gate.cmd,
-          JSON.stringify(gate.args ?? []),
-          gate.required === false ? 0 : 1,
-          gate.tier ?? 'task',
-          Date.now(),
-          gate.evidence ?? null,
-        ],
-      )
-    }
+  for (const gate of gates) {
+    await reportUncoveredVerifyCoverage({
+      changedPaths: [gate.scope ?? '.'],
+      proposedGate: {
+        name: gate.name,
+        cmd: gate.cmd,
+        args: gate.args ?? [],
+        scope: gate.scope ?? '.',
+        evidence: gate.evidence ?? 'detected at onboarding',
+      },
+    })
+  }
 
-    return { inserted: gates.length, proposed: 0, skipped: false }
-  })
+  return { proposed: gates.length, skipped: false }
 }
