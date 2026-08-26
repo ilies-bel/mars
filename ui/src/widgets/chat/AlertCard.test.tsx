@@ -258,30 +258,29 @@ describe('AlertCard – snooze menu', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Goal line (prompt excerpt as primary headline — new UX)
+// operatorGoal line (operator-facing goal as primary headline)
 // ---------------------------------------------------------------------------
 
-describe('AlertCard – goal line', () => {
-  it('renders goal as primary headline (no "Goal:" label) when goal is provided', () => {
-    const html = render({ goal: 'Add rate limiting to the API gateway' })
+describe('AlertCard – operatorGoal line', () => {
+  it('renders operatorGoal as primary headline when present', () => {
+    const html = render({ operatorGoal: 'Add rate limiting to the API gateway' })
     expect(html).toContain('data-testid="alert-card-goal"')
     expect(html).toContain('Add rate limiting to the API gateway')
-    // In the new design the goal IS the headline — no separate "Goal:" label.
-    // The word "Goal" must NOT appear as a UI label.
+    // The goal IS the headline — no separate "Goal:" label.
     expect(html).not.toContain('>Goal<')
   })
 
-  it('does not render the goal element when goal is absent', () => {
-    const html = render({ goal: undefined })
+  it('does not render the goal element when operatorGoal is absent', () => {
+    const html = render({ operatorGoal: undefined })
     expect(html).not.toContain('data-testid="alert-card-goal"')
     // Verify the summary is shown as the primary headline instead
     expect(html).toContain('data-testid="alert-card-summary"')
   })
 
-  it('goal is the primary headline; summary is still rendered as muted secondary', () => {
+  it('operatorGoal is the primary headline; summary renders as subhead when operatorGoal is present', () => {
     const html = render({
       summary: 'Arc exhausted all retry attempts',
-      goal: 'Implement the caching layer',
+      operatorGoal: 'Implement the caching layer',
     })
     expect(html).toContain('Arc exhausted all retry attempts')
     expect(html).toContain('Implement the caching layer')
@@ -290,31 +289,31 @@ describe('AlertCard – goal line', () => {
     expect(html).toContain('data-testid="alert-card-summary"')
   })
 
-  it('renders cause subtitle when goal + failureSignature are present', () => {
+  it('does not render cause line when operatorGoal and failureSignature are present', () => {
+    // Cause is no longer shown on the card face; VerifyExcerpt covers raw output.
     const html = render({
-      goal: 'Build the widget',
+      operatorGoal: 'Build the widget',
       detail: { failureSignature: 'verify/typecheck' },
     })
-    expect(html).toContain('data-testid="alert-card-cause"')
-    expect(html).toContain('verify failed')
+    expect(html).not.toContain('data-testid="alert-card-cause"')
   })
 
-  it('does not render cause when goal is absent', () => {
+  it('does not render cause when operatorGoal is absent', () => {
     const html = render({
       detail: { failureSignature: 'verify/typecheck' },
     })
     expect(html).not.toContain('data-testid="alert-card-cause"')
   })
 
-  it('renders verify output toggle when goal + errorExcerpt are present', () => {
+  it('renders verify output toggle when operatorGoal + errorExcerpt are present', () => {
     const html = render({
-      goal: 'Build the widget',
+      operatorGoal: 'Build the widget',
       detail: { failureSignature: 'verify/test', errorExcerpt: 'Error: expected 1 but got 2\nfail\n' },
     })
     expect(html).toContain('data-testid="alert-verify-output-toggle"')
   })
 
-  it('does not render verify output toggle when goal is absent even with errorExcerpt', () => {
+  it('does not render verify output toggle when operatorGoal is absent even with errorExcerpt', () => {
     const html = render({
       detail: { failureSignature: 'verify/test', errorExcerpt: 'Error: boom' },
     })
@@ -359,16 +358,16 @@ describe('AlertCard – baseline-broken gate output', () => {
   })
 
   it('does not render verify output toggle for non-baseline-broken card with gateOutput', () => {
-    // gateOutput on a task-failure card (with goal) does NOT trigger the output
-    // panel — that path only uses errorExcerpt/rawError.
+    // gateOutput on a task-failure card (with operatorGoal) does NOT trigger the
+    // output panel — that path only uses errorExcerpt/rawError.
     const html = render({
       kind: 'failed',
-      goal: 'Implement the caching layer',
+      operatorGoal: 'Implement the caching layer',
       detail: {
         gateOutput: 'FAIL src/foo.test.ts\nTests: 1 failed',
       },
     })
-    // goal present but no errorExcerpt/rawError → no toggle from either path
+    // operatorGoal present but no errorExcerpt/rawError → no toggle from either path
     expect(html).not.toContain('data-testid="alert-verify-output-toggle"')
   })
 })
@@ -522,11 +521,11 @@ describe('ActionQueueRow – recipe rendering', () => {
     expect(html).toContain('data-testid="alert-detail-toggle"')
   })
 
-  it('renders the arc goal line when arcGoal is present', () => {
+  it('renders the operator goal headline when operatorGoal is present', () => {
     const item = {
       ...BASE_ITEM,
       humanSummary: 'Arc exhausted retries',
-      arcGoal: 'Add rate limiting to the API gateway',
+      operatorGoal: 'Add rate limiting to the API gateway',
       verbs: [] as AlertVerb[],
     } as ActionQueueItem
     const html = renderToStaticMarkup(<ActionQueueRow item={item} />)
@@ -534,7 +533,7 @@ describe('ActionQueueRow – recipe rendering', () => {
     expect(html).toContain('Add rate limiting to the API gateway')
   })
 
-  it('does not render the arc goal line when arcGoal is absent', () => {
+  it('does not render the operator goal headline when operatorGoal is absent', () => {
     const item = {
       ...BASE_ITEM,
       humanSummary: 'Arc exhausted retries',

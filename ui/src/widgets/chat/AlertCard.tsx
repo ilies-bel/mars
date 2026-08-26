@@ -3,10 +3,10 @@
  * and action-queue row detail views.
  *
  * Design:
- *   - Headline: when `goal` (prompt excerpt) is present it becomes the primary
- *     heading so the operator sees WHAT the task was doing. A plain-language
- *     cause line (derived from the failure signature + error excerpt) sits below.
- *     When no goal is provided the humanSummary falls back to the headline.
+ *   - Headline: when `operatorGoal` (what the task was trying to achieve) is
+ *     present it becomes the primary heading. The plain-language summary
+ *     (humanSummary) sits below as a subhead. When no operatorGoal is provided
+ *     the humanSummary is the primary headline.
  *   - entityId shown small/monospace as metadata beneath the headline.
  *   - "Details ▸" expander revealing humanDetail as labeled fields.
  *   - "Output ▸" expander showing the last ~3 lines of verify output when
@@ -24,7 +24,6 @@ import { useState } from 'react'
 import { Response } from '@/components/ai-elements/response'
 import { snoozeActionQueueItem, restoreSnoozedItem, postDecision } from '@/shared/api'
 import { dispatchAlertVerb, verbButtonClass } from './alertVerbs'
-import { deriveCause } from '@/shared/alertCause'
 import type { AlertHumanDetail, AlertVerb, Decision } from '@/shared/schemas'
 import { taskHash, proposalHash } from '@/shared/routing'
 
@@ -128,11 +127,11 @@ export interface AlertCardProps {
    */
   snoozeUntil?: number
   /**
-   * The task's main goal / prompt excerpt — "what it was trying to achieve".
+   * The operator-facing goal — "what the task was trying to achieve".
    * When present it becomes the PRIMARY headline and the humanSummary is
-   * demoted to secondary text. Only the first line of the value is shown.
+   * rendered as a subhead beneath it.
    */
-  goal?: string
+  operatorGoal?: string
   /**
    * Server-defined decision buttons. One button is rendered per entry;
    * clicking POSTs the Decision's payload to its endpoint.
@@ -305,7 +304,7 @@ export const AlertCard = ({
   entityId,
   kind,
   summary,
-  goal,
+  operatorGoal,
   detail,
   verbs,
   decisions = [],
@@ -329,15 +328,12 @@ export const AlertCard = ({
 
   const isSnoozed = snoozedUntil !== null && snoozedUntil > Date.now()
 
-  // Derive cause from detail when goal is present (task failure card).
-  const cause = goal ? deriveCause(detail) : undefined
-
   // Derive verify output tail for the expandable section.
-  // - When a task goal is present: show the last ~3 lines of the error excerpt
+  // - When an operatorGoal is present: show the last ~3 lines of the error excerpt
   //   (enough context for a continue-vs-restart decision in place).
-  // - When no goal: show the gate output excerpt for baseline-broken cards so
+  // - When no operatorGoal: show the gate output excerpt for baseline-broken cards so
   //   the operator can see the failing-test summary without a terminal.
-  const verifyOutputTail = goal
+  const verifyOutputTail = operatorGoal
     ? verifyTail(detail?.errorExcerpt ?? detail?.rawError)
     : (detail?.gateOutput?.trim() || undefined)
 
@@ -419,7 +415,7 @@ export const AlertCard = ({
       >
         <div className="flex items-center gap-2">
           <span className="text-body" aria-hidden="true">{KIND_ICON[kind] ?? '•'}</span>
-          <span className="flex-1 font-mono text-label text-primary/60 line-clamp-1">{goal?.split('\n')[0] ?? summary}</span>
+          <span className="flex-1 font-mono text-label text-primary/60 line-clamp-1">{operatorGoal ?? summary}</span>
           <span className="font-mono text-micro text-primary/40">
             reappears in {reappearsIn(snoozedUntil)}
           </span>
@@ -457,25 +453,19 @@ export const AlertCard = ({
       <div className="mb-1 flex items-start gap-2">
         <span className="text-body shrink-0 mt-0.5" aria-hidden="true">{KIND_ICON[kind] ?? '•'}</span>
         <div className="flex-1 min-w-0">
-          {goal ? (
+          {operatorGoal ? (
             <>
-              {/* Primary headline: prompt excerpt (what the task was doing) */}
+              {/* Primary headline: operator-facing goal (what the task was trying to achieve) */}
               <p
                 className="font-mono text-label font-semibold text-foreground line-clamp-2"
                 data-testid="alert-card-goal"
               >
-                {goal.split('\n')[0]?.trim()}
+                {operatorGoal}
               </p>
-              {/* Cause: plain-language failure reason */}
-              {cause && (
-                <p className="mt-0.5 font-mono text-micro text-primary/70" data-testid="alert-card-cause">
-                  {cause}
-                </p>
-              )}
-              {/* humanSummary demoted to secondary/muted text */}
+              {/* summary as subhead (humanSummary / plain-language title) */}
               {summary && (
                 <p
-                  className="mt-0.5 font-mono text-micro text-primary/50 line-clamp-1"
+                  className="mt-0.5 font-mono text-micro text-primary/70"
                   data-testid="alert-card-summary"
                 >
                   {summary}
@@ -483,7 +473,7 @@ export const AlertCard = ({
               )}
             </>
           ) : (
-            /* No goal: summary is the primary headline (backward compat) */
+            /* No operatorGoal: summary is the primary headline (backward compat) */
             <span
               className="font-mono text-label font-semibold text-foreground line-clamp-3"
               data-testid="alert-card-summary"

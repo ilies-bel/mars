@@ -8,7 +8,7 @@
  * For task-failure rows the `restart` verb label is overridden to "Continue"
  * client-side so the operator sees the familiar Mars recovery vocabulary.
  * The last lines of verify output are surfaced inside AlertCard from the
- * `detail.errorExcerpt` field when `goal` (arcGoal) is present.
+ * `detail.errorExcerpt` field when `operatorGoal` is present.
  */
 
 import { AlertCard } from '@/widgets/chat/AlertCard'
@@ -54,7 +54,7 @@ export const ActionQueueRow = ({ item }: ActionQueueRowProps) => {
       entityId={item.entityId}
       kind={item.kind}
       summary={summary}
-      goal={item.arcGoal ?? undefined}
+      operatorGoal={item.operatorGoal ?? undefined}
       detail={item.humanDetail}
       verbs={verbs}
       resolved={item.resolution != null}
