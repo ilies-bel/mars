@@ -2,23 +2,30 @@
  * `proposal` command group — 18 leaves over the Mars database (proposals)
  * plus the planning-graph and cross-graph blocker edges.
  *
- * Local reads/writes go through the `core/proposals` module and `deps.store`;
- * the two daemon-routed verbs (`promote`, `slice`) go through `deps.daemon`.
+ * Transport rules (mirrors `task.ts`):
+ *   - Daemon-routed mutations go through `deps.daemon` (ALL write verbs).
+ *   - Local reads go through `deps.store` or the `core/proposals` module.
+ *
+ * Write verbs routed through `deps.daemon`:
+ *   `add` (`proposal.create`), `set` (`proposal.setField`),
+ *   `add-user-story` (`proposal.addUserStory`),
+ *   `remove-user-story` (`proposal.removeUserStory`),
+ *   `delete` (`proposal.delete`),
+ *   `block` (`proposal.addBlockers`), `unblock` (`proposal.removeBlocker`),
+ *   plus the existing lifecycle verbs (`promote`, `slice`, `reslice`,
+ *   `take`, `mockup`, `implement-live`).
+ *
+ * Lifecycle verbs with no daemon RPC (`dismiss`, `revive`) remain direct
+ * module calls — they are pure status flips with no worktree side effects and
+ * no UI affordance that would require parity today.
  */
 
 import { resolveAuthor, formatAuthor, detectOriginSession } from '../../core/author'
 import {
-  createProposal,
   getProposal,
   resolveProposalId,
-  setProposalField,
-  addProposalUserStory,
-  removeProposalUserStory,
   dismissProposal,
-  deleteProposal,
   listProposals,
-  addProposalDependencies,
-  removeProposalDependency,
   listProposalDependencies,
   validateProposalShaped,
   setProposalCoordinated,
@@ -26,6 +33,7 @@ import {
   hasUnresolvedOpenQuestions,
   reviveProposal,
   VALID_SOURCES,
+  PROPOSAL_STATUSES,
   isProposalSource,
   type ProposalSource,
 } from '../../core/proposals'
@@ -138,11 +146,13 @@ const proposalAdd: Command = {
     // of deriving one from the goal's first line / leading `#` heading.
     const titleFlag = args.flags['--title']
     try {
-      const idea = await createProposal(goal, {
-        author,
-        originSessionId,
+      const idea = (await deps.daemon.sendRequest({
+        op: 'proposal.create',
+        goal,
+        author: author ?? undefined,
+        originSessionId: originSessionId ?? undefined,
         ...(titleFlag !== undefined && { explicitTitle: titleFlag }),
-      })
+      })) as { id: string }
       deps.out(`${idea.id} (author: ${formatAuthor(author)})`)
     } catch (error: unknown) {
       deps.err(errorMessage(error))
@@ -209,6 +219,15 @@ const proposalSet: Command = {
     // status values are never file references; text fields honour @<path> and - (stdin).
     let value: string
     if (field === 'status') {
+      // Validate status locally before sending to daemon so unknown values are
+      // rejected client-side (same contract as the direct `setProposalField`
+      // path that formerly called `assertValidProposalStatus` inside the module).
+      if (!(PROPOSAL_STATUSES as readonly string[]).includes(rawValue)) {
+        deps.err(
+          `invalid proposal status '${rawValue}'; expected one of ${PROPOSAL_STATUSES.join(', ')}`,
+        )
+        return { code: 1 }
+      }
       value = rawValue
     } else {
       const result = resolvePromptSource(valueParts, args.flags)
@@ -225,7 +244,12 @@ const proposalSet: Command = {
       value = result.value
     }
     try {
-      await setProposalField(id, field, value)
+      await deps.daemon.sendRequest({
+        op: 'proposal.setField',
+        proposalId: id,
+        field,
+        value,
+      })
       deps.out(`updated ${id}`)
     } catch (error: unknown) {
       deps.err(errorMessage(error))
@@ -258,7 +282,11 @@ const proposalAddUserStory: Command = {
     }
     const story = storyResult.value
     try {
-      const idea = await addProposalUserStory(id, story)
+      const idea = (await deps.daemon.sendRequest({
+        op: 'proposal.addUserStory',
+        proposalId: id,
+        story,
+      })) as { userStories: string[] }
       deps.out(`added user story [${idea.userStories.length - 1}] to ${id}`)
     } catch (error: unknown) {
       deps.err(errorMessage(error))
@@ -285,7 +313,11 @@ const proposalRemoveUserStory: Command = {
       return { code: 2 }
     }
     try {
-      await removeProposalUserStory(id, idx)
+      await deps.daemon.sendRequest({
+        op: 'proposal.removeUserStory',
+        proposalId: id,
+        index: idx,
+      })
       deps.out(`removed user story [${idx}] from ${id}`)
     } catch (error: unknown) {
       deps.err(errorMessage(error))
@@ -510,13 +542,11 @@ const proposalDelete: Command = {
       return { code: 2 }
     }
     try {
-      const deletedId = await deleteProposal(id)
-      deps.out(`deleted ${deletedId}`)
-      if (!(await isDaemonReachable(deps.ctx.stateDir))) {
-        deps.err(
-          `proposal ${deletedId} deleted; the action-queue row will clear when the daemon next runs (daemon not running — run \`mars daemon start\`).`,
-        )
-      }
+      const result = (await deps.daemon.sendRequest({
+        op: 'proposal.delete',
+        proposalId: id,
+      })) as { deletedId: string }
+      deps.out(`deleted ${result.deletedId}`)
     } catch (error: unknown) {
       deps.err(errorMessage(error))
       return { code: 1 }
@@ -581,7 +611,11 @@ const proposalBlock: Command = {
       return { code: 2 }
     }
     try {
-      await addProposalDependencies(id, blockerArgs)
+      await deps.daemon.sendRequest({
+        op: 'proposal.addBlockers',
+        proposalId: id,
+        blockerIds: blockerArgs,
+      })
       deps.out(`blocked ${id} by: ${blockerArgs.join(', ')}`)
     } catch (error: unknown) {
       deps.err(errorMessage(error))
@@ -607,7 +641,11 @@ const proposalUnblock: Command = {
     try {
       const removed: string[] = []
       for (const b of blockerArgs) {
-        const r = await removeProposalDependency(id, b)
+        const r = (await deps.daemon.sendRequest({
+          op: 'proposal.removeBlocker',
+          proposalId: id,
+          blockerId: b,
+        })) as { removed: boolean }
         if (r.removed) removed.push(b)
       }
       deps.out(

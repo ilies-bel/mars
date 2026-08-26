@@ -21,6 +21,16 @@ import { setSemLimit } from '../semaphore'
 import { setInstallSemCap } from '../../lib/worktree-install'
 import { updateTask, getTask, listBlockers } from '../../queue'
 import { Arc } from '../../arc'
+import {
+  createProposal,
+  setProposalField,
+  addProposalUserStory,
+  removeProposalUserStory,
+  deleteProposal,
+  addProposalDependencies,
+  removeProposalDependency,
+  type ProposalField,
+} from '../../proposals'
 import type { DaemonRequest, DaemonResponse } from '../protocol'
 import type { DaemonDeps, RpcHandler } from './types'
 
@@ -668,6 +678,50 @@ const resetBreakerHandler = handler('reset-breaker', async (_req, deps) => {
   }
 })
 
+// ── Proposal content-mutation handlers ────────────────────────────────────────
+// These call `core/proposals` directly (same pattern as `taskContextForWorkerHandler`
+// calling `getTask`). They do not need closure state from `startDaemon`, so they
+// are NOT threaded through `DaemonDeps`; the import is top-level.
+
+const proposalCreateHandler = handler('proposal.create', async (req, _deps) => {
+  const proposal = await createProposal(req.goal, {
+    author: req.author,
+    originSessionId: req.originSessionId,
+    ...(req.explicitTitle !== undefined && { explicitTitle: req.explicitTitle }),
+  })
+  return { ok: true, data: proposal }
+})
+
+const proposalSetFieldHandler = handler('proposal.setField', async (req, _deps) => {
+  const updated = await setProposalField(req.proposalId, req.field as ProposalField, req.value)
+  return { ok: true, data: updated }
+})
+
+const proposalAddUserStoryHandler = handler('proposal.addUserStory', async (req, _deps) => {
+  const updated = await addProposalUserStory(req.proposalId, req.story)
+  return { ok: true, data: updated }
+})
+
+const proposalRemoveUserStoryHandler = handler('proposal.removeUserStory', async (req, _deps) => {
+  const updated = await removeProposalUserStory(req.proposalId, req.index)
+  return { ok: true, data: updated }
+})
+
+const proposalDeleteHandler = handler('proposal.delete', async (req, _deps) => {
+  const deletedId = await deleteProposal(req.proposalId)
+  return { ok: true, data: { deletedId } }
+})
+
+const proposalAddBlockersHandler = handler('proposal.addBlockers', async (req, _deps) => {
+  await addProposalDependencies(req.proposalId, req.blockerIds)
+  return { ok: true, data: { proposalId: req.proposalId, blocked: true } }
+})
+
+const proposalRemoveBlockerHandler = handler('proposal.removeBlocker', async (req, _deps) => {
+  const result = await removeProposalDependency(req.proposalId, req.blockerId)
+  return { ok: true, data: result }
+})
+
 /**
  * The full leaf set. Order is help/discovery order; the registry rejects
  * duplicate ops. Mirrors `cli/commands/index.ts`'s `allCommands`.
@@ -694,6 +748,13 @@ export const allRpcHandlers: readonly RpcHandler[] = [
   proposalTakeHandler,
   proposalMockupHandler,
   proposalImplementLiveHandler,
+  proposalCreateHandler,
+  proposalSetFieldHandler,
+  proposalAddUserStoryHandler,
+  proposalRemoveUserStoryHandler,
+  proposalDeleteHandler,
+  proposalAddBlockersHandler,
+  proposalRemoveBlockerHandler,
   refineHandler,
   glossaryWriteHandler,
   adrAddHandler,

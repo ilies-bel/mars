@@ -137,28 +137,23 @@ describe('task note — @file body input', () => {
 
 describe('proposal add — @file goal input', () => {
   it('round-trips backticks, $(...), and newlines byte-identically via @file', async () => {
+    // After daemon routing, the CLI's job is to pass the goal bytes to the
+    // daemon intact — verify via daemon call params (no DB write in tests).
     const goal = 'support `mars task add` for $(cmd)\nmulti-line proposal title'
     const filePath = join(repo, 'goal.txt')
     writeFileSync(filePath, goal + '\n') // trailing newline stripped by resolvePromptSource
+    const fake = makeFakeDaemon(() => ({ id: 'prop-prose-01' }))
     const { store, ctx, runCommandInProcess } = await freshModules()
-    const { getProposal } = await import('../../../core/proposals')
     const r = await runCommandInProcess(
       ['proposal', 'add', `@${filePath}`],
-      { store, ctx, daemon: makeFakeDaemon() },
+      { store, ctx, daemon: fake },
     )
     expect(r.code).toBe(0)
-    // Output format: "<id> (author: ...)" — extract the id to verify DB content.
-    const proposalId = r.out[0]?.split(' ')[0]
-    expect(proposalId).toBeTruthy()
-    const proposal = await getProposal(proposalId!)
-    // `createProposal` splits incoming prose into a short title + body, so the
-    // goal no longer lands wholesale in `title`. What this test guards is
-    // unchanged: nothing is shell-expanded and nothing is lost — the backticks
-    // and `$(...)` survive verbatim and the two halves recombine into the
-    // original bytes.
-    expect(proposal?.title).toBe('support `mars task add` for $(cmd)')
-    expect(proposal?.problem).toBe('multi-line proposal title')
-    expect(`${proposal?.title}\n${proposal?.problem}`).toBe(goal)
+    // The goal bytes — including backticks and $(...) — must arrive at the
+    // daemon verbatim; no shell expansion should have occurred.
+    expect(fake.calls).toHaveLength(1)
+    expect((fake.calls[0] as { goal?: string }).goal).toBe(goal)
+    expect(r.out.join('\n')).toContain('prop-prose-01')
   })
 
   it('round-trips content via stdin (-) without shell expansion', () => {
@@ -168,44 +163,45 @@ describe('proposal add — @file goal input', () => {
   })
 
   it('inline short value still works unchanged', async () => {
+    const fake = makeFakeDaemon(() => ({ id: 'prop-prose-02' }))
     const { store, ctx, runCommandInProcess } = await freshModules()
-    const { getProposal } = await import('../../../core/proposals')
     const r = await runCommandInProcess(
       ['proposal', 'add', 'short inline goal'],
-      { store, ctx, daemon: makeFakeDaemon() },
+      { store, ctx, daemon: fake },
     )
     expect(r.code).toBe(0)
-    const proposalId = r.out[0]?.split(' ')[0]
-    const proposal = await getProposal(proposalId!)
-    expect(proposal?.title).toBe('short inline goal')
+    expect(fake.calls).toHaveLength(1)
+    expect((fake.calls[0] as { goal?: string }).goal).toBe('short inline goal')
   })
 
   it('exits non-zero with no goal supplied', async () => {
+    const fake = makeFakeDaemon()
     const { store, ctx, runCommandInProcess } = await freshModules()
     const r = await runCommandInProcess(
       ['proposal', 'add'],
-      { store, ctx, daemon: makeFakeDaemon() },
+      { store, ctx, daemon: fake },
     )
     expect(r.code).not.toBe(0)
+    expect(fake.calls).toHaveLength(0)
   })
 
   it('rejects an unrecognised flag instead of folding it into the goal', async () => {
     const filePath = join(repo, 'goal.txt')
     writeFileSync(filePath, 'goal from file')
+    const fake = makeFakeDaemon()
     const { store, ctx, runCommandInProcess } = await freshModules()
-    const { listProposals } = await import('../../../core/proposals')
     const r = await runCommandInProcess(
       ['proposal', 'add', `@${filePath}`, '--not-a-real-flag', 'x'],
-      { store, ctx, daemon: makeFakeDaemon() },
+      { store, ctx, daemon: fake },
     )
     expect(r.code).not.toBe(0)
     expect(r.err.join(' ')).toContain('--not-a-real-flag')
-    expect(await listProposals()).toHaveLength(0)
+    expect(fake.calls).toHaveLength(0)
   })
 
-  it('accepts --title and stores it verbatim instead of deriving from the goal', async () => {
+  it('accepts --title and forwards it as explicitTitle to the daemon', async () => {
+    const fake = makeFakeDaemon(() => ({ id: 'prop-prose-03' }))
     const { store, ctx, runCommandInProcess } = await freshModules()
-    const { getProposal } = await import('../../../core/proposals')
     const r = await runCommandInProcess(
       [
         'proposal',
@@ -214,42 +210,43 @@ describe('proposal add — @file goal input', () => {
         '--title',
         'A deliberate title',
       ],
-      { store, ctx, daemon: makeFakeDaemon() },
+      { store, ctx, daemon: fake },
     )
     expect(r.code).toBe(0)
-    const proposalId = r.out[0]?.split(' ')[0]
-    const proposal = await getProposal(proposalId!)
-    expect(proposal?.title).toBe('A deliberate title')
-    expect(proposal?.problem).toBe('this first line would normally become the title')
+    expect(fake.calls).toHaveLength(1)
+    expect((fake.calls[0] as { explicitTitle?: string }).explicitTitle).toBe('A deliberate title')
+    expect((fake.calls[0] as { goal?: string }).goal).toBe(
+      'this first line would normally become the title',
+    )
   })
 
-  it('falls back to deriving from a leading # heading when --title is absent', async () => {
+  it('passes a leading # heading goal to the daemon verbatim (title extraction is daemon-side)', async () => {
+    // The CLI no longer extracts headings — it forwards the raw goal bytes to
+    // createProposal (via the daemon), which handles heading-based title parsing.
     const filePath = join(repo, 'heading-goal.txt')
     writeFileSync(filePath, '# Heading title\n\nbody text')
+    const fake = makeFakeDaemon(() => ({ id: 'prop-prose-04' }))
     const { store, ctx, runCommandInProcess } = await freshModules()
-    const { getProposal } = await import('../../../core/proposals')
     const r = await runCommandInProcess(
       ['proposal', 'add', `@${filePath}`],
-      { store, ctx, daemon: makeFakeDaemon() },
+      { store, ctx, daemon: fake },
     )
     expect(r.code).toBe(0)
-    const proposalId = r.out[0]?.split(' ')[0]
-    const proposal = await getProposal(proposalId!)
-    expect(proposal?.title).toBe('Heading title')
-    expect(proposal?.problem).toBe('body text')
+    expect(fake.calls).toHaveLength(1)
+    expect((fake.calls[0] as { goal?: string }).goal).toBe('# Heading title\n\nbody text')
   })
 
   it('rejects a leading @file followed by stray prose rather than folding it', async () => {
     const filePath = join(repo, 'goal.txt')
     writeFileSync(filePath, 'goal from file')
+    const fake = makeFakeDaemon()
     const { store, ctx, runCommandInProcess } = await freshModules()
-    const { listProposals } = await import('../../../core/proposals')
     const r = await runCommandInProcess(
       ['proposal', 'add', `@${filePath}`, 'stray', 'prose'],
-      { store, ctx, daemon: makeFakeDaemon() },
+      { store, ctx, daemon: fake },
     )
     expect(r.code).not.toBe(0)
-    expect(await listProposals()).toHaveLength(0)
+    expect(fake.calls).toHaveLength(0)
   })
 })
 

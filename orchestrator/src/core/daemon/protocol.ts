@@ -70,6 +70,38 @@ export type DaemonRequest =
   | { op: 'proposal.take'; proposalId: string; workflow?: string }
   | { op: 'proposal.mockup'; proposalId: string }
   | { op: 'proposal.implement-live'; proposalId: string }
+  /**
+   * Create a new proposal. The daemon calls `createProposal` and returns the
+   * full Proposal row (including its generated id) so the CLI can echo it.
+   */
+  | {
+      op: 'proposal.create'
+      goal: string
+      author?: Author
+      originSessionId?: string | null
+      explicitTitle?: string
+    }
+  /**
+   * Update a single content field on an existing proposal.
+   * `field` is one of: title | problem | solution | out-of-scope | notes | status.
+   */
+  | { op: 'proposal.setField'; proposalId: string; field: string; value: string }
+  /** Append a user story to a proposal's PRD. Returns the updated proposal. */
+  | { op: 'proposal.addUserStory'; proposalId: string; story: string }
+  /** Remove the user story at `index` (0-based; positions repack). */
+  | { op: 'proposal.removeUserStory'; proposalId: string; index: number }
+  /** Permanently remove a proposal row (cascades user stories). */
+  | { op: 'proposal.delete'; proposalId: string }
+  /**
+   * Add planning-graph blocker edges (proposal waits on other proposals).
+   * Mirrors `addProposalDependencies` in `core/proposals`.
+   */
+  | { op: 'proposal.addBlockers'; proposalId: string; blockerIds: readonly string[] }
+  /**
+   * Remove a single planning-graph blocker edge.
+   * Mirrors `removeProposalDependency` in `core/proposals`.
+   */
+  | { op: 'proposal.removeBlocker'; proposalId: string; blockerId: string }
   | { op: 'refine'; id: string; refresh?: boolean }
   | {
       op: 'glossary-write'

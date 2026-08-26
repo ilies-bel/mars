@@ -69,86 +69,83 @@ afterEach(async () => {
 // ── proposal set — inline text ────────────────────────────────────────────────
 
 describe('proposal set — inline "<text>"', () => {
-  it('stores a multi-word inline value verbatim', async () => {
+  it('sends a multi-word inline value verbatim to the daemon', async () => {
+    // After daemon routing: verify the value bytes arrive at daemon intact.
+    const fake = makeFakeDaemon(() => ({}))
     const { store, ctx, runCommandInProcess } = await freshModules()
-    const { createProposal, getProposal } = await import('../../../core/proposals')
-    const proposal = await createProposal('Inline input test')
-
     const result = await runCommandInProcess(
-      ['proposal', 'set', proposal.id, 'notes', 'plain inline notes text'],
-      { store, ctx, daemon: makeFakeDaemon() },
+      ['proposal', 'set', 'prop-set-01', 'notes', 'plain inline notes text'],
+      { store, ctx, daemon: fake },
     )
-
     expect(result.code).toBe(0)
-    const updated = await getProposal(proposal.id)
-    expect(updated?.notes).toBe('plain inline notes text')
+    expect(fake.calls).toHaveLength(1)
+    expect(fake.calls[0]).toMatchObject({
+      op: 'proposal.setField',
+      proposalId: 'prop-set-01',
+      field: 'notes',
+      value: 'plain inline notes text',
+    })
   })
 
-  it('stores content containing backticks verbatim when passed as a literal positional', async () => {
+  it('sends content containing backticks verbatim to the daemon', async () => {
+    const fake = makeFakeDaemon(() => ({}))
     const { store, ctx, runCommandInProcess } = await freshModules()
-    const { createProposal, getProposal } = await import('../../../core/proposals')
-    const proposal = await createProposal('Backtick inline test')
-
     const result = await runCommandInProcess(
-      ['proposal', 'set', proposal.id, 'notes', 'use `mars proposal set` to update'],
-      { store, ctx, daemon: makeFakeDaemon() },
+      ['proposal', 'set', 'prop-set-02', 'notes', 'use `mars proposal set` to update'],
+      { store, ctx, daemon: fake },
     )
-
     expect(result.code).toBe(0)
-    const updated = await getProposal(proposal.id)
-    expect(updated?.notes).toBe('use `mars proposal set` to update')
+    expect(fake.calls).toHaveLength(1)
+    expect((fake.calls[0] as { value?: string }).value).toBe('use `mars proposal set` to update')
   })
 
   it('exits non-zero when no value is supplied', async () => {
+    const fake = makeFakeDaemon()
     const { store, ctx, runCommandInProcess } = await freshModules()
-    const { createProposal } = await import('../../../core/proposals')
-    const proposal = await createProposal('Missing value test')
-
     const result = await runCommandInProcess(
-      ['proposal', 'set', proposal.id, 'notes'],
-      { store, ctx, daemon: makeFakeDaemon() },
+      ['proposal', 'set', 'prop-set-03', 'notes'],
+      { store, ctx, daemon: fake },
     )
-
     expect(result.code).not.toBe(0)
+    expect(fake.calls).toHaveLength(0)
   })
 })
 
 // ── proposal set — @<file> input ──────────────────────────────────────────────
 
 describe('proposal set — @<file>', () => {
-  it('reads the file and stores its contents with one trailing newline stripped', async () => {
+  it('reads the file and sends its contents to the daemon (one trailing newline stripped)', async () => {
+    // After daemon routing: the CLI reads the file via resolvePromptSource and
+    // forwards the content as `value` in the daemon request — verify the bytes.
+    const fake = makeFakeDaemon(() => ({}))
     const { store, ctx, runCommandInProcess } = await freshModules()
-    const { createProposal, getProposal } = await import('../../../core/proposals')
-    const proposal = await createProposal('File input test')
-
     const body = 'multi-line notes\nwith `backticks` and $(expansions)\nthird line'
     const filePath = join(repo, 'notes.txt')
     writeFileSync(filePath, body + '\n') // trailing newline stripped by resolvePromptSource
 
     const result = await runCommandInProcess(
-      ['proposal', 'set', proposal.id, 'notes', `@${filePath}`],
-      { store, ctx, daemon: makeFakeDaemon() },
+      ['proposal', 'set', 'prop-set-04', 'notes', `@${filePath}`],
+      { store, ctx, daemon: fake },
     )
 
     expect(result.code).toBe(0)
-    const updated = await getProposal(proposal.id)
-    expect(updated?.notes).toBe(body) // trailing newline stripped; content otherwise verbatim
+    expect(fake.calls).toHaveLength(1)
+    expect((fake.calls[0] as { value?: string }).value).toBe(body)
   })
 
   it('stores the @<path> reference verbatim in the NOT-file-expanded status field', async () => {
-    // status is never file-expanded; passing an @path as status hits DB validation.
+    // status is never file-expanded; passing an @path as status hits LOCAL
+    // validation before the daemon is called (PROPOSAL_STATUSES check).
+    const fake = makeFakeDaemon()
     const { store, ctx, runCommandInProcess } = await freshModules()
-    const { createProposal } = await import('../../../core/proposals')
-    const proposal = await createProposal('Status no expansion test')
-
     const result = await runCommandInProcess(
-      ['proposal', 'set', proposal.id, 'status', '@/nonexistent/path.txt'],
-      { store, ctx, daemon: makeFakeDaemon() },
+      ['proposal', 'set', 'prop-set-05', 'status', '@/nonexistent/path.txt'],
+      { store, ctx, daemon: fake },
     )
-
-    // The DB rejects '@/nonexistent/path.txt' as an invalid status value —
-    // no file read was attempted; the raw string was passed to setProposalField.
+    // Local validation rejects '@/nonexistent/path.txt' as an invalid status —
+    // no file read was attempted and the daemon was never called.
     expect(result.code).toBe(1)
+    expect(fake.calls).toHaveLength(0)
     expect(result.err.join('\n')).toMatch(/invalid.*status/i)
   })
 })
@@ -180,40 +177,38 @@ describe('proposal set — stdin (-)', () => {
 // ── proposal add-user-story — input shapes ────────────────────────────────────
 
 describe('proposal add-user-story — inline "<text>"', () => {
-  it('appends a multi-word inline story verbatim', async () => {
+  it('sends a multi-word inline story verbatim to the daemon', async () => {
+    // After daemon routing: verify story bytes reach the daemon intact.
+    const fake = makeFakeDaemon(() => ({ userStories: ['As a user I can save my work'] }))
     const { store, ctx, runCommandInProcess } = await freshModules()
-    const { createProposal, getProposal } = await import('../../../core/proposals')
-    const proposal = await createProposal('User story inline test')
-
     const result = await runCommandInProcess(
-      ['proposal', 'add-user-story', proposal.id, 'As a user I can save my work'],
-      { store, ctx, daemon: makeFakeDaemon() },
+      ['proposal', 'add-user-story', 'prop-story-01', 'As a user I can save my work'],
+      { store, ctx, daemon: fake },
     )
-
     expect(result.code).toBe(0)
-    const updated = await getProposal(proposal.id)
-    expect(updated?.userStories).toContain('As a user I can save my work')
+    expect(fake.calls).toHaveLength(1)
+    expect(fake.calls[0]).toMatchObject({
+      op: 'proposal.addUserStory',
+      proposalId: 'prop-story-01',
+      story: 'As a user I can save my work',
+    })
   })
 })
 
 describe('proposal add-user-story — @<file>', () => {
-  it('reads the file and appends its contents as a story (trailing newline stripped)', async () => {
-    const { store, ctx, runCommandInProcess } = await freshModules()
-    const { createProposal, getProposal } = await import('../../../core/proposals')
-    const proposal = await createProposal('User story file input test')
-
+  it('reads the file and sends its contents as the story to the daemon (trailing newline stripped)', async () => {
     const storyText = 'As a user, I can `export` my $(data) without shell expansion'
     const filePath = join(repo, 'story.txt')
-    writeFileSync(filePath, storyText + '\n') // trailing newline stripped
-
+    writeFileSync(filePath, storyText + '\n') // trailing newline stripped by resolvePromptSource
+    const fake = makeFakeDaemon(() => ({ userStories: [storyText] }))
+    const { store, ctx, runCommandInProcess } = await freshModules()
     const result = await runCommandInProcess(
-      ['proposal', 'add-user-story', proposal.id, `@${filePath}`],
-      { store, ctx, daemon: makeFakeDaemon() },
+      ['proposal', 'add-user-story', 'prop-story-02', `@${filePath}`],
+      { store, ctx, daemon: fake },
     )
-
     expect(result.code).toBe(0)
-    const updated = await getProposal(proposal.id)
-    expect(updated?.userStories).toContain(storyText) // no trailing newline
+    expect(fake.calls).toHaveLength(1)
+    expect((fake.calls[0] as { story?: string }).story).toBe(storyText)
   })
 })
 

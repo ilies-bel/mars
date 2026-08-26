@@ -5,7 +5,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { execFileSync, spawnSync } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -121,86 +121,81 @@ describe('proposal write commands', () => {
     expect(result.err).toEqual([])
   })
 
-  it('expands an @<path> reference in "proposal set title" to the file contents', async () => {
+  it('expands an @<path> reference in "proposal set title" to the file contents before sending to daemon', async () => {
+    // After daemon routing: the CLI reads the file via resolvePromptSource and
+    // forwards the content as `value` in the daemon request — the raw @<path>
+    // string never reaches the daemon, only the file contents do.
     const { store, ctx } = await loadStoreAndCtx()
-    const { createProposal, getProposal } = await import('../../../core/proposals')
     const { makeFakeDaemon } = await import('../../test-adapter')
-    const proposal = await createProposal('Original title')
+    const fake = makeFakeDaemon(() => ({}))
 
-    // Write the intended title into a temp file, mimicking what the /mars:to-prd
-    // skill does when it stores field content in a scratchpad file.
     const titleFile = join(repo, 'title.txt')
     writeFileSync(titleFile, 'Record each arc behaviour verification\n')
 
     const result = await run(
-      ['proposal', 'set', proposal.id, 'title', `@${titleFile}`],
-      { store, ctx, daemon: makeFakeDaemon() },
+      ['proposal', 'set', 'prop-werr-01', 'title', `@${titleFile}`],
+      { store, ctx, daemon: fake },
     )
 
     expect(result.code).toBe(0)
-    const updated = await getProposal(proposal.id)
-    // The stored title must be the file contents, not the raw @<path> reference.
+    // The daemon receives file contents, not the raw @<path> reference.
     // resolvePromptSource strips one trailing newline for consistency with siblings.
-    expect(updated?.title).toBe('Record each arc behaviour verification')
+    expect(fake.calls).toHaveLength(1)
+    expect((fake.calls[0] as { value?: string }).value).toBe(
+      'Record each arc behaviour verification',
+    )
   })
 
   it('stores a plain (non-@) title verbatim without attempting file reads', async () => {
     const { store, ctx } = await loadStoreAndCtx()
-    const { createProposal, getProposal } = await import('../../../core/proposals')
     const { makeFakeDaemon } = await import('../../test-adapter')
-    const proposal = await createProposal('Original title')
+    const fake = makeFakeDaemon(() => ({}))
 
     const result = await run(
-      ['proposal', 'set', proposal.id, 'title', 'Plain title with no at-sign'],
-      { store, ctx, daemon: makeFakeDaemon() },
+      ['proposal', 'set', 'prop-werr-02', 'title', 'Plain title with no at-sign'],
+      { store, ctx, daemon: fake },
     )
 
     expect(result.code).toBe(0)
-    const updated = await getProposal(proposal.id)
-    expect(updated?.title).toBe('Plain title with no at-sign')
+    expect(fake.calls).toHaveLength(1)
+    expect((fake.calls[0] as { value?: string }).value).toBe('Plain title with no at-sign')
   })
 
   it('does not expand @<path> for the status field (status is never a file reference)', async () => {
     const { store, ctx } = await loadStoreAndCtx()
-    const { createProposal } = await import('../../../core/proposals')
     const { makeFakeDaemon } = await import('../../test-adapter')
-    const proposal = await createProposal('Status field test')
+    const fake = makeFakeDaemon()
 
     // Passing a non-existent path for status must not cause a file-read attempt;
-    // instead it should fail with the "invalid proposal status" error from the DB layer.
+    // instead it should fail with the "invalid proposal status" local check.
     const result = await run(
-      ['proposal', 'set', proposal.id, 'status', '@/nonexistent/status.txt'],
-      { store, ctx, daemon: makeFakeDaemon() },
+      ['proposal', 'set', 'prop-werr-03', 'status', '@/nonexistent/status.txt'],
+      { store, ctx, daemon: fake },
     )
 
-    // The status value "@/nonexistent/status.txt" is not a valid status, so
-    // setProposalField rejects it — but the rejection comes from the DB
-    // validation layer, not from trying to read a file.
+    // Local validation rejects '@/nonexistent/status.txt' as an invalid status
+    // before the daemon is contacted — no daemon call happens.
     expect(result.code).toBe(1)
+    expect(fake.calls).toHaveLength(0)
     expect(result.err.join('\n')).toMatch(/invalid.*status/i)
   })
 
   it.each([
     ['proposal set', ['proposal', 'set', 'draft-id', 'notes', 'x']],
     ['proposal add-user-story', ['proposal', 'add-user-story', 'draft-id', 'As a user I can save']],
-  ])('%s exits non-zero and sends a database error to stderr', (_name, args) => {
-    // The production CLI must use the real database boundary here. Port 1 is
-    // deliberately refused, which deterministically makes schema bootstrap
-    // fail before either write can report success.
-    writeFileSync(join(repo, '.mars', 'pg.dsn'), 'postgres://127.0.0.1:1/mars')
-    const result = spawnSync(process.execPath, ['--import', 'tsx', 'src/cli.ts', ...args], {
-      cwd: resolve(import.meta.dirname, '../../../..'),
-      encoding: 'utf8',
-      env: {
-        ...process.env,
-        MARS_REPO: repo,
-        MARS_DB_BACKEND: 'embedded',
-        MARS_REFLECT_DISABLED: '1',
-      },
+  ])('%s exits non-zero and surfaces the daemon error to stderr', async (_name, args) => {
+    // After daemon routing these commands go through the daemon client, not the
+    // DB directly. Inject a throwing fake daemon to prove the error is surfaced.
+    const { store, ctx } = await loadStoreAndCtx()
+    const { makeFakeDaemon } = await import('../../test-adapter')
+    const fake = makeFakeDaemon(() => {
+      throw new Error('daemon: connection refused')
     })
 
-    expect(result.status).toBe(1)
-    expect(result.stdout).toBe('')
-    expect(result.stderr).toMatch(/ECONNREFUSED|connect/i)
+    const result = await run(args, { store, ctx, daemon: fake })
+
+    expect(result.code).toBe(1)
+    expect(result.out).toEqual([])
+    expect(result.err.join('\n')).toContain('daemon: connection refused')
   })
 })

@@ -675,3 +675,142 @@ describe('mars show (alert fallback)', () => {
     expect(r.err.join('\n')).toContain('no task, proposal, or alert matching mars-nope-nodaemon')
   })
 })
+
+// ---------------------------------------------------------------------------
+// proposal write routing — every mutation reaches the daemon, never the store
+// ---------------------------------------------------------------------------
+
+describe('proposal write routing (daemon)', () => {
+  it('`proposal add` sends proposal.create to the daemon', async () => {
+    const fake = makeFakeDaemon(() => ({ id: 'prop-seam-01' }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['proposal', 'add', 'build the seam feature'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(0)
+    expect(fake.calls).toHaveLength(1)
+    expect(fake.calls[0]).toMatchObject({ op: 'proposal.create', goal: 'build the seam feature' })
+    expect(r.out.join('\n')).toContain('prop-seam-01')
+  })
+
+  it('`proposal set` sends proposal.setField to the daemon', async () => {
+    const fake = makeFakeDaemon(() => ({}))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['proposal', 'set', 'prop-seam-02', 'title', 'new title'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(0)
+    expect(fake.calls).toHaveLength(1)
+    expect(fake.calls[0]).toMatchObject({
+      op: 'proposal.setField',
+      proposalId: 'prop-seam-02',
+      field: 'title',
+      value: 'new title',
+    })
+    expect(r.out.join('\n')).toContain('updated prop-seam-02')
+  })
+
+  it('`proposal set` rejects an invalid status locally without calling the daemon', async () => {
+    const fake = makeFakeDaemon()
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['proposal', 'set', 'prop-seam-03', 'status', 'not-a-real-status'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(1)
+    expect(fake.calls).toHaveLength(0)
+    expect(r.err.join('\n')).toContain("invalid proposal status 'not-a-real-status'")
+  })
+
+  it('`proposal add-user-story` sends proposal.addUserStory to the daemon', async () => {
+    const fake = makeFakeDaemon(() => ({ userStories: ['the story'] }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['proposal', 'add-user-story', 'prop-seam-04', 'the story'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(0)
+    expect(fake.calls).toHaveLength(1)
+    expect(fake.calls[0]).toMatchObject({
+      op: 'proposal.addUserStory',
+      proposalId: 'prop-seam-04',
+      story: 'the story',
+    })
+    expect(r.out.join('\n')).toContain('prop-seam-04')
+  })
+
+  it('`proposal remove-user-story` sends proposal.removeUserStory to the daemon', async () => {
+    const fake = makeFakeDaemon(() => ({}))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['proposal', 'remove-user-story', 'prop-seam-05', '0'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(0)
+    expect(fake.calls).toHaveLength(1)
+    expect(fake.calls[0]).toMatchObject({
+      op: 'proposal.removeUserStory',
+      proposalId: 'prop-seam-05',
+      index: 0,
+    })
+    expect(r.out.join('\n')).toContain('[0]')
+    expect(r.out.join('\n')).toContain('prop-seam-05')
+  })
+
+  it('`proposal delete` sends proposal.delete to the daemon', async () => {
+    const fake = makeFakeDaemon(() => ({ deletedId: 'prop-seam-06' }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['proposal', 'delete', 'prop-seam-06'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(0)
+    expect(fake.calls).toHaveLength(1)
+    expect(fake.calls[0]).toMatchObject({ op: 'proposal.delete', proposalId: 'prop-seam-06' })
+    expect(r.out.join('\n')).toContain('deleted prop-seam-06')
+  })
+
+  it('`proposal block` sends proposal.addBlockers to the daemon', async () => {
+    const fake = makeFakeDaemon(() => ({}))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['proposal', 'block', 'prop-seam-07', 'prop-seam-dep-1', 'prop-seam-dep-2'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(0)
+    expect(fake.calls).toHaveLength(1)
+    expect(fake.calls[0]).toMatchObject({
+      op: 'proposal.addBlockers',
+      proposalId: 'prop-seam-07',
+      blockerIds: ['prop-seam-dep-1', 'prop-seam-dep-2'],
+    })
+    expect(r.out.join('\n')).toContain('prop-seam-dep-1')
+    expect(r.out.join('\n')).toContain('prop-seam-dep-2')
+  })
+
+  it('`proposal unblock` sends proposal.removeBlocker to the daemon once per blocker', async () => {
+    const fake = makeFakeDaemon(() => ({ removed: true }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['proposal', 'unblock', 'prop-seam-08', 'prop-seam-dep-1', 'prop-seam-dep-2'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(0)
+    // One daemon call per blocker (not batched, since the op takes a single blockerId)
+    expect(fake.calls).toHaveLength(2)
+    expect(fake.calls[0]).toMatchObject({
+      op: 'proposal.removeBlocker',
+      proposalId: 'prop-seam-08',
+      blockerId: 'prop-seam-dep-1',
+    })
+    expect(fake.calls[1]).toMatchObject({
+      op: 'proposal.removeBlocker',
+      proposalId: 'prop-seam-08',
+      blockerId: 'prop-seam-dep-2',
+    })
+    expect(r.out.join('\n')).toContain('prop-seam-dep-1')
+    expect(r.out.join('\n')).toContain('prop-seam-dep-2')
+  })
+})
