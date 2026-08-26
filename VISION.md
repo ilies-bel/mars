@@ -180,6 +180,7 @@ been tested where it is made.
 | DEC-18 — internals stay behind a disclosure | Read an operator surface without expanding anything. A raw failure signature, captured stdout, or a machine slug rendered on the face of what the operator reads first falsifies it. |
 | DEC-9 — no explicit bound on queue size | Fill the queue past any plausible threshold and list it. A cap, a volume target, or a tail silently dropped from the open listing falsifies it; paginated resolved history and an expiring snooze do not. |
 | DEC-7 — sharpness, never alert count | Raise two rows naming the same origin task but carrying different operator obligations — one to recover a failure, one to validate a behaviour — and list the queue. A second, distinct decision folded into the first row, or a higher-priority raise inheriting a lower priority, falsifies it; folding several rows that name the same single obligation does not. |
+| DEC-14 — onboarding runs a task and the interview in parallel | Install into a repo Mars has never seen, then open the UI and send the first chat message while the first task is still running. A dispatched task with no conversation to accompany it, or a conversation that only starts after the task has finished, falsifies it. |
 
 ## 9. Definition of done
 
