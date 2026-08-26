@@ -720,6 +720,35 @@ export const SWEEPS: readonly SweepSpec[] = [
     },
   },
   {
+    // Draft-proposal reconcile sweep. Raises a `draft-proposal` action-queue
+    // row for every proposal in status='draft' that has NO action_queue_items
+    // row of any status. This is the safety net for the single missed-event
+    // failure mode: if the `action-queue-repopulator` subscriber is not draining
+    // when `proposal.added` fires (daemon down, crash, outbox drop), the row is
+    // never created and nothing backfills it without this sweep.
+    //
+    // Idempotent by construction: the NOT EXISTS predicate finds only proposals
+    // with no row at all — a draft whose row is already open or resolved is
+    // skipped. `raiseActionQueueItem` additionally deduplicates via the
+    // origin-keyed fingerprint as belt-and-suspenders.
+    //
+    // Runs once at startup so a freshly started daemon heals any proposals that
+    // missed their row while it was down, and every hour afterward so a
+    // long-lived daemon does not accumulate silent orphans.
+    name: 'draft-proposal-reconcile',
+    intervalMs: () => 60 * 60 * 1000,
+    runOnStart: true,
+    run: async ({ log, bus }) => {
+      const { raised } = await reconcileDraftProposalRows()
+      if (raised > 0) {
+        log(
+          `[draft-proposal-reconcile] raised ${raised} missing draft-proposal action-queue row(s)`,
+        )
+        bus.emit('view.action-queue-invalidated')
+      }
+    },
+  },
+  {
     // Daily proposal expiry sweep. The startup reconciler already expires
     // stale agent-authored drafts on boot; this keeps the sweep running daily
     // so a long-lived daemon does not accumulate new stale rows between
@@ -747,6 +776,58 @@ export const SWEEPS: readonly SweepSpec[] = [
     },
   },
 ]
+
+/**
+ * Raise a `draft-proposal` action-queue row for every proposal in
+ * status=`'draft'` that currently has NO `action_queue_items` row of any
+ * status keyed to its id.
+ *
+ * This is the idempotent safety net for the single missed-event failure mode:
+ * if the `action-queue-repopulator` subscriber is not draining when
+ * `proposal.added` fires (daemon down, crash, outbox drop), no row is created
+ * and nothing ever backfills it. Running this at startup and periodically
+ * closes that gap permanently.
+ *
+ * - Drafts with an existing open row → `raiseActionQueueItem` bumps
+ *   `seen_count` (NOT EXISTS prevents even reaching this path, but
+ *   `raiseActionQueueItem` is idempotent as belt-and-suspenders).
+ * - Drafts with a resolved row → NOT selected by the NOT EXISTS predicate,
+ *   so they are never touched.
+ * - Running twice → second pass finds no proposals that pass NOT EXISTS
+ *   (rows were raised by the first pass), so `raised = 0`.
+ *
+ * @returns The number of action-queue rows raised by this pass.
+ */
+export async function reconcileDraftProposalRows(): Promise<{ raised: number }> {
+  const { getDefaultDomainTaskStore } = await import('../store/task-store')
+  const { raiseDraftProposalRow } = await import('./action-queue-repopulator')
+
+  const store = getDefaultDomainTaskStore()
+  const result = await store.query({
+    sql: `SELECT p.id, p.title, p.source
+            FROM proposals p
+           WHERE p.status = 'draft'
+             AND NOT EXISTS (
+               SELECT 1
+                 FROM action_queue_items a
+                WHERE a.origin_task_id = p.id
+             )`,
+  })
+
+  let raised = 0
+  for (const raw of result.rows) {
+    const row = raw as unknown as { id: string; title: string; source: string }
+    await raiseDraftProposalRow({
+      proposalId: row.id,
+      title: row.title,
+      source: row.source,
+      raisedBy: 'sweep:draft-proposal-reconcile',
+    })
+    raised++
+  }
+
+  return { raised }
+}
 
 export interface SweepsHandle {
   /** Clears every sweep interval. Called from the daemon's shutdown path. */

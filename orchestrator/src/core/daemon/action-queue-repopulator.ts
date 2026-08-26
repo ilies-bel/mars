@@ -248,20 +248,11 @@ async function applyActionQueueMutation(event: BusEvent): Promise<void> {
       source: string
       title: string
     }
-    await raiseActionQueueItem({
-      kind: 'draft-proposal',
-      category: 'user',
-      priority: 'normal',
-      title: `Draft proposal: ${payload.title}`,
-      body: `Proposal \`${payload.proposalId}\` from \`${payload.source}\` is ready for review.`,
-      payload: {
-        proposalId: payload.proposalId,
-        source: payload.source,
-      },
-      context: {},
+    await raiseDraftProposalRow({
+      proposalId: payload.proposalId,
+      title: payload.title,
+      source: payload.source,
       raisedBy: 'action-queue-repopulator:proposal.added',
-      signature: payload.proposalId,
-      originTaskId: payload.proposalId,
     })
   } else if (event.type === 'scorer.suggested') {
     // Per-arc reflection landed a suggested Scorer — project it into a
@@ -312,6 +303,39 @@ async function applyActionQueueMutation(event: BusEvent): Promise<void> {
       `action-queue-repopulator:${event.type}`,
     )
   }
+}
+
+/**
+ * Raise (or idempotently bump) a `draft-proposal` action-queue row for the
+ * given proposal. Used by both the `proposal.added` event path and the
+ * `draft-proposal-reconcile` startup/periodic sweep so the two callers cannot
+ * produce rows with different shapes.
+ *
+ * {@link raiseActionQueueItem} deduplicates via the origin-keyed fingerprint —
+ * a row that already exists (open or resolved) is left untouched and only its
+ * `seen_count` is bumped on a re-raise of an open row.
+ */
+export async function raiseDraftProposalRow(opts: {
+  proposalId: string
+  title: string
+  source: string
+  raisedBy: string
+}): Promise<string> {
+  return raiseActionQueueItem({
+    kind: 'draft-proposal',
+    category: 'user',
+    priority: 'normal',
+    title: `Draft proposal: ${opts.title}`,
+    body: `Proposal \`${opts.proposalId}\` from \`${opts.source}\` is ready for review.`,
+    payload: {
+      proposalId: opts.proposalId,
+      source: opts.source,
+    },
+    context: {},
+    raisedBy: opts.raisedBy,
+    signature: opts.proposalId,
+    originTaskId: opts.proposalId,
+  })
 }
 
 /**
