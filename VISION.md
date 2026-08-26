@@ -177,6 +177,7 @@ been tested where it is made.
 | DEC-12 — borrowing a coding CLI is one adapter kind, not the architecture | Try to configure a key-backed provider adapter alongside the CLI-borrowing one. A provider port whose contract admits only a local CLI subprocess, or a key-backed path that requires changing the port rather than registering against it, falsifies it. |
 | HR-7 (sharpened) — provider-agnostic, every surface | Install with the default configuration and use every surface: dispatch a task, open chat, force a merge conflict. A vendor SDK or a hand-written vendor client in the core, a surface that only runs on one provider, or an API key Mars must hold, falsifies it. |
 | HR-3 — one API, three callers | Pick a mutation the CLI can perform and look for the matching operation in the daemon API. A CLI write that reaches the database directly, with no equivalent operation any other caller could invoke, falsifies it. |
+| DEC-18 — internals stay behind a disclosure | Read an operator surface without expanding anything. A raw failure signature, captured stdout, or a machine slug rendered on the face of what the operator reads first falsifies it. |
 
 ## 9. Definition of done
 
