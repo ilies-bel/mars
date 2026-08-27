@@ -4,3 +4,15 @@
 # and cannot see or clear them).
 hs_err_pid*.log
 replay_pid*.log
+
+# Per-repo Mars state — contains the embedded Postgres data directory,
+# daemon lock files, and task worktrees. Never committed; any git operation
+# that stages objects from this tree can corrupt the live database
+# irreversibly. The shipped CLAUDE.md says this directory is gitignored —
+# this rule makes that claim true.
+.mars/
+
+# Dependency install directory — large, reproducible from package.json.
+# Gitignoring it prevents agents from accidentally staging thousands of
+# dependency files via `git add -A`.
+node_modules/

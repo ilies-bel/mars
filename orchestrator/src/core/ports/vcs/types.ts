@@ -154,6 +154,22 @@ export interface VcsCaptureCheckpointSpec {
   ref: string
   /** Commit message stored on the checkpoint object. */
   message: string
+  /**
+   * Repo-relative file paths to exclude from the checkpoint even if they are
+   * not gitignored. Set by `checkpoint.ts` after filtering the working-tree
+   * status through `checkSecretPath` — this is the belt to `.gitignore`'s
+   * braces: a `.gitignore` can be edited away, but the checkpoint must
+   * never capture per-repo state (`.mars/`), dependency dirs
+   * (`node_modules/`), or build output (`dist/`, `coverage/`).
+   *
+   * The implementation removes these paths from the temporary staging index
+   * with `git rm --cached --ignore-unmatch` AFTER `git add -A`, so the
+   * predicate operates independently of `.gitignore` rules.
+   *
+   * Optional — when absent or empty, no paths are excluded beyond what
+   * `.gitignore` already covers.
+   */
+  excludePaths?: string[]
 }
 
 /**

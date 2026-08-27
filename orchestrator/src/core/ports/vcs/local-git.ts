@@ -146,7 +146,7 @@ export const localGitVcs: Vcs = {
   },
 
   async captureCheckpoint(spec: VcsCaptureCheckpointSpec): Promise<VcsCheckpoint | null> {
-    const { cwd, ref, message } = spec
+    const { cwd, ref, message, excludePaths } = spec
     const git = resolveGitBin()
 
     const head = (await exec(git, ['rev-parse', 'HEAD'], { cwd })).stdout.trim()
@@ -160,6 +160,19 @@ export const localGitVcs: Vcs = {
       // tree carries. `git add -A` honours .gitignore, so ignored files stay out.
       await exec(git, ['read-tree', 'HEAD'], { cwd, env })
       await exec(git, ['add', '-A'], { cwd, env })
+
+      // Belt to .gitignore's braces: remove any caller-requested exclusions
+      // from the temporary index AFTER git add -A, so they are never committed
+      // even when .gitignore has been edited away. `--ignore-unmatch` keeps the
+      // call idempotent when a path was already absent from the index (e.g. it
+      // was gitignored and git add -A never staged it).
+      if (excludePaths && excludePaths.length > 0) {
+        await exec(git, ['rm', '--cached', '--ignore-unmatch', '-r', '--', ...excludePaths], {
+          cwd,
+          env,
+        })
+      }
+
       const tree = (await exec(git, ['write-tree'], { cwd, env })).stdout.trim()
       if (tree === headTree) return null
 

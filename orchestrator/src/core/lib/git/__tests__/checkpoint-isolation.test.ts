@@ -205,4 +205,45 @@ describe('checkpoint isolation between concurrent tasks', () => {
     // The checkpoint survives the failed restore — the work is recoverable.
     expect(git(repo, 'rev-parse', cp.ref)).toBe(cp.sha)
   }, 60_000)
+
+  // -------------------------------------------------------------------------
+  // Secret-path guard (ADR-0099 / checkpoint.ts): captureCheckpoint must
+  // never stage paths that checkSecretPath rejects — .mars/, node_modules/,
+  // build output — even when .gitignore does not cover them. This is the
+  // "belt" to .gitignore's "braces": a .gitignore can be edited away, but
+  // the live Postgres data directory must remain uncapturable no matter what.
+  //
+  // The test sets up a worktree whose .gitignore does NOT ignore .mars/ and
+  // then writes .mars/pg/data/... files inside it. Without the guard those
+  // files would land in the checkpoint commit; with the guard they must be
+  // absent from `cp.files`.
+  // -------------------------------------------------------------------------
+
+  it('excludes .mars/ paths from the checkpoint even when they are not gitignored', async () => {
+    const src = addWorktree('task-g')
+
+    // Write a legitimate source-code change that SHOULD appear in the checkpoint.
+    writeFileSync(resolve(src, 'README.md'), 'real coder work\n')
+
+    // Write secret per-repo state that must NOT appear in the checkpoint, even
+    // though the test repo's .gitignore only ignores `ignored/` (not `.mars/`).
+    mkdirSync(resolve(src, '.mars', 'pg', 'data'), { recursive: true })
+    writeFileSync(resolve(src, '.mars', 'pg', 'data', 'PG_VERSION'), '14\n')
+    writeFileSync(resolve(src, '.mars', 'pg', 'data', 'pg_hba.conf'), '# pg_hba\n')
+
+    const cp = await captureCheckpoint({ cwd: src, key: 'task-g', message: 'guard test' })
+
+    // The checkpoint must exist — there IS legitimate work to capture.
+    expect(cp).not.toBeNull()
+    if (cp === null) throw new Error('unreachable')
+
+    // The source-code change must be captured.
+    expect(cp.files).toContain('README.md')
+
+    // The per-repo state must be absent from the checkpoint — every single
+    // path under .mars/ must be excluded by the guard regardless of depth.
+    expect(cp.files.every((f) => !f.startsWith('.mars/'))).toBe(true)
+    expect(cp.files).not.toContain('.mars/pg/data/PG_VERSION')
+    expect(cp.files).not.toContain('.mars/pg/data/pg_hba.conf')
+  }, 60_000)
 })

@@ -4,6 +4,48 @@ import { dirname, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 /**
+ * Each entry describes one independent block that `mergeGitignore` may append.
+ * Blocks are checked and appended individually — a repo that already has the
+ * JVM block but not the `.mars/` block gains only the missing block, so
+ * `mars update` repairs existing repos rather than silently leaving them
+ * exposed (ADR-0099 root cause: the old all-or-nothing check meant every repo
+ * initialised before this fix received none of the new rules).
+ */
+const GITIGNORE_BLOCKS: ReadonlyArray<{ sentinel: string; block: string }> = [
+  {
+    sentinel: 'hs_err_pid*.log',
+    block: [
+      '# JVM crash dumps — written to the working dir when the Gradle/desktop JVM',
+      '# hard-crashes. Pure diagnostics, never source. Prevent these from dirtying',
+      '# the integration branch (Mars main-committer runs in an isolated worktree',
+      '# and cannot see or clear them).',
+      'hs_err_pid*.log',
+      'replay_pid*.log',
+    ].join('\n'),
+  },
+  {
+    sentinel: '.mars/',
+    block: [
+      '# Per-repo Mars state — contains the embedded Postgres data directory,',
+      '# daemon lock files, and task worktrees. Never committed; any git operation',
+      '# that stages objects from this tree can corrupt the live database',
+      '# irreversibly. The shipped CLAUDE.md says this directory is gitignored —',
+      '# this rule makes that claim true.',
+      '.mars/',
+    ].join('\n'),
+  },
+  {
+    sentinel: 'node_modules/',
+    block: [
+      '# Dependency install directory — large, reproducible from package.json.',
+      '# Gitignoring it prevents agents from accidentally staging thousands of',
+      '# dependency files via `git add -A`.',
+      'node_modules/',
+    ].join('\n'),
+  },
+]
+
+/**
  * Resolve the bundled `templates/` directory regardless of whether the
  * orchestrator is being run from source (`src/init/scaffold.ts`) or from a
  * compiled artefact (`dist/init/scaffold.js`). The `templates/` folder sits
@@ -15,7 +57,6 @@ const TEMPLATES_DIR = resolve(
 )
 
 const TEMPLATE_CLAUDE_MD = resolve(TEMPLATES_DIR, 'CLAUDE.md')
-const TEMPLATE_GITIGNORE = resolve(TEMPLATES_DIR, '.gitignore')
 
 /**
  * Bundled template for the repo-root `.mcp.json` that registers the codegraph
@@ -193,28 +234,32 @@ export const mergeMcpJson = (repoRoot: string): void => {
 }
 
 /**
- * Merge the bundled JVM crash-dump .gitignore block into `existing` content.
+ * Merge the Mars-managed .gitignore blocks into `existing` content.
  *
- * The block is appended only when NEITHER `hs_err_pid*.log` NOR
- * `replay_pid*.log` is already present. This keeps the operation idempotent
- * and safe for repos that already added the rules manually (such as
- * projet-elissa, which got them in commit 12c3d38). Existing repos are never
- * touched unless they opt in by calling this function.
+ * Each block in {@link GITIGNORE_BLOCKS} is checked and appended
+ * **independently**: a repo that already has the JVM block but not the
+ * `.mars/` block gains only the missing block. This means `mars update`
+ * repairs every existing repo instead of silently leaving it exposed — the
+ * old all-or-nothing guard (`hs_err_pid*.log` present → skip everything) was
+ * the root cause of repos initialised before ADR-0099 never receiving
+ * `.mars/` or `node_modules/` coverage.
  *
- * Returns the (possibly modified) string — callers decide whether to write it.
+ * Returns the original `existing` string unchanged when every sentinel is
+ * already present, making the function idempotent: calling it twice produces
+ * the same output.
  */
 export const mergeGitignore = (existing: string): string => {
-  if (
-    existing.includes('hs_err_pid*.log') ||
-    existing.includes('replay_pid*.log')
-  ) {
-    return existing
+  let result = existing.trimEnd()
+  let modified = false
+  for (const { sentinel, block } of GITIGNORE_BLOCKS) {
+    if (result.includes(sentinel)) continue
+    const separator = result.length === 0 ? '' : '\n\n'
+    result = result + separator + block
+    modified = true
   }
-  const block = readFileSync(TEMPLATE_GITIGNORE, 'utf8')
-  // Ensure a blank-line separator between existing content and the new block.
-  const trimmed = existing.trimEnd()
-  const separator = trimmed.length === 0 ? '' : '\n\n'
-  return trimmed + separator + block
+  if (!modified) return existing
+  // Ensure the file ends with exactly one newline (POSIX convention).
+  return result + '\n'
 }
 
 /**

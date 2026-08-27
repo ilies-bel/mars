@@ -56,6 +56,7 @@
  * `git for-each-ref --format='%(refname)' refs/mars/checkpoint | xargs -n1 git update-ref -d`.
  */
 import { resolveVcs } from '../../ports/vcs/registry'
+import { checkSecretPath } from '../dirty-main-salvage'
 import type { TraceCtx } from './internal'
 
 import { codeCheckpointIntervalMs } from '../../config/tuning'
@@ -249,14 +250,53 @@ export interface CaptureCheckpointArgs {
  * touching `refs/stash`.
  *
  * Returns `null` when there is nothing to capture (the tree matches HEAD once
- * ignored files are discounted) — callers treat that as a benign skip.
+ * ignored files and secret-path exclusions are discounted) — callers treat
+ * that as a benign skip.
+ *
+ * **Secret-path guard (belt to `.gitignore`'s braces):** before staging, this
+ * function queries `git status` to enumerate dirty paths, filters them through
+ * {@link checkSecretPath}, and passes the matching paths as `excludePaths` to
+ * the VCS port so they are removed from the staging index after `git add -A`.
+ * This prevents per-repo state (`.mars/`), dependency directories
+ * (`node_modules/`), and build output (`dist/`, `coverage/`) from ever landing
+ * in a checkpoint commit — even when `.gitignore` has been edited away or
+ * never existed (the scenario observed in the fresh-install audit: `git add -A`
+ * on an un-ignoring repo staged `.mars/pg/data/` and destroyed the live
+ * database 48 seconds later).
  */
 export const captureCheckpoint = async (
   args: CaptureCheckpointArgs,
 ): Promise<Checkpoint | null> => {
   const { cwd, key, message } = args
   const ref = checkpointRefFor(key)
-  return resolveVcs().captureCheckpoint({ cwd, ref, message })
+
+  // Enumerate dirty paths (including untracked) and filter out any that
+  // checkSecretPath rejects. We collect them here rather than inside the VCS
+  // port so the filtering predicate lives in exactly one place (dirty-main-
+  // salvage.ts) and is not duplicated across port implementations.
+  const vcs = resolveVcs()
+  const status = await vcs.status({ cwd, untrackedFiles: 'all' })
+  const excludePaths: string[] = []
+  if (!status.clean) {
+    for (const rawLine of status.statusOutput.split('\n')) {
+      if (rawLine.length < 4) continue // porcelain lines are at least "XY P"
+      // Porcelain v1 format: "XY PATH" or "XY ORIG -> DEST" for renames.
+      const raw = rawLine.slice(3)
+      const arrowIdx = raw.indexOf(' -> ')
+      const pathRaw = arrowIdx >= 0 ? raw.slice(arrowIdx + 4) : raw
+      const filePath = pathRaw.trim().replace(/^"|"$/g, '')
+      if (filePath && checkSecretPath(filePath)) {
+        excludePaths.push(filePath)
+      }
+    }
+  }
+
+  return vcs.captureCheckpoint({
+    cwd,
+    ref,
+    message,
+    ...(excludePaths.length > 0 ? { excludePaths } : {}),
+  })
 }
 
 export interface AnchorBranchTipArgs {
