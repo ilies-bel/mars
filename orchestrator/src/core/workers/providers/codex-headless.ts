@@ -275,14 +275,26 @@ export const codexHeadless: HeadlessAdapter = {
 
     // Build the list of extra writable directories to pass to codex via --add-dir.
     //
-    // FIX 1 — git worktree metadata dir:
+    // FIX 1 — git common dir (objects + refs):
     //   codex exec --sandbox workspace-write allows writes to workdir, /tmp, and
     //   $TMPDIR, but NOT to the repo's common .git directory. When the coder runs
-    //   `git commit` inside the worktree, git needs to write to
-    //   .git/worktrees/<task-id>/index.lock (and MERGE_MSG etc.) in the shared git
-    //   dir — a path outside the sandbox boundary. Without --add-dir, that write
-    //   fails with "Operation not permitted", leaving commits uncommitted and the
-    //   branch empty at the merge gate (the mars-748ab10e / mars-eb04bbda incident).
+    //   `git commit` inside a linked worktree, git must write to three locations
+    //   inside that common dir:
+    //
+    //     • objects/            — blob and tree storage for `git add`
+    //     • refs/heads/<branch> — branch pointer updated by `git commit`
+    //     • worktrees/<id>/     — per-worktree index.lock, ORIG_HEAD, MERGE_MSG, etc.
+    //
+    //   All three live under the COMMON git dir (`git rev-parse --git-common-dir`),
+    //   which for a linked worktree is the repository root .git/, e.g. /repo/.git.
+    //   Granting only the per-worktree metadata dir (`--git-dir`, e.g.
+    //   /repo/.git/worktrees/<task-id>) covers index.lock and friends but MISSES
+    //   objects/ and refs/heads/, so `git add` fails with "Operation not permitted"
+    //   and commits are never written — the mars-486c9b94 incident.
+    //
+    //   Sibling worktrees live under <repoRoot>/.mars/worktrees/, which is NOT under
+    //   <repoRoot>/.git/, so granting the common git dir does NOT reopen the
+    //   sibling-contamination hole closed by mars-651807ec.
     //
     // FIX 2 (partial) — npm/pnpm install stall:
     //   npm install of new dependencies stalls ~150s because the workspace-write
@@ -294,17 +306,18 @@ export const codexHeadless: HeadlessAdapter = {
     //   blocked; see CLAUDE.md for the full npm-install-in-sandbox limitation.
     const addDirArgs: string[] = []
     if (!isReadOnlyRun(opts)) {
-      // --- git worktree metadata dir ---
+      // --- git common dir (objects/, refs/heads/, worktrees/<id>/) ---
       try {
-        const gitDir = execFileSync('git', ['rev-parse', '--git-dir'], {
+        const gitCommonDir = execFileSync('git', ['rev-parse', '--git-common-dir'], {
           cwd: opts.cwd,
           encoding: 'utf8',
         }).trim()
-        if (gitDir) {
-          // For a linked worktree, --git-dir returns an absolute path like
-          // /repo/.git/worktrees/<task-id>. resolve() handles the rare relative
-          // `.git` case (plain checkout, not a worktree) by prefixing cwd.
-          addDirArgs.push('--add-dir', resolve(opts.cwd, gitDir))
+        if (gitCommonDir) {
+          // For a linked worktree, --git-common-dir returns an absolute path like
+          // /repo/.git. resolve() handles the rare relative `.git` case (plain
+          // checkout) by prefixing cwd. This single grant covers objects/, refs/,
+          // and worktrees/<id>/ — everything git needs to commit from a linked worktree.
+          addDirArgs.push('--add-dir', resolve(opts.cwd, gitCommonDir))
         }
       } catch {
         // Best-effort: if git is unavailable or cwd is not inside a git repo,

@@ -22,6 +22,14 @@ vi.mock('../../lib/git/claude', async (importOriginal) => ({
   resolveClaudeBin: vi.fn(),
 }))
 
+// Mock node:child_process so execFileSync is controllable in tests.
+// Default implementation throws (simulates cwd not inside a git repo), matching
+// what the real binary does in a non-repo directory.  Individual tests override
+// this via mockReturnValueOnce / mockImplementationOnce.
+vi.mock('node:child_process', () => ({
+  execFileSync: vi.fn(),
+}))
+
 import {
   parseCodexEventLine,
   readCodexOutput,
@@ -31,6 +39,7 @@ import {
 import { runSubprocessStreaming, resolveClaudeBin } from '../../lib/git/claude'
 import { computeFailureSignature } from '../../lib/failure-signature'
 import { extractLastStreamText } from '../../lib/claude-stream'
+import { execFileSync } from 'node:child_process'
 
 // ---------------------------------------------------------------------------
 // parseCodexEventLine — pure normalisation helper
@@ -152,6 +161,12 @@ beforeEach(() => {
     },
   )
   vi.mocked(resolveClaudeBin).mockReset()
+  // Default: execFileSync throws (cwd not inside a git repo, pnpm unavailable).
+  // The adapter's try/catch swallows this gracefully — no --add-dir is emitted.
+  // Individual tests override specific calls via mockReturnValueOnce.
+  vi.mocked(execFileSync).mockImplementation(() => {
+    throw new Error('not a git repo / binary not found')
+  })
 })
 
 afterEach(() => {
@@ -581,5 +596,101 @@ describe('codexHeadless.run — empty prompt fails fast without spawning', () =>
       systemPrompt: '   ',
     })
     expect(runSubprocessStreaming).toHaveBeenCalled()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Regression: --add-dir must grant the git COMMON dir, not the per-worktree path.
+//
+// Incident (mars-486c9b94): the adapter called `git rev-parse --git-dir` which,
+// inside a linked worktree, returns the per-worktree metadata directory
+// (.git/worktrees/<task-id>). That directory contains index.lock, HEAD, etc.,
+// but NOT objects/ or refs/heads/ — the two locations git needs to persist a
+// commit. `git add` therefore failed with "Operation not permitted" inside the
+// sandbox, leaving commits uncommitted and the branch empty at the merge gate.
+//
+// Fix: use `--git-common-dir` instead. In a linked worktree it resolves to
+// the shared repository root (.git/), covering objects/, refs/heads/, and
+// worktrees/<task-id>/ in a single grant.  In a plain checkout --git-common-dir
+// and --git-dir are identical (both return .git), so the fix is backward-compatible.
+// ---------------------------------------------------------------------------
+
+describe('codexHeadless.run — --add-dir uses git-common-dir, not git-dir', () => {
+  // Helper: extract all values that follow a '--add-dir' flag from an argv array.
+  const addDirsFromArgv = (argv: readonly string[]): string[] =>
+    argv.flatMap((v, i) => (i > 0 && argv[i - 1] === '--add-dir' ? [v] : []))
+
+  it('linked worktree: --add-dir contains the common git dir, not the per-worktree path', async () => {
+    // Simulate a linked worktree: --git-common-dir → /repo/.git (absolute),
+    // NOT /repo/.git/worktrees/<task-id>.
+    vi.mocked(execFileSync).mockReturnValueOnce('/repo/.git\n')
+    // pnpm call falls back to the default throw → no pnpm --add-dir entry.
+
+    await codexHeadless.run('task', { cwd: '/repo/.mars/worktrees/mars-test' })
+
+    const argv = vi.mocked(runSubprocessStreaming).mock.calls[0][1] as readonly string[]
+    const addDirs = addDirsFromArgv(argv)
+
+    // Common dir must be present.
+    expect(addDirs).toContain('/repo/.git')
+    // The per-worktree subdirectory must NOT be present — that was the regression.
+    expect(addDirs.some((d) => d.includes('/worktrees/'))).toBe(false)
+  })
+
+  it('plain checkout: resolves the relative .git to an absolute path using cwd', async () => {
+    // In a plain (non-worktree) checkout, --git-common-dir returns the relative
+    // string ".git". resolve(cwd, ".git") must produce an absolute path.
+    vi.mocked(execFileSync).mockReturnValueOnce('.git\n')
+
+    await codexHeadless.run('task', { cwd: '/my/project' })
+
+    const argv = vi.mocked(runSubprocessStreaming).mock.calls[0][1] as readonly string[]
+    const addDirs = addDirsFromArgv(argv)
+
+    expect(addDirs).toContain('/my/project/.git')
+  })
+
+  it('git rev-parse failure: no git --add-dir is emitted and the run still starts', async () => {
+    // Default beforeEach mock already throws — just confirm the behavior.
+    const result = await codexHeadless.run('task', { cwd: '/tmp/not-a-repo' })
+
+    const argv = vi.mocked(runSubprocessStreaming).mock.calls[0][1] as readonly string[]
+    const addDirs = addDirsFromArgv(argv)
+
+    // No git --add-dir emitted.
+    expect(addDirs).toHaveLength(0)
+    // The run was still started — best-effort, not a fatal error.
+    expect(runSubprocessStreaming).toHaveBeenCalledOnce()
+    expect(result.exitCode).toBe(0)
+  })
+
+  it('read-only run: emits no --add-dir entries and never calls execFileSync', async () => {
+    // Even if git would succeed, the whole addDirArgs block is skipped for
+    // read-only runs so no sandbox escape is possible.
+    vi.mocked(execFileSync).mockReturnValue('/repo/.git\n')
+
+    await codexHeadless.run('inspect', {
+      cwd: '/repo',
+      forceSandbox: 'read-only',
+    })
+
+    const argv = vi.mocked(runSubprocessStreaming).mock.calls[0][1] as readonly string[]
+    expect(argv).not.toContain('--add-dir')
+    expect(execFileSync).not.toHaveBeenCalled()
+  })
+
+  it('pnpm-store --add-dir entry is still emitted when pnpm store path succeeds', async () => {
+    // git call throws (default) → no git --add-dir.
+    // pnpm call returns a path → its --add-dir entry must survive.
+    vi.mocked(execFileSync)
+      .mockImplementationOnce(() => { throw new Error('git not found') })
+      .mockReturnValueOnce('/Users/test/.local/share/pnpm/store\n')
+
+    await codexHeadless.run('task', { cwd: '/repo' })
+
+    const argv = vi.mocked(runSubprocessStreaming).mock.calls[0][1] as readonly string[]
+    const addDirs = addDirsFromArgv(argv)
+
+    expect(addDirs).toContain('/Users/test/.local/share/pnpm/store')
   })
 })
