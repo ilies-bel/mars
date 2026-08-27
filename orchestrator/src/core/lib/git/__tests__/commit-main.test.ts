@@ -28,7 +28,7 @@ import {
   commitMain,
   CommitToMainError,
   CommitToWrongBranchError,
-} from './commit-main'
+} from '../commit-main'
 
 /** Create a temp git repo on `main` with a single tracked file and initial commit. */
 const setupRepo = (): string => {
