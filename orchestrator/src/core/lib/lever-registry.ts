@@ -20,7 +20,7 @@
  * verifies every declared consumer reference actually exists in the codebase.
  */
 
-import { existsSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   loadDaemonConfig,
@@ -98,6 +98,16 @@ export interface RecipeMetadata {
   setupSteps: string[]
   verifyGate?: { name: string; cmd: string; args: string[]; scope?: string }
   maturityLevel: 'bare' | 'typecheck' | 'tests' | 'e2e'
+  /**
+   * Optional predicate that must hold before this recipe is offered.
+   *
+   * When present, `computeMissingGates` and `proposeGatesFromLevers` call this
+   * with the repo root and only include the recipe when it returns `true`. A
+   * recipe with no predicate is always considered applicable — the predicate is
+   * the machine half of HR-8 stack-applicability; `triggerPattern` is the
+   * human-readable evidence half that both consumers already use.
+   */
+  predicate?: (repoRoot: string) => boolean
 }
 
 /**
@@ -175,6 +185,64 @@ export interface LeverRegistryEntry {
    * `formatRecipeCatalog` to build reflector prompts.
    */
   recipe?: RecipeMetadata
+}
+
+// ─── Recipe predicates ────────────────────────────────────────────────────────
+
+/**
+ * Returns `true` when the repo at `repoRoot` has observable TypeScript
+ * evidence — a `tsconfig.json` at the root, `typescript` declared in
+ * `package.json` dependencies or devDependencies, or at least one `.ts` /
+ * `.tsx` source file outside `node_modules` (depth-limited to 3 levels).
+ *
+ * Used as the `predicate` for `verify.add-typecheck` so the recipe is only
+ * offered to repos that actually use TypeScript (HR-8 / DEC-15).
+ */
+function hasTypescriptEvidence(repoRoot: string): boolean {
+  // 1. tsconfig.json at repo root — the clearest signal
+  if (existsSync(join(repoRoot, 'tsconfig.json'))) return true
+
+  // 2. typescript declared in package.json deps/devDeps
+  const pkgPath = join(repoRoot, 'package.json')
+  if (existsSync(pkgPath)) {
+    try {
+      const pkg = JSON.parse(readFileSync(pkgPath, 'utf8')) as Record<
+        string,
+        Record<string, string> | undefined
+      >
+      if (
+        pkg['dependencies']?.['typescript'] !== undefined ||
+        pkg['devDependencies']?.['typescript'] !== undefined
+      ) {
+        return true
+      }
+    } catch {
+      // malformed package.json — fall through
+    }
+  }
+
+  // 3. Any .ts / .tsx source file outside node_modules (depth-limited)
+  const scan = (dir: string, depth: number): boolean => {
+    if (depth > 3) return false
+    try {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        if (entry.name === 'node_modules' || entry.name.startsWith('.')) continue
+        if (
+          entry.isFile() &&
+          (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx'))
+        ) {
+          return true
+        }
+        if (entry.isDirectory() && scan(join(dir, entry.name), depth + 1)) {
+          return true
+        }
+      }
+    } catch {
+      // permission error or inaccessible directory — skip
+    }
+    return false
+  }
+  return scan(repoRoot, 0)
 }
 
 // ─── Registry ─────────────────────────────────────────────────────────────────
@@ -290,6 +358,7 @@ const REGISTRY: LeverRegistryEntry[] = [
       ],
       verifyGate: { name: 'typecheck', cmd: 'npx', args: ['tsc', '--noEmit'] },
       maturityLevel: 'typecheck',
+      predicate: hasTypescriptEvidence,
     },
   },
   {

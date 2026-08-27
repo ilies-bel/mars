@@ -16,11 +16,19 @@ import type { TaskSpec } from '../core/lib/queue-primitives.js'
  *
  * @param entry A lever-registry entry whose `recipe` and `recipe.verifyGate`
  *              are guaranteed to be present (ensured by `computeMissingGates`).
+ * @param opts.isFallback When `true`, the recipe's `problem` text is replaced
+ *              with a neutral statement that claims only what Mars actually
+ *              knows — that no gate of this name is configured — rather than
+ *              asserting a property of the repo that was not verified (e.g.
+ *              "Your repo has TypeScript files"). Set this when
+ *              `computeMissingGates` returns `isFallback: true`, meaning the
+ *              entry was chosen because no recipe's predicate matched.
  * @throws When `entry.recipe` or `entry.recipe.verifyGate` is absent — callers
  *         must supply an entry that has both.
  */
 export function buildGateTaskPrompt(
   entry: LeverRegistryEntry,
+  opts?: { isFallback?: boolean },
 ): { prompt: string; spec: TaskSpec } {
   const recipe = entry.recipe
   if (!recipe) {
@@ -42,10 +50,16 @@ export function buildGateTaskPrompt(
       ? recipe.setupSteps.map((s, i) => `${i + 1}. ${s}`).join('\n')
       : '(no setup steps listed)'
 
+  // On the fallback path, use a neutral problem statement that makes no claim
+  // about the repo's stack — only that the gate is not yet configured.
+  const problemText = opts?.isFallback
+    ? `No ${vg.name} gate is configured. Adding one will catch errors before merge.`
+    : recipe.problem
+
   const prompt = [
     `## Problem`,
     ``,
-    recipe.problem,
+    problemText,
     ``,
     `## Solution`,
     ``,

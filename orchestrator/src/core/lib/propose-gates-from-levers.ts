@@ -13,6 +13,7 @@
  *     repeated calls).
  */
 
+import { resolveContext } from '../context.js'
 import { listVerifyGates } from '../verify-gates.js'
 import { listActionQueueItems } from './action-queue.js'
 import { getLeversWithVerifyGate } from './lever-registry.js'
@@ -23,11 +24,20 @@ import { reportUncoveredVerifyCoverage } from './verify-uncovered.js'
  * Propose verify gates for all lever recipes that have a `verifyGate` spec
  * but whose gate is not yet registered.
  *
+ * Recipes whose `predicate` returns false for the current repo root are
+ * excluded from proposals — no verify-uncovered item is raised for a gate
+ * that cannot apply to the repo's stack (HR-8).
+ *
  * Returns the number of proposals raised and the number of levers skipped
- * (either already registered or already open as a proposal).
+ * (either already registered, already open as a proposal, or predicate-filtered).
  */
 export async function proposeGatesFromLevers(): Promise<{ proposed: number; skipped: number }> {
-  const levers = getLeversWithVerifyGate()
+  const { repoRoot } = resolveContext()
+  const levers = getLeversWithVerifyGate().filter(({ recipe }) => {
+    const pred = recipe.predicate
+    // no predicate → always applicable; predicate returning false → skip
+    return pred ? pred(repoRoot) : true
+  })
 
   // Build a key set for already-registered gates so we can skip them.
   const registeredGates = await listVerifyGates()

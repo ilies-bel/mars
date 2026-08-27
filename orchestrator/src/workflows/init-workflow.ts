@@ -251,7 +251,8 @@ const initWorkflow = defineWorkflow<InitInput, InitWorkflowOutput>({
     const w3 = await ctx.step('init-databases', () => runInitDatabases(w2c))
     const w4 = await ctx.step('seed-verify-gates', async () => {
       const detected = input.wizardChoices?.verifyGates ?? WIZARD_DEFAULTS.verifyGates
-      const missingEntries = computeMissingGates(detected)
+      const appCtx = resolveContext()
+      const { entries: missingEntries, isFallback } = computeMissingGates(detected, appCtx.repoRoot)
       const firstMissing = missingEntries[0] ?? null
 
       let gatesToInstall: VerifyGateInput[] = [...detected]
@@ -270,14 +271,14 @@ const initWorkflow = defineWorkflow<InitInput, InitWorkflowOutput>({
       }
 
       await proposeOnboardingVerifyGates(gatesToInstall)
-      return { firstMissing }
+      return { firstMissing, isFallback }
     })
 
     const w5 = await ctx.step('dispatch-first-gate', async () => {
       if (w4.firstMissing === null) return null
       const entry = w4.firstMissing
       const gateName = entry.recipe!.verifyGate!.name
-      const { prompt, spec } = buildGateTaskPrompt(entry)
+      const { prompt, spec } = buildGateTaskPrompt(entry, { isFallback: w4.isFallback })
       const task = await enqueueTask(prompt, undefined, {
         skipTriage: true,
         priority: 2,

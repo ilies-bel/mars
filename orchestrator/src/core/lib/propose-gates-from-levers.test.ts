@@ -13,7 +13,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 
@@ -113,6 +113,10 @@ describe('proposeGatesFromLevers', () => {
   })
 
   it('each raised item carries proposedGate with lever spec and triggerPattern evidence', async () => {
+    // The typecheck recipe has a predicate that requires TypeScript evidence in
+    // the repo. Write a tsconfig.json so the predicate passes for this temp repo.
+    writeFileSync(resolve(repo, 'tsconfig.json'), '{}')
+
     // Register everything except typecheck so we can inspect its proposal.
     const { addVerifyGate } = await import('../verify-gates.js')
     await addVerifyGate({ name: 'test', cmd: 'npm', args: ['test'] })
