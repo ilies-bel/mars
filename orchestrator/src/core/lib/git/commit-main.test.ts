@@ -356,4 +356,76 @@ describe('autoCommitWorktreeIfDeterministic', () => {
     expect(committed).toContain('tracked.txt')
     expect(committed).not.toContain('scratch-notes.txt')
   })
+
+  // ── DEC-15: node_modules/ partition (the all-or-nothing guard regression) ─
+
+  it('coder-left-dirty: commits safe files only when node_modules/ paths are also dirty', async () => {
+    // Reproduces the DEC-15 failure: a TypeScript gate task installed
+    // `node_modules/` alongside four legitimate work files. The old guard
+    // refused the whole commit on the first node_modules/ hit; the partition
+    // commits the four real files and excludes the dependency tree.
+    checkoutTaskBranch(repo, 'gate-task')
+
+    // The four gate files the coder produced.
+    writeFileSync(resolve(repo, 'package.json'), '{"devDependencies":{"typescript":"^5"}}\n')
+    writeFileSync(resolve(repo, '.gitignore'), 'node_modules/\n')
+    writeFileSync(resolve(repo, 'package-lock.json'), '{"lockfileVersion":3}\n')
+    writeFileSync(resolve(repo, 'tsconfig.json'), '{"compilerOptions":{}}\n')
+    // Simulate a node_modules/ subtree (a handful of representative paths).
+    mkdirSync(resolve(repo, 'node_modules', 'typescript', 'lib'), { recursive: true })
+    writeFileSync(resolve(repo, 'node_modules', 'typescript', 'lib', 'typescript.js'), '/* ts */\n')
+    writeFileSync(resolve(repo, 'node_modules', 'typescript', 'package.json'), '{"name":"typescript"}\n')
+
+    const dirtyFiles = [
+      'package.json',
+      '.gitignore',
+      'package-lock.json',
+      'tsconfig.json',
+      'node_modules/typescript/lib/typescript.js',
+      'node_modules/typescript/package.json',
+    ]
+
+    const result = await autoCommitWorktreeIfDeterministic({
+      taskId: 'gate-task',
+      provenance: 'coder-left-dirty',
+      integrationBranch: 'main',
+      worktreePath: repo,
+      dirtyFiles,
+    })
+
+    // The four gate files landed; node_modules/ paths did not.
+    expect(result).toMatchObject({ committed: true, sha: expect.any(String) })
+    const tree = headCommitTree(repo)
+    expect(tree).toContain('package.json')
+    expect(tree).toContain('.gitignore')
+    expect(tree).toContain('package-lock.json')
+    expect(tree).toContain('tsconfig.json')
+    expect(tree.some((p) => p.startsWith('node_modules/'))).toBe(false)
+
+    // Commit body names the excluded paths (operator transparency).
+    const commitMsg = execSync('git log -1 --format=%B', { cwd: repo }).toString()
+    expect(commitMsg).toContain('Excluded')
+    expect(commitMsg).toContain('dependency directory')
+  })
+
+  it('coder-left-dirty: refuses outright when every dirty file is in node_modules/', async () => {
+    // All dirty files are unsafe — nothing safe to land. The refusal is
+    // unchanged from the old behaviour (committed:false, refusal:unsafe-path).
+    checkoutTaskBranch(repo, 'nm-only-task')
+    mkdirSync(resolve(repo, 'node_modules', 'lodash'), { recursive: true })
+    writeFileSync(resolve(repo, 'node_modules', 'lodash', 'index.js'), 'module.exports={}\n')
+
+    const result = await autoCommitWorktreeIfDeterministic({
+      taskId: 'nm-only-task',
+      provenance: 'coder-left-dirty',
+      integrationBranch: 'main',
+      worktreePath: repo,
+      dirtyFiles: ['node_modules/lodash/index.js'],
+    })
+
+    expect(result).toMatchObject({ committed: false, refusal: 'unsafe-path' })
+    expect((result as { reason: string }).reason).toContain('unsafe')
+    // Nothing was committed — HEAD is still the initial commit.
+    expect(headCommitTree(repo)).not.toContain('node_modules/lodash/index.js')
+  })
 })

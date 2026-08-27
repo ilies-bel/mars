@@ -180,19 +180,33 @@ export type AutoCommitResult =
   | { committed: false; refusal: 'unsafe-path' | 'git' | 'main-branch' | 'wrong-branch' | 'nothing-to-commit'; reason: string }
 
 /**
- * Attempt a deterministic `git add -A && git commit` inside the worktree, on
- * behalf of the orchestrator when a worktree has deterministic dirty content.
+ * Attempt a deterministic commit inside the worktree, on behalf of the
+ * orchestrator when a worktree has deterministic dirty content.
  *
- * Guarded: every dirty path is checked against {@link checkSecretPath} FIRST,
- * and a single match aborts the whole commit (all-or-nothing) before anything
- * is staged. `git add -A` honours `.gitignore`, so build output and
- * dependencies listed there are already excluded; the guard covers the shapes
- * that must never land even if a repo forgot to ignore them.
+ * Guarded: every dirty path is checked against {@link checkSecretPath} and
+ * **partitioned** into safe and unsafe sets. Only the safe paths are staged
+ * and committed; the unsafe paths (dependency directories, generated output,
+ * per-repo state) are left untouched. The function only refuses outright when
+ * the safe set is empty — i.e. every dirty file is an unsafe path and there
+ * is nothing legitimate to land.
  *
- * Returns `{committed: true, sha}` on success so the pipeline can continue
- * to verify as if the coder had committed. Returns
- * `{committed: false, refusal, reason}` when the guard trips or the commit
- * fails (pre-commit hook rejection, empty staged set, etc.) — the caller
+ * This replaces the previous all-or-nothing guard (DEC-15 regression): in a
+ * consumer repo without pre-existing ignore rules, a task that installs
+ * `node_modules/` alongside 4 real work files produced ~530 unsafe paths and
+ * the guard refused to commit any of them, including the real work.
+ *
+ * `committer-salvage` stages tracked modifications only (`git add -u`) so
+ * operator scratch work and untracked build artifacts never land — the
+ * invariant from the 2026-08-17 incident is preserved.
+ *
+ * `coder-left-dirty` stages only the safe paths explicitly (`git add -- <safe>`)
+ * so newly-created source files the coder forgot to stage are captured
+ * (the root cause of the 2026-07-20 incident), while unsafe paths like
+ * `node_modules/` are excluded.
+ *
+ * Returns `{committed: true, sha}` on success. Returns
+ * `{committed: false, refusal, reason}` when the safe set is empty, the
+ * commit is rejected by a hook, the staged set is empty, etc. — the caller
  * decides what to do next.
  */
 export const autoCommitWorktreeIfDeterministic = async (
@@ -200,7 +214,6 @@ export const autoCommitWorktreeIfDeterministic = async (
 ): Promise<AutoCommitResult> => {
   const git = resolveGitBin()
   const { taskId, provenance, integrationBranch, worktreePath, dirtyFiles, traceCtx } = args
-  const count = dirtyFiles.length
 
   // Branch-safety guard: commits from the orchestrator must land ONLY on the
   // invoking task's own branch. A commit to `main`/`master` is rejected with a
@@ -230,52 +243,93 @@ export const autoCommitWorktreeIfDeterministic = async (
     }
   }
 
+  // Partition dirty files into safe (committable) and unsafe (must be excluded)
+  // sets. Previously, a single unsafe hit aborted the whole commit — causing the
+  // DEC-15 scenario where a TypeScript gate task installed `node_modules/`,
+  // producing ~530 unsafe paths alongside 4 legitimate work files, and the
+  // guard refused to commit any of them. The partition commits only the safe
+  // subset; refusal is reserved for when the safe set is empty (nothing
+  // legitimate to land).
+  const unsafePaths: Array<{ filePath: string; reason: string }> = []
+  const safePaths: string[] = []
   for (const filePath of dirtyFiles) {
     const hit = checkSecretPath(filePath)
     if (hit) {
-      return {
-        committed: false,
-        refusal: 'unsafe-path',
-        reason: `refusing to auto-commit: ${hit.filePath} is a ${hit.reason} and must never be committed`,
-      }
+      unsafePaths.push({ filePath: hit.filePath, reason: hit.reason })
+    } else {
+      safePaths.push(filePath)
     }
   }
 
+  if (safePaths.length === 0) {
+    // All dirty paths are unsafe — nothing legitimate to commit.
+    const firstHit = unsafePaths[0]!
+    return {
+      committed: false,
+      refusal: 'unsafe-path',
+      reason:
+        `refusing to auto-commit: all ${unsafePaths.length} path(s) are unsafe to commit ` +
+        `(e.g. ${firstHit.filePath} is a ${firstHit.reason}) — nothing safe to land`,
+    }
+  }
+
+  const safeCount = safePaths.length
+  const excludedNote =
+    unsafePaths.length > 0
+      ? [
+          '',
+          `Excluded ${unsafePaths.length} path(s) that are unsafe to commit (dependency`,
+          `directories, generated output, or per-repo state). They remain in the`,
+          `worktree untracked. Distinct reasons: ${[...new Set(unsafePaths.map((u) => u.reason))].join('; ')}.`,
+        ].join('\n')
+      : ''
+
   const [subject, body] = provenance === 'coder-left-dirty'
     ? [
-        `chore(auto-commit): task ${taskId} — coder finished but did not commit — ${count} path(s)`,
+        `chore(auto-commit): task ${taskId} — coder finished but did not commit — ${safeCount} path(s)`,
         [
-          `The coder for task ${taskId} ended the code step with ${count} path(s) still`,
+          `The coder for task ${taskId} ended the code step with ${safeCount} path(s) still`,
           'uncommitted. The orchestrator committed them on the agent\'s behalf so the',
           'work reaches verify and the merge rebase. The agent did NOT author this',
           'commit and did not choose its contents.',
           '',
-          ...dirtyFiles.map((f) => `  ${f}`),
+          ...safePaths.map((f) => `  ${f}`),
+          excludedNote,
         ].join('\n'),
       ]
     : [
-        `chore(auto-commit): task ${taskId} — salvaged uncommitted ${integrationBranch} state — ${count} path(s)`,
+        `chore(auto-commit): task ${taskId} — salvaged uncommitted ${integrationBranch} state — ${safeCount} path(s)`,
         [
-          `These ${count} path(s) were found uncommitted on ${integrationBranch}.`,
+          `These ${safeCount} path(s) were found uncommitted on ${integrationBranch}.`,
           'The committer agent could not commit them itself, so the orchestrator',
           `landed them to unblock ${integrationBranch}. Authorship is unknown and may`,
           'belong to a human operator.',
           '',
-          ...dirtyFiles.map((f) => `  ${f}`),
+          ...safePaths.map((f) => `  ${f}`),
+          excludedNote,
         ].join('\n'),
       ]
 
-  // `committer-salvage` stages ONLY tracked modifications — never untracked
-  // files. Untracked files may be operator scratch work, secrets, or build
-  // artifacts that were not gitignored; pulling them into a salvage commit and
-  // landing them on main via the steward is the exact failure mode of the
-  // 2026-08-17 incident (operator built `app/dist-demo/` and the salvage
-  // committed it). `git add -u` stages tracked changes only.
+  // Stage only safe paths so the excluded unsafe paths (node_modules/, dist/,
+  // .mars/, etc.) are never touched by git add.
   //
-  // `coder-left-dirty` keeps `git add -A` so newly-created source files the
-  // coder forgot to `git add` are still captured — that was the root cause of
-  // the 2026-07-20 incident where `git commit -am` silently dropped new files.
-  const addArgs = provenance === 'committer-salvage' ? ['add', '-u'] : ['add', '-A']
+  // `committer-salvage` keeps `git add -u` (no pathspec) — it only stages
+  // TRACKED modifications and already naturally excludes untracked files
+  // (operator scratch work, untracked build artifacts). Passing explicit
+  // pathspecs to `-u` causes git to error on untracked entries in the list,
+  // which breaks the invariant. The partition already guards unsafe tracked
+  // paths; the git add -u naturally handles untracked ones.
+  //
+  // `coder-left-dirty` uses `git add -- <safePaths>` so that newly-created
+  // source files the coder forgot to `git add` are captured (the root cause
+  // of the 2026-07-20 incident where `git commit -am` silently dropped new
+  // files). The explicit pathspec excludes the unsafe paths that the partition
+  // already removed from safePaths — replacing the previous `git add -A` which
+  // would have swept the full node_modules/ tree into the commit.
+  const addArgs =
+    provenance === 'committer-salvage'
+      ? ['add', '-u']
+      : ['add', '--', ...safePaths]
   const addResult = await execProbe(
     git,
     addArgs,
