@@ -183,7 +183,7 @@ describe('createConditionItemsSource — stale-queued phantom in-flight attribut
     const summary = recipeHumanSummary('stale-queued', row.payload)
     expect(summary).toContain('stuck in an in-flight status')
     expect(summary).toContain('mars sync')
-    expect(summary).not.toContain('the worker pool may be saturated or the dispatcher may be stuck')
+    expect(summary).not.toContain('the worker slots may be full or the task processor may be stuck')
   })
 
   it('keeps the generic message when the tracker genuinely holds the in-flight jobs (no phantom mismatch)', async () => {
@@ -205,7 +205,7 @@ describe('createConditionItemsSource — stale-queued phantom in-flight attribut
     expect(row.payload['activeWorkerCount']).toBe(2)
 
     const summary = recipeHumanSummary('stale-queued', row.payload)
-    expect(summary).toContain('the worker pool may be saturated or the dispatcher may be stuck')
+    expect(summary).toContain('the worker slots may be full or the task processor may be stuck')
     expect(summary).not.toContain('phantom')
     expect(summary).not.toContain('mars sync')
   })
