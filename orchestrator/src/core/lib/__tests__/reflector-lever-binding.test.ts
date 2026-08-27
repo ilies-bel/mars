@@ -204,6 +204,133 @@ describe('parseAndValidateOutcome — invalid type', () => {
   })
 })
 
+// ─── HR-1 leverGap framework-source guard ────────────────────────────────────
+
+describe('parseAndValidateOutcome — leverGap framework-source guard (HR-1)', () => {
+  it('rejects a leverGap suggestion whose prompt references the Mars orchestrator implementation', () => {
+    const registry = miniRegistry()
+    const raw = {
+      type: 'leverGap',
+      leverGap: {
+        proposedLeverId: 'orchestrator.commit-correction-ownership',
+        family: 'orchestration',
+        whatItWouldControl: 'who owns the commit-correction step',
+      },
+    }
+    const offendingPrompt =
+      'Inspect the Mars orchestrator implementation that performs commit-correction ' +
+      'and recovery for task worktrees. Verify with the relevant orchestrator test ' +
+      'command. Save your work.'
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const result = parseAndValidateOutcome(raw, registry, offendingPrompt)
+    expect(result).toBeNull()
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('leverGap suggestion rejected'),
+    )
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('framework source'),
+    )
+    warnSpy.mockRestore()
+  })
+
+  it('rejects a leverGap suggestion whose prompt references orchestrator/src/', () => {
+    const registry = miniRegistry()
+    const raw = {
+      type: 'leverGap',
+      leverGap: {
+        proposedLeverId: 'verify.scope',
+        family: 'verify',
+        whatItWouldControl: 'Verify command file-scope pattern',
+      },
+    }
+    const offendingPrompt =
+      'Edit orchestrator/src/workflows/implement-workflow.ts to narrow verify scope. Save your work.'
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const result = parseAndValidateOutcome(raw, registry, offendingPrompt)
+    expect(result).toBeNull()
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('leverGap suggestion rejected'))
+    warnSpy.mockRestore()
+  })
+
+  it('rejects a leverGap suggestion whose prompt references packages/workflow/', () => {
+    const registry = miniRegistry()
+    const raw = {
+      type: 'leverGap',
+      leverGap: {
+        proposedLeverId: 'workflow.durability',
+        family: 'workflow',
+        whatItWouldControl: 'checkpoint durability interval',
+      },
+    }
+    const offendingPrompt =
+      'Update packages/workflow/src/checkpoint.ts. Save your work.'
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const result = parseAndValidateOutcome(raw, registry, offendingPrompt)
+    expect(result).toBeNull()
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('leverGap suggestion rejected'))
+    warnSpy.mockRestore()
+  })
+
+  it('accepts a leverGap suggestion whose prompt describes only the missing control', () => {
+    const registry = miniRegistry()
+    const raw = {
+      type: 'leverGap',
+      leverGap: {
+        proposedLeverId: 'slicer.hotspot-overlap-policy',
+        family: 'workflow',
+        whatItWouldControl: 'how the slicer handles shared contract files across tasks',
+      },
+    }
+    const cleanPrompt =
+      'The slicer currently distributes shared contract files across multiple tasks ' +
+      'without deduplication. A slicer.hotspot-overlap-policy lever would let the ' +
+      'operator choose how to handle hotspot files (split vs. merge). ' +
+      'Evidence: 7 tasks in arc arc-abc123 all touched contracts/types.ts. ' +
+      'Expected effect: reduces unnecessary overlap in future arcs.'
+    const result = parseAndValidateOutcome(raw, registry, cleanPrompt)
+    expect(result).not.toBeNull()
+    expect(result!.type).toBe('leverGap')
+  })
+
+  it('accepts a lever suggestion whose prompt names a path in the operator\'s own repo', () => {
+    // Collateral-damage guard: operator-repo paths must not be blocked by the
+    // framework-source predicate (tsconfig.json, .github/workflows/ci.yml, etc.).
+    const registry = miniRegistry()
+    const raw = {
+      type: 'lever',
+      lever: { id: 'caps.implement', currentValue: '12', proposedValue: '8' },
+    }
+    const promptWithOperatorPaths =
+      'Update tsconfig.json to enable strictNullChecks. ' +
+      'Run .github/workflows/ci.yml locally with act to verify. ' +
+      'Expected effect: raises completeness. Save your work.'
+    // No warning should fire for a lever suggestion with operator-repo paths.
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const result = parseAndValidateOutcome(raw, registry, promptWithOperatorPaths)
+    expect(result).not.toBeNull()
+    expect(result!.type).toBe('lever')
+    expect(warnSpy).not.toHaveBeenCalled()
+    warnSpy.mockRestore()
+  })
+
+  it('still rejects a leverGap whose whatItWouldControl references framework source even without a prompt', () => {
+    const registry = miniRegistry()
+    const raw = {
+      type: 'leverGap',
+      leverGap: {
+        proposedLeverId: 'some.gap',
+        family: 'orchestration',
+        whatItWouldControl: 'Modifies orchestrator/src/core to adjust commit logic',
+      },
+    }
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const result = parseAndValidateOutcome(raw, registry)
+    expect(result).toBeNull()
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('leverGap suggestion rejected'))
+    warnSpy.mockRestore()
+  })
+})
+
 // ─── Lever binding rendered in proposal ────────────────────────────────────────
 
 describe('persistSuggestions — lever binding rendered in proposal notes', () => {

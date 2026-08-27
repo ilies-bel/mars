@@ -268,7 +268,7 @@ no markdown — just the JSON. Shape:
     {
       "title": "short imperative title (≤ 60 chars)",
       "category": "token|failure|cache|drift",
-      "prompt": "self-contained Mars task prompt that a fresh agent can act on without further context. Include file paths, the symptom, the suggested fix, and the verification command. End with 'Save your work.'",
+      "prompt": "For type:'lever' — self-contained Mars task prompt that a fresh agent can act on without further context. Include file paths in the operator's own repo, the symptom, the suggested fix, and the verification command. End with 'Save your work.' For type:'leverGap' — describe only the missing control: what the knob would be called, what behaviour the operator would get by setting it, and the evidence arc. Do NOT include framework file paths, module names, or any 'inspect/modify/test the orchestrator' phrasing.",
       "rationale": "1–2 sentences citing the evidence: task ids, weighted token counts, error patterns",
       "rootCauseKey": "snake_case_slug stable across runs (e.g. typecheck_failure, cache_miss_code_step)",
       "affectedTaskIds": ["task-id-1", "task-id-2"],
@@ -348,6 +348,18 @@ is a code change, not a knob — that must be a leverGap, not forced onto
 \`caps.implement\` or any unrelated lever. An out-of-range proposedValue or
 an id not in the registry will cause the suggestion to be REJECTED and
 never filed — the operator will never see it.
+
+LEVER GAP PROMPT CONTRACT: When \`outcome.type\` is 'leverGap', the \`prompt\`
+field MUST describe only the missing control — what the knob would be called,
+what behaviour the operator would get by setting it, and the evidence arc that
+motivates adding it. The \`prompt\` field MUST NOT contain: framework file
+paths (orchestrator/src/, packages/workflow/), framework module names, or
+phrases like "inspect the Mars orchestrator implementation", "modify the
+orchestrator", or "verify with the relevant orchestrator test command". A
+leverGap prompt is an operator-facing description of a product capability that
+does not yet exist — not an implementation plan for the framework maintainers.
+Suggestions that violate this rule will be REJECTED and never reach the
+operator.
 
 BUILT-IN PIPELINE EXCLUSION: The lever 'workflow.steps' covers ONLY
 user-owned workflows scaffolded as .mars/workflows/*.js files. The built-in
@@ -658,21 +670,50 @@ export const collectAssistantText = (
 }
 
 /**
+ * Returns true when `text` contains references to framework source that an
+ * operator in a consumer repo cannot act on (HR-1).
+ *
+ * Used as a shared predicate by both:
+ * - the `workflow.steps` guard in the `lever` branch of
+ *   {@link parseAndValidateOutcome} (BUILT-IN PIPELINE EXCLUSION)
+ * - the `leverGap` branch of {@link parseAndValidateOutcome} (ensures the
+ *   operator-facing `prompt` describes a missing control, not an
+ *   implementation plan targeting framework internals)
+ */
+const referencesFrameworkSource = (text: string): boolean =>
+  /orchestrator\/src\//.test(text) ||
+  /packages\/workflow\//.test(text) ||
+  /\bMars orchestrator implementation\b/i.test(text) ||
+  /\borchestrator\s+test\b/i.test(text)
+
+/**
  * Parse and validate a raw suggestion `outcome` value from model output.
  *
  * For a `lever` outcome, validates that:
  * - The lever id exists in the registry.
  * - The proposed value is within the lever's `allowedValues`.
  *
+ * For a `leverGap` outcome, validates that the operator-facing text
+ * (`whatItWouldControl` and the suggestion `prompt`, when supplied) does not
+ * reference framework source — a "patch the orchestrator" instruction is
+ * unactionable for a consumer operator (HR-1).
+ *
  * Returns `null` and logs a warning for any validation failure so a badly-
  * behaved model is visible rather than silently dropping findings.
  *
  * Exported so it can be reused in `deep-reflector.ts` without a separate
  * copy.
+ *
+ * @param raw - Raw outcome object from model output.
+ * @param registry - Lever registry for id/value validation.
+ * @param suggestionPrompt - The full suggestion `prompt` string, passed so the
+ *   leverGap guard can check for framework-source references in the
+ *   operator-facing action text. Optional; omitting it skips that check.
  */
 export const parseAndValidateOutcome = (
   raw: unknown,
   registry: LeverRegistryEntry[],
+  suggestionPrompt?: string,
 ): SuggestionOutcome | null => {
   if (!raw || typeof raw !== 'object') return null
   const o = raw as Record<string, unknown>
@@ -696,9 +737,9 @@ export const parseAndValidateOutcome = (
     }
 
     // Guard: workflow.steps only covers user-owned .mars/workflows/*.js files.
-    // Any proposedValue referencing orchestrator source is a built-in pipeline
+    // Any proposedValue referencing framework source is a built-in pipeline
     // finding that must use leverGap instead (BUILT-IN PIPELINE EXCLUSION).
-    if (id === 'workflow.steps' && /orchestrator\/src\//.test(proposedValue)) {
+    if (id === 'workflow.steps' && referencesFrameworkSource(proposedValue)) {
       // eslint-disable-next-line no-console
       console.warn(
         'workflow.steps binding rejected: proposedValue references built-in pipeline source',
@@ -738,6 +779,20 @@ export const parseAndValidateOutcome = (
     const whatItWouldControl =
       typeof g.whatItWouldControl === 'string' ? g.whatItWouldControl.trim() : null
     if (!proposedLeverId || !family || !whatItWouldControl) return null
+
+    // Guard: a leverGap whose operator-facing text references framework source
+    // is an unactionable "patch the framework" instruction — the consumer
+    // operator has no orchestrator source to inspect (HR-1). Check both the
+    // gap description and the full suggestion prompt (when supplied).
+    const operatorText = suggestionPrompt ? `${whatItWouldControl} ${suggestionPrompt}` : whatItWouldControl
+    if (referencesFrameworkSource(operatorText)) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        '[reflector] leverGap suggestion rejected: operator-facing text references framework source — describe the missing control, not an implementation plan',
+      )
+      return null
+    }
+
     return { type: 'leverGap', leverGap: { proposedLeverId, family, whatItWouldControl } }
   }
 
@@ -802,7 +857,7 @@ export const parseReflectionResponse = (text: string): ParsedReflectionResponse 
       : affectedTaskIds
     const doesNotClaim = typeof obj.doesNotClaim === 'string' ? obj.doesNotClaim.trim() : ''
     if (!title || !prompt) continue
-    const outcome = parseAndValidateOutcome(obj.outcome, registry)
+    const outcome = parseAndValidateOutcome(obj.outcome, registry, prompt)
     if (!outcome) continue
     suggestions.push({
       title,
