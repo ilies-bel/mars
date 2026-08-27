@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import { ChatRunner } from '../chat-runner'
-import { CHAT_SYSTEM_PROMPT } from '../chat-system-prompt'
+import { CHAT_ONBOARDING_PROMPT } from '../chat-onboarding-prompt'
 import type { StreamCodexResponseOpts } from '../codex-api'
 
 const agentMessage = (text: string): unknown => ({
@@ -112,7 +112,7 @@ describe('chat onboarding first-slice queue offer', () => {
   })
 
   it('shows a first-slice plan after saving the Vision, then queues it only after go', async () => {
-    expect(CHAT_SYSTEM_PROMPT).toContain('After the Vision is captured')
+    expect(CHAT_ONBOARDING_PROMPT).toContain('After the Vision is captured')
 
     mockStream
       .mockImplementationOnce(streamEmitting(commandExecution('vision', 'mars vision set "Build a project dashboard"'), completedEvent()))

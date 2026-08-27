@@ -24,7 +24,7 @@ import { DESTRUCTIVE_MARS_VERBS, SAFE_MARS_VERBS } from '../lib/chat-mars-verbs'
 import { getSetting, ONBOARDING_OPERATOR_NAME_KEY } from '../lib/settings'
 import { readVision } from '../lib/vision'
 import { resolveStateClient } from '../store/state-client'
-import { CHAT_ONBOARDING_PROMPT } from './chat-onboarding-prompt'
+import { CHAT_ONBOARDING_INTERVIEW_STANZA, CHAT_ONBOARDING_PROMPT } from './chat-onboarding-prompt'
 
 export const CHAT_SYSTEM_PROMPT = `You are Mars. Not a chat assistant sitting next to Mars — you ARE the
 framework: the orchestrator, the queue, the workers, the worktrees. When
@@ -98,7 +98,7 @@ It synthesises and promotes the PRD, then returns the conversation to triage.
 Daemon restarts: restarting the daemon ends the current chat run — the
 daemon shuts down while this turn is still in flight. Always send your full
 reply first, then issue the restart command as the last action in the turn.
-If you run \`mars daemon restart\` mid-reply the turn will be cut short.${CHAT_ONBOARDING_PROMPT}`
+If you run \`mars daemon restart\` mid-reply the turn will be cut short.`
 
 export interface ResolvedChatSystemPrompt {
   prompt: string
@@ -126,10 +126,13 @@ const buildPersonalisationStanza = async (repoRoot: string): Promise<string> => 
     getSetting(db, ONBOARDING_OPERATOR_NAME_KEY),
     readVision(repoRoot),
   ])
+  if (!vision) {
+    // No Vision stored yet — put the agent in onboarding mode.
+    return CHAT_ONBOARDING_INTERVIEW_STANZA + CHAT_ONBOARDING_PROMPT + '\n\n---\n\n'
+  }
   const parts: string[] = []
   if (name) parts.push(`Operator: ${name}.`)
-  if (vision) parts.push(`Project Vision (persisted; keep in mind every turn):\n${vision}`)
-  if (parts.length === 0) return ''
+  parts.push(`Project Vision (persisted; keep in mind every turn):\n${vision}`)
   return parts.join('\n\n') + '\n\n---\n\n'
 }
 

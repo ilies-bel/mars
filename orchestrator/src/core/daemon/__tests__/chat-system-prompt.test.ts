@@ -38,39 +38,47 @@ describe('resolveChatSystemPrompt', () => {
     await rm(repoRoot, { recursive: true, force: true })
   })
 
-  it('returns CHAT_SYSTEM_PROMPT when the override file is absent', async () => {
+  it('uses the built-in base prompt when the override file is absent', async () => {
     const result = await resolveChatSystemPrompt(repoRoot)
-    expect(result).toEqual({ prompt: CHAT_SYSTEM_PROMPT, source: 'built-in' })
+    // The stanza (onboarding mode, since readVision is mocked null) is always
+    // prepended to the base, so the prompt is not exactly CHAT_SYSTEM_PROMPT.
+    expect(result.source).toBe('built-in')
+    expect(result.prompt).toContain(CHAT_SYSTEM_PROMPT)
   })
 
-  it('returns trimmed file contents when the override file exists and is non-empty', async () => {
+  it('uses trimmed file contents as the base when the override file exists and is non-empty', async () => {
     const custom = '  My custom operator prompt.\nSecond line.  '
     await writeFile(join(repoRoot, '.mars', 'chat-system-prompt.md'), custom, 'utf8')
 
     const result = await resolveChatSystemPrompt(repoRoot)
-    expect(result).toEqual({ prompt: custom.trim(), source: 'override' })
+    // The stanza is prepended even for override prompts; the base is custom.trim().
+    expect(result.source).toBe('override')
+    expect(result.prompt).toContain(custom.trim())
   })
 
-  it('falls back to CHAT_SYSTEM_PROMPT when the override file is empty', async () => {
+  it('falls back to the built-in base when the override file is empty', async () => {
     await writeFile(join(repoRoot, '.mars', 'chat-system-prompt.md'), '', 'utf8')
 
     const result = await resolveChatSystemPrompt(repoRoot)
-    expect(result).toEqual({ prompt: CHAT_SYSTEM_PROMPT, source: 'built-in' })
+    expect(result.source).toBe('built-in')
+    expect(result.prompt).toContain(CHAT_SYSTEM_PROMPT)
   })
 
-  it('falls back to CHAT_SYSTEM_PROMPT when the override file is whitespace-only', async () => {
+  it('falls back to the built-in base when the override file is whitespace-only', async () => {
     await writeFile(join(repoRoot, '.mars', 'chat-system-prompt.md'), '   \n\t\n  ', 'utf8')
 
     const result = await resolveChatSystemPrompt(repoRoot)
-    expect(result).toEqual({ prompt: CHAT_SYSTEM_PROMPT, source: 'built-in' })
+    expect(result.source).toBe('built-in')
+    expect(result.prompt).toContain(CHAT_SYSTEM_PROMPT)
   })
 
-  it('falls back to CHAT_SYSTEM_PROMPT when .mars directory does not exist', async () => {
+  it('falls back to the built-in base when .mars directory does not exist', async () => {
     // Remove the .mars dir entirely so the read throws ENOENT.
     await rm(join(repoRoot, '.mars'), { recursive: true })
 
     const result = await resolveChatSystemPrompt(repoRoot)
-    expect(result).toEqual({ prompt: CHAT_SYSTEM_PROMPT, source: 'built-in' })
+    expect(result.source).toBe('built-in')
+    expect(result.prompt).toContain(CHAT_SYSTEM_PROMPT)
   })
 })
 
