@@ -207,23 +207,30 @@ describe('computeMissingGates — predicate-based filtering (real registry)', ()
     expect(entries.map((e) => e.id)).toContain('verify.add-typecheck')
   })
 
-  it('does not offer the typecheck recipe for a JS-only repo with no TypeScript evidence', async () => {
-    // Create a minimal JS-only repo: index.js + package.json with no typescript dep
+  it('does not offer typecheck outside the fallback path for a JS-only repo', async () => {
+    // A bare JS repo has no TypeScript, no test files, no linter, no playwright —
+    // ALL predicates fail. The DEC-15 fallback kicks in (isFallback: true), which
+    // means typecheck's predicate correctly returned false (no false positive match).
     writeFileSync(join(tmpDir, 'index.js'), 'module.exports = {}')
     writeFileSync(join(tmpDir, 'package.json'), JSON.stringify({ scripts: { start: 'node index.js' } }))
     const fn = await realComputeMissingGates()
-    const { entries } = fn([], tmpDir)
-    expect(entries.map((e) => e.id)).not.toContain('verify.add-typecheck')
+    const { isFallback } = fn([], tmpDir)
+    // isFallback: true confirms no predicate matched — hasTypescriptEvidence returned
+    // false, as did all other recipe predicates. Any non-fallback result would imply
+    // a false-positive predicate match.
+    expect(isFallback).toBe(true)
   })
 
-  it('still returns a non-empty list when the typecheck predicate fails (DEC-15 guard)', async () => {
-    // JS-only repo: typecheck predicate fails, but entries without predicates survive
+  it('still returns a non-empty list when all predicates fail (DEC-15 guard)', async () => {
+    // A bare JS repo — no TypeScript, no tests, no linter, no playwright — causes
+    // all recipe predicates to fail. The DEC-15 fallback returns the full
+    // maturity-ordered list so onboarding always has a gate to dispatch.
     writeFileSync(join(tmpDir, 'index.js'), 'module.exports = {}')
     writeFileSync(join(tmpDir, 'package.json'), JSON.stringify({ scripts: {} }))
     const fn = await realComputeMissingGates()
-    const { entries } = fn([], tmpDir)
-    // The other recipes (test, lint, e2e, etc.) have no predicate → always applicable
+    const { entries, isFallback } = fn([], tmpDir)
     expect(entries.length).toBeGreaterThan(0)
+    expect(isFallback).toBe(true)
   })
 
   it('sets isFallback: false when at least one predicate matches', async () => {
@@ -317,5 +324,140 @@ describe('buildGateTaskPrompt — fallback problem statement', () => {
     // The fixture problem is 'Repo has files but no typecheck gate.'
     const { prompt } = buildGateTaskPrompt(entry, { isFallback: false })
     expect(prompt).toContain('Repo has files but no typecheck gate.')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Table-driven registry invariant — every recipe that asserts a repo property
+// must carry a predicate (HR-8 regression guard).
+// ---------------------------------------------------------------------------
+// This is the most important guard in the file: it ensures a future recipe
+// cannot silently assert "Your repo has X" without a predicate that checks X.
+
+describe('lever registry — predicate completeness invariant (table-driven)', () => {
+  /**
+   * Pattern that detects a second-person repo-property claim in a recipe's
+   * problem string. Any problem sentence that begins with "Your repo has"
+   * asserts a specific property of the operator's repo and therefore requires
+   * a predicate so the assertion is actually checked before the recipe is
+   * offered.
+   */
+  const REPO_CLAIM_PATTERN = /Your repo has\b/i
+
+  it('every recipe whose problem text makes a second-person repo claim carries a predicate', async () => {
+    vi.resetModules()
+    vi.doMock('../../core/lib/lever-registry.js', async () =>
+      vi.importActual('../../core/lib/lever-registry.js'),
+    )
+    const { loadLeverRegistry } = await import('../../core/lib/lever-registry.js')
+    const registry = loadLeverRegistry()
+
+    const violations: string[] = []
+    for (const entry of registry) {
+      if (!entry.recipe) continue
+      if (!REPO_CLAIM_PATTERN.test(entry.recipe.problem)) continue
+      if (!entry.recipe.predicate) {
+        violations.push(
+          `${entry.id}: problem asserts "${entry.recipe.problem.slice(0, 60)}…" but has no predicate`,
+        )
+      }
+    }
+
+    expect(violations).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Direct predicate tests — each new predicate against real temp directories
+// ---------------------------------------------------------------------------
+
+describe('computeMissingGates — unit-test, lint, and e2e predicate filtering (real registry)', () => {
+  let tmpDir: string
+
+  beforeEach(() => {
+    vi.resetModules()
+    tmpDir = mkdtempSync(resolve(tmpdir(), 'mars-cmg-preds-'))
+  })
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true })
+    vi.restoreAllMocks()
+  })
+
+  async function realComputeMissingGates() {
+    vi.doMock('../../core/lib/lever-registry.js', async () =>
+      vi.importActual('../../core/lib/lever-registry.js'),
+    )
+    return (await import('../compute-missing-gates.js')).computeMissingGates
+  }
+
+  // ── unit-test predicate ──────────────────────────────────────────────────
+
+  it('offers the unit-test recipe when a test/ directory exists', async () => {
+    const { mkdirSync } = await import('node:fs')
+    mkdirSync(join(tmpDir, 'test'))
+    const fn = await realComputeMissingGates()
+    const { entries, isFallback } = fn([], tmpDir)
+    expect(isFallback).toBe(false)
+    expect(entries.map((e) => e.id)).toContain('verify.add-unit-tests')
+  })
+
+  it('does not offer the unit-test recipe for a repo with no test evidence', async () => {
+    // A repo with neither a test directory nor a test script nor test files.
+    writeFileSync(join(tmpDir, 'index.js'), 'module.exports = {}')
+    writeFileSync(join(tmpDir, 'package.json'), JSON.stringify({ scripts: {} }))
+    const fn = await realComputeMissingGates()
+    const { isFallback } = fn([], tmpDir)
+    // All predicates fail → DEC-15 fallback. The fallback confirms no test
+    // evidence was found (otherwise some predicate would have matched).
+    expect(isFallback).toBe(true)
+  })
+
+  // ── lint predicate ───────────────────────────────────────────────────────
+
+  it('offers the lint recipe when .eslintrc.json exists', async () => {
+    writeFileSync(join(tmpDir, '.eslintrc.json'), '{"root":true}')
+    const fn = await realComputeMissingGates()
+    const { entries, isFallback } = fn([], tmpDir)
+    expect(isFallback).toBe(false)
+    expect(entries.map((e) => e.id)).toContain('verify.add-lint')
+  })
+
+  it('does not offer the lint recipe for a repo with no linter evidence', async () => {
+    writeFileSync(join(tmpDir, 'index.js'), 'module.exports = {}')
+    writeFileSync(join(tmpDir, 'package.json'), JSON.stringify({ scripts: {} }))
+    const fn = await realComputeMissingGates()
+    const { isFallback } = fn([], tmpDir)
+    expect(isFallback).toBe(true)
+  })
+
+  // ── e2e predicate ────────────────────────────────────────────────────────
+
+  it('offers the e2e recipe when playwright.config.ts exists', async () => {
+    writeFileSync(join(tmpDir, 'playwright.config.ts'), 'export default {}')
+    const fn = await realComputeMissingGates()
+    const { entries, isFallback } = fn([], tmpDir)
+    expect(isFallback).toBe(false)
+    expect(entries.map((e) => e.id)).toContain('verify.add-e2e')
+  })
+
+  it('does not offer the e2e recipe for a repo with no playwright evidence', async () => {
+    writeFileSync(join(tmpDir, 'index.js'), 'module.exports = {}')
+    writeFileSync(join(tmpDir, 'package.json'), JSON.stringify({ scripts: {} }))
+    const fn = await realComputeMissingGates()
+    const { isFallback } = fn([], tmpDir)
+    expect(isFallback).toBe(true)
+  })
+
+  // ── DEC-15 fallback with all new predicates ──────────────────────────────
+
+  it('yields isFallback: true and non-empty entries when no predicate matches (DEC-15 with all predicates)', async () => {
+    // Bare repo — no TypeScript, no tests, no linter, no playwright.
+    writeFileSync(join(tmpDir, 'index.js'), 'module.exports = {}')
+    writeFileSync(join(tmpDir, 'package.json'), JSON.stringify({ name: 'bare-repo' }))
+    const fn = await realComputeMissingGates()
+    const { entries, isFallback } = fn([], tmpDir)
+    expect(isFallback).toBe(true)
+    expect(entries.length).toBeGreaterThan(0)
   })
 })

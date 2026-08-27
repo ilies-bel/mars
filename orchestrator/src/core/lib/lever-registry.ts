@@ -245,6 +245,171 @@ function hasTypescriptEvidence(repoRoot: string): boolean {
   return scan(repoRoot, 0)
 }
 
+/**
+ * Returns `true` when the repo at `repoRoot` has observable unit-test
+ * evidence — a `test`, `tests`, or `__tests__` directory at the root; a
+ * `test` script in `package.json`; or at least one `*.test.*` / `*.spec.*`
+ * file outside `node_modules` (depth-limited to 3 levels).
+ *
+ * Used as the `predicate` for `verify.add-unit-tests` so the recipe is only
+ * offered when the repo actually has tests to run (HR-8).
+ */
+function hasTestEvidence(repoRoot: string): boolean {
+  // 1. test / tests / __tests__ directory at repo root
+  for (const dir of ['test', 'tests', '__tests__']) {
+    if (existsSync(join(repoRoot, dir))) return true
+  }
+
+  // 2. test script in package.json
+  const pkgPath = join(repoRoot, 'package.json')
+  if (existsSync(pkgPath)) {
+    try {
+      const pkg = JSON.parse(readFileSync(pkgPath, 'utf8')) as Record<
+        string,
+        Record<string, string> | undefined
+      >
+      if (pkg['scripts']?.['test'] !== undefined) return true
+    } catch {
+      // malformed package.json — fall through
+    }
+  }
+
+  // 3. Any *.test.* / *.spec.* file outside node_modules (depth-limited)
+  const scan = (dir: string, depth: number): boolean => {
+    if (depth > 3) return false
+    try {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        if (entry.name === 'node_modules' || entry.name.startsWith('.')) continue
+        if (entry.isFile() && /\.(test|spec)\.[^.]+$/.test(entry.name)) {
+          return true
+        }
+        if (entry.isDirectory() && scan(join(dir, entry.name), depth + 1)) {
+          return true
+        }
+      }
+    } catch {
+      // permission error or inaccessible directory — skip
+    }
+    return false
+  }
+  return scan(repoRoot, 0)
+}
+
+/**
+ * Returns `true` when the repo at `repoRoot` has observable linter evidence —
+ * an `.eslintrc*` or `eslint.config.*` file at the root, an `eslintConfig`
+ * key in `package.json`, or `eslint` declared in dependencies or
+ * devDependencies.
+ *
+ * Used as the `predicate` for `verify.add-lint` so the recipe is only offered
+ * when the repo actually has a linter configured (HR-8).
+ */
+function hasLinterEvidence(repoRoot: string): boolean {
+  // 1. .eslintrc* or eslint.config.* at repo root
+  try {
+    for (const name of readdirSync(repoRoot)) {
+      if (/^\.eslintrc(\.[^.]*)?$/.test(name) || /^eslint\.config\.[^.]+$/.test(name)) {
+        return true
+      }
+    }
+  } catch {
+    // inaccessible directory — fall through
+  }
+
+  // 2. eslintConfig key or eslint dependency in package.json
+  const pkgPath = join(repoRoot, 'package.json')
+  if (existsSync(pkgPath)) {
+    try {
+      const pkg = JSON.parse(readFileSync(pkgPath, 'utf8')) as Record<string, unknown>
+      if ('eslintConfig' in pkg) return true
+      const deps = pkg['dependencies'] as Record<string, string> | undefined
+      const devDeps = pkg['devDependencies'] as Record<string, string> | undefined
+      if (deps?.['eslint'] !== undefined || devDeps?.['eslint'] !== undefined) {
+        return true
+      }
+    } catch {
+      // malformed package.json — fall through
+    }
+  }
+
+  return false
+}
+
+/**
+ * Returns `true` when the repo at `repoRoot` has observable Playwright /
+ * browser-test evidence — a `playwright.config.*` file at the root,
+ * `@playwright/test` declared in dependencies or devDependencies, or an
+ * `e2e` directory at the root.
+ *
+ * Used as the `predicate` for `verify.add-e2e` so the recipe is only offered
+ * when the repo actually has E2E tests (HR-8).
+ */
+function hasPlaywrightEvidence(repoRoot: string): boolean {
+  // 1. playwright.config.* at repo root
+  try {
+    for (const name of readdirSync(repoRoot)) {
+      if (/^playwright\.config\.[^.]+$/.test(name)) return true
+    }
+  } catch {
+    // inaccessible directory — fall through
+  }
+
+  // 2. @playwright/test dependency in package.json
+  const pkgPath = join(repoRoot, 'package.json')
+  if (existsSync(pkgPath)) {
+    try {
+      const pkg = JSON.parse(readFileSync(pkgPath, 'utf8')) as Record<
+        string,
+        Record<string, string> | undefined
+      >
+      if (
+        pkg['dependencies']?.['@playwright/test'] !== undefined ||
+        pkg['devDependencies']?.['@playwright/test'] !== undefined
+      ) {
+        return true
+      }
+    } catch {
+      // malformed package.json — fall through
+    }
+  }
+
+  // 3. e2e/ directory at repo root
+  if (existsSync(join(repoRoot, 'e2e'))) return true
+
+  return false
+}
+
+/**
+ * Returns `true` when the repo at `repoRoot` has observable integration-test
+ * evidence — a `test:integration` script in `package.json`, or an
+ * `integration`, `integration-tests`, or `test/integration` directory.
+ *
+ * Used as the `predicate` for `verify.add-integration-tests` so the recipe is
+ * only offered when the repo actually has integration tests (HR-8).
+ */
+function hasIntegrationTestEvidence(repoRoot: string): boolean {
+  // 1. test:integration script in package.json
+  const pkgPath = join(repoRoot, 'package.json')
+  if (existsSync(pkgPath)) {
+    try {
+      const pkg = JSON.parse(readFileSync(pkgPath, 'utf8')) as Record<
+        string,
+        Record<string, string> | undefined
+      >
+      if (pkg['scripts']?.['test:integration'] !== undefined) return true
+    } catch {
+      // malformed package.json — fall through
+    }
+  }
+
+  // 2. integration / integration-tests / test/integration directory
+  for (const dir of ['integration', 'integration-tests', join('test', 'integration')]) {
+    if (existsSync(join(repoRoot, dir))) return true
+  }
+
+  return false
+}
+
 // ─── Registry ─────────────────────────────────────────────────────────────────
 
 const REGISTRY: LeverRegistryEntry[] = [
@@ -381,6 +546,7 @@ const REGISTRY: LeverRegistryEntry[] = [
       ],
       verifyGate: { name: 'test', cmd: 'npm', args: ['test'] },
       maturityLevel: 'tests',
+      predicate: hasTestEvidence,
     },
   },
   {
@@ -403,6 +569,7 @@ const REGISTRY: LeverRegistryEntry[] = [
       ],
       verifyGate: { name: 'lint', cmd: 'npx', args: ['eslint', '.'] },
       maturityLevel: 'tests',
+      predicate: hasLinterEvidence,
     },
   },
   {
@@ -429,6 +596,7 @@ const REGISTRY: LeverRegistryEntry[] = [
       ],
       verifyGate: { name: 'e2e', cmd: 'npx', args: ['playwright', 'test'] },
       maturityLevel: 'e2e',
+      predicate: hasPlaywrightEvidence,
     },
   },
   {
@@ -451,6 +619,7 @@ const REGISTRY: LeverRegistryEntry[] = [
         'Add gate: mars verify add integration --cmd npm --args "run test:integration"',
       ],
       maturityLevel: 'tests',
+      predicate: hasIntegrationTestEvidence,
     },
   },
   {
