@@ -428,7 +428,7 @@ export const startDaemon = async (
   const env = opts.env ?? process.env
   const integrationBranch =
     opts.integrationBranch ?? resolveIntegrationBranch()
-  const { socket: socketPath, pidFile, logFile, httpPortFile, runningMarker, crashMarker, lockFile } = daemonPaths()
+  const { socket: socketPath, pidFile, logFile, httpPortFile, runningMarker, crashMarker, lockFile, socketPathFile } = daemonPaths()
 
   // ── Unclean-exit detection (before any file mutations) ───────────────────
   // If `daemon.running.json` exists from a prior run that never completed
@@ -6499,7 +6499,7 @@ export const startDaemon = async (
             resolvePath(resolveContext().stateDir, 'pg.dsn'),
           ]
         : []
-    for (const f of [socketPath, pidFile, httpPortFile, runningMarker, crashMarker, lockFile, ...pgPublishFiles]) {
+    for (const f of [socketPath, pidFile, httpPortFile, runningMarker, crashMarker, lockFile, socketPathFile, ...pgPublishFiles]) {
       if (existsSync(f)) {
         try {
           unlinkSync(f)

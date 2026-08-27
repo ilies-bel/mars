@@ -1,12 +1,36 @@
 import { spawn, type ChildProcess } from 'node:child_process'
-import { appendFileSync, existsSync, mkdirSync, readFileSync, unlinkSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { createConnection } from 'node:net'
+import { tmpdir } from 'node:os'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { resolveContext } from '../context'
 
+/**
+ * Maximum byte length of a UNIX domain socket path (sockaddr_un.sun_path),
+ * including the null terminator the OS appends when binding. macOS allows 104
+ * bytes; Linux allows 108 bytes. We use the smaller value so the behaviour is
+ * identical across both platforms, and subtract one for the null terminator.
+ *
+ * A socket path that exceeds this limit causes bind(2) to fail with EINVAL —
+ * the error gives no hint that the cause is path length. The constant is named
+ * after the POSIX structure to make the origin unambiguous.
+ */
+const SOCKADDR_UN_PATH_MAX = 103
+
 export interface DaemonPaths {
   socket: string
+  /**
+   * `<stateDir>/watch.sock.path` — written (one line) when the natural socket
+   * path exceeds the OS limit and `socket` falls back to a short path under
+   * `os.tmpdir()`. Deleted at clean shutdown alongside the other markers.
+   *
+   * The file lets operators discover the daemon socket from `.mars/` even when
+   * it lives outside the repo directory. Programmatic consumers use `socket`
+   * directly via `daemonPaths()`, which already returns the correct path.
+   */
+  socketPathFile: string
   pidFile: string
   logFile: string
   /** File that stores the TCP port of the daemon's local HTTP API (one line). */
@@ -35,8 +59,51 @@ export interface DaemonPaths {
 
 export const daemonPaths = (repo?: string): DaemonPaths => {
   const ctx = resolveContext(repo)
+  const socketPathFile = resolve(ctx.stateDir, 'watch.sock.path')
+
+  // Compute the natural socket path and check it against the OS limit.
+  // Buffer.byteLength measures in bytes (the unit bind(2) cares about), not
+  // characters — a repo path with multi-byte characters would be
+  // under-measured by String.length.
+  const naturalSocket = resolve(ctx.stateDir, 'watch.sock')
+  let socket: string
+  if (Buffer.byteLength(naturalSocket, 'utf8') <= SOCKADDR_UN_PATH_MAX) {
+    // Common case: the natural path fits — return it unchanged so every
+    // existing install is completely unaffected.
+    socket = naturalSocket
+  } else {
+    // The natural path exceeds the limit; derive a short, stable, per-repo
+    // fallback under os.tmpdir(). The hash makes the name deterministic (so
+    // daemon and client independently reach the same path) and distinct per
+    // repo (so two long-path installs never collide).
+    const repoHash = createHash('sha256').update(ctx.repoRoot).digest('hex').slice(0, 12)
+    const fallbackSocket = resolve(tmpdir(), `mars-${repoHash}.sock`)
+
+    if (Buffer.byteLength(fallbackSocket, 'utf8') > SOCKADDR_UN_PATH_MAX) {
+      // The tmpdir itself is unusually long — nothing we can do automatically.
+      throw new Error(
+        `the socket path Mars needs is ${Buffer.byteLength(fallbackSocket, 'utf8')} bytes ` +
+          `and the operating system allows ${SOCKADDR_UN_PATH_MAX} — ` +
+          `install this repo at a shorter path`,
+      )
+    }
+
+    // Write the indirection pointer into .mars/ so operators can discover the
+    // socket without knowing about the fallback. This write is best-effort and
+    // idempotent; if it fails the daemon still starts correctly.
+    try {
+      mkdirSync(ctx.stateDir, { recursive: true })
+      writeFileSync(socketPathFile, fallbackSocket + '\n', 'utf8')
+    } catch {
+      // Best-effort only — the socket path itself is the source of truth.
+    }
+
+    socket = fallbackSocket
+  }
+
   return {
-    socket: resolve(ctx.stateDir, 'watch.sock'),
+    socket,
+    socketPathFile,
     pidFile: resolve(ctx.stateDir, 'watch.pid'),
     logFile: resolve(ctx.stateDir, 'watch.log'),
     httpPortFile: resolve(ctx.stateDir, 'http.port'),

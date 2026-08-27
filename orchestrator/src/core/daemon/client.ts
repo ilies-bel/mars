@@ -47,6 +47,25 @@ const spawnDaemon = async (
       return
     }
   }
+
+  // A daemon that died during boot is not a slow start — surface the actual
+  // failure reason so the operator does not have to open the log file.
+  let bootFailureReason: string | null = null
+  try {
+    const logContent = readFileSync(logFile, 'utf8')
+    for (const line of logContent.split('\n').reverse()) {
+      const match = line.match(/daemon boot failed:\s*(.+)/)
+      if (match) {
+        bootFailureReason = match[1]!.trim()
+        break
+      }
+    }
+  } catch {
+    // Log file may not exist or may be unreadable — fall through.
+  }
+  if (bootFailureReason) {
+    throw new Error(`daemon boot failed: ${bootFailureReason}`)
+  }
   throw new Error(
     `daemon did not come up within ${CONNECT_TIMEOUT_MS}ms (check ${logFile})`,
   )
