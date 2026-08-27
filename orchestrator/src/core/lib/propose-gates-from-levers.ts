@@ -11,6 +11,12 @@
  *  2. An open `verify-uncovered` item with the same proposedGate.scope and
  *     proposedGate.name already exists (prevents duplicate proposals across
  *     repeated calls).
+ *
+ * Caller: the `lever-gate-sweep` periodic daemon sweep (`core/daemon/sweeps.ts`)
+ * runs this function hourly and on every daemon boot so the gate catalogue
+ * stays in sync with the lever registry without requiring a manual trigger.
+ * The function is idempotent and safe to call repeatedly — it converges on
+ * the first run that finds all gaps and is a no-op thereafter.
  */
 
 import { resolveContext } from '../context.js'

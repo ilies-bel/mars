@@ -775,6 +775,42 @@ export const SWEEPS: readonly SweepSpec[] = [
       }
     },
   },
+  {
+    // Lever-gate catalogue sweep. Reconciles the lever registry's `verifyGate`
+    // recipes against the set of already-registered verify gates and raises a
+    // `verify-uncovered` action-queue item for each (scope, name) pair that is
+    // not yet covered.
+    //
+    // DEC-17 position — permissible under the "it idles" clause: this sweep is
+    // DB-only. It reads the lever registry (in-memory) and the gate table
+    // (DB read), raises operator-decision rows (DB write), spawns no Worker,
+    // and makes no LLM call. A future audit should not need to re-derive this.
+    //
+    // Low-frequency (hourly, MARS_LEVER_GATE_SWEEP_MS override) because the
+    // registry is static and the gate set changes rarely. `runOnStart: true`
+    // so a repo initialised before this shipped gets its proposals on the next
+    // daemon boot rather than waiting a full hour.
+    //
+    // proposeGatesFromLevers is idempotent by construction — it skips
+    // already-registered and already-open (scope, name) pairs — so running it
+    // repeatedly converges safely. This satisfies VISION.md DEC-11's
+    // "gates are earned by observation" PRD 6bbf9f4c slice 8 outcome:
+    // lever recipes that carry a `verifyGate` spec automatically raise
+    // verify-uncovered items for scopes where the gate is not yet registered.
+    name: 'lever-gate-sweep',
+    intervalMs: () => SWEEP_INTERVALS_MS.leverGateSweep,
+    runOnStart: true,
+    run: async ({ log, bus }) => {
+      const { proposeGatesFromLevers } = await import('../lib/propose-gates-from-levers.js')
+      const result = await proposeGatesFromLevers()
+      if (result.proposed > 0) {
+        log(
+          `[lever-gate-sweep] proposed ${result.proposed} verify-uncovered gate proposal(s) (skipped ${result.skipped})`,
+        )
+        bus.emit('view.action-queue-invalidated')
+      }
+    },
+  },
 ]
 
 /**

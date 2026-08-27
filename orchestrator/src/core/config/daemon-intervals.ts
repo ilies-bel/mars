@@ -85,6 +85,12 @@ export interface SweepIntervalsMs {
   reflectDetector: number
   /** Shared cadence for stale-queued-watchdog, awaiting-validation-watchdog and phantom-watchdog. */
   phantomWatchdog: number
+  /**
+   * Cadence for the lever-gate-sweep that reconciles lever recipes against the
+   * registered gate set and raises verify-uncovered proposals for any gap.
+   * Defaults to 1 h — the registry is static and the gate set changes rarely.
+   */
+  leverGateSweep: number
 }
 
 /** Cadences (+ the committer lifetime and backlog-sustain thresholds) for `sweeps.ts`'s `SWEEPS` registry. @param env injectable for hermetic tests; defaults to `process.env`. */
@@ -102,6 +108,7 @@ export const resolveSweepIntervalsMs = (env: NodeJS.ProcessEnv = process.env): S
   backlogSustain: msFromEnv(env, 'MARS_BACKLOG_SUSTAIN_MS', 60_000),
   reflectDetector: msFromEnv(env, 'MARS_REFLECT_DETECTOR_MS', 5 * 60_000),
   phantomWatchdog: msFromEnv(env, 'MARS_PHANTOM_WATCHDOG_MS', 5 * 60_000),
+  leverGateSweep: msFromEnv(env, 'MARS_LEVER_GATE_SWEEP_MS', 60 * 60_000),
 })
 
 /**
