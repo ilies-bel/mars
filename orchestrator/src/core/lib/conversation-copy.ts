@@ -55,7 +55,7 @@ export interface AutonomousNoticePayloads {
    */
   'suggestion.codegraph': { tasksRun: number; windowDays: number }
   /** Commits reaching the integration branch outside the pipeline. */
-  'observation.manual-push': { commits: number; windowDays: number; branch: string }
+  'observation.manual-push': { commits: number; marsCommits: number; windowDays: number; branch: string }
   /**
    * Token spend rose measurably against the operator's own baseline. Mars
    * reports the trend it measured and offers to go find the cause — it does
@@ -209,7 +209,7 @@ const REGISTRY: { [Kind in AutonomousNoticeKind]: NoticeKindEntry<Kind> } = {
   'observation.manual-push': {
     act: 'offer',
     render: (p) =>
-      `${p.commits} commits on ${sentenceValue(p.branch)} have never been through verify — I cannot vouch for them.`,
+      `Mars landed ${p.marsCommits} commits on ${sentenceValue(p.branch)}; ${p.commits} more arrived that have never been through verify — I cannot vouch for those.`,
     lever: UNVERIFIED_COMMITS_LEVER,
     offers: (p) => [
       {

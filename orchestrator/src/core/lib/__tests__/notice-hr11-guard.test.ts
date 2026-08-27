@@ -52,7 +52,7 @@ const REPRESENTATIVE_PAYLOADS: { [K in AutonomousNoticeKind]: AutonomousNoticePa
   },
   'session.idle-proposal': { proposalId: 'prop-1', title: 'Rework the merge gate' },
   'suggestion.codegraph': { tasksRun: 41, windowDays: 7 },
-  'observation.manual-push': { commits: 6, windowDays: 14, branch: 'main' },
+  'observation.manual-push': { commits: 6, marsCommits: 665, windowDays: 14, branch: 'main' },
   'trend.token-spend': { changePct: 38, windowDays: 14 },
   'gate.main-broken': { failingCheck: 'npm test', blockedTasks: 4 },
   'merge.operator-auto-commit': {

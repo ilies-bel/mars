@@ -2,15 +2,14 @@
  * Commits arriving on the integration branch outside the pipeline.
  *
  * This Notice reports what Mars observed, not what the operator did wrong.
- * HR-11 forbids evaluating the operator's method; the `marsCommits` field
- * gives the render layer enough context to frame the finding as a factual
- * comparison ("Mars landed N; M arrived outside") rather than a verdict.
+ * HR-11 forbids evaluating the operator's method; the render uses `marsCommits`
+ * to frame the finding as a factual comparison ("Mars landed N; M more arrived
+ * that have never been through verify") rather than a verdict about the
+ * operator's choices.
  *
- * Evidence rigour: attribution is built only from `merge_jobs.merged_sha` —
- * the branch tip after each Mars fast-forward. The `excludeTips` argument
- * lets `listCommits` exclude all commits reachable from those tips, so every
- * commit a multi-commit task branch contributed is correctly attributed, not
- * just its final SHA.
+ * Evidence rigour: attribution walks consecutive pairs of merge-tip SHAs via
+ * `listCommitRange` (`git rev-list from..to`), so every commit a multi-commit
+ * task branch contributed is correctly attributed, not just the recorded tip.
  *
  * The consequence of that rigour: before any merge has recorded a SHA there
  * is no evidence at all, and the detector stays silent rather than reading
@@ -24,10 +23,11 @@ export interface ManualPushObservation {
   windowDays: number
   branch: string
   /**
-   * How many commits Mars itself landed on `branch` in the same window. Lets
-   * the render layer present the finding as a factual comparison rather than
-   * treating the unaccounted count in isolation — supporting HR-11 compliance
-   * by avoiding any framing that evaluates the operator's method.
+   * How many commits Mars itself landed on `branch` in the same window.
+   * Rendered alongside `commits` as a denominator: "Mars landed N; M more
+   * arrived that have never been through verify" — a factual comparison that
+   * satisfies HR-11 by reporting repo state rather than evaluating the
+   * operator's method.
    */
   marsCommits: number
 }
@@ -39,20 +39,13 @@ export interface DetectManualPushOptions {
   threshold?: number
   now?: () => number
   /**
-   * Lists commits on `branch` since `sinceMs`, newest first, excluding
-   * commits reachable from any SHA in `excludeTips`.
+   * Lists commits on `branch` since `sinceMs`, newest first.
    *
-   * Ancestry-aware implementations pass `excludeTips` to
-   * `git log <branch> --not <excludeTips...>` so that every commit Mars
-   * fast-forwarded into the branch is attributed correctly, regardless of
-   * how many commits a task branch contributed.
-   *
-   * Callers that do not perform ancestry exclusion may safely ignore the
-   * third argument: TypeScript's structural typing treats a two-parameter
-   * function as a valid implementation of this three-parameter type, and the
-   * post-filter inside the detector catches exact SHA matches as a fallback.
+   * Attribution is done entirely by the detector via `listCommitRange` range
+   * walks between consecutive merge tips — this callback is responsible only
+   * for supplying the raw commit list. No `--not` exclusion is needed here.
    */
-  listCommits: (branch: string, sinceMs: number, excludeTips: readonly string[]) => Promise<readonly string[]>
+  listCommits: (branch: string, sinceMs: number) => Promise<readonly string[]>
   /**
    * Returns all SHAs reachable from `to` but not from `from`
    * (`git rev-list from..to`). When provided, the detector walks consecutive
@@ -101,7 +94,7 @@ export const detectManualPush = async (
   // No evidence is not evidence of wrongdoing.
   if (marsShas.size === 0) return null
 
-  const commits = await options.listCommits(options.branch, sinceMs, orderedMarsShAs)
+  const commits = await options.listCommits(options.branch, sinceMs)
 
   let unaccounted: number
   if (options.listCommitRange !== undefined && commits.length > 0) {
