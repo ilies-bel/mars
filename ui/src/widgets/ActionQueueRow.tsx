@@ -12,7 +12,7 @@
  */
 
 import { AlertCard } from '@/widgets/chat/AlertCard'
-import { isTaskFailureActionQueueKind } from '@/shared/schemas'
+import { isTaskFailureActionQueueKind, hasResolvableTask } from '@/shared/schemas'
 import type { ActionQueueItem, AlertVerb } from '@/shared/schemas'
 
 interface ActionQueueRowProps {
@@ -59,6 +59,7 @@ export const ActionQueueRow = ({ item }: ActionQueueRowProps) => {
       verbs={verbs}
       resolved={item.resolution != null}
       snoozeUntil={item.snoozeUntil}
+      isTaskBacked={hasResolvableTask(item)}
     />
   )
 }

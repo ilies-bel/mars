@@ -1,13 +1,22 @@
 /**
  * Jargon ban for action-queue copy.
  *
- * Scans (a) every kind's humanSummary from the recipe registry and (b) every
+ * Scans (a) every kind's humanSummary from the recipe registry, (b) every
  * non-null OPERATIONAL_ALERT_COPY entry's title, body, and optional
- * humanSummary for internal system terms that a non-expert operator should
- * never see.
+ * humanSummary for internal system terms, and (c) every registered failure
+ * kind's failedTaskTitle output for machine-slug shapes.
  *
- * A failing test prints a message like:
- *   Kind "baseline-broken" humanSummary contains banned term "integration branch"
+ * Two enforcement layers:
+ *
+ *   1. **Banned-word list** — explicit jargon terms a non-expert operator
+ *      should never see (e.g. "integration branch", "dispatch", "semaphore").
+ *      A failing test prints:
+ *        Kind "baseline-broken" humanSummary contains banned term "integration branch"
+ *
+ *   2. **Slug-shape assertion** — the class of defect the banned-word list
+ *      cannot catch: a `family/sub-class` token (lowercase, contains `/`),
+ *      which is a machine-internal failure signature shape.
+ *      Applied to failedTaskTitle outputs (DEC-18).
  *
  * This test is expected to fail until PRD b99b1deb slices 3 and 4 have landed
  * and fixed the violations in the recipe/operational-copy renderers.
@@ -21,6 +30,7 @@ import {
   type PersistedActionQueueRow,
 } from '../../daemon/view/action-queue'
 import type { DispatchPauseState } from '../../daemon/pause-state'
+import { FAILURE_KINDS, failedTaskTitle } from '../failure-kinds'
 
 // ── Banned terms ──────────────────────────────────────────────────────────────
 
@@ -232,5 +242,58 @@ describe('action-queue copy jargon ban', () => {
         }
       },
     )
+  })
+})
+
+// ── Slug-shape enforcement (DEC-18) ──────────────────────────────────────────
+
+/**
+ * A machine-slug shape: a lowercase token containing a forward slash, matching
+ * the `family/sub-class` form of internal failure signatures (e.g.
+ * `code/uncommitted-changes`, `verify:typecheck/typecheck-property-not-exist`).
+ *
+ * This pattern catches the class of defect the banned-word list cannot:
+ * `code/uncommitted-changes` is not a listed word, but it IS a slug that
+ * must never appear on the face of an operator-facing card.
+ *
+ * The regex matches any substring of the form `<lower-kebab>/<lower-kebab>`.
+ */
+const SLUG_SHAPE = /[a-z][a-z0-9-]*\/[a-z][a-z0-9-]*/
+
+describe('failedTaskTitle slug-shape enforcement (DEC-18)', () => {
+  it.each(FAILURE_KINDS.map((k) => [k.signature, k] as const))(
+    'failedTaskTitle for signature "%s" contains no machine-slug shape',
+    (_, kind) => {
+      // Test with and without a task id — the slug must not appear in either form.
+      const withId = failedTaskTitle({ signature: kind.signature, taskId: 'mars-deadbeef' })
+      const withoutId = failedTaskTitle({ signature: kind.signature })
+      expect(
+        withId,
+        `failedTaskTitle(${kind.signature}) [with id] contains a slug shape`,
+      ).not.toMatch(SLUG_SHAPE)
+      expect(
+        withoutId,
+        `failedTaskTitle(${kind.signature}) [no id] contains a slug shape`,
+      ).not.toMatch(SLUG_SHAPE)
+    },
+  )
+
+  it('a bare kind name drawn from ACTION_QUEUE_KINDS does not appear in humanSummary output', () => {
+    // Derived-condition rows whose entityId IS the kind slug (e.g. daemon-code-drift)
+    // must not have that slug bleed into the humanSummary the operator reads first.
+    for (const kind of ACTION_QUEUE_KINDS) {
+      const recipe = lookupRecipe(kind)
+      const summary = recipe.humanSummary(makeRecipeCtx(kind))
+      // A bare kind slug in humanSummary would be a machine name on the face.
+      // Allow the kind slug only when it is part of a natural English word
+      // (e.g. "failed" is both a kind and a common English word — allow it).
+      // The assertion targets multi-word kebab slugs (contain a hyphen).
+      if (kind.includes('-')) {
+        expect(
+          summary,
+          `Kind "${kind}" humanSummary contains the bare kind slug "${kind}"`,
+        ).not.toContain(kind)
+      }
+    }
   })
 })

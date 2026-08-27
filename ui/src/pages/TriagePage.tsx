@@ -450,14 +450,21 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
               {item.humanSummary}
             </p>
           )}
-          {(item.humanDetail?.errorExcerpt ?? item.humanDetail?.rawError) != null && (
+          {(item.humanDetail?.errorExcerpt ?? item.humanDetail?.rawError ?? item.humanDetail?.failureSignature) != null && (
             <CollapsibleSection
               label="Output"
               className="mt-1.5"
               data-testid="triage-output-disclosure"
             >
               <pre className="max-h-28 overflow-y-auto rounded bg-primary/10 p-1.5 font-mono text-micro text-primary/80 whitespace-pre-wrap break-all">
-                {item.humanDetail?.errorExcerpt ?? item.humanDetail?.rawError}
+                {[
+                  item.humanDetail?.failureSignature
+                    ? `signature: ${item.humanDetail.failureSignature}`
+                    : null,
+                  item.humanDetail?.errorExcerpt ?? item.humanDetail?.rawError,
+                ]
+                  .filter(Boolean)
+                  .join('\n')}
               </pre>
             </CollapsibleSection>
           )}
@@ -478,8 +485,11 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
           others, so a kind-only check would either dead-link the non-task rows
           or (as TASK_RECOVERY_KINDS did) deny the link to valid task rows of
           kinds it doesn't enumerate. See hasResolvableTask's doc comment in
-          shared/schemas.ts. */}
-      {hasResolvableTask(item) ? (
+          shared/schemas.ts.
+          Non-task-backed rows (entityId is a kind slug like "daemon-code-drift")
+          render nothing — the kind badge above already names the condition in
+          plain language and repeating the slug here is DEC-18 jargon. */}
+      {hasResolvableTask(item) && (
         <a
           href={taskHash(item.entityId, 'triage')}
           className="mb-2 block font-mono text-micro text-primary transition-colors hover:text-foreground hover:underline"
@@ -487,10 +497,6 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
         >
           {item.entityId}
         </a>
-      ) : (
-        <p className="mb-2 font-mono text-micro text-muted-dark">
-          {item.entityId}
-        </p>
       )}
 
       {/* Actions row */}

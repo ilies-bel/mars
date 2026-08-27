@@ -149,6 +149,17 @@ export interface AlertCardProps {
     label: string
     onAction: () => void
   }
+  /**
+   * When true the row is backed by a real task (dag !== null, entityId is a
+   * real task id) and the entity-id metadata link is rendered.
+   * When false or absent (the default) the entity-id is NOT rendered — the
+   * kind badge already names the condition in plain language and a machine slug
+   * (e.g. `daemon-code-drift`) on the card face would be DEC-18 jargon.
+   *
+   * Callers: ActionQueueRow passes `hasResolvableTask(item)`; chat-transcript
+   * callers that always have a real task id should pass `true`.
+   */
+  isTaskBacked?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -311,6 +322,7 @@ export const AlertCard = ({
   resolved = false,
   snoozeUntil: initialSnoozeUntil,
   bulkContinue,
+  isTaskBacked = false,
 }: AlertCardProps) => {
   const [pendingOp, setPendingOp] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
@@ -489,15 +501,20 @@ export const AlertCard = ({
         )}
       </div>
 
-      {/* Entity id — metadata row: smaller, muted mono */}
-      <a
-        href={entityHash}
-        className="mb-1.5 block font-mono text-micro text-primary/40 truncate hover:text-primary/60 hover:underline transition-colors"
-        data-testid="alert-card-entity-id"
-        aria-label={`Open details for ${entityId}`}
-      >
-        {entityId}
-      </a>
+      {/* Entity id — metadata row: smaller, muted mono.
+          Only rendered when the row is backed by a real task (isTaskBacked).
+          Non-task-backed derived conditions (e.g. daemon-code-drift) carry the
+          kind slug as entityId — showing it would be DEC-18 jargon on the face. */}
+      {isTaskBacked && (
+        <a
+          href={entityHash}
+          className="mb-1.5 block font-mono text-micro text-primary/40 truncate hover:text-primary/60 hover:underline transition-colors"
+          data-testid="alert-card-entity-id"
+          aria-label={`Open details for ${entityId}`}
+        >
+          {entityId}
+        </a>
+      )}
 
       {/* Resolution success message */}
       {resolvedOp !== null && (

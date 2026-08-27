@@ -52,10 +52,25 @@ describe('AlertCard – recipe rendering', () => {
     expect(html).toContain('data-testid="alert-card-summary"')
   })
 
-  it('renders entityId in the card', () => {
-    const html = render({ entityId: 'abc-123' })
+  it('renders entityId link when isTaskBacked=true', () => {
+    const html = render({ entityId: 'abc-123', isTaskBacked: true })
     expect(html).toContain('abc-123')
     expect(html).toContain('data-testid="alert-card-entity-id"')
+  })
+
+  it('suppresses entityId when isTaskBacked is absent (default false) — DEC-18', () => {
+    // Non-task-backed rows carry a kind slug as entityId (e.g. "daemon-code-drift").
+    // Rendering it on the card face would be jargon. The kind badge already names
+    // the condition; the entity-id line is omitted entirely.
+    const html = render({ entityId: 'daemon-code-drift' })
+    expect(html).not.toContain('data-testid="alert-card-entity-id"')
+    expect(html).not.toContain('daemon-code-drift')
+  })
+
+  it('suppresses entityId when isTaskBacked=false — DEC-18', () => {
+    const html = render({ entityId: 'signature-storm:unknown', isTaskBacked: false })
+    expect(html).not.toContain('data-testid="alert-card-entity-id"')
+    expect(html).not.toContain('signature-storm:unknown')
   })
 
   it('renders the kind icon for failed', () => {
@@ -377,30 +392,32 @@ describe('AlertCard – baseline-broken gate output', () => {
 // ---------------------------------------------------------------------------
 
 describe('AlertCard – entity id navigation', () => {
-  it('renders entity id as an anchor element (not inert text)', () => {
-    const html = render({ entityId: 't-999' })
+  // All tests in this block set isTaskBacked=true because they are testing
+  // the entity-id link's presence and routing for task-backed rows.
+  it('renders entity id as an anchor element (not inert text) when isTaskBacked=true', () => {
+    const html = render({ entityId: 't-999', isTaskBacked: true })
     // Must be an <a> tag containing the testid
     expect(html).toContain('<a')
     expect(html).toContain('data-testid="alert-card-entity-id"')
   })
 
   it('entity id link points to task hash for task-like kinds (failed-task)', () => {
-    const html = render({ entityId: 't-123', kind: 'failed-task' })
+    const html = render({ entityId: 't-123', kind: 'failed-task', isTaskBacked: true })
     expect(html).toContain('href="#/task/t-123?from=chat"')
   })
 
   it('entity id link points to task hash for arc-failed kind', () => {
-    const html = render({ entityId: 'origin-42', kind: 'arc-failed' })
+    const html = render({ entityId: 'origin-42', kind: 'arc-failed', isTaskBacked: true })
     expect(html).toContain('href="#/task/origin-42?from=chat"')
   })
 
   it('entity id link points to proposal hash for draft-proposal kind', () => {
-    const html = render({ entityId: 'p-456', kind: 'draft-proposal' })
+    const html = render({ entityId: 'p-456', kind: 'draft-proposal', isTaskBacked: true })
     expect(html).toContain('href="#/proposal/p-456?from=chat"')
   })
 
   it('entity id link is keyboard-accessible (has aria-label)', () => {
-    const html = render({ entityId: 't-999' })
+    const html = render({ entityId: 't-999', isTaskBacked: true })
     expect(html).toContain('aria-label=')
     expect(html).toContain('t-999')
   })

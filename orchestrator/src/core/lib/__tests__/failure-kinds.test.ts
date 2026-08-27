@@ -477,15 +477,25 @@ describe('new catalog entries for previously-unmatched signatures', () => {
 })
 
 describe('failedTaskTitle', () => {
-  it('leads with the signature and tags the task for a registered signature', () => {
+  it('returns the warm reason alone (no signature prefix) for a registered signature', () => {
+    // DEC-18: signature slugs must not appear on the face of what the operator
+    // reads first. arcGoal + entityId are the discriminators; the signature
+    // lives behind the Output/Details disclosure.
     expect(
       failedTaskTitle({
         signature: 'verify:typecheck/typecheck-cannot-find-name',
         taskId: 'mars-c6cab686',
       }),
     ).toBe(
-      'verify:typecheck/typecheck-cannot-find-name — The changes did not pass type-checking [task mars-c6cab686]',
+      'The changes did not pass type-checking [task mars-c6cab686]',
     )
+    // No slug shape in output
+    expect(
+      failedTaskTitle({
+        signature: 'verify:typecheck/typecheck-cannot-find-name',
+        taskId: 'mars-c6cab686',
+      }),
+    ).not.toMatch(/[a-z][a-z0-9-]*\/[a-z][a-z0-9-]*/)
   })
 
   it('uses a plain-English title when no failure-kind record exists', () => {
@@ -542,15 +552,16 @@ describe('failedTaskTitle', () => {
     )
   })
 
-  it('names the signature in the title for continue:base-refresh-conflict/merge-conflict-unresolved', () => {
-    // This is the signature coreContinueTask writes when git merge conflicts and
-    // the VCS supervisor cannot resolve it. The title must carry the full
-    // signature so the action-queue list is immediately scannable.
+  it('returns the warm reason for continue:base-refresh-conflict/merge-conflict-unresolved, no slug prefix', () => {
+    // DEC-18: the registered warmTitle is the face; the signature is evidence
+    // behind the disclosure — it must NOT appear in the face title.
     const title = failedTaskTitle({
       signature: 'continue:base-refresh-conflict/merge-conflict-unresolved',
       taskId: 'mars-5c83d931',
     })
-    expect(title).toContain('continue:base-refresh-conflict/merge-conflict-unresolved')
+    // No slug shape in output
+    expect(title).not.toMatch(/[a-z][a-z0-9-]*\/[a-z][a-z0-9-]*/)
+    expect(title).not.toContain('continue:base-refresh-conflict/merge-conflict-unresolved')
     expect(title).not.toContain('Mars could not determine why this task failed')
     expect(title).toContain('[task mars-5c83d931]')
   })
@@ -588,6 +599,30 @@ describe('failedTaskTitle', () => {
       taskId: 'bbbbbbbb',
     })
     expect(a).not.toBe(b)
+  })
+
+  it('no registered-kind title contains a machine-slug shape (family/sub-class)', () => {
+    // DEC-18 slug-shape enforcement: every registered kind's failedTaskTitle
+    // output must be free of `family/sub-class` tokens (lowercase, contains `/`).
+    // This is the class of defect that slipped through the banned-word list.
+    const SLUG_SHAPE = /[a-z][a-z0-9-]*\/[a-z][a-z0-9-]*/
+    for (const kind of FAILURE_KINDS) {
+      const title = failedTaskTitle({
+        signature: kind.signature,
+        taskId: 'test-task-id',
+      })
+      expect(
+        title,
+        `failedTaskTitle for "${kind.signature}" contains a machine-slug shape`,
+      ).not.toMatch(SLUG_SHAPE)
+    }
+  })
+
+  it('falls back to a discriminating output even when no signature, no captured error', () => {
+    // The last rung of the degradation ladder must never produce an empty string.
+    const title = failedTaskTitle({ signature: null })
+    expect(title.length).toBeGreaterThan(0)
+    expect(title).toBe('Mars could not determine why this task failed')
   })
 })
 

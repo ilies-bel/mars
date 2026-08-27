@@ -468,22 +468,30 @@ describe('TriageRow – task id is a link to the task detail drawer', () => {
   // gate-broken) or denies the link to real task rows of kinds it doesn't
   // enumerate (gate-broken carries a task id on SOME rows and a gate slug on
   // others — a single kind can't be classified either way).
-  it('signature-storm rows (entityId is a signature slug, no dag) keep plain text', () => {
+  //
+  // DEC-18 fix: non-task-backed rows must render NO entity line at all.
+  // The kind badge already names the condition in plain language; repeating
+  // the slug (e.g. "signature-storm:unknown", "verify/typecheck") as plain
+  // text is machine jargon on the card face. The entity id is suppressed, not
+  // demoted to plain text.
+  it('signature-storm rows (entityId is a signature slug, no dag) render no entity line', () => {
     mockItems.mockReturnValue([
       makeItem('signature-storm', { entityId: 'signature-storm:unknown', dag: null }),
     ])
     const html = renderToStaticMarkup(<TriagePage />)
     expect(html).not.toContain('data-testid="triage-entity-link"')
-    expect(html).toContain('signature-storm:unknown')
+    // The slug must not appear anywhere on the card face (DEC-18)
+    expect(html).not.toContain('signature-storm:unknown')
   })
 
-  it('gate-broken rows with a gate-slug entityId (no dag) keep plain text', () => {
+  it('gate-broken rows with a gate-slug entityId (no dag) render no entity line', () => {
     mockItems.mockReturnValue([
       makeItem('gate-broken', { entityId: 'verify/typecheck', dag: null }),
     ])
     const html = renderToStaticMarkup(<TriagePage />)
     expect(html).not.toContain('data-testid="triage-entity-link"')
-    expect(html).toContain('verify/typecheck')
+    // The slug must not appear anywhere on the card face (DEC-18)
+    expect(html).not.toContain('verify/typecheck')
   })
 
   it('gate-broken rows with a real task id AND a populated dag still link', () => {

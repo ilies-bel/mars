@@ -1102,37 +1102,28 @@ export const resolveFailureKind = (
 const TITLE_ERROR_HEAD_MAX = 98
 
 /**
- * Render a signature for the title's discriminator slot.
- *
- * The signature earns its place because warm titles are many-to-one: eight
- * distinct `verify:typecheck/*` signatures all read "The changes did not pass
- * type-checking", and without the sub-class those rows are indistinguishable.
- * But `/unclassified` is the taxonomy's way of saying there IS no sub-class, so
- * printing it discriminates nothing — it just puts a jargon token in front of
- * every row that has no finer classification. Drop it and keep the step family.
- */
-const titleSignature = (signature: string): string =>
-  signature.endsWith('/unclassified') ? signature.slice(0, -'/unclassified'.length) : signature
-
-/**
  * Compose the operator-facing action-queue title for a FAILED task.
  *
- * A queue of sixteen failures is only triageable if each row says WHICH task
- * failed and WHAT the failure was, so the title always carries every
- * discriminator that exists:
+ * The title is the warm plain-English reason, never a machine signature:
  *
- *   `<signature> — <warm reason> [task <id8>]`
+ *   `<warm reason> [task <id8>]`
  *
- * and, when no structured signature was written at failure time, degrades to
- * the next-best discriminator — the first line of the captured error:
+ * Row discrimination comes from the task id (the `[task ...]` tag) and the
+ * operatorGoal headline — not from the signature prefix.  arcGoal and entityId
+ * are the two discriminators that survived the DEC-18 audit; the signature
+ * moves behind the Output/Details disclosure where a warm reader never needs
+ * to parse it but a debugging operator can still find it.
  *
- *   `<warm reason>: <first line of the error> [task <id8>]`
+ * The degradation ladder (most-informative first):
  *
- * The bare warm reason (`Mars could not determine why this task failed`) is emitted ONLY
- * when there is genuinely nothing else to say: no signature, no captured
- * error, no task id. A signature with no `FAILURE_KINDS` record uses the
- * step-family's plain-English label; the action-queue detail retains the
- * technical signature as the drill-down key.
+ *   1. Registered signature  → `<warmTitle> [task ...]`
+ *   2. Unregistered signature → step-family plain-English label `[task ...]`
+ *   3. No signature, captured error → `<generic reason>: <first error line> [task ...]`
+ *   4. Nothing at all → `<generic reason> [task ...]`
+ *
+ * (See also: action-queue.ts `[task mars-…]` suffix rationale at line 783-784,
+ * which records why arcGoal now carries the discrimination the signature prefix
+ * formerly attempted.)
  */
 export const failedTaskTitle = (args: {
   /** `tasks.failure_signature` as written at failure time, or null. */
@@ -1154,7 +1145,7 @@ export const failedTaskTitle = (args: {
       kind !== null
         ? kind.warmTitle
         : unknownFailureKind(failingStepFromSignature(signature), capturedError).warmTitle
-    return kind !== null ? `${titleSignature(signature)} — ${reason}${idPart}` : `${reason}${idPart}`
+    return `${reason}${idPart}`
   }
 
   const reason = unknownFailureKind('unknown', capturedError).warmTitle
