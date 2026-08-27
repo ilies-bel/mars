@@ -182,6 +182,7 @@ been tested where it is made.
 | DEC-7 — sharpness, never alert count | Raise two rows naming the same origin task but carrying different operator obligations — one to recover a failure, one to validate a behaviour — and list the queue. A second, distinct decision folded into the first row, or a higher-priority raise inheriting a lower priority, falsifies it; folding several rows that name the same single obligation does not. |
 | DEC-14 — onboarding runs a task and the interview in parallel | Install into a repo Mars has never seen, then open the UI and send the first chat message while the first task is still running. A dispatched task with no conversation to accompany it, or a conversation that only starts after the task has finished, falsifies it. |
 | HR-1 — the consumer has no source tree | Run reflection in a repo that is not the framework and read every suggestion it drafts. A suggestion whose text instructs the operator to inspect, modify or test the orchestrator's own source — rather than to set a control, change a gate, or work in their own repo — falsifies it. Naming a path inside the operator's own repository does not. |
+| HR-8 — stack-agnostic at the start | Install into a fresh repo whose language the first gate does not fit, and read the first task Mars dispatches. A gate chosen without inspecting the repo, or a message asserting a property of the repo that was never checked, falsifies it. |
 
 ## 9. Definition of done
 
