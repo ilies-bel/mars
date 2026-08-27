@@ -10,9 +10,10 @@
  * written crash marker appear in the returned item.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { execFileSync } from 'node:child_process'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createConditionItemsSource } from '../derived-conditions.js'
 import { humanSummary as recipeHumanSummary } from '../../../lib/action-queue-recipes.js'
@@ -309,3 +310,135 @@ describe('createConditionItemsSource — stale-queued derivation', () => {
     expect((rows[0]!.payload as { phantomInFlightCount: number }).phantomInFlightCount).toBe(0)
   })
 })
+
+// ── deriveFailedConditions: recovery-task suppression by origin status ────────
+//
+// Regression guard for the 2026-08-27 incident: a recovery task (fix_for_task_id
+// set) whose origin was `dropped` continued to emit a `failed` row even though
+// `dropped` is a settled terminal status that carries no actionable obligation.
+//
+// The fix: change the suppression predicate from `origin.status = 'done'` to
+// `origin.status IN ('done', 'dropped')`, matching the settlement rule in
+// CLAUDE.md ("dropped settles because it is terminal and can never become done").
+//
+// Five cases are covered (uses a real PGlite DB to exercise the actual SQL):
+//   - origin `failed`  → row emitted (recovery exhausted — the actionable case)
+//   - origin `queued`  → row suppressed (non-terminal, operator cannot act)
+//   - origin `done`    → row suppressed (already passing before the fix)
+//   - origin `dropped` → row suppressed (the fix — was incorrectly emitted before)
+//   - origin absent    → row still emitted (orphaned-origin case: keep visible)
+
+function setupSuppressRepo(): string {
+  const repo = mkdtempSync(join(tmpdir(), 'mars-dc-suppress-'))
+  execFileSync('git', ['init', '-q'], { cwd: repo })
+  mkdirSync(join(repo, '.mars'), { recursive: true })
+  return repo
+}
+
+async function makeSuppressClient(repo: string): Promise<DbClient> {
+  const { openDb } = await import('../../../lib/db.js')
+  const { ensureSchema } = await import('../../../lib/pg-schema.js')
+  const client = openDb(resolve(repo, '.mars'))
+  await ensureSchema(client)
+  return client
+}
+
+async function seedSuppressTask(
+  client: DbClient,
+  id: string,
+  status: string,
+  opts: { fixForTaskId?: string } = {},
+): Promise<void> {
+  await client.execute({
+    sql: `INSERT INTO tasks (id, prompt, status, fix_for_task_id, created_at, updated_at)
+          VALUES (?, ?, ?, ?, NOW(), NOW())`,
+    args: [id, `task ${id}`, status, opts.fixForTaskId ?? null],
+  })
+}
+
+describe(
+  'deriveFailedConditions — origin-status suppression for recovery tasks',
+  { timeout: 60_000 },
+  () => {
+    let repo: string
+    let client: DbClient
+
+    beforeEach(async () => {
+      repo = setupSuppressRepo()
+      process.env.MARS_REPO = repo
+      vi.resetModules()
+      client = await makeSuppressClient(repo)
+    })
+
+    afterEach(async () => {
+      await client.close()
+      delete process.env.MARS_REPO
+      rmSync(repo, { recursive: true, force: true })
+    })
+
+    it('emits a row when the origin is failed (recovery exhausted — actionable)', async () => {
+      await seedSuppressTask(client, 'origin-failed', 'failed')
+      await seedSuppressTask(client, 'fix-failed', 'failed', { fixForTaskId: 'origin-failed' })
+
+      const source = createConditionItemsSource({ getClient: () => client })
+      const rows = await source.derive({ kinds: new Set(['failed']) })
+      const ids = rows.map((r) => r.payload['taskId'])
+
+      expect(ids).toContain('fix-failed')
+    })
+
+    it('suppresses the row when the origin is queued (non-terminal, operator cannot act)', async () => {
+      await seedSuppressTask(client, 'origin-queued', 'queued')
+      await seedSuppressTask(client, 'fix-queued', 'failed', { fixForTaskId: 'origin-queued' })
+
+      const source = createConditionItemsSource({ getClient: () => client })
+      const rows = await source.derive({ kinds: new Set(['failed']) })
+      const ids = rows.map((r) => r.payload['taskId'])
+
+      expect(ids).not.toContain('fix-queued')
+    })
+
+    it('suppresses the row when the origin is done (recovery moot — already passing)', async () => {
+      await seedSuppressTask(client, 'origin-done', 'done')
+      await seedSuppressTask(client, 'fix-done', 'failed', { fixForTaskId: 'origin-done' })
+
+      const source = createConditionItemsSource({ getClient: () => client })
+      const rows = await source.derive({ kinds: new Set(['failed']) })
+      const ids = rows.map((r) => r.payload['taskId'])
+
+      expect(ids).not.toContain('fix-done')
+    })
+
+    it('suppresses the row when the origin is dropped (recovery moot — work cancelled)', async () => {
+      // Regression test for 2026-08-27 incident: fix-9b733a8b kept emitting a
+      // high-priority failed alert after its origin mars-efd984fb was dropped
+      // (superseded). The operator was asked to act on work that already shipped
+      // under mars-76c56dbe. `dropped` settles the same way `done` does.
+      await seedSuppressTask(client, 'origin-dropped', 'dropped')
+      await seedSuppressTask(client, 'fix-dropped', 'failed', { fixForTaskId: 'origin-dropped' })
+
+      const source = createConditionItemsSource({ getClient: () => client })
+      const rows = await source.derive({ kinds: new Set(['failed']) })
+      const ids = rows.map((r) => r.payload['taskId'])
+
+      expect(ids).not.toContain('fix-dropped')
+    })
+
+    it('still emits a row when the origin row is absent (hard-deleted / orphaned)', async () => {
+      // In production, hard-deleting the origin task without the orchestrator's
+      // FK-edge cleanup would leave the fix task referencing a ghost id. We
+      // simulate this by temporarily dropping the FK constraint so the test can
+      // insert the referentially-impossible row, exercising the NOT EXISTS logic
+      // rather than the ORM deletion path. The constraint is non-deferrable and
+      // PGlite is in-memory, so the test DB is ephemeral — restoration is a no-op.
+      await client.execute('ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_fix_for_task_id_fkey')
+      await seedSuppressTask(client, 'fix-orphan', 'failed', { fixForTaskId: 'ghost-origin' })
+
+      const source = createConditionItemsSource({ getClient: () => client })
+      const rows = await source.derive({ kinds: new Set(['failed']) })
+      const ids = rows.map((r) => r.payload['taskId'])
+
+      expect(ids).toContain('fix-orphan')
+    })
+  },
+)

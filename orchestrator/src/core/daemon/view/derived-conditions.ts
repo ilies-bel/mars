@@ -159,6 +159,13 @@ async function deriveFailedConditions(
         AND (
           t.fix_for_task_id IS NULL
           OR (
+            -- Settlement rule (CLAUDE.md): emit only when the origin is itself
+            -- 'failed' (recovery exhausted, the actionable case) or when the
+            -- origin row is missing entirely. Both 'done' and 'dropped' settle
+            -- the origin: the recovery's failure is moot once the origin has
+            -- finished or been explicitly cancelled. A missing row (hard-deleted)
+            -- is an orphaned-origin situation; keep emitting here so it stays
+            -- visible until that kind resolves it.
             NOT EXISTS (
               SELECT 1 FROM tasks origin
                WHERE origin.id = t.fix_for_task_id
@@ -167,7 +174,7 @@ async function deriveFailedConditions(
             AND NOT EXISTS (
               SELECT 1 FROM tasks origin
                WHERE origin.id = t.fix_for_task_id
-                 AND origin.status = 'done'
+                 AND origin.status IN ('done', 'dropped')
             )
           )
         )
