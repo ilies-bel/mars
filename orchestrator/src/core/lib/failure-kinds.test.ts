@@ -9,8 +9,8 @@ import {
   isSignatureStormExempt,
   lookupFailureKind,
   unknownFailureKind,
-} from '../failure-kinds'
-import { DAEMON_KILLED_SIGNATURE } from '../retry-budget'
+} from './failure-kinds'
+import { DAEMON_KILLED_SIGNATURE } from './retry-budget'
 
 describe('FAILURE_KINDS registry', () => {
   it('contains an entry for every expected setup:install signature', () => {
