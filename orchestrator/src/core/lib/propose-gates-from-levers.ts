@@ -33,9 +33,12 @@ import { reportUncoveredVerifyCoverage } from './verify-uncovered.js'
  */
 export async function proposeGatesFromLevers(): Promise<{ proposed: number; skipped: number }> {
   const { repoRoot } = resolveContext()
-  const levers = getLeversWithVerifyGate().filter(({ recipe }) => {
+  const allLevers = getLeversWithVerifyGate()
+
+  // Predicate-filtered levers are counted as skipped: they are not applicable
+  // to this repo's stack and no verify-uncovered item is raised for them (HR-8).
+  const levers = allLevers.filter(({ recipe }) => {
     const pred = recipe.predicate
-    // no predicate → always applicable; predicate returning false → skip
     return pred ? pred(repoRoot) : true
   })
 
@@ -55,7 +58,8 @@ export async function proposeGatesFromLevers(): Promise<{ proposed: number; skip
   }
 
   let proposed = 0
-  let skipped = 0
+  // Predicate-filtered entries (allLevers not in levers) count toward skipped.
+  let skipped = allLevers.length - levers.length
 
   for (const { recipe } of levers) {
     const spec = recipe.verifyGate!
