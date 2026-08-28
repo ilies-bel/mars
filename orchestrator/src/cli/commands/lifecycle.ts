@@ -443,7 +443,7 @@ const sync: Command = {
   usage: 'usage: mars sync',
   run: async (_args, deps) => {
     const { isDaemonAlive } = await import('../../core/daemon/paths')
-    const liveness = await isDaemonAlive()
+    const liveness = await isDaemonAlive(deps.ctx.repoRoot)
 
     if (liveness.alive) {
       const summary = (await deps.daemon.sendRequest(

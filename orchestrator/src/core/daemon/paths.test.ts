@@ -320,3 +320,84 @@ describe('readDaemonPid', () => {
     expect(readDaemonPid(pidFile)).toBeNull()
   })
 })
+
+// ── Two-repo resolution regression (2026-08-28 incident) ─────────────────────
+//
+// Root cause: every `isDaemonAlive()` and `daemonPaths()` call in
+// cli/commands/daemon.ts omitted the repo argument, so `mars --repo B daemon
+// restart` with the shell CWD inside repo A called isDaemonAlive() → resolved
+// A's daemon pid → waited for A's daemon to exit → SIGKILL'd A's daemon after
+// it never exited (it wasn't asked to shut down — B's daemon was).
+//
+// Fix: pass `deps.ctx.repoRoot` to every isDaemonAlive / daemonPaths call in
+// the daemon CLI commands. This test pins the invariant: daemonPaths(B) must
+// resolve B's socket path, NOT A's, regardless of what MARS_REPO is set to.
+//
+// NOTE: following the pattern established in __tests__/paths.test.ts, both
+// repos are passed as explicit override arguments (daemonPaths(repo)) to bypass
+// resolveContext's module-level cache. The cache is set by earlier tests in
+// this suite (the lockFile tests call daemonPaths() without an override), so
+// a bare daemonPaths() call here would return stale cached state rather than
+// the MARS_REPO value this test sets. Explicit overrides correctly model how
+// the fixed CLI code threads deps.ctx.repoRoot into every call.
+
+describe('daemonPaths — two-repo resolution: --repo B resolves B socket when MARS_REPO is A', () => {
+  let repoA: string
+  let repoB: string
+
+  beforeEach(() => {
+    // Two fully independent git repos with .mars directories.
+    repoA = mkdtempSync(resolve(tmpdir(), 'mars-tworepo-a-'))
+    repoB = mkdtempSync(resolve(tmpdir(), 'mars-tworepo-b-'))
+    execFileSync('git', ['init', '-q'], { cwd: repoA })
+    mkdirSync(resolve(repoA, '.mars'), { recursive: true })
+    execFileSync('git', ['init', '-q'], { cwd: repoB })
+    mkdirSync(resolve(repoB, '.mars'), { recursive: true })
+  })
+
+  afterEach(() => {
+    rmSync(repoA, { recursive: true, force: true })
+    rmSync(repoB, { recursive: true, force: true })
+  })
+
+  it('daemonPaths(B) resolves B socket, not A socket, even when MARS_REPO=A', () => {
+    // Simulate the ambient context being set to repo A (CWD / env).
+    const prev = process.env.MARS_REPO
+    process.env.MARS_REPO = repoA
+    try {
+      const naturalSocketA = resolve(repoA, '.mars', 'watch.sock')
+      const naturalSocketB = resolve(repoB, '.mars', 'watch.sock')
+
+      // Skip gracefully on systems where the natural paths exceed the OS limit
+      // (the fallback tmpdir paths would collide with the address-space check).
+      if (
+        Buffer.byteLength(naturalSocketA, 'utf8') > 103 ||
+        Buffer.byteLength(naturalSocketB, 'utf8') > 103
+      ) {
+        return
+      }
+
+      // Both repos are resolved via explicit override (the pattern the fixed
+      // CLI code uses via deps.ctx.repoRoot). This bypasses the module-level
+      // cache and proves that passing the target repo root routes to the
+      // correct socket, even when MARS_REPO is a different repo.
+      const pathsA = daemonPaths(repoA)
+      const pathsB = daemonPaths(repoB)
+
+      expect(pathsA.socket).toBe(naturalSocketA)
+      expect(pathsB.socket).toBe(naturalSocketB)
+
+      // The two sockets must be distinct — B must not accidentally resolve A's socket.
+      expect(pathsB.socket).not.toBe(pathsA.socket)
+      // B's socket must live under B's .mars/, never A's.
+      expect(pathsB.socket.startsWith(resolve(repoA, '.mars'))).toBe(false)
+      expect(pathsB.socket.startsWith(resolve(repoB, '.mars'))).toBe(true)
+    } finally {
+      if (prev !== undefined) {
+        process.env.MARS_REPO = prev
+      } else {
+        delete process.env.MARS_REPO
+      }
+    }
+  })
+})

@@ -38,6 +38,7 @@ import {
   captureDaemonBootStderr,
   daemonPaths,
   isDaemonAlive,
+  readDaemonPid,
   spawnDaemonProcess,
   waitForProcessExit,
 } from '../../core/daemon/paths'
@@ -83,7 +84,7 @@ const waitForDaemonReady = async (
   deps: CommandDeps,
   child: ChildProcess,
 ): Promise<{ code: number }> => {
-  const { logFile } = daemonPaths()
+  const { logFile } = daemonPaths(deps.ctx.repoRoot)
   const POLL_INTERVAL_MS = 100
   const deadline = Date.now() + 10_000
   let childExit: { code: number | null; signal: NodeJS.Signals | null } | null = null
@@ -108,7 +109,7 @@ const waitForDaemonReady = async (
       new Promise<void>((resolve) => setTimeout(resolve, remaining)),
     ])
     if (childExit !== null || childSpawnError !== null) break
-    const check = await isDaemonAlive()
+    const check = await isDaemonAlive(deps.ctx.repoRoot)
     if (check.alive) {
       // The daemon switches to its own watch.log logger after boot. Closing
       // this one-purpose pipe lets the detached CLI return normally.
@@ -250,7 +251,7 @@ const daemonStatus: Command = {
       process.env.INTEGRATION_BRANCH ?? 'main',
       deps.out,
     )
-    const liveness = await isDaemonAlive()
+    const liveness = await isDaemonAlive(deps.ctx.repoRoot)
     if (!liveness.alive) {
       deps.err(`daemon not running (${liveness.reason})`)
       return { code: 1 }
@@ -351,7 +352,7 @@ const daemonResetBreaker: Command = {
   summary: 'clear the signature-storm circuit-breaker flag',
   usage: 'usage: mars daemon reset-breaker',
   run: async (_args, deps) => {
-    const liveness = await isDaemonAlive()
+    const liveness = await isDaemonAlive(deps.ctx.repoRoot)
     if (!liveness.alive) {
       deps.err(`daemon not running (${liveness.reason})`)
       return { code: 1 }
@@ -419,9 +420,9 @@ const daemonStart: Command = {
       }
       return { code: 0 }
     }
-    const liveness = await isDaemonAlive()
+    const liveness = await isDaemonAlive(deps.ctx.repoRoot)
     if (liveness.alive) {
-      const { logFile } = daemonPaths()
+      const { logFile } = daemonPaths(deps.ctx.repoRoot)
       deps.out(`[mars] daemon detached (pid ${liveness.pid}, log: ${logFile})`)
       return { code: 0 }
     }
@@ -445,7 +446,7 @@ const daemonRestart: Command = {
   summary: 'force-stop then start a fresh daemon',
   usage: 'usage: mars daemon restart',
   run: async (_args, deps) => {
-    const liveness = await isDaemonAlive()
+    const liveness = await isDaemonAlive(deps.ctx.repoRoot)
     if (liveness.alive) {
       // Capture the old PID before the daemon deletes its pid file during
       // shutdown. `liveness.pid` is 0 when the pid file was absent (sentinel);
@@ -463,7 +464,7 @@ const daemonRestart: Command = {
       const socketDeadline = Date.now() + 5_000
       while (Date.now() < socketDeadline) {
         await new Promise((r) => setTimeout(r, 100))
-        const check = await isDaemonAlive()
+        const check = await isDaemonAlive(deps.ctx.repoRoot)
         if (!check.alive) break
       }
       // Wait for the OLD PROCESS itself to exit, not just the socket.
@@ -481,9 +482,28 @@ const daemonRestart: Command = {
       if (oldPid !== null) {
         const exited = await waitForProcessExit(oldPid, 10_000)
         if (!exited) {
-          // Graceful wait exhausted — escalate to SIGKILL.
-          try { process.kill(oldPid, 'SIGKILL') } catch { /* may have exited */ }
-          await waitForProcessExit(oldPid, 5_000)
+          // Graceful wait exhausted — SIGKILL escalation.
+          //
+          // Before killing, re-read the pid file for the TARGET repo and
+          // confirm oldPid is still recorded as its daemon. Between the
+          // initial liveness check and this escalation the pid file could
+          // have been replaced (e.g. a new daemon started) or could belong
+          // to a completely different repo if --repo was not honoured by a
+          // prior (unfixed) call. Killing an unidentified process is
+          // strictly worse than a failed restart, so we skip SIGKILL and
+          // report plainly instead.
+          const { pidFile } = daemonPaths(deps.ctx.repoRoot)
+          const currentPid = readDaemonPid(pidFile)
+          if (currentPid !== oldPid) {
+            deps.err(
+              `[mars] SIGKILL escalation skipped — pid ${oldPid} is no longer recorded as the daemon for this repo` +
+                ` (current pid file: ${currentPid ?? 'absent'}); refusing to kill an unidentified process`,
+            )
+            // Fall through: attempt to spawn the replacement anyway.
+          } else {
+            try { process.kill(oldPid, 'SIGKILL') } catch { /* may have exited */ }
+            await waitForProcessExit(oldPid, 5_000)
+          }
         }
       }
     }

@@ -208,3 +208,4 @@ describe('daemonPaths — socket path fallback', () => {
     expect(existsSync(paths.socketPathFile)).toBe(false)
   })
 })
+
