@@ -2568,18 +2568,32 @@ export class Arc {
     const s = await getDefaultTaskStore()
     const now = new Date().toISOString()
 
-    // Find all tasks currently `blocked` on this committer.
+    // Find all tasks currently `blocked` that should be released: both via
+    // explicit blocker edges AND via the committer's own fix_for_task_id link.
+    // UNION (not UNION ALL) deduplicates so a task with both an edge and an
+    // origin link is processed once. This covers the case where the blocker
+    // edge was never written or was silently removed before the committer
+    // completed, leaving the source task stuck in `blocked` with no edge —
+    // the exact failure mode observed in the fresh-install reproducer.
     const r = await s.query({
       sql: `SELECT t.id AS id
               FROM task_blockers tb
               JOIN tasks t ON t.id = tb.task_id
              WHERE tb.blocker_task_id = ?
+               AND t.status = 'blocked'
+             UNION
+            SELECT t.id AS id
+              FROM tasks committer
+              JOIN tasks t ON t.id = committer.fix_for_task_id
+             WHERE committer.id = ?
                AND t.status = 'blocked'`,
-      args: [committerTaskId],
+      args: [committerTaskId, committerTaskId],
     })
 
     const dependents = r.rows as unknown as Array<{ id: string }>
-    if (dependents.length === 0) return { released: 0, total: 0 }
+    // No early return when dependents is empty — the summary log below must
+    // always fire so a zero-dependent release pass is visible in the log.
+    // A silent early return was the bug's signature: the episode left no trace.
 
     let released = 0
 

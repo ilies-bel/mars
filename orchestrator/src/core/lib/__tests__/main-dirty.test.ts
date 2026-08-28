@@ -867,6 +867,164 @@ describe('main-committer verify: integration-clean check', () => {
   })
 })
 
+// ---------------------------------------------------------------------------
+// releaseMainCommitterDependentsAfterSuccess — edge-free origin release
+//
+// Reproducer for the fresh-install bug: a source task can be parked as
+// `blocked` with the blocker edge silently absent, leaving the function
+// unable to find it via the blocker-only query. The fix widens the query
+// with a UNION on fix_for_task_id so the origin is always included.
+// ---------------------------------------------------------------------------
+
+describe('releaseMainCommitterDependentsAfterSuccess', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+    process.env.MARS_REPO = repo
+    vi.resetModules()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('re-queues an origin with no blocker edge when its committer succeeds (reproducer)', async () => {
+    // Exact scenario from the fresh-install bug: mars-80d7c976 was `blocked`
+    // with zero rows in task_blockers, but its committer fix-4df3d1a8 had
+    // already reached `done`. The old edge-only query found nothing and
+    // returned early — the origin stayed `blocked` permanently.
+    const queue = await import('../../queue')
+    await queue.migrateQueueSchema()
+    const { Arc } = await import('../../arc')
+    const { serialiseMainCommiterPayload } = await import('../main-dirty')
+    const c = queue.resolveQueueClient()
+    const now = new Date().toISOString()
+
+    // Source task parked as `blocked` with NO blocker edges.
+    const origin = await queue.enqueueTask('origin-no-edge', undefined, { skipTriage: true })
+    await c.execute({
+      sql: `UPDATE tasks SET status = 'blocked' WHERE id = ?`,
+      args: [origin.id],
+    })
+
+    // Committer linked to origin via fix_for_task_id, no edge in task_blockers.
+    const committerId = 'fix-release01'
+    await c.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, kind, fix_for_task_id, author_kind, author_name, origin_id, priority, recovery_payload, created_at, updated_at)
+            VALUES (?, 'committer', 'done', 'fix', ?, 'agent', 'seed', ?, 3, ?, ?, ?)`,
+      args: [committerId, origin.id, origin.id,
+        serialiseMainCommiterPayload({ recipe: 'main-commiter', integrationBranch: 'main' }),
+        now, now],
+    })
+
+    // Confirm zero edges — this is the bug's prerequisite.
+    const edgeCheck = await c.execute({
+      sql: `SELECT COUNT(*) AS n FROM task_blockers WHERE task_id = ? AND blocker_task_id = ?`,
+      args: [origin.id, committerId],
+    })
+    expect(Number((edgeCheck.rows[0] as unknown as { n: number }).n)).toBe(0)
+
+    const logs: string[] = []
+    const result = await Arc.releaseMainCommitterDependentsAfterSuccess(
+      committerId,
+      (msg) => logs.push(msg),
+    )
+
+    // The origin must be re-queued.
+    const after = await queue.getTask(origin.id)
+    expect(after?.status).toBe('queued')
+    expect(result.released).toBe(1)
+    expect(result.total).toBe(1)
+    // Summary log must be emitted.
+    expect(logs.some((l) => l.includes('released 1/1'))).toBe(true)
+  }, 30000)
+
+  it('leaves an origin blocked when other unsettled blockers remain', async () => {
+    // Even when the committer's fix_for_task_id pulls in the origin, the
+    // NOT EXISTS guard inside the atomic re-queue must prevent a flip when
+    // another unsettled blocker edge is still present.
+    const queue = await import('../../queue')
+    await queue.migrateQueueSchema()
+    const { Arc } = await import('../../arc')
+    const { serialiseMainCommiterPayload } = await import('../main-dirty')
+    const c = queue.resolveQueueClient()
+    const now = new Date().toISOString()
+    const blockerCreatedAt = Date.now()
+
+    const origin = await queue.enqueueTask('origin-other-blocker', undefined, { skipTriage: true })
+    await c.execute({
+      sql: `UPDATE tasks SET status = 'blocked' WHERE id = ?`,
+      args: [origin.id],
+    })
+
+    const committerId = 'fix-release02'
+    await c.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, kind, fix_for_task_id, author_kind, author_name, origin_id, priority, recovery_payload, created_at, updated_at)
+            VALUES (?, 'committer', 'done', 'fix', ?, 'agent', 'seed', ?, 3, ?, ?, ?)`,
+      args: [committerId, origin.id, origin.id,
+        serialiseMainCommiterPayload({ recipe: 'main-commiter', integrationBranch: 'main' }),
+        now, now],
+    })
+
+    // A second blocker (not the committer) remains unsettled.
+    const otherBlocker = await queue.enqueueTask('other-blocker', undefined, { skipTriage: true })
+    await c.execute({
+      sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, created_at) VALUES (?, ?, 'confirmed', ?)`,
+      args: [origin.id, otherBlocker.id, blockerCreatedAt],
+    })
+
+    const logs: string[] = []
+    const result = await Arc.releaseMainCommitterDependentsAfterSuccess(
+      committerId,
+      (msg) => logs.push(msg),
+    )
+
+    // Origin must still be blocked — the other blocker has not settled.
+    const after = await queue.getTask(origin.id)
+    expect(after?.status).toBe('blocked')
+    expect(result.released).toBe(0)
+    expect(result.total).toBe(1)
+    // Summary log must still be emitted (0 released, 1 total).
+    expect(logs.some((l) => l.includes('released 0/1'))).toBe(true)
+  }, 30000)
+
+  it('emits released 0/0 summary when there is genuinely nothing to release', async () => {
+    // When neither the edge query nor the fix_for_task_id link finds a blocked
+    // task, the function previously returned early and emitted no log at all.
+    // After the fix the summary log must always fire so the pass is auditable.
+    const queue = await import('../../queue')
+    await queue.migrateQueueSchema()
+    const { Arc } = await import('../../arc')
+    const { serialiseMainCommiterPayload } = await import('../main-dirty')
+    const c = queue.resolveQueueClient()
+    const now = new Date().toISOString()
+
+    // Origin is `queued` (not blocked) — neither query arm matches it.
+    const origin = await queue.enqueueTask('queued-origin', undefined, { skipTriage: true })
+    const committerId = 'fix-release03'
+    await c.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, kind, fix_for_task_id, author_kind, author_name, origin_id, priority, recovery_payload, created_at, updated_at)
+            VALUES (?, 'committer', 'done', 'fix', ?, 'agent', 'seed', ?, 3, ?, ?, ?)`,
+      args: [committerId, origin.id, origin.id,
+        serialiseMainCommiterPayload({ recipe: 'main-commiter', integrationBranch: 'main' }),
+        now, now],
+    })
+
+    const logs: string[] = []
+    const result = await Arc.releaseMainCommitterDependentsAfterSuccess(
+      committerId,
+      (msg) => logs.push(msg),
+    )
+
+    expect(result.released).toBe(0)
+    expect(result.total).toBe(0)
+    // The summary log must be emitted even with a 0/0 result.
+    expect(logs.some((l) => l.includes('released 0/0'))).toBe(true)
+  }, 30000)
+})
+
 describe('provisionCommitterWorktree carries dirty state into the new tree', () => {
   let repo: string
 
