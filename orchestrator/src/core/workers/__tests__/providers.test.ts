@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { PROVIDERS } from '../providers'
 import { PROVIDER_MODELS } from '../provider-types'
 import { ASK_USER_DENIED_TOOL, WORKER_CONFIGS, READ_ONLY_DENIED_TOOLS, FIXER_BACKLOG_DENIED_TOOLS } from '../index'
+import { claudeStreamArgs } from '../../lib/git/claude'
 
 describe('PROVIDERS registry', () => {
   it('publishes conversation-memory facts for every provider model', () => {
@@ -436,5 +437,49 @@ describe("ask-user tool policy — spawnArgv propagation", () => {
     // READ_ONLY_DENIED_TOOLS means every worker that references that constant
     // in its disallowedTools config automatically gets the denial.
     expect(READ_ONLY_DENIED_TOOLS).toContain(ASK_USER_DENIED_TOOL)
+  })
+})
+
+describe('vcs-supervisor (Vega) headless argv — provider-agnostic regression', () => {
+  // invokeVcsSupervisor must NOT pass `agent` to runHeadlessProvider. Emitting
+  // `--agent vcs-supervisor` would have the `claude` CLI resolve the name
+  // against the CONSUMER repo's `.claude/agents/` directory — a file that
+  // `mars init` never ships — breaking every Claude-provider run in consumer
+  // repos while silently succeeding in the framework's own checkout.
+  //
+  // The Vega conflict-resolution protocol is delivered via `systemPrompt`
+  // (see merge.ts:invokeVcsSupervisor), so the `--agent` flag is redundant
+  // AND provider-breaking. These tests assert the invariant at the argv layer
+  // so a future edit cannot silently re-introduce the flag.
+  it('claudeStreamArgs without agent produces no --agent flag', () => {
+    const argv = claudeStreamArgs('resolve conflicts', {
+      model: 'claude-sonnet-5',
+      systemPrompt: 'You are Vega.',
+      permissionMode: 'acceptEdits',
+      // agent is intentionally absent — mirrors invokeVcsSupervisor
+    })
+    expect(argv).not.toContain('--agent')
+  })
+
+  it('claudeStreamArgs without agent still carries --system-prompt so the Vega protocol is delivered', () => {
+    const protocol = 'VEGA_CONFLICT_RESOLUTION_PROTOCOL'
+    const argv = claudeStreamArgs('resolve conflicts', {
+      model: 'claude-sonnet-5',
+      systemPrompt: protocol,
+      permissionMode: 'acceptEdits',
+    })
+    expect(argv).toContain('--system-prompt')
+    // The system prompt value must be present somewhere in the argv
+    const idx = (argv as readonly string[]).indexOf('--system-prompt')
+    expect(argv[idx + 1]).toContain(protocol)
+  })
+
+  it('claudeStreamArgs WITH agent still emits --agent — generic plumbing unchanged', () => {
+    // This confirms that the generic `--agent` plumbing in claudeStreamArgs
+    // is intact; the supervisor simply chooses not to use it.
+    const argv = claudeStreamArgs('do work', { agent: 'my-custom-agent' })
+    expect(argv).toContain('--agent')
+    const idx = (argv as readonly string[]).indexOf('--agent')
+    expect(argv[idx + 1]).toBe('my-custom-agent')
   })
 })

@@ -588,13 +588,23 @@ End with the Completion Report block exactly as specified above.`
   // Wall-clock timeout is delegated to runHeadlessProvider, which wires its
   // own AbortController and kills the provider subprocess when timeoutMs
   // elapses. No local AbortController or setTimeout needed here.
+  //
+  // NOTE: `agent` is intentionally absent. The Vega conflict-resolution
+  // protocol is the system prompt (see above) — all providers receive it
+  // via `systemPrompt`, so no per-repo `.claude/agents/vcs-supervisor.md`
+  // file is needed. Passing `agent: 'vcs-supervisor'` would emit a
+  // `--agent` CLI flag that the `claude` binary resolves against the
+  // CONSUMER repo's own `.claude/agents/` directory — a file that `mars
+  // init` never ships — breaking every Claude-provider run in consumer
+  // repos while working fine in the framework's own checkout. Span naming
+  // for this call is set independently by the merge step's own tracing
+  // (workerName: 'Vega') and does not depend on this option.
   const result = await runHeadlessProvider(userPrompt, {
     cwd,
     modelTier: 'flagship',
     systemPrompt,
     timeoutMs,
     onEvent,
-    agent: 'vcs-supervisor',
     permissionMode: 'acceptEdits',
   })
   return {
