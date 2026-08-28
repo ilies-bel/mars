@@ -17,7 +17,7 @@
  *
  * The reason is what makes resume coherent: the daemon knows a `storm` pause
  * also owns the durable `tripped` flag and clears both together, and status
- * can tell the operator which of the three is holding dispatch down.
+ * can tell the operator which of the four is holding dispatch down.
  *
  * First cause wins. A second pause while already paused does NOT overwrite the
  * reason or the timestamp and returns `false`, so callers (quota handler,

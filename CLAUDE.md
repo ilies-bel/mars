@@ -410,24 +410,33 @@ recovery-spawn path itself.
     `"paused": true`, so it survives a daemon auto-respawn (a restarted daemon
     comes up paused and logs `[pause] restored persisted paused state`).
   - Dispatch can also be paused **without an operator gesture**: the
-    signature-storm circuit breaker (`reason: storm`) and a provider
-    rate/spend rejection (`reason: quota`) both pause it. First cause wins —
+    signature-storm circuit breaker (`reason: storm`), a provider rate/spend
+    rejection (`reason: quota`), and the integration branch itself failing a
+    required gate (`reason: baseline`) all pause it. First cause wins —
     a second pause never overwrites the reason.
-  - `mars operator set dispatch on` is the general way out of **any** of the
-    three pause causes: it resumes dispatch unconditionally (operator, storm,
-    or quota) and also clears the durable signature-storm `tripped` flag as a
-    side effect, so a later restart does not re-pause the queue. Do not wait
-    out the storm breaker's crash/hang fallback timer.
+  - `mars operator set dispatch on` is the general way out of **`operator`,
+    `storm`, and `quota` pauses**: it resumes dispatch unconditionally for
+    those three causes and also clears the durable signature-storm `tripped`
+    flag as a side effect, so a later restart does not re-pause the queue.
+    Do not wait out the storm breaker's crash/hang fallback timer.
+    **It does not resolve a `baseline` pause.** Although the command
+    technically clears the pause latch, it does not fix the integration
+    branch — the baseline health checker will re-assert the pause on its
+    next run because the branch still fails a required gate. The correct
+    resolution is to repair the integration branch so the gate passes (or
+    retire/quarantine the failing gate); once the branch is healthy, dispatch
+    resumes on its own. Forcing dispatch on while the baseline is still red
+    only sends tasks into a broken integration branch.
   - `mars daemon reset-breaker` is the purpose-built way to clear a **tripped
     storm breaker specifically** — it is what `mars daemon status` itself
     recommends when tripped (`run 'mars daemon reset-breaker' to clear`). It
     always clears the durable `tripped`/streak state, but only resumes
     dispatch if the current pause reason is `storm`; a pause held for
-    `operator` or `quota` is left completely untouched, so that pause still
-    needs `mars operator set dispatch on` (or resolving the quota condition)
-    to lift. Prefer `reset-breaker` when you only want to clear the breaker
-    without touching an unrelated pause; reach for `set dispatch on` when you
-    want dispatch running again regardless of cause.
+    `operator`, `quota`, or `baseline` is left completely untouched, so
+    those pauses still need their own resolution to lift. Prefer
+    `reset-breaker` when you only want to clear the breaker without touching
+    an unrelated pause; reach for `set dispatch on` when you want dispatch
+    running again for `operator`, `storm`, or `quota` causes.
   - Both `mars daemon status` and `mars operator status` render the same
     `DispatchPauseState`, so they always agree on whether dispatch is running
     and why it is not.
