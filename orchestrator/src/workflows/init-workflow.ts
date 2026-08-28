@@ -348,8 +348,26 @@ export const runInit = async (opts: RunInitOptions): Promise<RunInitResult> => {
   )
 
   if (result.status !== 'completed' || !result.output) {
-    const cause = result.error instanceof Error ? `: ${result.error.message}` : ''
-    throw new Error(`init workflow ${result.status}${cause}`)
+    const rawCause = result.error instanceof Error ? result.error.message : ''
+    const causeStr = rawCause ? `: ${rawCause}` : ''
+
+    // When the init fails, check whether the real cause is host file-descriptor
+    // exhaustion rather than a database problem. The enrichment probe is
+    // non-fatal: if it throws, the import fails, or the platform is unsupported,
+    // we fall through to today's message unchanged.
+    if (result.status === 'failed' && rawCause) {
+      let enrichedMessage: string | null = null
+      try {
+        const { enrichInitDbError } = await import('../core/lib/fd-headroom')
+        const enriched = enrichInitDbError(rawCause)
+        if (enriched !== rawCause) enrichedMessage = `init workflow failed: ${enriched}`
+      } catch {
+        // import or enrichment threw — keep the original message below
+      }
+      if (enrichedMessage !== null) throw new Error(enrichedMessage)
+    }
+
+    throw new Error(`init workflow ${result.status}${causeStr}`)
   }
 
   // Auto-register this repo in the global project registry so the UI can

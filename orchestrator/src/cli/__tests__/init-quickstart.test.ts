@@ -1,12 +1,16 @@
 /**
- * Unit tests for the probe + env-defaults logic exported from install.ts.
+ * Unit tests for the probe + env-defaults logic exported from install.ts,
+ * and for the fd-headroom enrichment helper (fd-headroom.ts).
  *
  * These tests exercise pure/injectable functions only — no daemon, no TTY, no
- * real filesystem calls. The goal is to verify that:
+ * real filesystem calls, no shell-outs. The goal is to verify that:
  *   - detectMarsEnvOverrides correctly classifies known vs. unknown MARS_* vars
  *   - formatClaudeAuthNote produces the right message for each auth state
  *   - checkAlreadyInitialized uses readManifest to gate on the init manifest
  *     only (not on .mars/pg/data or the .mars directory itself)
+ *   - enrichInitDbError names file descriptors when the probe reports high
+ *     usage, returns the original message on healthy headroom or a throwing
+ *     probe, and never propagates probe errors
  */
 
 import { describe, expect, it } from 'vitest'
@@ -15,6 +19,11 @@ import {
   detectMarsEnvOverrides,
   formatClaudeAuthNote,
 } from '../commands/install'
+import {
+  enrichInitDbError,
+  probeFdHeadroom,
+  type FdHeadroomDeps,
+} from '../../core/lib/fd-headroom'
 
 // ---------------------------------------------------------------------------
 // detectMarsEnvOverrides
@@ -167,5 +176,122 @@ describe('checkAlreadyInitialized', () => {
     const paths = ['CLAUDE.md', 'CONTEXT.md', '.claude/settings.json']
     const result = checkAlreadyInitialized('/complete/repo', () => paths)
     expect(result).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// fd-headroom: probeFdHeadroom
+// ---------------------------------------------------------------------------
+
+describe('probeFdHeadroom', () => {
+  it('returns null on an unsupported platform without throwing', () => {
+    const deps: FdHeadroomDeps = {
+      platform: 'win32',
+      readSysctlNum: () => { throw new Error('should not be called') },
+      readFileNr: () => { throw new Error('should not be called') },
+    }
+    expect(probeFdHeadroom(deps)).toBeNull()
+  })
+
+  it('returns a snapshot on macOS-like platforms via sysctl', () => {
+    const deps: FdHeadroomDeps = {
+      platform: 'darwin',
+      readSysctlNum: (key) => key === 'kern.num_files' ? 256841 : 491520,
+      readFileNr: () => { throw new Error('should not be called') },
+    }
+    const result = probeFdHeadroom(deps)
+    expect(result).not.toBeNull()
+    expect(result?.used).toBe(256841)
+    expect(result?.limit).toBe(491520)
+    expect(result?.pct).toBeCloseTo(256841 / 491520)
+  })
+
+  it('returns a snapshot on Linux via /proc/sys/fs/file-nr', () => {
+    const deps: FdHeadroomDeps = {
+      platform: 'linux',
+      readSysctlNum: () => { throw new Error('should not be called') },
+      readFileNr: () => '256841\t0\t491520\n',
+    }
+    const result = probeFdHeadroom(deps)
+    expect(result).not.toBeNull()
+    expect(result?.used).toBe(256841)
+    expect(result?.limit).toBe(491520)
+    expect(result?.pct).toBeCloseTo(256841 / 491520)
+  })
+
+  it('returns null when the sysctl call throws (non-fatal)', () => {
+    const deps: FdHeadroomDeps = {
+      platform: 'darwin',
+      readSysctlNum: () => { throw new Error('sysctl unavailable') },
+      readFileNr: () => { throw new Error('should not be called') },
+    }
+    expect(probeFdHeadroom(deps)).toBeNull()
+  })
+
+  it('returns null when file-nr is malformed (non-fatal)', () => {
+    const deps: FdHeadroomDeps = {
+      platform: 'linux',
+      readSysctlNum: () => { throw new Error('should not be called') },
+      readFileNr: () => 'not a number at all',
+    }
+    expect(probeFdHeadroom(deps)).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// fd-headroom: enrichInitDbError
+// ---------------------------------------------------------------------------
+
+describe('enrichInitDbError', () => {
+  const RAW_DB_ERROR = 'Query read timeout'
+
+  it('names file descriptors when probe reports the incident-level usage (256841/491520)', () => {
+    // 256841/491520 ≈ 52% — above the FD_EXHAUSTION_THRESHOLD (0.5)
+    const result = enrichInitDbError(RAW_DB_ERROR, () => ({
+      used: 256841,
+      limit: 491520,
+      pct: 256841 / 491520,
+    }))
+
+    // Must mention file descriptors
+    expect(result).toMatch(/file descriptor/i)
+    // Must NOT lead with the database error — fd context comes first
+    expect(result).not.toMatch(new RegExp(`^${RAW_DB_ERROR}`))
+    // Must include the raw error as detail, not discard it
+    expect(result).toContain(RAW_DB_ERROR)
+    // Must include the actual counts
+    expect(result).toContain('256841')
+    expect(result).toContain('491520')
+  })
+
+  it('returns today\'s message verbatim when probe reports healthy headroom', () => {
+    // 10000/491520 ≈ 2% — well below the FD_EXHAUSTION_THRESHOLD
+    const result = enrichInitDbError(RAW_DB_ERROR, () => ({
+      used: 10000,
+      limit: 491520,
+      pct: 10000 / 491520,
+    }))
+    expect(result).toBe(RAW_DB_ERROR)
+  })
+
+  it('returns today\'s message verbatim and does not propagate when probe throws', () => {
+    const result = enrichInitDbError(RAW_DB_ERROR, () => {
+      throw new Error('ENFILE: file table overflow')
+    })
+    expect(result).toBe(RAW_DB_ERROR)
+  })
+
+  it('returns today\'s message verbatim when probe returns null (unsupported platform)', () => {
+    const result = enrichInitDbError(RAW_DB_ERROR, () => null)
+    expect(result).toBe(RAW_DB_ERROR)
+  })
+
+  it('includes the lsof command suggestion in the fd-exhaustion message', () => {
+    const result = enrichInitDbError(RAW_DB_ERROR, () => ({
+      used: 450000,
+      limit: 491520,
+      pct: 450000 / 491520,
+    }))
+    expect(result).toContain('lsof')
   })
 })
