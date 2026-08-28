@@ -25,6 +25,7 @@ import type { ProviderName } from '../../core/workers/provider-types'
 // every registered provider even under `mars init --skip-doctor`.
 import '../../core/workers/providers'
 import { listProviders } from '../../core/workers/provider-registry'
+import { readInitManifest } from '../../init/init-manifest'
 
 /**
  * Provider names `mars init --provider <name>` will accept, driven by the
@@ -115,20 +116,27 @@ export const formatClaudeAuthNote = (
 }
 
 /**
- * Return true when the target repo has already been initialised by `mars init`.
- * The marker is the init manifest `mars init` writes on every run (the old
- * `.mars/mars.db` sentinel died with the embedded-PostgreSQL migration — the
- * database is server-provisioned, not a file). The embedded-PG data dir is
- * accepted as a secondary signal so a repo whose daemon already provisioned a
- * database is never re-initialised destructively.
- * `fileExists` is injectable so tests never touch disk.
+ * Return true when the target repo has already been fully initialised by
+ * `mars init`. The sole marker is the init manifest that `mars init` writes
+ * on every successful run — present + readable means init completed.
+ *
+ * The old `.mars/pg/data` secondary signal has been removed: the daemon
+ * creates that directory before scaffolding starts, so any init that dies
+ * after daemon boot but before scaffold completion (e.g. a `Query read
+ * timeout`) would falsely report "already initialized" to a follow-up
+ * `mars init` call, offering only the alarming `--force` escape. The manifest
+ * is written by `writeInitManifest` only on a successful run, making it the
+ * authoritative completion marker.
+ *
+ * `readManifest` is injectable so tests never touch disk. The default is
+ * `readInitManifest`, which validates the file and returns its path list
+ * (empty array = absent or malformed). A non-empty result means the manifest
+ * is both present and structurally valid.
  */
 export const checkAlreadyInitialized = (
   repoRoot: string,
-  fileExists: (path: string) => boolean,
-): boolean =>
-  fileExists(join(repoRoot, '.mars', 'init-manifest.json')) ||
-  fileExists(join(repoRoot, '.mars', 'pg', 'data'))
+  readManifest: (marsDir: string) => string[] = readInitManifest,
+): boolean => readManifest(join(repoRoot, '.mars')).length > 0
 
 // ---------------------------------------------------------------------------
 // Commands
@@ -165,9 +173,10 @@ const init: Command = {
     const provider: ProviderName = (providerRaw as ProviderName | undefined) ?? 'codex'
 
     // ── Already-initialized idempotent check ─────────────────────────────
-    // Preserve an existing .mars without re-running the wizard. --force bypasses
-    // this so operators can re-initialize a repo explicitly.
-    if (!force && checkAlreadyInitialized(deps.ctx.repoRoot, existsSync)) {
+    // Gate on the init manifest — the authoritative record that a successful
+    // `mars init` run wrote all scaffold files. --force bypasses this so
+    // operators can re-initialize a repo explicitly.
+    if (!force && checkAlreadyInitialized(deps.ctx.repoRoot)) {
       deps.out('Mars is already initialized in this repository.')
       deps.out(`  ${join(deps.ctx.repoRoot, '.mars')} — found`)
       deps.out('')
@@ -175,6 +184,16 @@ const init: Command = {
       deps.out("Run 'mars doctor' to re-check prerequisites any time.")
       deps.out("Run 'mars init --force' to re-initialize (overwrites existing config).")
       return { code: 0 }
+    }
+
+    // ── Partial-install detection ─────────────────────────────────────────
+    // If .mars exists but the init manifest does not, a previous `mars init`
+    // run started (daemon booted, pg/ was provisioned) but did not finish
+    // writing scaffold files. This is NOT a complete install — continue into
+    // the normal init path and explain why we are running again rather than
+    // short-circuiting.
+    if (!force && existsSync(join(deps.ctx.repoRoot, '.mars'))) {
+      deps.out('Found a partial Mars install (no init manifest) — completing it.')
     }
 
     // ── Env-aware defaults ────────────────────────────────────────────────

@@ -5,8 +5,8 @@
  * real filesystem calls. The goal is to verify that:
  *   - detectMarsEnvOverrides correctly classifies known vs. unknown MARS_* vars
  *   - formatClaudeAuthNote produces the right message for each auth state
- *   - checkAlreadyInitialized delegates to the injected fileExists and probes
- *     the correct marker paths (init manifest, embedded-PG data dir)
+ *   - checkAlreadyInitialized uses readManifest to gate on the init manifest
+ *     only (not on .mars/pg/data or the .mars directory itself)
  */
 
 import { describe, expect, it } from 'vitest'
@@ -133,30 +133,39 @@ describe('formatClaudeAuthNote', () => {
 // ---------------------------------------------------------------------------
 
 describe('checkAlreadyInitialized', () => {
-  it('returns false when the injected fileExists returns false', () => {
-    const result = checkAlreadyInitialized('/some/repo', () => false)
+  it('returns false when readManifest returns an empty array (no manifest or malformed)', () => {
+    const result = checkAlreadyInitialized('/some/repo', () => [])
     expect(result).toBe(false)
   })
 
-  it('returns true when the injected fileExists returns true', () => {
-    const result = checkAlreadyInitialized('/some/repo', () => true)
+  it('returns true when readManifest returns a non-empty paths list', () => {
+    const result = checkAlreadyInitialized('/some/repo', () => ['CLAUDE.md'])
     expect(result).toBe(true)
   })
 
-  it('probes the init manifest and embedded-PG data dir under the repo root', () => {
-    const seen: string[] = []
-    checkAlreadyInitialized('/my/project', (p) => {
-      seen.push(p)
-      return false
+  it('passes the .mars directory path (under repoRoot) to readManifest', () => {
+    let calledWith = ''
+    checkAlreadyInitialized('/my/project', (marsDir) => {
+      calledWith = marsDir
+      return []
     })
-    expect(seen).toHaveLength(2)
-    // Primary marker: the init manifest `mars init` writes on every run.
-    expect(seen[0]).toMatch(/\.mars[/\\]init-manifest\.json$/)
-    // Secondary marker: the daemon-provisioned embedded PostgreSQL data dir.
-    expect(seen[1]).toMatch(/\.mars[/\\]pg[/\\]data$/)
-    for (const p of seen) {
-      expect(p).toContain('my')
-      expect(p).toContain('project')
-    }
+    // readManifest receives the .mars dir, not the individual file path.
+    expect(calledWith).toMatch(/my[/\\]project[/\\]\.mars$/)
+  })
+
+  // New case 1: .mars present but no init-manifest.json (partial install) →
+  // NOT already-initialized; a plain `mars init` must be able to finish the job.
+  it('returns false when .mars exists but init-manifest.json is absent (partial install)', () => {
+    // Simulate: readInitManifest returns [] because the file does not exist.
+    const result = checkAlreadyInitialized('/partial/repo', () => [])
+    expect(result).toBe(false)
+  })
+
+  // New case 2: valid init-manifest.json present → fully initialized; init
+  // command must short-circuit with { code: 0 } without re-running scaffold.
+  it('returns true when init-manifest.json is present and lists scaffold paths', () => {
+    const paths = ['CLAUDE.md', 'CONTEXT.md', '.claude/settings.json']
+    const result = checkAlreadyInitialized('/complete/repo', () => paths)
+    expect(result).toBe(true)
   })
 })
