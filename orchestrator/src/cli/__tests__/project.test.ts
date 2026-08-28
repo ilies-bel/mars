@@ -1,5 +1,6 @@
 /**
- * Integration tests for `mars project` subcommand routing.
+ * Integration tests for `mars project` subcommand routing, plus unit tests
+ * for the saveProjectRegistry chokepoint guard.
  *
  * Uses MARS_PROJECTS_FILE to redirect the registry to a temp file so
  * tests never touch ~/.mars/projects.json.
@@ -11,6 +12,11 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import {
+  addProject,
+  removeProject,
+  ensureProjectRegistered,
+} from '../../registry/projects.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
 // src/cli/__tests__ -> src/cli -> src -> orchestrator
@@ -141,5 +147,94 @@ describe('mars project --help', () => {
     const result = runCli(['project', '--help'])
     expect(result.status).toBe(0)
     expect(result.stdout).toContain('--name')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Unit tests for the saveProjectRegistry chokepoint guard.
+//
+// These tests import the registry functions directly (not via the CLI
+// subprocess) so they run in the Vitest process where VITEST is set.
+// ---------------------------------------------------------------------------
+
+describe('saveProjectRegistry chokepoint guard — VITEST without MARS_PROJECTS_FILE', () => {
+  let savedProjectsFile: string | undefined
+
+  beforeEach(() => {
+    // The global setup-env.ts has already set MARS_PROJECTS_FILE to a temp
+    // path before this beforeEach runs. Save and delete it so the guard
+    // condition (VITEST set, MARS_PROJECTS_FILE unset) fires.
+    savedProjectsFile = process.env.MARS_PROJECTS_FILE
+    delete process.env.MARS_PROJECTS_FILE
+  })
+
+  afterEach(() => {
+    // Restore so subsequent tests and setup-env.ts's ??= guard are consistent.
+    if (savedProjectsFile !== undefined) {
+      process.env.MARS_PROJECTS_FILE = savedProjectsFile
+    } else {
+      delete process.env.MARS_PROJECTS_FILE
+    }
+  })
+
+  it('addProject throws the registry-violation error', () => {
+    // repoDir is created by the outer beforeEach; it is unique per-run so
+    // it cannot collide with any real entry in ~/.mars/projects.json.
+    expect(() => addProject({ repoRoot: repoDir })).toThrow('[mars-test registry violation]')
+  })
+
+  it('addProject error names the real registry path and the fix', () => {
+    let message = ''
+    try {
+      addProject({ repoRoot: repoDir })
+    } catch (err) {
+      message = String(err)
+    }
+    expect(message).toContain('projects.json')
+    expect(message).toContain('MARS_PROJECTS_FILE')
+    expect(message).toContain('setup-env.ts')
+  })
+
+  it('ensureProjectRegistered returns a synthesised entry without throwing', () => {
+    // ensureProjectRegistered short-circuits before saveProjectRegistry
+    // when VITEST is set and MARS_PROJECTS_FILE is unset.
+    const entry = ensureProjectRegistered({ repoRoot: repoDir })
+    expect(entry.repoRoot).toBe(repoDir)
+    expect(entry.projectId).toMatch(/^p_[0-9a-f]{12}$/)
+  })
+})
+
+describe('saveProjectRegistry — normal operation with MARS_PROJECTS_FILE set', () => {
+  let ownTmpDir: string
+  let ownRegistry: string
+
+  beforeEach(() => {
+    ownTmpDir = mkdtempSync(resolve(tmpdir(), 'mars-guard-ok-test-'))
+    ownRegistry = resolve(ownTmpDir, 'projects.json')
+    process.env.MARS_PROJECTS_FILE = ownRegistry
+  })
+
+  afterEach(() => {
+    rmSync(ownTmpDir, { recursive: true, force: true })
+    // Delete so setup-env.ts's ??= in the next beforeEach restores the default
+    // per-run temp path and doesn't see a path to a deleted directory.
+    delete process.env.MARS_PROJECTS_FILE
+  })
+
+  it('addProject writes to the temp file and returns the new entry', () => {
+    const entry = addProject({ repoRoot: repoDir })
+    expect(entry.projectId).toMatch(/^p_[0-9a-f]{12}$/)
+    expect(entry.repoRoot).toBe(repoDir)
+  })
+
+  it('removeProject removes an existing entry and returns true', () => {
+    const entry = addProject({ repoRoot: repoDir })
+    const removed = removeProject(entry.projectId)
+    expect(removed).toBe(true)
+  })
+
+  it('removeProject returns false without writing when the project is not found', () => {
+    const removed = removeProject('p_000000000000')
+    expect(removed).toBe(false)
   })
 })
