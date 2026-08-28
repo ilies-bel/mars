@@ -791,7 +791,17 @@ const RECIPE_DEFINITIONS = {
   'verify-uncovered': {
     humanSummary: (ctx) => {
       const scope = str(ctx.payload['scope']) || ctx.entityId
-      return `Decide whether to add an automated check for ${scope} — a task merged without any check covering these changes.`
+      // A bare '.' (repo-root scope) must never reach the operator.
+      const scopeLabel = scope === '.' ? 'the repository root' : scope
+      const proposed = ctx.payload['proposedGate'] as
+        | { evidence?: string }
+        | undefined
+      // When a proposedGate is present the row was raised by a sweep (not a
+      // merge). Use the sweep's own evidence rather than the merge wording.
+      if (proposed && str(proposed['evidence'])) {
+        return `Decide whether to add an automated check — Mars found: ${str(proposed['evidence'])}.`
+      }
+      return `Decide whether to add an automated check for ${scopeLabel} — a task merged without any check covering these changes.`
     },
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
@@ -828,9 +838,12 @@ const RECIPE_DEFINITIONS = {
                 : []),
             ].join(' ')
           : `mars verify-gate add --scope ${scope} --name <name> --cmd <cmd>`
-      const baseVerbs: RecipeVerb[] = [{ op: 'copy', label: 'Add gate check', style: 'primary', hint }]
+      // 'Copy gate command' copies the ready-to-run mars verify-gate add command;
+      // 'Add proposed gate' one-click-creates the gate from the proposedGate payload.
+      // Labels are distinct so a cold reader can tell them apart.
+      const baseVerbs: RecipeVerb[] = [{ op: 'copy', label: 'Copy gate command', style: 'primary', hint }]
       if (proposed) {
-        baseVerbs.push({ op: 'add-gate', label: 'Add gate', style: 'primary' })
+        baseVerbs.push({ op: 'add-gate', label: 'Add proposed gate', style: 'primary' })
       }
       baseVerbs.push({ op: 'dismiss-uncovered', label: 'No gate needed', style: 'primary' })
       return baseVerbs

@@ -87,16 +87,30 @@ export const reportUncoveredVerifyCoverage = async (args: {
   const fingerprint = computeScopeFingerprint(normalized)
   const signature = `verify-uncovered:${fingerprint}`
 
-  const pathSummary =
+  const rawSummary =
     normalized.slice(0, 3).join(', ') +
     (normalized.length > 3 ? ` (+${normalized.length - 3} more)` : '')
+  // A bare '.' (repo-root scope) must never reach the operator — render it as
+  // words. This matches the existing title-side special case below.
+  const pathSummary = rawSummary === '.' ? 'the repository root' : rawSummary
+
+  // Body text branches on provenance: when a proposedGate is present the row was
+  // raised by a sweep (no task merged), so the body describes what Mars observed
+  // and what check it proposes. When absent a task genuinely merged without a
+  // covering gate, so the original merge wording is kept unchanged.
+  const body = args.proposedGate
+    ? [
+        `Mars found: ${args.proposedGate.evidence}.`,
+        `Proposed check: ${[args.proposedGate.cmd, ...args.proposedGate.args].join(' ')}`,
+      ].join('\n')
+    : `Task merged without any check covering: ${pathSummary}`
 
   await raiseActionQueueItem({
     kind: 'verify-uncovered',
     category: 'orchestrator',
     priority: 'normal',
     title: `No verify gate covers changed files${scope !== '.' ? ` in ${scope}` : ''}`,
-    body: `Task merged without any check covering: ${pathSummary}`,
+    body,
     payload: {
       scope,
       changedPaths: normalized,
