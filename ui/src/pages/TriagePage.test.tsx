@@ -1110,3 +1110,79 @@ describe('TriageRow – operator-decision kind: row hides optimistically on verb
     expect(container.querySelector('[data-testid="triage-decision-Approve"]')).toBeNull()
   })
 })
+
+// ---------------------------------------------------------------------------
+// KIND_LABEL — kind chip shows a humanised label, never a raw machine slug
+//
+// DEC-18: a raw hyphenated kind slug on the face of the operator's first read
+// falsifies the vision claim. The three kinds called out by the task report
+// (daemon-died, verify-uncovered, gate-enrichment-stale) were absent from the
+// previous KIND_LABEL map; the map is now exhaustive and a missing label is a
+// compile error. The humanising fallback (`replace(/-/g, ' ')`) is kept as
+// defence in depth for kinds arriving from the daemon after a build.
+// ---------------------------------------------------------------------------
+
+describe('TriagePage – kind chip never renders a raw machine slug', () => {
+  it('daemon-died renders its mapped label on the chip face', () => {
+    mockItems.mockReturnValue([makeItem('daemon-died')])
+    const html = renderToStaticMarkup(<TriagePage />)
+    expect(html).toContain('daemon died')
+    // Raw hyphenated slug must not appear on the card face
+    expect(html).not.toMatch(/>\s*daemon-died\s*</)
+  })
+
+  it('verify-uncovered renders its mapped label on the chip face', () => {
+    mockItems.mockReturnValue([makeItem('verify-uncovered')])
+    const html = renderToStaticMarkup(<TriagePage />)
+    expect(html).toContain('uncovered')
+    expect(html).not.toMatch(/>\s*verify-uncovered\s*</)
+  })
+
+  it('gate-enrichment-stale renders its mapped label on the chip face', () => {
+    mockItems.mockReturnValue([makeItem('gate-enrichment-stale')])
+    const html = renderToStaticMarkup(<TriagePage />)
+    expect(html).toContain('stale enrichment')
+    expect(html).not.toMatch(/>\s*gate-enrichment-stale\s*</)
+  })
+
+  it('a kind unknown at build time is humanised (hyphens → spaces) rather than emitted raw', () => {
+    // Simulates a kind the daemon shipped after the last build cut — the
+    // defence-in-depth fallback must produce readable text, not a slug.
+    // Override title/entityId so the kind slug does not bleed into other
+    // fields; we are only testing the chip label path.
+    // The cast is intentional: we are probing the runtime path, not the
+    // compile-time exhaustiveness check.
+    mockItems.mockReturnValue([
+      makeItem('future-unknown-kind' as unknown as string, {
+        id: 'unknown-kind-item',
+        entityId: 'task-abc123',
+        title: 'A test item',
+        humanSummary: 'Test summary',
+      }),
+    ])
+    const html = renderToStaticMarkup(<TriagePage />)
+    expect(html).toContain('future unknown kind')
+    // The raw slug must not reach the chip face; it must not appear at all
+    // since we scrubbed it from every other field above.
+    expect(html).not.toContain('future-unknown-kind')
+  })
+
+  it('badge kinds (extra conditions on entity-grouped cards) are also humanised', () => {
+    // Tests the third fallback site (extraBadges) in TriageRow.
+    mockItems.mockReturnValue([
+      makeItem('failed', {
+        id: 'primary-row',
+        entityId: 'mars-abc',
+        recoveryExhausted: false,
+      }),
+      makeItem('gate-broken', {
+        id: 'badge-row',
+        entityId: 'mars-abc',
+      }),
+    ])
+    const html = renderToStaticMarkup(<TriagePage />)
+    // gate-broken → 'gate broken' (from the map); must not appear raw on the badge
+    expect(html).toContain('gate broken')
+    expect(html).not.toMatch(/>\s*gate-broken\s*</)
+  })
+})

@@ -716,6 +716,14 @@ export const actionQueueItemSchema = z.union([
 ])
 
 /**
+ * The discriminated union of every action-queue item kind the UI can receive.
+ * Derived from the schema union so it stays in sync automatically: adding a new
+ * item variant to `actionQueueItemSchema` automatically widens this type and
+ * forces any `Record<ActionQueueKind, …>` map to declare a label for the new kind.
+ */
+export type ActionQueueKind = z.infer<typeof actionQueueItemSchema>['kind']
+
+/**
  * True when `item.entityId` is a task id the task detail drawer can resolve
  * (GET /api/tasks/:id, OriginTree). `dag` is populated by the daemon only for
  * rows backed by a real task row, so it is a reliable discriminator — unlike

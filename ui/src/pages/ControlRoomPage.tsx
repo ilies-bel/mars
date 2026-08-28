@@ -424,7 +424,7 @@ const AdvisorySection = () => {
             >
               <div className="flex items-start gap-2">
                 <span className="mt-0.5 shrink-0 rounded bg-primary/10 px-1.5 py-0.5 font-mono text-micro uppercase tracking-wide text-primary/60">
-                  {ADVISORY_LABELS[item.kind] ?? item.kind}
+                  {ADVISORY_LABELS[item.kind] ?? item.kind.replace(/-/g, ' ')}
                 </span>
                 <span className="font-mono text-label text-foreground/80">{item.title}</span>
               </div>

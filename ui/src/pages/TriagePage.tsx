@@ -44,7 +44,7 @@ import { defaultAqUrlState, encodeAqState } from '@/shared/actionQueueUrlState'
 import { taskHash } from '@/shared/routing'
 import { hasResolvableTask, isConditionActionQueueKind } from '@/shared/schemas'
 import { useSseConnected } from '@/shared/sseStatus'
-import type { ActionQueueItem } from '@/shared/schemas'
+import type { ActionQueueItem, ActionQueueKind } from '@/shared/schemas'
 import type { Decision } from '@/shared/schemas'
 
 // ── Kind display ──────────────────────────────────────────────────────────────
@@ -70,25 +70,75 @@ const KIND_ICON: Record<string, string> = {
   'dirty-integration': '⊘',
 }
 
-const KIND_LABEL: Record<string, string> = {
+/**
+ * Human-readable chip label for every action-queue kind.
+ *
+ * Typed as `Record<ActionQueueKind, string>` so TypeScript raises a compile
+ * error when a new kind is added to the schema without a corresponding label
+ * here — omitting a kind would silently emit the raw machine slug on the card
+ * face (DEC-18). The three `?? kind.replace(/-/g, ' ')` fallbacks at the
+ * render sites are defence-in-depth for kinds that arrive from the daemon at
+ * runtime after the build was cut.
+ */
+const KIND_LABEL: Record<ActionQueueKind, string> = {
+  // ── condition kinds ──────────────────────────────────────────────────────
   failed: 'failed',
-  'daemon-killed': 'killed',
   'stale-queued': 'stale',
+  'stale-queued-summary': 'stale summary',
+  'gate-broken': 'gate broken',
+  'subscriber-stalled': 'stalled',
+  'signature-storm': 'storm',
+  'daemon-died': 'daemon died',
+  'daemon-code-drift': 'daemon drift',
+  'baseline-broken': 'baseline broken',
   'stale-worktree': 'worktree',
+  'phantom-task': 'phantom',
+  'worktree-ahead': 'ahead',
+  'orphaned-origin': 'orphaned',
+  'steward-repeat': 'steward',
+  'e2e-tooling-missing': 'e2e tooling',
+  // ── task-failure kinds ───────────────────────────────────────────────────
+  'daemon-killed': 'killed',
+  'cancelled-blocker-cascade': 'cascaded',
+  'diagnose-inconclusive': 'inconclusive',
+  'coder-question': 'question',
+  'prerequisite-failed': 'prerequisite',
+  'slices-dropped': 'slices dropped',
+  'slice-failed': 'slice failed',
+  'behaviour-unverified': 'unverified',
+  'observability-store-oversize': 'store oversize',
+  'outbox-lag': 'outbox lag',
+  'recovery-abandoned': 'recovery abandoned',
+  'done-with-unmerged-commits': 'unmerged',
+  'api-outage': 'api outage',
+  'workflow-install-drift': 'install drift',
+  'provider-rate-limited': 'rate limited',
+  'gate-enrichment': 'enrichment',
+  'verify-uncovered': 'uncovered',
+  'budget-window': 'budget',
+  'budget-arc': 'arc budget',
+  'promotion-decision': 'promotion',
+  'arc-verification-failed': 'arc verify',
+  'gate-enrichment-stale': 'stale enrichment',
+  'env-incident': 'env incident',
+  'dirty-integration': 'dirty integration',
+  'fragmented-repo-layout': 'fragmented',
+  'low-disk-space': 'low disk',
+  // ── notice kinds ─────────────────────────────────────────────────────────
+  'spend-control-notice': 'spend limit',
+  'scheduling-decision': 'scheduled',
+  'requeue-warning': 'requeue',
+  'arc-superseded-on-main': 'superseded',
+  'mockup-ready': 'mockup',
+  'qa-step-list-opt-in': 'qa opt-in',
+  'qa-step-list-promote': 'qa promote',
+  // ── operator-decision kinds ───────────────────────────────────────────────
   'draft-proposal': 'proposal',
   'awaiting-validation': 'validate',
   'arc-failed': 'arc failed',
   'awaiting-human': 'awaiting',
-  'coder-question': 'question',
-  'diagnose-inconclusive': 'inconclusive',
   'reflect-recommended': 'reflect',
-  'gate-broken': 'gate broken',
-  'recovery-abandoned': 'recovery abandoned',
   'scorer-suggested': 'scorer',
-  'baseline-broken': 'baseline broken',
-  'daemon-code-drift': 'daemon drift',
-  'signature-storm': 'storm',
-  'dirty-integration': 'dirty integration',
 }
 
 /** Left accent bar color per kind. */
@@ -166,7 +216,7 @@ interface TriageClusterRowProps {
  */
 const TriageClusterRow = ({ kind, count, latestAt }: TriageClusterRowProps) => {
   const age = relativeTime(latestAt)
-  const kindLabel = KIND_LABEL[kind] ?? kind
+  const kindLabel = (KIND_LABEL as Record<string, string | undefined>)[kind] ?? kind.replace(/-/g, ' ')
   const kindIcon = KIND_ICON[kind] ?? '•'
   const chipClass = KIND_CHIP_CLASS[kind] ?? 'text-muted-foreground border-border'
   const accentClass = KIND_ACCENT[kind] ?? 'border-l-muted'
@@ -285,7 +335,7 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
   const goal = item.operatorGoal ?? null
   const headline = !goal ? (item.humanSummary || item.title) : null
   const accentClass = KIND_ACCENT[item.kind] ?? 'border-l-muted'
-  const kindLabel = KIND_LABEL[item.kind] ?? item.kind
+  const kindLabel = KIND_LABEL[item.kind] ?? item.kind.replace(/-/g, ' ')
   const kindIcon = KIND_ICON[item.kind] ?? '•'
   const chipClass =
     KIND_CHIP_CLASS[item.kind] ?? 'text-muted-foreground border-border'
@@ -420,7 +470,7 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
               className="rounded border border-border px-1.5 py-0.5 font-mono text-micro leading-none text-muted-foreground"
               data-testid={`triage-entity-badge-${badgeKind}`}
             >
-              {KIND_LABEL[badgeKind] ?? badgeKind}
+              {(KIND_LABEL as Record<string, string | undefined>)[badgeKind] ?? badgeKind.replace(/-/g, ' ')}
             </span>
           ))}
         </div>
