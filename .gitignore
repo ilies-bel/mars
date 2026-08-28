@@ -104,6 +104,16 @@ failed-tasks-*
 # ui/playwright*.config.ts files, which are unaffected by a directory pattern).
 .playwright-cli/
 
+# PGlite data directories. Tests and any bare-key `MARS_REPO` resolution create
+# `<dir>/.mars.pglite/`; a stale one is ~688 files, and 182 of them (~7.3 GB)
+# once exhausted the host file table via an external code indexer (codegraph).
+# This rule previously lived only in `.git/info/exclude`, which is per-clone and
+# untracked, so no other clone or tool inherited it — the measured proof is that
+# codegraph honoured node_modules (committed .gitignore) and opened 1 file
+# there, while opening ~240,000 under .mars.pglite (info/exclude only).
+# Verified clean before adding: `git ls-files | grep '\.mars\.pglite'` → none.
+.mars.pglite/
+
 # Defensive: SqliteStore undefined-path artifacts (see PRD; validation lives in packages/workflow/src/store-sqlite.ts)
 /orchestrator/undefined
 /orchestrator/undefined-shm
