@@ -10,8 +10,9 @@
 import { execFileSync } from 'node:child_process'
 import { mkdtempSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
-import { dirname, isAbsolute, join, resolve, sep } from 'node:path'
+import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { beforeEach } from 'vitest'
+import { hermeticViolation } from './hermetic-repo.js'
 
 process.env.MARS_ARC_INVARIANT_CHECK = '1'
 
@@ -94,45 +95,43 @@ process.env.MARS_REPO = mkdtempSync(join(tmpdir(), `mars-test-repo-${process.pid
 
 // ── Fail-fast guard ────────────────────────────────────────────────────────
 //
-// Detect the real repo's .mars path ONCE at setup time (before we redirect
-// MARS_REPO).  After each test, assert that MARS_REPO (if set) does not point
-// back at the live .mars — so a test that accidentally resets MARS_REPO to the
-// live repo produces a loud, actionable failure instead of 2404 mysterious
-// assertion errors.
+// Detect the real repo root ONCE at setup time (before we redirect MARS_REPO).
+// After each test, assert that MARS_REPO (if set) does not point anywhere
+// inside the repo working tree — so a test that accidentally resets MARS_REPO
+// to a path inside the repo produces a loud, actionable failure instead of
+// 2404 mysterious assertion errors or silent disk accumulation.
 //
 // Detection uses the same --git-common-dir trick as detectRepoRoot() in
 // context.ts: for a linked worktree the common git dir is the real repo's .git,
 // so dirname gives the real repo root regardless of which worktree we are in.
-let _realMarsDir: string | null = null
+//
+// The predicate is delegated to hermeticViolation() in ./hermetic-repo.ts so
+// it can be unit-tested independently and is the single source of truth.
+let _repoRoot: string | null = null
 try {
   const raw = execFileSync('git', ['rev-parse', '--git-common-dir'], {
     encoding: 'utf8',
     cwd: process.cwd(),
   }).trim()
   const abs = isAbsolute(raw) ? raw : resolve(process.cwd(), raw)
-  _realMarsDir = resolve(dirname(abs), '.mars')
+  _repoRoot = dirname(abs)
 } catch {
   // Not inside a git repo or git unavailable — skip the guard.
 }
-const REAL_MARS_DIR = _realMarsDir
+const REPO_ROOT = _repoRoot
 
-if (REAL_MARS_DIR !== null) {
+if (REPO_ROOT !== null) {
   beforeEach(() => {
     // ── MARS_REPO guard ────────────────────────────────────────────────────
-    const marsRepo = process.env.MARS_REPO
-    if (marsRepo !== undefined && marsRepo !== '') {
-      const candidateStateDir = resolve(marsRepo, '.mars')
-      if (
-        candidateStateDir === REAL_MARS_DIR ||
-        candidateStateDir.startsWith(REAL_MARS_DIR + sep)
-      ) {
-        throw new Error(
-          `[mars-test hermetic violation] MARS_REPO="${marsRepo}" resolves to ` +
-            `the live .mars directory at "${REAL_MARS_DIR}". ` +
-            `Set MARS_REPO to an isolated temp dir in your test's beforeEach, ` +
-            `or rely on the global hermetic MARS_REPO set in test/setup-env.ts.`,
-        )
-      }
+    //
+    // Reject any MARS_REPO that resolves to a path equal to or nested under
+    // the repo root — not just paths under .mars/ (the old, too-narrow check).
+    // This catches the historical leak: a bare relative key like
+    // `learned-recipes-test-${pid}-${n}` resolving to
+    // `<repoRoot>/orchestrator/<key>` and creating ~688 PGlite files there.
+    const violation = hermeticViolation(process.env.MARS_REPO, REPO_ROOT)
+    if (violation !== null) {
+      throw new Error(violation)
     }
     // (if marsRepo is undefined/empty the test manages its own isolation —
     // see context.test.ts — so we skip the MARS_REPO check but still run
