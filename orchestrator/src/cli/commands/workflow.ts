@@ -79,8 +79,12 @@ const userWorkflowFiles = (stateDir: string): string[] => {
 // 'missing' = a bundled template exists but no on-disk file does. There is NO
 // dispatch fallback (ADR-0067): a task routed to a missing workflow fails, so
 // the honest remedy is scaffolding the file (`mars update`).
-// 'agent-draft' = a self-authored file pending operator approval (ADR-0068);
-// dispatch for this name hard-fails until `mars workflow approve <name>`.
+// 'agent-draft' = one provenance outcome for a self-authored file (ADR-0068):
+// a body that fails the primitive-only lint is rejected outright (nothing is
+// written); one that passes is auto-approved and classified 'custom'. 'agent-draft'
+// is only set when provenance.pendingApproval is still true — i.e. the file was
+// written by an older path and was never auto-approved. Dispatch hard-fails for
+// this classification until `mars workflow approve <name>` is run.
 type WorkflowSource = 'missing' | 'scaffolded' | 'user-modified' | 'custom' | 'agent-draft'
 
 /** Human-facing label for a source — drafts carry their gating state inline. */
@@ -533,7 +537,7 @@ const workflowAuthorInputSchema = z.object({
 const workflowAuthor: Command = {
   path: 'workflow author',
   summary:
-    'author a NEW workflow from a JS body (stdin or file) — create-only; lint + dry-run gated; lands as an agent draft pending operator approval',
+    'author a NEW workflow from a JS body (stdin or file) — create-only; lint + dry-run gated; a primitive-only body is auto-approved and dispatch-eligible immediately; a body that fails the lint is rejected and nothing is written',
   usage: 'usage: mars workflow author <name> --from <-|path> [--author <id>]',
   run: async (args, deps) => {
     const nameArg = args.positional[0]
@@ -661,7 +665,7 @@ const workflowAuthor: Command = {
 const workflowApprove: Command = {
   path: 'workflow approve',
   summary:
-    'approve a pending agent-draft workflow — the single moment agent-written JS becomes operator-privileged (ADR-0068)',
+    'approve a pending agent-draft workflow — promotes an agent-written JS body that was NOT auto-approved to operator-privileged status (ADR-0068); primitive-only bodies are auto-approved at authorship and do not need this step',
   usage: 'usage: mars workflow approve <name>',
   run: async (args, deps) => {
     const name = args.positional[0]

@@ -17,9 +17,15 @@
  *     ("no top-level side effects" — all work lives inside `ctx.step` bodies
  *     composing the five primitives).
  *
- * The lint is a best-effort textual screen, not a sandbox: the trust boundary
- * remains write-time operator approval (`mars workflow approve`). A body that
- * passes the lint still lands as a non-dispatchable agent draft.
+ * The lint surface IS the auto-approval boundary (ADR-0068, amended): a body
+ * that passes the lint is auto-approved and dispatch-eligible immediately; a
+ * body that fails is rejected outright — nothing is written to disk. The
+ * `mars workflow approve` step is only needed for agent-draft files written by
+ * older paths that were not auto-approved at authorship time.
+ *
+ * The lint is a best-effort textual screen, not a sandbox: it is possible for
+ * a sufficiently creative body to pass the screen while still doing unintended
+ * work through the allowed primitives.
  */
 
 import { listPrimitives } from './primitives/registry'
