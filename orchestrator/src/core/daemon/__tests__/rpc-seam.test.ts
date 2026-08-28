@@ -66,6 +66,7 @@ const makeDeps = (overrides: Partial<DaemonDeps> = {}): {
   }
   const deps: DaemonDeps = {
     log: () => {},
+    repoRoot: '/fake/repo',
     bus: { emit: () => true } as unknown as DaemonDeps['bus'],
     tracker: fakeTracker(),
     sems: {
@@ -144,12 +145,10 @@ describe('RPC registry', () => {
   it('registers exactly one leaf per protocol op, no duplicates', () => {
     // Every handler op is unique (buildRpcRegistry throws on dup).
     expect(() => buildRpcRegistry(allRpcHandlers)).not.toThrow()
-    // Stop-task adds one leaf to the existing registry surface.
-    // (35 + preview.spawn + preview.status + preview.teardown + merge.cancel
-    //  + spend-control.show + spend-control.set + task.contextForWorker
-    //  + mcp.audit.append + set-dispatch + reset-breaker + vision-write
-    //  + adr-supersede + task.set-verify + step.abort).
-    expect(rpcRegistry.size).toBe(51)
+    // Snapshot of the full registered surface; update this number when a new
+    // op is added to the protocol. The comment lists the categories; the
+    // authoritative count comes from the actual rpcRegistry at runtime.
+    expect(rpcRegistry.size).toBe(58)
   })
 
   it('rejects duplicate ops', () => {

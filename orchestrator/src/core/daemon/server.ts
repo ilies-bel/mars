@@ -4977,6 +4977,7 @@ export const startDaemon = async (
   let rpcDeps: DaemonDeps | undefined
   const buildRpcDeps = (): DaemonDeps => ({
     log,
+    repoRoot: resolveContext().repoRoot,
     bus,
     tracker,
     sems: {
@@ -6519,7 +6520,11 @@ export const startDaemon = async (
 
   for (const sig of ['SIGINT', 'SIGTERM'] as const) {
     process.once(sig, () => {
-      log(`received ${sig}`)
+      // writeLog is synchronous (appendFileSync), so this line is guaranteed to
+      // land on disk before the async shutdown() begins — even if the process
+      // exits quickly. Using writeLog directly (rather than log()) avoids any
+      // async trace-store tee path that might not flush before exit.
+      writeLog(logFile, `[shutdown] received ${sig} (pid ${process.pid}); cleaning up`)
       void shutdown(false)
     })
   }

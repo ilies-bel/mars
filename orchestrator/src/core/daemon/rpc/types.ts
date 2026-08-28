@@ -88,6 +88,8 @@ export interface DaemonDeps {
   // ── ambient primitives ────────────────────────────────────────────────────
   /** The daemon's line logger (the `(line) => void` closure, not a Logger). */
   log: (line: string) => void
+  /** The absolute path of the repo root this daemon serves. */
+  repoRoot: string
   bus: EventEmitter
   tracker: TaskFlightTracker
   sems: RpcSemaphores

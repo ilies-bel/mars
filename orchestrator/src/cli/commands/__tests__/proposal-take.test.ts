@@ -430,6 +430,7 @@ describe('mars proposal take — command coverage', () => {
         }
       return {
         log: () => {},
+        repoRoot: '/fake/repo',
         bus: { emit: () => {} } as unknown as import('node:events').EventEmitter,
         tracker: fakeTracker(),
         sems: {

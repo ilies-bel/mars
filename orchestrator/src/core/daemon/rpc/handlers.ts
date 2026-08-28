@@ -388,6 +388,9 @@ const shutdownHandler = handler('shutdown', async (req, deps) => {
   //                 running/verifying in the queue).
   //   neither     → exit only if idle; refuse otherwise so the
   //                 user can pick drain or kill explicitly.
+  deps.log(
+    `[shutdown] stop requested via socket for ${deps.repoRoot} (pid ${process.pid}, drain=${req.drain ?? false}, force=${req.force ?? false})`,
+  )
   if (req.drain) {
     if (deps.getAcceptingWork()) {
       deps.setAcceptingWork(false)

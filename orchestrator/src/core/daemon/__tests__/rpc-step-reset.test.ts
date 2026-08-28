@@ -36,6 +36,7 @@ const notImpl =
 
 const makeDeps = (overrides: Partial<DaemonDeps> = {}): DaemonDeps => ({
   log: () => {},
+  repoRoot: '/fake/repo',
   bus: { emit: () => true } as unknown as DaemonDeps['bus'],
   tracker: fakeTracker(),
   sems: {
