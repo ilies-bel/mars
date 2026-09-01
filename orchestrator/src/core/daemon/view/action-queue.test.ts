@@ -12,6 +12,9 @@
  * the ActionQueueRow[] returned by buildActionQueueView.
  */
 
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   buildActionQueueView,
@@ -24,6 +27,7 @@ import {
 } from './action-queue.js'
 import { lookupFailureKind } from '../../lib/failure-kinds.js'
 import { DAEMON_KILLED_SIGNATURE } from '../../lib/retry-budget.js'
+import { ACTION_QUEUE_KINDS } from '../../lib/action-queue-kinds.js'
 
 // ── Test helpers ──────────────────────────────────────────────────────────────
 
@@ -1874,5 +1878,79 @@ describe('buildActionQueueView — every emitted op has a registered handler', (
     expect(dpRow).toBeDefined()
     const allOps = [...dpRow!.verbs, ...dpRow!.actions].map((v) => v.op)
     expect(allOps).not.toContain('grill')
+  })
+})
+
+// ── taskFailureKinds drift gate (orchestrator side) ────────────────────────────
+//
+// The daemon classifies "is this action-queue kind a task failure?" as a
+// complement: every kind in ACTION_QUEUE_KINDS that is NOT in
+// NON_TASK_FAILURE_KINDS (this file) is a task failure. The UI mirror
+// `taskFailureKinds` (ui/src/shared/schemas.ts) is hand-maintained against
+// that complement.
+//
+// Adding this gate co-located with NON_TASK_FAILURE_KINDS means any verify
+// command scoped to action-queue.test.ts catches UI mirror drift automatically
+// — without the task author needing to widen --verify. This closes the gap that
+// caused the incident of 2026-08-24, where a task touching NON_TASK_FAILURE_KINDS
+// shipped with a passing orchestrator-only verify while the UI gate failed and
+// poisoned the integration branch.
+//
+// The authoritative UI-side gate lives alongside the mirror it protects:
+//   ui/src/shared/taskFailureKinds.driftGate.test.ts
+// Both gates must agree; this one ensures the orchestrator's test suite is a
+// sufficient verify scope for changes to either constant.
+
+function extractQuotedList(source: string, pattern: RegExp): string[] {
+  const match = pattern.exec(source)
+  if (!match) {
+    throw new Error(`could not locate array literal matching ${pattern} in source`)
+  }
+  return [...match[1]!.matchAll(/'([^']+)'/g)].map((m) => m[1]!)
+}
+
+describe('taskFailureKinds drift gate — orchestrator side', () => {
+  it('ui taskFailureKinds matches ACTION_QUEUE_KINDS minus NON_TASK_FAILURE_KINDS exactly', () => {
+    const here = path.dirname(fileURLToPath(import.meta.url))
+
+    const aqSource = readFileSync(path.resolve(here, 'action-queue.ts'), 'utf8')
+    const nonTaskKinds = extractQuotedList(
+      aqSource,
+      /const NON_TASK_FAILURE_KINDS = new Set\(\[([\s\S]*?)\]\)/,
+    )
+    expect(
+      nonTaskKinds.length,
+      'NON_TASK_FAILURE_KINDS extraction returned empty — check regex against action-queue.ts',
+    ).toBeGreaterThan(0)
+
+    const uiSource = readFileSync(
+      path.resolve(here, '../../../../../ui/src/shared/schemas.ts'),
+      'utf8',
+    )
+    const uiKinds = extractQuotedList(
+      uiSource,
+      /export const taskFailureKinds = \[([\s\S]*?)\] as const/,
+    )
+    expect(
+      uiKinds.length,
+      'taskFailureKinds extraction returned empty — check regex against ui/src/shared/schemas.ts',
+    ).toBeGreaterThan(0)
+
+    const nonTaskSet = new Set(nonTaskKinds)
+    const expected = Array.from(ACTION_QUEUE_KINDS).filter((k) => !nonTaskSet.has(k))
+
+    expect([...uiKinds].sort()).toEqual([...expected].sort())
+  })
+
+  it('extraction guard — throws on syntax change, not silently empty', () => {
+    // When the literal-array syntax changes (e.g. from new Set([...]) to new Set(...)),
+    // the regex cannot match and extractQuotedList throws rather than returning [].
+    // This prevents a refactor from producing a false-green drift gate.
+    expect(() =>
+      extractQuotedList(
+        'const NON_TASK_FAILURE_KINDS = new Map([])',
+        /const NON_TASK_FAILURE_KINDS = new Set\(\[([\s\S]*?)\]\)/,
+      ),
+    ).toThrow('could not locate array literal')
   })
 })

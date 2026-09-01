@@ -22,6 +22,9 @@
  * and fixed the violations in the recipe/operational-copy renderers.
  */
 
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { ACTION_QUEUE_KINDS, type ActionQueueKind } from '../action-queue-kinds'
 import { lookupRecipe, type RecipeContext } from '../action-queue-recipes'
@@ -295,5 +298,74 @@ describe('failedTaskTitle slug-shape enforcement (DEC-18)', () => {
         ).not.toContain(kind)
       }
     }
+  })
+})
+
+// ── taskFailureKinds drift gate (ACTION_QUEUE_KINDS side) ─────────────────────
+//
+// ACTION_QUEUE_KINDS (action-queue-kinds.ts) is one half of the complement the
+// daemon uses to classify task-failure kinds. The UI mirror `taskFailureKinds`
+// (ui/src/shared/schemas.ts) must equal ACTION_QUEUE_KINDS minus
+// NON_TASK_FAILURE_KINDS at all times.
+//
+// This gate runs from the test file most naturally scoped to action-queue-kinds.ts
+// (this file already imports ACTION_QUEUE_KINDS) so a verify command covering
+// ACTION_QUEUE_KINDS changes also catches UI mirror drift without the task author
+// needing to widen --verify.
+//
+// The authoritative UI-side gate: ui/src/shared/taskFailureKinds.driftGate.test.ts
+// The NON_TASK_FAILURE_KINDS-side gate: orchestrator/src/core/daemon/view/action-queue.test.ts
+
+function extractQuotedList(source: string, pattern: RegExp): string[] {
+  const match = pattern.exec(source)
+  if (!match) {
+    throw new Error(`could not locate array literal matching ${pattern} in source`)
+  }
+  return [...match[1]!.matchAll(/'([^']+)'/g)].map((m) => m[1]!)
+}
+
+describe('taskFailureKinds drift gate — ACTION_QUEUE_KINDS side', () => {
+  it('ui taskFailureKinds matches ACTION_QUEUE_KINDS minus NON_TASK_FAILURE_KINDS exactly', () => {
+    const here = path.dirname(fileURLToPath(import.meta.url))
+
+    const aqSource = readFileSync(
+      path.resolve(here, '../../daemon/view/action-queue.ts'),
+      'utf8',
+    )
+    const nonTaskKinds = extractQuotedList(
+      aqSource,
+      /const NON_TASK_FAILURE_KINDS = new Set\(\[([\s\S]*?)\]\)/,
+    )
+    expect(
+      nonTaskKinds.length,
+      'NON_TASK_FAILURE_KINDS extraction returned empty — check regex against action-queue.ts',
+    ).toBeGreaterThan(0)
+
+    const uiSource = readFileSync(
+      path.resolve(here, '../../../../../ui/src/shared/schemas.ts'),
+      'utf8',
+    )
+    const uiKinds = extractQuotedList(
+      uiSource,
+      /export const taskFailureKinds = \[([\s\S]*?)\] as const/,
+    )
+    expect(
+      uiKinds.length,
+      'taskFailureKinds extraction returned empty — check regex against ui/src/shared/schemas.ts',
+    ).toBeGreaterThan(0)
+
+    const nonTaskSet = new Set(nonTaskKinds)
+    const expected = Array.from(ACTION_QUEUE_KINDS).filter((k) => !nonTaskSet.has(k))
+
+    expect([...uiKinds].sort()).toEqual([...expected].sort())
+  })
+
+  it('extraction guard — throws on syntax change, not silently empty', () => {
+    expect(() =>
+      extractQuotedList(
+        'export const ACTION_QUEUE_KINDS = new Set([])',
+        /export const ACTION_QUEUE_KINDS = \[([\s\S]*?)\] as const/,
+      ),
+    ).toThrow('could not locate array literal')
   })
 })
