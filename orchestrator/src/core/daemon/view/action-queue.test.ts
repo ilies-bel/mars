@@ -1746,6 +1746,9 @@ describe('buildActionQueueView — every emitted op has a registered handler', (
     'restart', 'continue', 'remerge', 'unblock', 'purge', 'prune-worktree',
     'dismiss', 'dismiss-daemon-died', 'dismiss-uncovered',
     'validate', 'reject', 'land-work', 'gate-restore', 'add-gate', 'enrich-retire',
+    // special-cased routes before entityHandlers (routes.ts, not in EntityOp union)
+    'investigate',        // POST /actions/investigate/:id
+    'diagnose-failure',   // POST /actions/diagnose-failure/:id
     // own-route actions (no entity id)
     'restart-daemon', 'run-reflect', 'resume-dispatch',
     // snooze (POST /actions/snooze/:id — its own route)

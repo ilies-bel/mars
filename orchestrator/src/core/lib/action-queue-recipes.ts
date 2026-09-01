@@ -886,7 +886,9 @@ const RECIPE_DEFINITIONS = {
       signature: str(ctx.payload['signature']),
       streak: ctx.payload['streak'],
     }),
-    verbs: [{ op: 'show-all', label: 'Show all', style: 'default' }],
+    // 'show-all' was removed: it had no registered daemon handler, and
+    // derivedRowActions already provides a copy-action for 'mars operator'.
+    verbs: [],
   },
 
   /**
