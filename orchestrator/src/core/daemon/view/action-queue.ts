@@ -1098,6 +1098,16 @@ export const buildActionQueueView = async ({
     // the title, reason, and action menu are always from the same record.
     // For stale-worktree, draft-proposal, and hitl-slice-needs-operator rows,
     // the non-failure derived-row action menu is the authority.
+    //
+    // A draft-proposal row whose payload carries no proposalId is mis-kinded
+    // (it was raised under the wrong kind, e.g. a legacy QA step-list payload
+    // stored before raisers were re-kinded to qa-step-list-opt-in /
+    // qa-step-list-promote). Its advertised promote/dismiss/grill verbs would
+    // 500 against a nonexistent proposal entity. The row stays visible so the
+    // operator can see it, but emits no actions or recipe verbs — unactionable
+    // until a reconciliation pass closes it or re-raises it under the correct kind.
+    const isMiskindedDraftProposal =
+      errorKind === 'draft-proposal' && typeof row.payload.proposalId !== 'string'
     let actions: { id: string; label: string; op: string }[]
     if (isTaskFailure) {
       const sig = taskById.get(entityId)?.failureSignature ?? null
@@ -1107,13 +1117,7 @@ export const buildActionQueueView = async ({
             unknownFailureKind(failingStepFromSignature(sig), ''))
           : unknownFailureKind('unknown', '')
       actions = fk.actions as { id: string; label: string; op: string; needsConfirm?: boolean; hint?: string }[]
-    } else if (errorKind === 'draft-proposal' && typeof row.payload.proposalId !== 'string') {
-      // A draft-proposal row whose payload carries no proposalId is mis-kinded
-      // (it was raised under the wrong kind, e.g. a QA step-list payload). Its
-      // advertised propose/dismiss verbs would 500 against a nonexistent proposal
-      // entity. Emit no verbs: the row stays visible so the operator can see it,
-      // but unactionable until a reconciliation pass re-raises it under the
-      // correct kind.
+    } else if (isMiskindedDraftProposal) {
       actions = []
     } else {
       actions = derivedRowActions(errorKind, entityId) as {
@@ -1553,7 +1557,10 @@ export const buildActionQueueView = async ({
       noticeKey,
       humanSummary,
       humanDetail: recipeFields.humanDetail,
-      verbs: recipeFields.verbs,
+      // Mis-kinded draft-proposal rows carry no proposalId: their promote/
+      // dismiss/grill verbs would 500. Suppress all recipe verbs so the row
+      // is visible but unactionable until a reconciliation pass closes it.
+      verbs: isMiskindedDraftProposal ? [] : recipeFields.verbs,
     })
   }
 

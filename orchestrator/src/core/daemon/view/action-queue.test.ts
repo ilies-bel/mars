@@ -658,11 +658,12 @@ describe('buildActionQueueView — stale-worktree row (no regression)', () => {
 // ── Draft-proposal: copy + dismiss actions ────────────────────────────────────
 
 describe('buildActionQueueView — draft-proposal row', () => {
-  it('emits no verbs when the payload lacks a proposalId (mis-kinded row)', async () => {
-    // Rows raised under draft-proposal by mistake (e.g. a QA step-list payload
-    // with no proposalId) must not advertise promote/dismiss verbs — those verbs
-    // 500 against a nonexistent proposal entity. The row remains visible so the
-    // operator can see it, but must carry no actionable buttons.
+  it('emits no actions or recipe verbs when the payload lacks a proposalId (mis-kinded row)', async () => {
+    // Rows raised under draft-proposal by mistake (e.g. a legacy QA step-list
+    // payload stored before raisers were re-kinded to qa-step-list-opt-in /
+    // qa-step-list-promote) must not advertise promote/dismiss/grill verbs —
+    // those verbs 500 against a nonexistent proposal entity. The row remains
+    // visible so the operator can see it, but must carry no actionable buttons.
     const rows = await buildActionQueueView({
       ...BASE_PARAMS,
       stateStore: makeStateStore([
@@ -679,8 +680,15 @@ describe('buildActionQueueView — draft-proposal row', () => {
 
     const dpRow = rows.find((r) => r.kind === 'draft-proposal')
     expect(dpRow).toBeDefined()
-    // No promote / dismiss verbs — emitting them would cause a 500.
+    // No promote / dismiss verbs on either the legacy actions or the recipe verbs —
+    // emitting them would cause a 500 against a nonexistent proposal entity.
     expect(dpRow!.actions).toHaveLength(0)
+    expect(dpRow!.verbs).toHaveLength(0)
+    // Specifically confirm no grill, promote, or dismiss verb is present.
+    const allOps = [...dpRow!.actions, ...dpRow!.verbs].map((v) => v.op)
+    expect(allOps).not.toContain('grill')
+    expect(allOps).not.toContain('promote')
+    expect(allOps).not.toContain('dismiss')
   })
 
   it('derives draft-proposal actions from the derived-row menu, not the FailureKind registry', async () => {

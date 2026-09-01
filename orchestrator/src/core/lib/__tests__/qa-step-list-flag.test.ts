@@ -228,12 +228,12 @@ describe('suggestQaStepListCapability', () => {
     vi.clearAllMocks()
   })
 
-  it('raises a draft-proposal item with the global dedup signature', async () => {
+  it('raises a qa-step-list-opt-in item with the global dedup signature', async () => {
     await suggestQaStepListCapability('origin-abc123')
 
     expect(raiseSpy).toHaveBeenCalledOnce()
     const item = raiseSpy.mock.calls[0][0] as RaiseActionQueueItem
-    expect(item.kind).toBe('draft-proposal')
+    expect(item.kind).toBe('qa-step-list-opt-in')
     expect(item.signature).toBe(QA_STEP_LIST_CAPABILITY_SUGGESTION_SIGNATURE)
     expect(item.signature).toBe('qa-step-list-capability-suggestion')
   })
@@ -289,12 +289,12 @@ describe('runArcVerification + qa-step-list flag', () => {
         manifest: null,
       })
 
-      // Exactly one draft-proposal suggestion was raised.
+      // Exactly one qa-step-list-opt-in suggestion was raised.
       const suggestions = raiseSpy.mock.calls.filter(
         (c) => (c[0] as RaiseActionQueueItem).signature === 'qa-step-list-capability-suggestion',
       )
       expect(suggestions).toHaveLength(1)
-      expect(suggestions[0][0].kind).toBe('draft-proposal')
+      expect(suggestions[0][0].kind).toBe('qa-step-list-opt-in')
     } finally {
       cleanup()
     }

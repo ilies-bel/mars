@@ -133,7 +133,7 @@ export const QA_STEP_LIST_PROMOTE_SUGGESTION_SIGNATURE = 'qa-step-list-promote-s
  * but only the first time per project.
  *
  * Checks `.mars/arc-qa/.promote-suggested`. When absent, raises a
- * `draft-proposal` action-queue item (deduped by the fixed signature
+ * `qa-step-list-promote` action-queue item (deduped by the fixed signature
  * {@link QA_STEP_LIST_PROMOTE_SUGGESTION_SIGNATURE}) then writes the marker so
  * subsequent arcs skip the check entirely.
  *
@@ -151,7 +151,7 @@ export async function maybeSuggestPromotion(
   const manifestPath = join('arc-qa', originId, 'manifest.json')
 
   await raiseActionQueueItem({
-    kind: 'draft-proposal',
+    kind: 'qa-step-list-promote',
     category: 'orchestrator',
     priority: 'normal',
     title: 'Promote QA step lists into project documentation?',
@@ -167,7 +167,7 @@ export async function maybeSuggestPromotion(
       'Consider promoting this step list into the project\'s permanent documentation',
       'so future contributors can follow the same QA flow without running the Arc.',
     ].join('\n'),
-    payload: { originId, manifestPath },
+    payload: { arcId: originId, manifestPath },
     context: {},
     raisedBy: 'arc-verifier',
     signature: QA_STEP_LIST_PROMOTE_SUGGESTION_SIGNATURE,

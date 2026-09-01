@@ -3,7 +3,7 @@
  *
  * Reads and persists the `qaStepList.enabled` boolean from `.mars/daemon.json`.
  * Provides the `suggestQaStepListCapability` helper that raises a
- * `draft-proposal` action-queue item exactly once per project (deduped by the
+ * `qa-step-list-opt-in` action-queue item exactly once per project (deduped by the
  * fixed signature `qa-step-list-capability-suggestion`).
  *
  * The flag is `false` by default — the step-list walk is opt-in.
@@ -51,7 +51,7 @@ export function readQaStepListFlag(marsStateDir: string): boolean {
 }
 
 /**
- * Raise a `draft-proposal` action-queue item offering to enable the QA
+ * Raise a `qa-step-list-opt-in` action-queue item offering to enable the QA
  * step-list walk for this project.
  *
  * Deduped globally by the fixed signature
@@ -61,7 +61,7 @@ export function readQaStepListFlag(marsStateDir: string): boolean {
  */
 export async function suggestQaStepListCapability(originId: string): Promise<void> {
   await raiseActionQueueItem({
-    kind: 'draft-proposal',
+    kind: 'qa-step-list-opt-in',
     category: 'orchestrator',
     priority: 'normal',
     title: 'Enable QA step-list walk for this project',
@@ -80,7 +80,7 @@ export async function suggestQaStepListCapability(originId: string): Promise<voi
       'to enable it for this project. The walk will run automatically on the next',
       'arc that completes verification.',
     ].join('\n'),
-    payload: { originId },
+    payload: { arcId: originId },
     context: {},
     raisedBy: 'arc-verifier',
     signature: QA_STEP_LIST_CAPABILITY_SUGGESTION_SIGNATURE,

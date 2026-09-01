@@ -246,12 +246,12 @@ describe('maybeSuggestPromotion()', () => {
     expect(QA_STEP_LIST_PROMOTE_SUGGESTION_SIGNATURE).toBe('qa-step-list-promote-suggestion')
   })
 
-  it('raises a draft-proposal when the marker is absent', async () => {
+  it('raises a qa-step-list-promote when the marker is absent', async () => {
     await maybeSuggestPromotion('origin-abc', marsStateDir)
 
     expect(raiseSpy).toHaveBeenCalledOnce()
     const item = raiseSpy.mock.calls[0][0] as RaiseActionQueueItem
-    expect(item.kind).toBe('draft-proposal')
+    expect(item.kind).toBe('qa-step-list-promote')
     expect(item.signature).toBe('qa-step-list-promote-suggestion')
   })
 

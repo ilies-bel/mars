@@ -10,26 +10,27 @@
  * ledger id, attempt id) and supporting data so the recipe can render a
  * meaningful action card without a second DB lookup.
  *
- * ## draft-proposal: three raisers, one wide interface
+ * ## draft-proposal: one raiser, optional legacy fields
  *
- * `draft-proposal` is raised by three different paths:
+ * `draft-proposal` is raised by a single active path:
  *   - `action-queue-repopulator` on `proposal.added` — `{ proposalId, source }`
- *   - `arc-qa-manifest.maybeSuggestPromotion` — `{ originId, manifestPath }`
- *   - `qa-step-list-flag.suggestQaStepListCapability` — `{ originId }`
  *
- * Their payloads are divergent and none share a natural discriminator, so the
- * contract uses a single wide interface with all fields optional rather than a
- * discriminated union that would require adding a discriminator to existing
- * raisers. The recipe uses `str()` fallbacks for absent fields.
+ * The optional `originId` and `manifestPath` fields are legacy from two former
+ * raisers that have since been re-kinded:
+ *   - `arc-qa-manifest.maybeSuggestPromotion` → now raises `qa-step-list-promote`
+ *   - `qa-step-list-flag.suggestQaStepListCapability` → now raises `qa-step-list-opt-in`
+ *
+ * The interface retains the legacy fields so pre-existing stored rows (raised
+ * before the re-kinding) remain parseable. The recipe uses `str()` fallbacks
+ * for absent fields.
  */
 
 // ── draft-proposal ─────────────────────────────────────────────────────────
 
 /**
- * Wide interface covering all three `draft-proposal` raisers.
- *
- * All fields are optional because no single raiser emits all of them. The
- * recipe falls back gracefully (via `str()`) when a field is absent.
+ * Payload for `draft-proposal` rows raised by `action-queue-repopulator` on
+ * `proposal.added`. All fields are optional so the recipe degrades gracefully
+ * on legacy rows raised by the former QA step-list raisers (now re-kinded).
  */
 export interface DraftProposalPayload {
   /** Present when raised from a `proposal.added` event. */
@@ -38,9 +39,16 @@ export interface DraftProposalPayload {
   source?: string
   /** The recipe reads this key with a fallback to `ctx.title`. */
   title?: string
-  /** Present when raised from `arc-qa-manifest` or `qa-step-list-flag`. */
+  /**
+   * Legacy field — present only on pre-existing rows raised by
+   * `arc-qa-manifest` or `qa-step-list-flag` before those raisers were
+   * re-kinded to `qa-step-list-promote` / `qa-step-list-opt-in`.
+   */
   originId?: string
-  /** Present when raised from `arc-qa-manifest`. */
+  /**
+   * Legacy field — present only on pre-existing rows raised by
+   * `arc-qa-manifest` before it was re-kinded to `qa-step-list-promote`.
+   */
   manifestPath?: string
 }
 
