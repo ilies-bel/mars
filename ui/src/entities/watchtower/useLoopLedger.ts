@@ -14,9 +14,10 @@ const LoopLedgerEntrySchema = z.object({
   runId: z.string(),
   scoredAt: z.number().nullable(),
   score: z.number().nullable(),
-  recordedAt: z.number().nullable(),
-  suggestion: z.object({ version: z.string() }).nullable(),
-  review: z.object({ decision: z.string() }).nullable(),
+  /** True when status = 'scored'; false on error rows. Matches LoopLedgerEntry in loop-ledger.ts. */
+  recorded: z.boolean(),
+  suggestion: z.object({ version: z.string(), decisionKind: z.string() }).nullable(),
+  review: z.object({ decision: z.string(), decidedAt: z.number() }).nullable(),
 })
 
 export type LoopLedgerEntry = z.infer<typeof LoopLedgerEntrySchema>

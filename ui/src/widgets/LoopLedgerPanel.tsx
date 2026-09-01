@@ -69,11 +69,19 @@ export const LoopLedgerPanel = () => {
                 <td className="py-0.5 pr-2">
                   {entry.score !== null ? entry.score.toFixed(2) : '—'}
                 </td>
-                <td className="py-0.5 pr-2 font-mono">
-                  {entry.recordedAt !== null ? formatTs(entry.recordedAt) : '—'}
+                <td className="py-0.5 pr-2">
+                  {entry.recorded ? '✓' : '—'}
                 </td>
-                <td className="py-0.5 pr-2">{entry.suggestion?.version ?? '—'}</td>
-                <td className="py-0.5">{entry.review?.decision ?? '—'}</td>
+                <td className="py-0.5 pr-2">
+                  {entry.suggestion !== null
+                    ? `${entry.suggestion.version} (${entry.suggestion.decisionKind})`
+                    : '—'}
+                </td>
+                <td className="py-0.5">
+                  {entry.review !== null
+                    ? `${entry.review.decision} · ${formatTs(entry.review.decidedAt)}`
+                    : '—'}
+                </td>
               </tr>
             ))}
           </tbody>

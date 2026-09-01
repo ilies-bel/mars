@@ -26,9 +26,9 @@ const makeEntry = (
   runId,
   scoredAt: 1700000000000,
   score: 0.85,
-  recordedAt: 1700000001000,
-  suggestion: hasSuggestion ? { version: 'v1.2.3' } : null,
-  review: hasReview ? { decision: 'accepted' } : null,
+  recorded: true,
+  suggestion: hasSuggestion ? { version: 'v1.2.3', decisionKind: 'promoted' } : null,
+  review: hasReview ? { decision: 'accepted', decidedAt: 1700000002000 } : null,
 })
 
 const WORKFLOWS = ['implement', 'review']
@@ -119,13 +119,48 @@ describe('LoopLedgerPanel', () => {
     expect(html).toContain('run-001')
     expect(html).toContain('run-002')
 
-    // Entry with suggestion/review shows them
+    // Entry with suggestion shows version and decisionKind
     expect(html).toContain('v1.2.3')
+    expect(html).toContain('promoted')
+
+    // Entry with review shows decision
     expect(html).toContain('accepted')
+
+    // Recorded column shows ✓ for recorded entries
+    expect(html).toContain('✓')
 
     // Entry without suggestion/review shows — (at least 2 dashes)
     const dashCount = (html.match(/—/g) ?? []).length
     expect(dashCount).toBeGreaterThanOrEqual(2)
+  })
+
+  it('renders the table (not the empty state) with a server-shaped entry (recorded: boolean, no recordedAt)', async () => {
+    // This directly mirrors the live server payload that caused the bug:
+    //   { runId, scoredAt, score, recorded: true, suggestion: null, review: null }
+    // The old client schema had `recordedAt: z.number().nullable()` which failed
+    // Zod validation on every entry, collapsing the panel to "No loop runs yet".
+    const serverEntry: LoopLedgerEntry = {
+      runId: 'mars-ba051780',
+      scoredAt: 1788267539341,
+      score: 0.72,
+      recorded: true,
+      suggestion: null,
+      review: null,
+    }
+
+    vi.mocked(useLoopLedger).mockReturnValueOnce({
+      entries: [serverEntry],
+      isLoading: false,
+      error: null,
+    })
+
+    const { LoopLedgerPanel } = await import('./LoopLedgerPanel')
+    const html = renderToStaticMarkup(<LoopLedgerPanel />)
+
+    expect(html).not.toContain('No loop runs yet')
+    expect(html).toContain('mars-ba051780')
+    // recorded: true renders as a tick, not as a timestamp
+    expect(html).toContain('✓')
   })
 
   it('selector onChange causes useLoopLedger to be called with the new workflow', async () => {
