@@ -45,12 +45,27 @@ import { recoverPhase } from './phase-recovery'
  */
 export const requeueRunningTasksFromPriorDaemon = async (
   repoRoot: string,
+  opts: {
+    /**
+     * When provided, tasks for which this predicate returns `true` are SKIPPED
+     * by the recovery loop. The `requeue-stale-running` reconciler passes
+     * `tracker.isInFlight` here so tasks that were dispatched by the current
+     * daemon (after boot, before the reconcile sweep) are never swept.
+     */
+    isInFlight?: (taskId: string) => boolean
+    /**
+     * Log function forwarded to the process-kill path inside `recoverPhase`.
+     * Defaults to a no-op (the reconciler itself logs per-id after the call).
+     */
+    log?: (line: string) => void
+  } = {},
 ): Promise<string[]> => {
   const result = await recoverPhase('running', {
-    log: () => {},
+    log: opts.log ?? (() => {}),
     bus: new EventEmitter(),
     repoRoot,
     silent: true,
+    isOwnedByCurrentDaemon: opts.isInFlight,
   })
   return result.requeued
 }

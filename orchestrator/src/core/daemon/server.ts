@@ -336,9 +336,21 @@ const makeWorkflowLogger = (
       payload: { level, msg, source: 'workflow', fields: { ...bindings, ...callFields } },
     }).catch(() => {})
   }
+  // Per-token `agent-event` and `claude-event` workflow emissions are generated
+  // by the workflow engine for every `ctx.emit()` call, including thinking_tokens
+  // deltas (several per second per coder run). They dominated watch.log at 59%
+  // of all lines in a sample run (3,423 of 5,827). The onEvent sink in
+  // dispatchImplement already processes agent events; the log line is redundant.
+  // This predicate gates the watch.log write without affecting teeTrace, so the
+  // trace store retains the structured event record for the UI timeline.
+  const isHighFreqEvent = (arg1: Record<string, unknown> | string): boolean =>
+    typeof arg1 === 'object' &&
+    arg1 !== null &&
+    (arg1.event === 'agent-event' || arg1.event === 'claude-event')
+
   return {
     info: (arg1: Record<string, unknown> | string, arg2?: string) => {
-      log(fmt('info', arg1, arg2))
+      if (!isHighFreqEvent(arg1)) log(fmt('info', arg1, arg2))
       teeTrace('info', arg1, arg2)
     },
     warn: (arg1: Record<string, unknown> | string, arg2?: string) => {

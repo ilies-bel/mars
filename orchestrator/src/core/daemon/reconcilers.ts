@@ -724,10 +724,13 @@ const phantomInFlightSweep: Reconciler = {
  */
 const requeueStaleRunning: Reconciler = {
   name: 'requeue-stale-running',
-  async run({ log, bus }) {
+  async run({ log, bus, isInFlight = () => false }) {
     const { requeueRunningTasksFromPriorDaemon } = await import('./reconcile-running')
     const { getRepoRoot } = await import('../context')
-    const requeued = await requeueRunningTasksFromPriorDaemon(getRepoRoot())
+    const requeued = await requeueRunningTasksFromPriorDaemon(getRepoRoot(), {
+      isInFlight,
+      log,
+    })
     for (const taskId of requeued) {
       log(`[reconcile] task ${taskId} was running on prior daemon; requeued from setup`)
       bus.emit('task.queued', { taskId })

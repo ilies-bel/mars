@@ -176,6 +176,14 @@ export interface RecoverPhaseOptions {
    * same `merging` status alongside a stale one.
    */
   taskIds?: readonly string[]
+  /**
+   * When provided, tasks for which this predicate returns `true` are SKIPPED —
+   * they are owned by the currently-running daemon and must not be requeued.
+   * Used by the `requeue-stale-running` reconciler to protect tasks that were
+   * dispatched by this daemon after boot but before the reconcile sweep ran
+   * (the "main-dirty" delay can be 93+ s, so new dispatches commonly precede it).
+   */
+  isOwnedByCurrentDaemon?: (taskId: string) => boolean
 }
 
 /** The cleared-in-flight patch applied on both requeue and restore-to-blocked. */
@@ -226,7 +234,7 @@ export const recoverPhase = async (
   opts: RecoverPhaseOptions,
 ): Promise<PhaseRecoveryResult> => {
   const policy = PHASE_POLICY[phase]
-  const { log, bus, repoRoot, silent = false } = opts
+  const { log, bus, repoRoot, silent = false, isOwnedByCurrentDaemon } = opts
 
   const { existsSync: exists } = await import('node:fs')
   const { resolveVcs } = await import('../ports/vcs/registry')
@@ -256,6 +264,10 @@ export const recoverPhase = async (
   const taskIdSet = opts.taskIds !== undefined ? new Set(opts.taskIds) : null
   const tasks = taskIdSet !== null ? allTasks.filter((t) => taskIdSet.has(t.id)) : allTasks
   for (const t of tasks) {
+    // Skip tasks that belong to the currently-running daemon — they are not
+    // orphaned runs from a prior daemon and must not be swept.
+    if (isOwnedByCurrentDaemon?.(t.id)) continue
+
     const verdict = policy.classify
       ? await policy.classify(t, probeCtx)
       : 'recover'
@@ -423,6 +435,65 @@ export const recoverPhase = async (
     // Preserve branch/worktreePath when the worktree is live; clear everything
     // (including pointers) when the worktree is gone so the task row is clean.
     const patch = worktreeOnDisk ? CLEARED_TRANSIENT : CLEARED_INFLIGHT
+
+    // Kill any orphaned worker process before flipping the row so the next
+    // dispatch does not race with an abandoned coder session.
+    //
+    // `pgrep -f <taskId>` matches any process whose argv contains the task id.
+    // The real coder session carries the id in its worktree path (the --prompt
+    // text includes the full worktree path, which includes the task id).
+    // Best-effort: errors are swallowed so a kill failure never prevents requeue.
+    if (policy.status === 'running') {
+      const { execFile } = await import('node:child_process')
+      const { promisify } = await import('node:util')
+      const execFileAsync = promisify(execFile)
+      let orphanPids: number[]
+      try {
+        const { stdout } = await execFileAsync('pgrep', ['-f', t.id])
+        orphanPids = stdout
+          .split('\n')
+          .map((s) => parseInt(s.trim(), 10))
+          .filter((n) => Number.isFinite(n) && n > 0 && n !== process.pid)
+      } catch {
+        orphanPids = []
+      }
+      if (orphanPids.length > 0) {
+        log(
+          `[reconcile] terminating ${orphanPids.length} orphaned process(es) for task ${t.id}: ` +
+            orphanPids.join(', '),
+        )
+        for (const pid of orphanPids) {
+          try {
+            process.kill(pid, 'SIGTERM')
+          } catch {
+            /* already gone */
+          }
+        }
+        // Poll for graceful exit (up to 5 s), then force-kill survivors.
+        const isAlive = (pid: number): boolean => {
+          try {
+            process.kill(pid, 0)
+            return true
+          } catch {
+            return false
+          }
+        }
+        const killDeadline = Date.now() + 5_000
+        while (Date.now() < killDeadline && orphanPids.some(isAlive)) {
+          await new Promise<void>((r) => setTimeout(r, 100))
+        }
+        for (const pid of orphanPids.filter(isAlive)) {
+          log(
+            `[reconcile] force-killing pid ${pid} for task ${t.id} (SIGTERM grace period expired)`,
+          )
+          try {
+            process.kill(pid, 'SIGKILL')
+          } catch {
+            /* already gone */
+          }
+        }
+      }
+    }
 
     const hasBlockers = await hasIncompleteBlockers(t.id).catch(() => false)
     if (hasBlockers) {
