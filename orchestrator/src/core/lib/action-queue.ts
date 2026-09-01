@@ -569,9 +569,11 @@ export const raiseActionQueueItem = async <K extends ActionQueueKind>(
                SET seen_count = seen_count + 1,
                    last_seen_at = ?,
                    payload = ?,
-                   priority = ?
+                   priority = ?,
+                   title = ?,
+                   body = ?
              WHERE id = ?`,
-      args: [now, JSON.stringify(payload), maxPriority, row.id],
+      args: [now, JSON.stringify(payload), maxPriority, item.title, item.body, row.id],
     })
     return row.id
   }

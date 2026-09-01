@@ -306,6 +306,56 @@ describe('runReflectRecommendedDetector', () => {
     expect(await ctx.countOpenReflectRows()).toBe(1)
   })
 
+  // Acceptance criterion 4b: bump refreshes title and body
+  it('refreshes body (and title) on bump while keeping seen_count and row id consistent', async () => {
+    const ctx = await loadContext(repo)
+
+    // Use two different failure signatures so each detector run produces distinct
+    // evidence text.  The first cluster fires the raise; the second cluster fires
+    // the bump and should produce a different body.
+    await insertFailedTask(ctx.store, 'task-b1', 'code/timeout')
+    await insertFailedTask(ctx.store, 'task-b2', 'code/timeout')
+    await insertFailedTask(ctx.store, 'task-b3', 'code/timeout')
+
+    // First raise
+    const first = await ctx.runReflectRecommendedDetector({ store: ctx.store })
+    expect(first.raised).toBe(true)
+    expect(first.rowId).not.toBeNull()
+
+    // Read the body stored after the first raise
+    const bodyQuery1 = await ctx.store.query({
+      sql: `SELECT id, body, seen_count FROM action_queue_items WHERE id = ?`,
+      args: [first.rowId!],
+    })
+    const row1 = bodyQuery1.rows[0] as unknown as { id: string; body: string; seen_count: number }
+    expect(row1.seen_count).toBe(1)
+    const bodyAfterFirstRaise = row1.body
+
+    // Now add a second cluster (different signature) so the second run produces
+    // evidence that will be reflected in a different body string.
+    await insertFailedTask(ctx.store, 'task-b4', 'verify/oom')
+    await insertFailedTask(ctx.store, 'task-b5', 'verify/oom')
+    await insertFailedTask(ctx.store, 'task-b6', 'verify/oom')
+
+    // Second raise on the same fingerprint → bump
+    const second = await ctx.runReflectRecommendedDetector({ store: ctx.store })
+    expect(second.raised).toBe(true)
+    // Same row, not a duplicate
+    expect(second.rowId).toBe(first.rowId)
+    expect(await ctx.countOpenReflectRows()).toBe(1)
+
+    // The bump must have refreshed both seen_count and body
+    const bodyQuery2 = await ctx.store.query({
+      sql: `SELECT id, body, seen_count FROM action_queue_items WHERE id = ?`,
+      args: [first.rowId!],
+    })
+    const row2 = bodyQuery2.rows[0] as unknown as { id: string; body: string; seen_count: number }
+    expect(row2.seen_count).toBe(2)
+    // Body must reflect the second raise — it must differ from what was stored
+    // after the first raise (the second run has an additional cluster to report).
+    expect(row2.body).not.toBe(bodyAfterFirstRaise)
+  })
+
   // Acceptance criterion 6: condition gone → open row is closed
   it('closes the open row when the condition no longer holds', async () => {
     const ctx = await loadContext(repo)
