@@ -1252,6 +1252,16 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
       listTasksForActionQueueItems: listActionQueueTaskGraph,
     }
 
+    // Proposal status store: guards draft-proposal rows whose proposalId
+    // points at a proposal that is absent or no longer in 'draft' status.
+    // A single bulk SQL query covers all draft-proposal rows in this batch.
+    const proposalStore = {
+      getDraftProposalIds: async (ids: readonly string[]) => {
+        const { getProposalStatusForIds } = await import('./proposals')
+        return getProposalStatusForIds(ids)
+      },
+    }
+
     return buildActionQueueView({
       stateStore,
       taskStore,
@@ -1260,6 +1270,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
       pauseState: deps.getPauseState?.() ?? null,
       kinds: opts?.kinds,
       conditionsSource: deps.getConditionsSource?.(),
+      proposalStore,
     })
   }
 

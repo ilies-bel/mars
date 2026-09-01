@@ -1617,3 +1617,198 @@ describe('buildActionQueueView — reflect-recommended row age and evidence', ()
     expect(rows[0]!.humanDetail.raisedAt).toBe(RAISED_AT)
   })
 })
+
+// ── draft-proposal: guard for present-but-non-draft proposals ─────────────────
+
+describe('buildActionQueueView — draft-proposal present-but-non-draft guard', () => {
+  /**
+   * Residual 1: row 816b5fc3 has a proposalId that points at a dismissed
+   * proposal. The old guard only checked for the *absence* of proposalId;
+   * this case slipped through, leaving promote/dismiss verbs active against a
+   * proposal the daemon would 500 on.
+   *
+   * When a proposalStore IS wired and the proposalId is NOT in the returned
+   * draft set, the row must be treated as mis-kinded: no actions, no verbs.
+   */
+  it('suppresses all verbs when the proposalStore reports the proposal is not draft', async () => {
+    const proposalStore = {
+      getDraftProposalIds: async (_ids: readonly string[]) =>
+        // The proposal exists but is dismissed — it is NOT in the draft set.
+        new Set<string>(),
+    }
+
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([
+        makeRow({
+          id: 'dp-dismissed',
+          kind: 'draft-proposal',
+          payload: { proposalId: 'prop-dismissed-xyz' },
+          context: {},
+        }),
+      ]),
+      taskStore: makeTaskStore([]),
+      proposalStore,
+    })
+
+    const dpRow = rows.find((r) => r.kind === 'draft-proposal')
+    expect(dpRow).toBeDefined()
+    // Row is visible but carries no actionable verbs — the proposal is not draft.
+    expect(dpRow!.actions).toHaveLength(0)
+    expect(dpRow!.verbs).toHaveLength(0)
+    const allOps = [...dpRow!.actions, ...dpRow!.verbs].map((v) => v.op)
+    expect(allOps).not.toContain('promote')
+    expect(allOps).not.toContain('dismiss')
+    expect(allOps).not.toContain('grill')
+  })
+
+  it('emits verbs when the proposalStore confirms the proposal IS draft', async () => {
+    const proposalStore = {
+      getDraftProposalIds: async (_ids: readonly string[]) =>
+        new Set<string>(['prop-still-draft']),
+    }
+
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([
+        makeRow({
+          id: 'dp-draft',
+          kind: 'draft-proposal',
+          payload: { proposalId: 'prop-still-draft' },
+          context: {},
+        }),
+      ]),
+      taskStore: makeTaskStore([]),
+      proposalStore,
+    })
+
+    const dpRow = rows.find((r) => r.kind === 'draft-proposal')
+    expect(dpRow).toBeDefined()
+    // Proposal is draft → row is actionable.
+    const verbOps = dpRow!.verbs.map((v) => v.op)
+    expect(verbOps).toContain('promote')
+    // grill is intentionally absent from the recipe — the drawer/clipboard UX owns it.
+    expect(verbOps).not.toContain('grill')
+  })
+
+  it('degrades to proposalId-presence-only guard when proposalStore is omitted', async () => {
+    // Without a proposalStore the guard cannot detect a present-but-dismissed
+    // proposal. It only catches the no-proposalId case. This is acceptable
+    // because the startup reconcile closes the stale rows before user traffic
+    // reaches the view.
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([
+        makeRow({
+          id: 'dp-no-store',
+          kind: 'draft-proposal',
+          payload: { proposalId: 'prop-dismissed-but-no-store' },
+          context: {},
+        }),
+      ]),
+      taskStore: makeTaskStore([]),
+      // No proposalStore wired — guard cannot check proposal status.
+    })
+
+    const dpRow = rows.find((r) => r.kind === 'draft-proposal')
+    expect(dpRow).toBeDefined()
+    // Without the store, the row is treated as actionable (proposalId present).
+    // This is the degraded path; the startup reconcile owns cleanup in this case.
+    const verbOps = dpRow!.verbs.map((v) => v.op)
+    expect(verbOps).toContain('promote')
+  })
+})
+
+// ── Op coverage: every emitted verb op must resolve to a registered handler ───
+
+describe('buildActionQueueView — every emitted op has a registered handler', () => {
+  /**
+   * Residual 3: `grill` was emitted by the draft-proposal recipe but had no
+   * entry in `entityHandlers` — POST /actions/grill/:id returned 404.
+   *
+   * This test verifies the class-closure invariant: for every row kind the
+   * view can produce, each verb `op` must be in the known-registered set.
+   * A verb that appears here but lacks a handler means a future 404 the
+   * operator discovers by clicking, not a compile error.
+   *
+   * The known-registered ops are:
+   *   - entityHandlers keys (EntityOp union in routes.ts)
+   *   - snooze (POST /actions/snooze/:id — its own route)
+   *   - copy   (client-side clipboard — never POSTs to daemon)
+   *   - continue-all-daemon-killed (batch action handled by its own route)
+   *   - restart-daemon (no :id, separate route)
+   *   - run-reflect   (no :id, separate route)
+   *   - dismiss-notice (handled via chat thread inline response)
+   *   - promote-workflow (workflow-specific action, registered separately)
+   */
+  const REGISTERED_OPS = new Set([
+    // entityHandlers (routes.ts EntityOp)
+    'restart', 'continue', 'remerge', 'unblock', 'purge', 'prune-worktree',
+    'dismiss', 'dismiss-daemon-died', 'dismiss-uncovered',
+    'validate', 'reject', 'land-work', 'gate-restore', 'add-gate', 'enrich-retire',
+    // own-route actions (no entity id)
+    'restart-daemon', 'run-reflect', 'resume-dispatch',
+    // snooze (POST /actions/snooze/:id — its own route)
+    'snooze',
+    // client-side clipboard — never reaches the daemon
+    'copy',
+    // batch daemon-killed action
+    'continue-all-daemon-killed',
+    // notice-inline dismiss
+    'dismiss-notice',
+    // workflow promotion
+    'promote-workflow',
+    // promote is handled by the promote route (POST /actions/promote/:id)
+    'promote',
+  ])
+
+  /** Build the view across every non-task-backed kind we can cheaply construct. */
+  const buildAllKinds = () =>
+    buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([
+        makeRow({ id: 'r-failed', kind: 'failed', payload: { taskId: 'task-1' } }),
+        makeRow({ id: 'r-dp', kind: 'draft-proposal', payload: { proposalId: 'prop-1' }, context: {} }),
+        makeRow({ id: 'r-sw', kind: 'stale-worktree', payload: { taskId: 'task-1' }, context: { taskId: 'task-1' } }),
+        makeRow({ id: 'r-hitl', kind: 'hitl-slice-needs-operator', payload: { proposalId: 'p', sliceIndex: 0, subTaskId: 's' }, signature: 'p:hitl:0' }),
+        makeRow({ id: 'r-aw', kind: 'awaiting-human', payload: { taskId: 'task-1' }, context: {} }),
+        makeRow({ id: 'r-storm', kind: 'signature-storm', payload: { signature: 'code/foo', streak: 2 }, signature: 'signature-storm:code/foo' }),
+        makeRow({ id: 'r-gate', kind: 'gate-broken', payload: { gate: 'test', verdict: 'verify:test/test-assertion-error', streak: 1 }, signature: 'gate-broken:x' }),
+      ]),
+      taskStore: makeTaskStore([
+        makeTask({ id: 'task-1', status: 'failed', failureSignature: 'verify:test/test-assertion-error' }),
+      ]),
+    })
+
+  it('every verb op emitted by the view resolves to a registered handler', async () => {
+    const rows = await buildAllKinds()
+    const unknownOps: string[] = []
+    for (const row of rows) {
+      for (const verb of row.verbs) {
+        if (!REGISTERED_OPS.has(verb.op)) {
+          unknownOps.push(`${row.kind}:${verb.op}`)
+        }
+      }
+      for (const action of row.actions) {
+        if (!REGISTERED_OPS.has(action.op)) {
+          unknownOps.push(`${row.kind}:${action.op}`)
+        }
+      }
+    }
+    expect(unknownOps).toEqual([])
+  })
+
+  it('draft-proposal verbs do not include grill (no registered daemon handler)', async () => {
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([
+        makeRow({ id: 'dp-grill', kind: 'draft-proposal', payload: { proposalId: 'prop-grill' }, context: {} }),
+      ]),
+      taskStore: makeTaskStore([]),
+    })
+    const dpRow = rows.find((r) => r.kind === 'draft-proposal')
+    expect(dpRow).toBeDefined()
+    const allOps = [...dpRow!.verbs, ...dpRow!.actions].map((v) => v.op)
+    expect(allOps).not.toContain('grill')
+  })
+})

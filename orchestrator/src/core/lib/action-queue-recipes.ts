@@ -433,7 +433,11 @@ const RECIPE_DEFINITIONS = {
       source: str(ctx.payload['source']),
     }),
     verbs: [
-      { op: 'grill', label: 'Shape into PRD', style: 'primary' },
+      // 'grill' is intentionally absent: the UI's drawer "Shape into PRD" button
+      // and the `/mars:grill <id>` clipboard command are the intended paths for
+      // opening a grill session. Emitting 'grill' here would produce a verb with
+      // no registered daemon handler (POST /actions/grill/:id → 404), turning a
+      // deliberate UX into a dead button for any surface that renders recipe verbs.
       { op: 'promote', label: 'Promote & enqueue', style: 'default' },
     ],
   },

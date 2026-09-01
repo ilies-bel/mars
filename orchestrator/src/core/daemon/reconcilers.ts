@@ -1270,6 +1270,70 @@ const orphanedFailedScan: Reconciler = {
 }
 
 /**
+ * Bounded one-time migration: close open `draft-proposal` action-queue rows
+ * whose proposal is absent or no longer in `draft` status (e.g. dismissed).
+ *
+ * **Justification for this reconcile step (ADR-0094 tension).**
+ * ADR-0094 forbids standing sweeps for operator-decision rows; instead the
+ * forward path (proposal dismiss / expire) closes the corresponding row in
+ * the same transaction. But three rows accumulated before that path was
+ * hardened: one pointing at a dismissed proposal (816b5fc3) and two QA
+ * step-list rows stored under the wrong kind. This step is a bounded cleanup,
+ * not a standing watchdog — it runs once at startup, closes only the backlog,
+ * and costs two cheap SQL queries regardless of queue size. Once the backlog is
+ * clear it becomes a no-op on every subsequent boot.
+ *
+ * Does NOT delete rows (per CLAUDE.md convention — raw SQL deletes leave
+ * `task_blockers` edges dangling). Closes via `setActionQueueState` which
+ * writes a `resolved` row to `action_queue_history` and updates the item.
+ */
+const staleProposalActionQueueReconcile: Reconciler = {
+  name: 'stale-proposal-action-queue-reconcile',
+  async run({ log }) {
+    try {
+      const { listVisibleActionQueueItems, setActionQueueState } = await import('../lib/action-queue')
+      const { getProposalStatusForIds } = await import('../proposals')
+
+      const items = await listVisibleActionQueueItems()
+      const draftProposalRows = items.filter((item) => item.kind === 'draft-proposal')
+      if (draftProposalRows.length === 0) return {}
+
+      // Collect proposalIds that are present in the payload. Rows with no
+      // proposalId are also stale (mis-kinded) but they never had a real
+      // proposal — close them as well.
+      const proposalIds = draftProposalRows
+        .filter((r) => typeof r.payload['proposalId'] === 'string')
+        .map((r) => r.payload['proposalId'] as string)
+      const draftIds = await getProposalStatusForIds(proposalIds)
+
+      let closed = 0
+      for (const row of draftProposalRows) {
+        const pid = typeof row.payload['proposalId'] === 'string' ? row.payload['proposalId'] : null
+        if (pid === null || !draftIds.has(pid)) {
+          await setActionQueueState(row.id, 'resolved', {
+            resolution: 'proposal-no-longer-draft',
+            by: 'startup-reconcile',
+          }).catch(() => {
+            // Non-fatal: row may have been closed concurrently by another path.
+          })
+          closed++
+        }
+      }
+
+      if (closed > 0) {
+        log(
+          `[reconcile] stale-proposal-action-queue-reconcile: closed ${closed} draft-proposal row(s) whose proposal is absent or not draft`,
+        )
+      }
+      return { staleProposalRowsClosed: closed }
+    } catch (err) {
+      log(`[reconcile] stale-proposal-action-queue-reconcile failed: ${(err as Error).message}`)
+      return {}
+    }
+  },
+}
+
+/**
  * The ordered startup-reconcile registry. Order is load-bearing and matches
  * the historical hand-called sequence 1→10. To add a step, insert a
  * `Reconciler` at the correct position; the boot path iterates this array.
@@ -1305,4 +1369,5 @@ export const RECONCILERS: readonly Reconciler[] = [
   codeDriftClearSweep,
   workflowInstallDriftSweep,
   ghostSubscriberSweep,
+  staleProposalActionQueueReconcile,
 ]

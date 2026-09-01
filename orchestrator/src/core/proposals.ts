@@ -625,6 +625,31 @@ export const getProposal = async (
 }
 
 /**
+ * Bulk-check which of the given proposal IDs are currently in `draft` status.
+ * Returns a Set containing only the IDs whose proposal exists AND is `draft`.
+ * Absent proposals and those in any other status are excluded.
+ *
+ * Uses a single SQL query regardless of how many IDs are supplied. Callers
+ * should pass an empty array when they have nothing to check — an empty Set
+ * is returned immediately with no DB hit.
+ *
+ * Used by the action-queue view to guard `draft-proposal` rows whose proposalId
+ * points at a proposal that is no longer actionable (e.g. already dismissed).
+ */
+export const getProposalStatusForIds = async (
+  ids: readonly string[],
+): Promise<ReadonlySet<string>> => {
+  if (ids.length === 0) return new Set()
+  const c = stateClient()
+  const placeholders = ids.map(() => '?').join(', ')
+  const r = await c.execute({
+    sql: `SELECT id FROM proposals WHERE id IN (${placeholders}) AND status = 'draft'`,
+    args: [...ids],
+  })
+  return new Set(r.rows.map((row) => (row as unknown as { id: string }).id))
+}
+
+/**
  * ADR-0008 planning-graph edge writer. Adds `proposal_dependencies` rows so
  * `proposalId` waits on each `blockerId`. Mirrors `addBlockers` in queue.ts:
  * the subject and every blocker id must already exist, self-edges are

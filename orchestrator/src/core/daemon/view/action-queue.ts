@@ -667,6 +667,23 @@ export interface ActionQueueTaskStore {
   ): Promise<TaskForActionQueue[]>
 }
 
+/**
+ * Store for checking whether a set of proposal IDs are currently in `draft`
+ * status. Used to guard `draft-proposal` action-queue rows whose proposalId
+ * points at a proposal that is no longer actionable (e.g. already dismissed).
+ *
+ * Injected as an optional dep so tests that do not need proposal-status
+ * checking can omit it (the guard degrades to proposalId-presence-only).
+ */
+export interface ProposalStatusStore {
+  /**
+   * Returns the subset of the given IDs whose proposal exists AND is in
+   * `draft` status. IDs for absent proposals or proposals in any other status
+   * are excluded from the returned set.
+   */
+  getDraftProposalIds(ids: readonly string[]): Promise<ReadonlySet<string>>
+}
+
 export interface BuildActionQueueViewParams {
   stateStore: ActionQueueStateStore
   taskStore: ActionQueueTaskStore
@@ -697,6 +714,17 @@ export interface BuildActionQueueViewParams {
    * and CLI contexts it may be omitted (defaults to no derived items).
    */
   conditionsSource?: ConditionItemsSource
+  /**
+   * Optional proposal status store. When provided, `draft-proposal` rows
+   * whose proposalId points at a proposal that is absent or not in `draft`
+   * status are treated as mis-kinded: their verbs are suppressed so unusable
+   * actions (promote/dismiss) cannot reach the daemon.
+   *
+   * When omitted (tests, CLI contexts), the guard degrades to checking only
+   * whether the proposalId field is present — sufficient for the most common
+   * mis-kinded case (no proposalId at all).
+   */
+  proposalStore?: ProposalStatusStore
 }
 
 export interface BuildActionQueueHistoryViewParams {
@@ -996,6 +1024,7 @@ export const buildActionQueueView = async ({
   pauseState: rawPauseState,
   kinds,
   conditionsSource,
+  proposalStore,
 }: BuildActionQueueViewParams): Promise<ActionQueueRow[]> => {
   const pauseState = rawPauseState ?? null
   const profileStart = performance.now()
@@ -1036,6 +1065,20 @@ export const buildActionQueueView = async ({
 
   const persistedRows = [...derivedRows, ...storedRows]
   const persistedRowsLoadedAt = performance.now()
+
+  // Pre-fetch the set of proposal IDs that are currently in `draft` status, so
+  // the per-row guard can detect rows pointing at dismissed/absent proposals
+  // without issuing one DB round-trip per row. Only queried when a proposalStore
+  // is wired and there are draft-proposal rows with a proposalId in this batch.
+  const draftProposalRowIds: string[] = proposalStore
+    ? persistedRows
+        .filter((r) => r.kind === 'draft-proposal' && typeof r.payload.proposalId === 'string')
+        .map((r) => r.payload.proposalId as string)
+    : []
+  const validDraftProposalIds: ReadonlySet<string> =
+    proposalStore && draftProposalRowIds.length > 0
+      ? await proposalStore.getDraftProposalIds(draftProposalRowIds).catch(() => new Set<string>())
+      : new Set<string>()
 
   const allTasks = await taskStore.listTasksForActionQueueItems(persistedRows)
   const taskGraphLoadedAt = performance.now()
@@ -1099,15 +1142,24 @@ export const buildActionQueueView = async ({
     // For stale-worktree, draft-proposal, and hitl-slice-needs-operator rows,
     // the non-failure derived-row action menu is the authority.
     //
-    // A draft-proposal row whose payload carries no proposalId is mis-kinded
-    // (it was raised under the wrong kind, e.g. a legacy QA step-list payload
-    // stored before raisers were re-kinded to qa-step-list-opt-in /
-    // qa-step-list-promote). Its advertised promote/dismiss/grill verbs would
-    // 500 against a nonexistent proposal entity. The row stays visible so the
-    // operator can see it, but emits no actions or recipe verbs — unactionable
-    // until a reconciliation pass closes it or re-raises it under the correct kind.
+    // A draft-proposal row is "unusable" when:
+    //   (a) its payload carries no proposalId (mis-kinded — e.g. a legacy QA
+    //       step-list payload stored before raisers were re-kinded to
+    //       qa-step-list-opt-in / qa-step-list-promote), OR
+    //   (b) its proposalId references a proposal that is absent or no longer
+    //       in `draft` status (e.g. already dismissed). In both cases the
+    //       promote/dismiss verbs would 500 against a nonexistent or
+    //       non-actionable proposal entity.
+    // The row stays visible so the operator can see it, but emits no actions or
+    // recipe verbs — unactionable until the startup reconcile closes it.
+    const proposalId =
+      errorKind === 'draft-proposal' && typeof row.payload.proposalId === 'string'
+        ? row.payload.proposalId
+        : null
     const isMiskindedDraftProposal =
-      errorKind === 'draft-proposal' && typeof row.payload.proposalId !== 'string'
+      errorKind === 'draft-proposal' &&
+      (proposalId === null ||
+        (proposalStore !== undefined && !validDraftProposalIds.has(proposalId)))
     let actions: { id: string; label: string; op: string }[]
     if (isTaskFailure) {
       const sig = taskById.get(entityId)?.failureSignature ?? null
