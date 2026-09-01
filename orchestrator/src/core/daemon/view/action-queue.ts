@@ -1181,6 +1181,17 @@ export const buildActionQueueView = async ({
       }[]
     }
 
+    // Suppress diagnose-failure when this is a task-failure-kind row but the
+    // entityId does not resolve to a real task in the loaded task graph.
+    // gate-broken and signature-storm are isTaskFailureKind rows that CAN carry
+    // a taskId payload (and are genuinely task-backed when they do), but when
+    // they don't, entityId resolves to a signature string — invoking
+    // diagnose-failure against a non-task id is meaningless. Per-row decision,
+    // not per-kind: the kind alone cannot express "this row has a task behind it".
+    if (isTaskFailure && !taskById.has(entityId)) {
+      actions = actions.filter((a) => a.op !== 'diagnose-failure')
+    }
+
     // DAG enrichment for task-backed rows.
     let dag: ActionQueueRow['dag'] = null
     if (isTaskFailure) {

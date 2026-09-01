@@ -519,6 +519,67 @@ describe('buildActionQueueView — unregistered signature', () => {
   })
 })
 
+// ── diagnose-failure gate: per-row, not per-kind ──────────────────────────────
+
+describe('buildActionQueueView — diagnose-failure is suppressed on task-less condition rows', () => {
+  // gate-broken and signature-storm are isTaskFailureKind rows (not in
+  // NON_TASK_FAILURE_KINDS) so the FailureKind registry normally supplies their
+  // actions — including diagnose-failure. When the row carries no real task id
+  // the entityId is a signature string, and calling diagnose-failure against it
+  // makes no sense. The fix is per-row: check taskById.has(entityId), not the kind.
+
+  it('omits diagnose-failure from a gate-broken row that has no task id', async () => {
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([
+        makeRow({
+          id: 'gb-no-task',
+          kind: 'gate-broken',
+          title: 'Gate test is consistently failing (3 tasks)',
+          body: 'The test check has repeatedly produced verify:test/test-assertion-error.',
+          payload: { gate: 'test', verdict: 'verify:test/test-assertion-error', streak: 3 },
+          signature: 'gate-broken:verify:test/test-assertion-error',
+        }),
+      ]),
+      // No task supplied — entityId resolves to the signature, not a task id.
+      taskStore: makeTaskStore([]),
+    })
+
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.actions.some((a) => a.op === 'diagnose-failure')).toBe(false)
+  })
+
+  it('keeps diagnose-failure on a gate-broken row that carries a real task id and dag', async () => {
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([
+        makeRow({
+          id: 'gb-with-task',
+          kind: 'gate-broken',
+          title: 'Gate test is consistently failing (1 tasks)',
+          body: 'The test check has repeatedly produced verify:test/test-assertion-error.',
+          // Payload carries a taskId so entityId resolves to the real task.
+          payload: {
+            gate: 'test',
+            verdict: 'verify:test/test-assertion-error',
+            streak: 1,
+            taskId: 'task-1',
+          },
+          signature: 'gate-broken:verify:test/test-assertion-error',
+        }),
+      ]),
+      taskStore: makeTaskStore([
+        makeTask({ id: 'task-1', failureSignature: 'verify:test/test-assertion-error' }),
+      ]),
+    })
+
+    expect(rows).toHaveLength(1)
+    // dag is non-null when a real task backs the row.
+    expect(rows[0]!.dag).not.toBeNull()
+    expect(rows[0]!.actions.some((a) => a.op === 'diagnose-failure')).toBe(true)
+  })
+})
+
 // ── daemon-killed batch row (slices 2 + 3) ────────────────────────────────────
 
 describe('buildActionQueueView — daemon-killed batch row', () => {
