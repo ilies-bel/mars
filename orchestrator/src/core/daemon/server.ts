@@ -154,7 +154,7 @@ import {
   type StormStewardReport,
 } from './storm-breaker'
 import { collectStormEvidence, type StormEvidence } from './storm-evidence'
-import { createBaselineHealthChecker } from './baseline-health'
+import { createBaselineHealthChecker, startBaselinePauseWatcher } from './baseline-health'
 import { createRealBaselineRepairer } from './baseline-repair-wiring'
 import { setInstallSemCap } from '../lib/worktree-install'
 import { probeDuckDBLock } from './duckdb-lock'
@@ -5954,6 +5954,32 @@ export const startDaemon = async (
     )
   }
 
+  // Baseline pause watcher — re-checks the baseline health whenever the
+  // integration branch SHA advances while dispatch is paused for 'baseline'.
+  //
+  // The `task.completed` trigger (below) only fires when a task completes
+  // successfully — which can never happen while dispatch is paused.  This
+  // watcher breaks that self-deadlock: it polls the branch SHA on a 60 s
+  // interval and, when the SHA changes, runs baselineHealthChecker.check().
+  // A successful check clears the pause and dispatch resumes on its own,
+  // without a daemon restart.
+  const BASELINE_WATCHER_INTERVAL_MS = Number(
+    env.MARS_BASELINE_WATCHER_INTERVAL_MS ?? 60_000,
+  )
+  const baselinePauseWatcher = startBaselinePauseWatcher({
+    pause,
+    getIntegrationBranchSha: async () => {
+      const { execProbe } = await import('../lib/git/internal')
+      const result = await execProbe('git', ['rev-parse', integrationBranch], {
+        cwd: resolveContext().repoRoot,
+      })
+      return result.exitCode === 0 ? result.stdout.trim() : null
+    },
+    checkBaseline: () => baselineHealthChecker.check(),
+    intervalMs: BASELINE_WATCHER_INTERVAL_MS,
+    log,
+  })
+
   // Re-check durable usage deferrals at the same cadence as the other daemon
   // sweepers. The flight tracker retains ownership of its pending set, so the
   // sweeper gets only the narrow capability it needs to re-queue a task.
@@ -6480,6 +6506,7 @@ export const startDaemon = async (
     clearInterval(devStalenessCheck)
     clearInterval(usageSamplerInterval)
     deferralWakeSweeper.stop()
+    baselinePauseWatcher.stop()
     healthScheduler.stop()
     // Drop the dispatch hint before the tracker is torn down, so a writer that
     // creates a task during shutdown does not fan out into a dead tracker.

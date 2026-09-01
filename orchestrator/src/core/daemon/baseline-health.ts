@@ -332,3 +332,118 @@ export const createBaselineHealthChecker = (
     },
   }
 }
+
+// ── Baseline pause watcher ─────────────────────────────────────────────────
+
+/**
+ * Periodic watcher that re-runs the baseline health check whenever the
+ * integration branch SHA advances while dispatch is paused for `'baseline'`.
+ *
+ * Motivation (observed incident 2026-09-01): the only previous trigger for
+ * re-running the health check was a `task.completed` event, which never fires
+ * while dispatch is paused — creating a self-deadlock. This watcher breaks
+ * that cycle by polling the branch SHA independently of dispatch:
+ *
+ *   1. Every `intervalMs` (default 60 s), read the current integration-branch
+ *      SHA via `getIntegrationBranchSha`.
+ *   2. Skip the check when dispatch is not paused for `'baseline'` — the
+ *      watcher is a no-op in the healthy-dispatch steady state.
+ *   3. When the observed SHA differs from the last-known SHA, call
+ *      `checkBaseline()`. If the gates now pass the checker's internal state
+ *      transitions from poisoned → healthy and the pause is cleared.
+ *
+ * The SHA comparison prevents the expensive gate run from firing on every
+ * tick; the gates only run when the integration branch actually moved.
+ *
+ * The timer is `unref()`'d so it never prevents a clean process exit.
+ * Call `stop()` in the daemon's shutdown path to disarm it explicitly.
+ */
+export interface BaselinePauseWatcher {
+  stop(): void
+}
+
+export interface BaselinePauseWatcherDeps {
+  /** The daemon's shared pause controller — read-only from this watcher. */
+  pause: PauseController
+  /**
+   * Read the current SHA of the integration branch. May return `null` on git
+   * error; a null SHA never matches a previous non-null one, so a transient
+   * git error triggers a check rather than suppressing one. Non-fatal: an
+   * error here is swallowed and the next tick retries.
+   */
+  getIntegrationBranchSha: () => Promise<string | null>
+  /**
+   * Run the baseline health check (delegates to
+   * {@link BaselineHealthChecker.check}). Called only when the integration
+   * branch SHA advances while dispatch is paused for `'baseline'`.
+   */
+  checkBaseline: () => Promise<{ poisoned: boolean }>
+  /** Poll cadence in milliseconds. Defaults to 60 000 (1 minute). */
+  intervalMs?: number
+  /** Optional logger. */
+  log?: (msg: string) => void
+}
+
+/**
+ * Factory — creates and starts a {@link BaselinePauseWatcher}.
+ *
+ * Wire this in `startDaemon` immediately after the baseline health checker is
+ * created, and call `stop()` inside the daemon's `shutdown()` closure.
+ */
+export function startBaselinePauseWatcher(
+  deps: BaselinePauseWatcherDeps,
+): BaselinePauseWatcher {
+  const { pause, getIntegrationBranchSha, checkBaseline, log } = deps
+  const intervalMs = deps.intervalMs ?? 60_000
+
+  let _lastObservedSha: string | null = null
+  let _checkInFlight = false
+
+  const tick = async (): Promise<void> => {
+    if (pause.get().reason !== 'baseline') return
+
+    let sha: string | null
+    try {
+      sha = await getIntegrationBranchSha()
+    } catch (err) {
+      log?.(
+        `[baseline-pause-watcher] could not read integration branch SHA (non-fatal): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      )
+      return
+    }
+
+    if (sha === _lastObservedSha) return
+    _lastObservedSha = sha
+
+    if (_checkInFlight) return
+    _checkInFlight = true
+    try {
+      log?.(
+        `[baseline-pause-watcher] integration branch advanced (sha=${sha ?? 'null'}) — re-checking baseline`,
+      )
+      const { poisoned } = await checkBaseline()
+      if (!poisoned) {
+        log?.('[baseline-pause-watcher] baseline recovered — dispatch resumed')
+      }
+    } catch (err) {
+      log?.(
+        `[baseline-pause-watcher] check failed (non-fatal): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      )
+    } finally {
+      _checkInFlight = false
+    }
+  }
+
+  const timer = setInterval(() => {
+    void tick()
+  }, intervalMs)
+  timer.unref()
+
+  return {
+    stop: () => clearInterval(timer),
+  }
+}

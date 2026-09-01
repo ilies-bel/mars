@@ -228,3 +228,140 @@ describe('baseline.broken health check', () => {
     expect(raisedKeys.has('baseline-broken')).toBe(true)
   })
 })
+
+// ── startBaselinePauseWatcher ────────────────────────────────────────────────
+
+describe('startBaselinePauseWatcher', () => {
+  beforeEach(() => {
+    vi.resetModules()
+  })
+
+  it('clears a baseline pause when the integration branch advances, without any task completing', async () => {
+    /**
+     * Regression guard for the self-deadlock observed 2026-09-01:
+     *
+     *   baseline poisoned → dispatch paused
+     *   dispatch paused  → no task dispatched
+     *   no task          → task.completed never fires
+     *   no event         → health check never re-runs
+     *   → loop forever, only a daemon restart escapes
+     *
+     * The watcher must break this by detecting a branch-SHA advance and
+     * re-running the check autonomously.
+     */
+    const { createBaselineHealthChecker, startBaselinePauseWatcher } = await import(
+      '../../daemon/baseline-health.js'
+    )
+    const { createPauseController } = await import('../../daemon/pause-state.js')
+
+    // Gate is initially broken.
+    let gateExitCode = 1
+    let currentSha = 'sha-broken'
+
+    const pause = createPauseController()
+    const checker = createBaselineHealthChecker({
+      repoRoot: '/repo',
+      loadGates: async () => [makeGate()],
+      runGate: async (g) => ({
+        gate: g,
+        exitCode: gateExitCode,
+        stdout: '',
+        stderr: 'Type error',
+      }),
+      pause,
+      computeDepFingerprint: vi.fn().mockResolvedValue(null),
+      runInstallProbe: vi.fn().mockResolvedValue({ exitCode: 0, stdout: '', stderr: '' }),
+    })
+
+    // Poison the baseline (simulates startup check finding it broken).
+    await checker.check()
+    expect(pause.get().paused).toBe(true)
+    expect(pause.get().reason).toBe('baseline')
+    expect(checker.isBaselinePoisoned()).toBe(true)
+
+    // Simulate an operator repairing main: both the gate and the SHA change.
+    // No task.completed event fires — dispatch is paused, so no task runs.
+    gateExitCode = 0
+    currentSha = 'sha-fixed'
+
+    // Start the watcher with a very short interval for testing.
+    const watcher = startBaselinePauseWatcher({
+      pause,
+      getIntegrationBranchSha: async () => currentSha,
+      checkBaseline: () => checker.check(),
+      intervalMs: 15,
+    })
+
+    try {
+      // Wait for the watcher to detect the SHA change and re-run the check.
+      // No task.completed event is fired — dispatch remains mechanically "paused"
+      // the entire time, yet the watcher clears it.
+      await vi.waitFor(
+        () => {
+          expect(pause.get().paused).toBe(false)
+        },
+        { timeout: 500 },
+      )
+
+      expect(checker.isBaselinePoisoned()).toBe(false)
+      expect(checker.getLastDetection()).toBeNull()
+    } finally {
+      watcher.stop()
+    }
+  })
+
+  it('does not run the check when dispatch is not paused for baseline', async () => {
+    const { createBaselineHealthChecker, startBaselinePauseWatcher } = await import(
+      '../../daemon/baseline-health.js'
+    )
+    const { createPauseController } = await import('../../daemon/pause-state.js')
+
+    const checkFn = vi.fn().mockResolvedValue({ poisoned: false })
+    const pause = createPauseController()
+    // Dispatch is running (no pause) — the watcher must be silent.
+
+    const watcher = startBaselinePauseWatcher({
+      pause,
+      getIntegrationBranchSha: async () => 'sha-healthy',
+      checkBaseline: checkFn,
+      intervalMs: 15,
+    })
+
+    await new Promise((r) => setTimeout(r, 60))
+    watcher.stop()
+
+    expect(checkFn).not.toHaveBeenCalled()
+  })
+
+  it('does not re-run the check when the SHA has not changed', async () => {
+    const { createBaselineHealthChecker, startBaselinePauseWatcher } = await import(
+      '../../daemon/baseline-health.js'
+    )
+    const { createPauseController } = await import('../../daemon/pause-state.js')
+
+    const pause = createPauseController()
+    pause.pause('baseline', 'gate "typecheck" fails')
+
+    let checkCount = 0
+    const checkFn = vi.fn(async () => {
+      checkCount++
+      return { poisoned: true } // still broken
+    })
+
+    const watcher = startBaselinePauseWatcher({
+      pause,
+      // Always returns the same SHA — no advance, so no re-check after the first.
+      getIntegrationBranchSha: async () => 'sha-stuck',
+      checkBaseline: checkFn,
+      intervalMs: 15,
+    })
+
+    // Wait long enough for multiple timer ticks.
+    await new Promise((r) => setTimeout(r, 80))
+    watcher.stop()
+
+    // The check fires once (on the first tick, when SHA transitions from null
+    // to 'sha-stuck'), then never again because the SHA is stable.
+    expect(checkCount).toBe(1)
+  })
+})

@@ -424,9 +424,11 @@ recovery-spawn path itself.
     branch — the baseline health checker will re-assert the pause on its
     next run because the branch still fails a required gate. The correct
     resolution is to repair the integration branch so the gate passes (or
-    retire/quarantine the failing gate); once the branch is healthy, dispatch
-    resumes on its own. Forcing dispatch on while the baseline is still red
-    only sends tasks into a broken integration branch.
+    retire/quarantine the failing gate); once a commit lands on the healthy
+    branch, the daemon detects the SHA advance (within ~1 minute) and
+    re-checks the gates automatically — dispatch resumes on its own,
+    no daemon restart needed. Forcing dispatch on while the baseline is
+    still red only sends tasks into a broken integration branch.
   - `mars daemon reset-breaker` is the purpose-built way to clear a **tripped
     storm breaker specifically** — it is what `mars daemon status` itself
     recommends when tripped (`run 'mars daemon reset-breaker' to clear`). It
