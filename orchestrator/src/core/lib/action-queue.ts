@@ -1671,3 +1671,45 @@ export const listDismissedNotices = async (): Promise<NoticeDismissal[]> => {
     }
   })
 }
+
+/**
+ * Close every open `draft-proposal` action-queue row that references the
+ * given proposal.
+ *
+ * ADR-0094 states that operator-decision rows are "closed atomically in the
+ * same transaction as the mutation that resolves them". A proposal dismissal
+ * is that mutation: once a proposal is `dismissed`, any open `draft-proposal`
+ * row advertising `promote`/`dismiss` verbs against it can never be resolved
+ * through any of those verbs — the dismiss verb 500s ("proposal is
+ * 'dismissed'") and there is no sweep to catch it. This function is the
+ * missing close call.
+ *
+ * Idempotent — already-resolved rows are excluded by the WHERE clause.
+ *
+ * @param proposalId  The fully-resolved proposal id (never a prefix).
+ * @param by          Actor to attribute the resolution to (default: `'proposal:dismiss'`).
+ * @returns           Ids of the rows closed (empty when none were open).
+ */
+export const closeDraftProposalAqRowsForProposal = async (
+  proposalId: string,
+  by = 'proposal:dismiss',
+): Promise<string[]> => {
+  const c = stateClient()
+  const rows = await c.execute({
+    sql: `SELECT id FROM action_queue_items
+           WHERE kind = 'draft-proposal' AND status = 'open'
+             AND payload::jsonb ->> 'proposalId' = ?`,
+    args: [proposalId],
+  })
+  const ids: string[] = []
+  for (const row of rows.rows) {
+    const id = (row as unknown as { id: string }).id
+    await setActionQueueState(id, 'resolved', {
+      resolution: 'dismissed',
+      note: 'proposal dismissed',
+      by,
+    })
+    ids.push(id)
+  }
+  return ids
+}

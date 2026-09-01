@@ -99,6 +99,42 @@ describe('proposal bus events', () => {
     expect(events[0].payload).toEqual({ proposalId: proposal.id })
   })
 
+  it('dismissing a proposal closes its open draft-proposal action-queue row (ADR-0094)', async () => {
+    // ADR-0094: operator-decision rows are closed atomically in the same
+    // operation as the mutation that resolves them. A dismissed proposal's
+    // draft-proposal row can never be resolved through its advertised verbs,
+    // so dismissProposal must close it here — not rely on a sweep.
+    const { p } = await loadMods(repo)
+    const aq = await import('../lib/action-queue')
+    await aq.initActionQueue()
+
+    const proposal = await p.createProposal('Proposal with AQ row', { source: 'human' })
+
+    // Raise a draft-proposal AQ row for the proposal.
+    await aq.raiseActionQueueItem({
+      kind: 'draft-proposal',
+      category: 'orchestrator',
+      priority: 'normal',
+      title: 'Proposal with AQ row',
+      body: 'A draft proposal awaiting review',
+      payload: { proposalId: proposal.id, source: 'human' },
+      context: {},
+      raisedBy: 'test',
+      signature: `draft-proposal:${proposal.id}`,
+    })
+
+    // Confirm the row is open before dismissal.
+    const before = await aq.listActionQueueItems('open')
+    expect(before.some((r) => r.kind === 'draft-proposal' && r.payload['proposalId'] === proposal.id)).toBe(true)
+
+    // Dismiss the proposal.
+    await p.dismissProposal(proposal.id)
+
+    // The draft-proposal row must now be resolved (not open).
+    const after = await aq.listActionQueueItems('open')
+    expect(after.some((r) => r.kind === 'draft-proposal' && r.payload['proposalId'] === proposal.id)).toBe(false)
+  })
+
   it('marking a proposal sliced emits proposal.sliced with proposalId and taskCount', async () => {
     const { p, q } = await loadMods(repo)
     const proposal = await p.createProposal('Feature to slice', { source: 'human', problem: 'p', solution: 's' })

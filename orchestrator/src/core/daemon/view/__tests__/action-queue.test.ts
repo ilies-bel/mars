@@ -658,6 +658,31 @@ describe('buildActionQueueView — stale-worktree row (no regression)', () => {
 // ── Draft-proposal: copy + dismiss actions ────────────────────────────────────
 
 describe('buildActionQueueView — draft-proposal row', () => {
+  it('emits no verbs when the payload lacks a proposalId (mis-kinded row)', async () => {
+    // Rows raised under draft-proposal by mistake (e.g. a QA step-list payload
+    // with no proposalId) must not advertise promote/dismiss verbs — those verbs
+    // 500 against a nonexistent proposal entity. The row remains visible so the
+    // operator can see it, but must carry no actionable buttons.
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([
+        makeRow({
+          id: 'dp-no-id',
+          kind: 'draft-proposal',
+          // Mis-kinded payload: has no proposalId field (QA step-list shape).
+          payload: { originId: 'mars-eaa528ad', manifestPath: 'arc-qa/mars-eaa528ad/manifest.json' },
+          context: {},
+        }),
+      ]),
+      taskStore: makeTaskStore([]),
+    })
+
+    const dpRow = rows.find((r) => r.kind === 'draft-proposal')
+    expect(dpRow).toBeDefined()
+    // No promote / dismiss verbs — emitting them would cause a 500.
+    expect(dpRow!.actions).toHaveLength(0)
+  })
+
   it('derives draft-proposal actions from the derived-row menu, not the FailureKind registry', async () => {
     const rows = await buildActionQueueView({
       ...BASE_PARAMS,

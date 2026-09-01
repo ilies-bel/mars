@@ -1103,6 +1103,12 @@ export const dismissProposal = async (
       `proposal ${id} is '${current.status}'; only draft proposals can be dismissed`,
     )
   }
+  // ADR-0094: close the open draft-proposal action-queue row in the same
+  // logical operation as the status flip. A dismissed proposal's row can
+  // never be resolved through any advertised verb (the dismiss action 500s
+  // with "proposal is 'dismissed'"), and there is no sweep to catch it.
+  const { closeDraftProposalAqRowsForProposal } = await import('./lib/action-queue')
+  await closeDraftProposalAqRowsForProposal(id, 'proposal:dismiss')
   await emitProposalBusEvent('proposal.dismissed', { proposalId: id })
   const updated = await getProposal(id)
   if (!updated) {

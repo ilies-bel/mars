@@ -1107,6 +1107,14 @@ export const buildActionQueueView = async ({
             unknownFailureKind(failingStepFromSignature(sig), ''))
           : unknownFailureKind('unknown', '')
       actions = fk.actions as { id: string; label: string; op: string; needsConfirm?: boolean; hint?: string }[]
+    } else if (errorKind === 'draft-proposal' && typeof row.payload.proposalId !== 'string') {
+      // A draft-proposal row whose payload carries no proposalId is mis-kinded
+      // (it was raised under the wrong kind, e.g. a QA step-list payload). Its
+      // advertised propose/dismiss verbs would 500 against a nonexistent proposal
+      // entity. Emit no verbs: the row stays visible so the operator can see it,
+      // but unactionable until a reconciliation pass re-raises it under the
+      // correct kind.
+      actions = []
     } else {
       actions = derivedRowActions(errorKind, entityId) as {
         id: string
