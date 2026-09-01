@@ -57,20 +57,20 @@ export const dispatchAlertVerb = async (
  * Resolve the chat thread id an action-queue row should open, creating one
  * if needed.
  *
- * Task-failure rows are backed by a daemon-derived Alert: `startThreadFromAlert`
- * dedups by arc, so a repeat click reuses the existing thread rather than
- * creating a new one. Per CLAUDE.md/ADR-0057, `'failed'` is the actual
- * condition kind the action-queue endpoint emits for a failed task; `'arc-failed'`
- * is the daemon's internal Alert-domain kind for the same condition (kept here
- * too so a row sourced directly from the Alert/Bell surface still resolves).
- * The Alert is keyed by the arc's origin id, which is the row's own `entityId`
- * for an origin task but `fixForTaskId` for a recovery/fix task's row — passing
- * `entityId` alone for a recovery-task row would look up the wrong (or a
- * nonexistent) arc and 404.
+ * For `'arc-failed'` rows (from the Bell/Alert surface) the Alert aggregate
+ * exists and is keyed by the arc id, so `startThreadFromAlert` deduplicates by
+ * arc: a repeat click reuses the existing thread rather than creating a new one.
  *
- * Every other kind goes through `startThreadForQueueItem`, which dedups on the
- * row id the same way the arc path dedups on the arc, and seeds the thread with
- * a proactive opener stating the problem and the available moves. It previously
+ * For `'failed'` rows (from the action-queue surface) an Alert may or may not
+ * exist. A `failed` row whose arc still has `done` or `blocked` siblings has NO
+ * Alert (the arc is not wholly terminal), so `startThreadFromAlert` returns 404.
+ * In that case — and whenever the arc id cannot be resolved from the row payload
+ * — we fall through to `startThreadForQueueItem`, which deduplicates on the row
+ * id and seeds the thread with a proactive opener stating the problem and the
+ * available moves. Non-404 errors (e.g. 500) propagate so the caller can surface
+ * them.
+ *
+ * Every other kind goes through `startThreadForQueueItem` directly. It previously
  * called the generic `createChatThread`, which knew nothing about the row: each
  * click minted a NEW thread for the same alert, and that thread opened empty —
  * so the operator landed in a blank conversation about a problem it never
@@ -85,13 +85,15 @@ export const resolveThreadForItem = async (
   qc: QueryClient,
 ): Promise<string> => {
   if (item.kind === 'arc-failed' || item.kind === 'failed') {
-    // These rows are always backed by a daemon-derived arc Alert — errors must
-    // propagate so the operator sees the failure rather than silently landing in
-    // an unkeyed fallback thread (which would be a different thread from the
-    // arc-keyed one the same row opens on retry, and would open blank instead of
-    // seeded with the arc context).
-    const result = await startThreadFromAlert(item.fixForTaskId ?? item.entityId)
-    return result.threadId
+    try {
+      const result = await startThreadFromAlert(item.fixForTaskId ?? item.entityId)
+      return result.threadId
+    } catch (err) {
+      // No Alert exists for this arc (e.g. the arc is not wholly terminal — some
+      // sibling tasks are still done/blocked) — fall through to the generic
+      // per-row path. Re-throw anything that is not a plain 404.
+      if (!(err instanceof Error && /→ 404/.test(err.message))) throw err
+    }
   }
   const thread = await startThreadForQueueItem(
     item.id,
