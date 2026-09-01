@@ -5426,6 +5426,20 @@ export const startDaemon = async (
       await setActionQueueState(id, 'resolved', { resolution: 'dismissed', by: 'operator' })
       bus.emit('view.action-queue-invalidated')
     },
+    addGateFromItem: async (id) => {
+      const { createAddGateFromItem } = await import('../lib/add-gate-from-item.js')
+      const { getActionQueueItem, setActionQueueState } = await import('../lib/action-queue.js')
+      const { addVerifyGate } = await import('../verify-gates.js')
+      const handler = createAddGateFromItem({
+        getItem: (itemId) => getActionQueueItem(itemId),
+        addVerifyGate,
+        resolveItem: async (itemId, note) => {
+          await setActionQueueState(itemId, 'resolved', { resolution: 'gate-added', note, by: 'operator' })
+        },
+      })
+      await handler(id)
+      bus.emit('view.action-queue-invalidated')
+    },
     promoteProposal: async (id) => {
       // Flip draft → prd-ready, then await the slicer so the HTTP caller
       // receives the created task IDs. Unlike the socket-RPC path

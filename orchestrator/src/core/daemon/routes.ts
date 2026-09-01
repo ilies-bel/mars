@@ -196,6 +196,11 @@ const sendError = (
     return
   }
   const message = err instanceof Error ? err.message : String(err)
+  const errCode = err instanceof Error ? (err as unknown as Record<string, unknown>).code : undefined
+  if (errCode === 'NOT_IMPLEMENTED') {
+    sendJson(res, 501, { ok: false, error: message })
+    return
+  }
   sendJson(res, 500, { ok: false, error: message })
 }
 
