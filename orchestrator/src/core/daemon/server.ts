@@ -5430,7 +5430,7 @@ export const startDaemon = async (
         const r = await c.execute({
           sql: `SELECT payload FROM action_queue_items
                  WHERE kind = 'gate-enrichment' AND status = 'open'
-                   AND json_extract(payload, '$.originTaskId') = ?
+                   AND (payload::jsonb ->> 'originTaskId') = ?
                  ORDER BY raised_at DESC LIMIT 1`,
           args: [id],
         })

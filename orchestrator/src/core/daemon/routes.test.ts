@@ -271,7 +271,7 @@ describe('POST /actions/enrich-retire/:id — handler registration', () => {
     )
   })
 
-  it('returns 500 (not 404 Unknown action op) when handleEnrichRetire is absent', async () => {
+  it('returns 501 (not 404 Unknown action op) when handleEnrichRetire is absent', async () => {
     const { startHttpServer } = await import('./http-server')
     // Provide deps WITHOUT handleEnrichRetire — it is optional.
     server = await startHttpServer(makeMinimalDeps())
@@ -281,9 +281,10 @@ describe('POST /actions/enrich-retire/:id — handler registration', () => {
       { method: 'POST' },
     )
 
-    // The route IS registered (it throws "not implemented"), so the response
-    // must be 500, not 404 with "Unknown action op: enrich-retire".
-    expect(res.status).toBe(500)
+    // The route IS registered (it throws NOT_IMPLEMENTED), so the response
+    // must be 501, not 404 with "Unknown action op: enrich-retire".
+    // (routes.ts maps code:'NOT_IMPLEMENTED' → 501; code-less errors → 500.)
+    expect(res.status).toBe(501)
     const body = (await res.json()) as Record<string, unknown>
     // Critical: must NOT be the "Unknown action op" error.
     expect(String(body.error)).not.toMatch('Unknown action op')
