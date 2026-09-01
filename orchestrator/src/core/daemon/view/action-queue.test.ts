@@ -21,9 +21,9 @@ import {
   type ConditionItemsSource,
   type PersistedActionQueueRow,
   type TaskForActionQueue,
-} from '../action-queue.js'
-import { lookupFailureKind } from '../../../lib/failure-kinds.js'
-import { DAEMON_KILLED_SIGNATURE } from '../../../lib/retry-budget.js'
+} from './action-queue.js'
+import { lookupFailureKind } from '../../lib/failure-kinds.js'
+import { DAEMON_KILLED_SIGNATURE } from '../../lib/retry-budget.js'
 
 // ── Test helpers ──────────────────────────────────────────────────────────────
 
