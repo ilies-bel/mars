@@ -467,22 +467,22 @@ export const OPERATIONAL_ALERT_COPY: Record<
       pauseState !== null && pauseState.paused && pauseState.reason === 'storm'
     if (dispatchPausedByStorm) {
       return {
-        title: `${streak} tasks failed with \`${signature}\` — dispatch is paused`,
+        title: `${streak} tasks failed with \`${signature}\` — Mars has paused new work`,
         body:
-          `The same error keeps recurring across tasks, so dispatch is paused. ` +
-          `There is no single task transcript for this incident. Dispatch will resume as soon as the automated monitor reports ` +
+          `The same error keeps recurring across tasks, so Mars has paused starting new work. ` +
+          `There is no single task transcript for this incident. New tasks will resume as soon as the automated monitor reports ` +
           `an outcome (fix, no-op, or failure), or on the bounded crash/hang fallback. ` +
-          `Inspect \`.mars/watch.log\`, correct the shared cause, then inspect \`mars operator\` before resuming dispatch.`,
-        humanSummary: `Mars detected ${streak} tasks failing with \`${signature}\` — dispatch is paused while it monitors, no action needed from you.`,
+          `Inspect \`.mars/watch.log\`, correct the shared cause, then inspect \`mars operator\` before resuming.`,
+        humanSummary: `Mars detected ${streak} tasks failing with \`${signature}\` — Mars has paused new work while it monitors, no action needed from you.`,
       }
     }
     return {
       title: `${streak} tasks failed with \`${signature}\``,
       body:
-        `The same error kept recurring across tasks. Dispatch has since resumed. ` +
+        `The same error kept recurring across tasks. Mars has since resumed starting new tasks. ` +
         `There is no single task transcript for this incident. ` +
         `Inspect \`.mars/watch.log\` and correct the shared cause to prevent future occurrences.`,
-      humanSummary: `Mars detected ${streak} tasks failing with \`${signature}\` — dispatch has since resumed, no action needed from you.`,
+      humanSummary: `Mars detected ${streak} tasks failing with \`${signature}\` — Mars has since resumed starting new tasks, no action needed from you.`,
     }
   },
   'gate-enrichment-stale': null,
@@ -548,13 +548,13 @@ export const OPERATIONAL_ALERT_COPY: Record<
     const dispatchPausedByBaseline =
       pauseState !== null && pauseState.paused && pauseState.reason === 'baseline'
     const pauseSuffix = dispatchPausedByBaseline
-      ? ' — dispatch is paused until it is fixed'
+      ? ' — Mars has stopped starting new tasks until it is fixed'
       : ''
     return {
       title: `A check is failing on the main branch "${gateName}"${caughtSuffix}${pauseSuffix}`,
       body: typeof row.payload.output === 'string' ? row.payload.output : '',
       humanSummary: dispatchPausedByBaseline
-        ? `A check is failing on the main branch "${gateName}"${caughtSuffix} — dispatch is paused until it is fixed.`
+        ? `A check is failing on the main branch "${gateName}"${caughtSuffix} — Mars has stopped starting new tasks until it is fixed.`
         : undefined,
     }
   },
