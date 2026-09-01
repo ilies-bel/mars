@@ -1509,11 +1509,17 @@ export const buildActionQueueView = async ({
     // `failed` keeps its sharper source: the task's own updatedAt is the exact
     // failure time, where raisedAt is only the derive-time fallback.
     //
-    // Stored (non-derived) rows have a meaningful lastSeenAt.
+    // `reflect-recommended` is a stored (non-derived) row, but its raiser
+    // bumps `lastSeenAt` on every detector recompute — so `lastSeenAt` tracks
+    // when evidence was last evaluated, NOT when the advisory was first raised.
+    // Using it would make the row always appear brand-new to the operator.
+    // `raisedAt` is the stable origin timestamp; use it here too.
+    //
+    // All other stored rows have a meaningful lastSeenAt.
     const rowAt =
       row.kind === 'failed'
         ? (taskById.get(entityId)?.updatedAt ?? new Date(row.raisedAt).toISOString())
-        : DERIVED_KINDS.has(row.kind as ActionQueueKind)
+        : DERIVED_KINDS.has(row.kind as ActionQueueKind) || row.kind === 'reflect-recommended'
           ? new Date(row.raisedAt).toISOString()
           : new Date(row.lastSeenAt).toISOString()
 

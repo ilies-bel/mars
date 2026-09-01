@@ -1530,3 +1530,82 @@ describe('deriveOperatorGoal — normalisation', () => {
     expect(rows[0]!.operatorGoal).toBeNull()
   })
 })
+
+// ── reflect-recommended: age from raisedAt, evidence consistency ──────────────
+
+describe('buildActionQueueView — reflect-recommended row age and evidence', () => {
+  // The reflect-recommended raiser bumps `lastSeenAt` on every detector
+  // recompute, but `raisedAt` is the stable "this advisory has been pending
+  // since" timestamp. Using `lastSeenAt` would make the row reset to "just now"
+  // on every background sweep, hiding how long it has been ignored.
+
+  const RAISED_AT = '2026-08-31T13:56:24.000Z'
+  const RECOMPUTED_AT = '2026-09-01T12:52:59.000Z'
+
+  const makeReflectRow = (payload: Record<string, unknown> = {}): PersistedActionQueueRow =>
+    makeRow({
+      kind: 'reflect-recommended',
+      signature: 'reflect-recommended',
+      raisedAt: Date.parse(RAISED_AT),
+      lastSeenAt: Date.parse(RECOMPUTED_AT),
+      payload,
+    })
+
+  it('derives "at" from raisedAt, not lastSeenAt', async () => {
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([makeReflectRow()]),
+      taskStore: makeTaskStore([]),
+    })
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.at).toBe(RAISED_AT)
+    expect(rows[0]!.at).not.toBe(RECOMPUTED_AT)
+  })
+
+  it('at field does not change when lastSeenAt advances (simulated recompute)', async () => {
+    const LATER_RECOMPUTE = '2026-09-01T13:05:00.000Z'
+    const [firstRun, secondRun] = await Promise.all([
+      buildActionQueueView({
+        ...BASE_PARAMS,
+        stateStore: makeStateStore([makeReflectRow()]),
+        taskStore: makeTaskStore([]),
+      }),
+      buildActionQueueView({
+        ...BASE_PARAMS,
+        stateStore: makeStateStore([
+          makeRow({
+            kind: 'reflect-recommended',
+            signature: 'reflect-recommended',
+            raisedAt: Date.parse(RAISED_AT),
+            lastSeenAt: Date.parse(LATER_RECOMPUTE), // later recompute
+            payload: {},
+          }),
+        ]),
+        taskStore: makeTaskStore([]),
+      }),
+    ])
+    // Both runs derive "at" from the same raisedAt, regardless of lastSeenAt.
+    expect(firstRun[0]!.at).toBe(RAISED_AT)
+    expect(secondRun[0]!.at).toBe(RAISED_AT)
+    expect(firstRun[0]!.at).toBe(secondRun[0]!.at)
+  })
+
+  it('humanDetail.evidence reflects the payload evidence field', async () => {
+    const evidence = { tokenSpike: { taskId: 'mars-ce846b2d', multipleOfMedian: 6.1 } }
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([makeReflectRow({ evidence })]),
+      taskStore: makeTaskStore([]),
+    })
+    expect(rows[0]!.humanDetail).toMatchObject({ evidence })
+  })
+
+  it('humanDetail.raisedAt matches raisedAt, not lastSeenAt', async () => {
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([makeReflectRow()]),
+      taskStore: makeTaskStore([]),
+    })
+    expect(rows[0]!.humanDetail.raisedAt).toBe(RAISED_AT)
+  })
+})

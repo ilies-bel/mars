@@ -540,13 +540,13 @@ export const raiseActionQueueItem = async <K extends ActionQueueKind>(
       payload: string | null
       priority: string
     }
-    const payload = parseJsonObject(row.payload)
+    const storedPayload = parseJsonObject(row.payload)
 
     // Always append an occurrence so a folded raise leaves evidence even when
     // the caller supplied no occurrence.  The caller's occurrence fields are
     // merged in when present; kind, title and foldedAt are always recorded.
-    const prior = Array.isArray(payload.occurrences)
-      ? (payload.occurrences as unknown[])
+    const priorOccurrences = Array.isArray(storedPayload.occurrences)
+      ? (storedPayload.occurrences as unknown[])
       : []
     const occurrenceEntry: Record<string, unknown> = {
       ...(item.occurrence ?? {}),
@@ -554,7 +554,18 @@ export const raiseActionQueueItem = async <K extends ActionQueueKind>(
       title: item.title,
       foldedAt: new Date(now).toISOString(),
     }
-    payload.occurrences = [...prior, occurrenceEntry]
+
+    // Merge the caller's fresh payload into the stored payload so top-level
+    // evidence fields (e.g. reflect-recommended's `evidence`) stay in sync
+    // with the freshly computed `title`/`body`. This prevents the inconsistency
+    // where `title`/`body` are updated each re-raise but `humanDetail` fields
+    // derived from payload keys remain frozen at raise time.
+    // Occurrences are rebuilt from the prior history to preserve the audit trail.
+    const payload: Record<string, unknown> = {
+      ...storedPayload,
+      ...(item.payload as UnauditedPayload),
+      occurrences: [...priorOccurrences, occurrenceEntry],
+    }
 
     // Take the max of the existing and incoming priority so a higher-urgency
     // raise is never silently discarded.
