@@ -7,8 +7,9 @@
  * test:src`); the `bun:test` import is redirected to the compat shim.
  */
 import { afterEach, describe, expect, it, vi } from 'bun:test'
+import { z } from 'zod'
 import { resolveFallback, logFallbackError } from './uiFallback'
-import { ApiError, SchemaError } from '@/shared/api'
+import { ApiError, SchemaError, fetchJson } from '@/shared/api'
 
 describe('resolveFallback', () => {
   afterEach(() => {
@@ -240,7 +241,7 @@ describe('logFallbackError', () => {
     vi.restoreAllMocks()
   })
 
-  it('does not call console.error in prod mode', () => {
+  it('does not call console.error in prod mode for plain errors', () => {
     vi.stubEnv('DEV', false)
     const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     logFallbackError('something went wrong')
@@ -260,5 +261,105 @@ describe('logFallbackError', () => {
     const err = new Error('network failure')
     logFallbackError(err)
     expect(spy).toHaveBeenCalledWith(err)
+  })
+
+  it('logs SchemaError in production builds (contract break must not be invisible)', () => {
+    vi.stubEnv('DEV', false)
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const err = new SchemaError('/api/tasks', [
+      {
+        code: 'invalid_type',
+        expected: 'string',
+        received: 'undefined',
+        path: ['status'],
+        message: 'Required',
+      },
+    ])
+    logFallbackError(err)
+    expect(spy).toHaveBeenCalledWith(err)
+  })
+
+  it('does not log a plain ApiError in production builds', () => {
+    vi.stubEnv('DEV', false)
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    logFallbackError(new ApiError('boom', 'unreachable'))
+    expect(spy).not.toHaveBeenCalled()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// fetchJson – SchemaError propagation
+//
+// These tests verify the full mechanism that surfaces a schema mismatch as a
+// React Query error state rather than an empty list or permanent skeleton.
+//
+// The chain is:
+//   fetchJson → throws SchemaError → React Query catches it → sets query.error
+//
+// The custom retry function in main.tsx returns false for SchemaError, which
+// means query.error is set on the FIRST failure with no retry-delay window
+// during which it would be null. The tests here prove that fetchJson does
+// NOT swallow the error (it rejects the returned promise) and that the
+// failure is logged even in production builds.
+// ---------------------------------------------------------------------------
+
+describe('fetchJson – SchemaError propagation to React Query', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    vi.restoreAllMocks()
+  })
+
+  const schema = z.object({ expected: z.string() })
+
+  const makeOkFetch = (body: unknown) => (): Promise<Response> =>
+    Promise.resolve(
+      new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    )
+
+  it('rejects with SchemaError when the response body fails schema validation', async () => {
+    // Proves that fetchJson does NOT swallow the error — the returned Promise
+    // rejects, so React Query's queryFn machinery will catch it and set
+    // query.error instead of leaving the query in an indefinite empty state.
+    await expect(
+      fetchJson('/test', schema, undefined, makeOkFetch({ unexpected: 'shape' })),
+    ).rejects.toBeInstanceOf(SchemaError)
+  })
+
+  it('resolves normally when the response body matches the schema', async () => {
+    const result = await fetchJson('/test', schema, undefined, makeOkFetch({ expected: 'hello' }))
+    expect(result).toEqual({ expected: 'hello' })
+  })
+
+  it('logs schema validation failures in production builds', async () => {
+    // A broken client/server contract must not be invisible in the shipped
+    // bundle. Before this fix the console.error was gated on import.meta.env.DEV,
+    // meaning production operators saw nothing: no error UI, no network error,
+    // no console message — only a silent empty/loading state.
+    vi.stubEnv('DEV', false)
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+    await fetchJson('/test', schema, undefined, makeOkFetch({ unexpected: 'shape' })).catch(() => {})
+
+    expect(spy).toHaveBeenCalledWith(
+      '[mars-ui] Schema validation failed for',
+      '/test',
+      expect.any(Array),
+    )
+  })
+
+  it('logs schema validation failures in dev builds', async () => {
+    vi.stubEnv('DEV', true)
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+    await fetchJson('/test', schema, undefined, makeOkFetch({ unexpected: 'shape' })).catch(() => {})
+
+    expect(spy).toHaveBeenCalledWith(
+      '[mars-ui] Schema validation failed for',
+      '/test',
+      expect.any(Array),
+    )
   })
 })

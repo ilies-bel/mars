@@ -207,9 +207,9 @@ export const fetchJson = async <T>(
   const raw = await r.json()
   const result = schema.safeParse(raw)
   if (!result.success) {
-    if (import.meta.env.DEV) {
-      console.error('[mars-ui] Schema validation failed for', path, result.error.issues)
-    }
+    // Always log — a broken client/server contract is invisible in the shipped
+    // build otherwise, and the console is the only channel available here.
+    console.error('[mars-ui] Schema validation failed for', path, result.error.issues)
     throw new SchemaError(path, result.error.issues)
   }
   return result.data

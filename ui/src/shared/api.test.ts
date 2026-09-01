@@ -1262,11 +1262,13 @@ describe('fetchJson – SchemaError on schema mismatch', () => {
     expect((thirdArg as unknown[]).length).toBeGreaterThan(0)
   })
 
-  it('does not call console.error in prod mode', async () => {
+  it('logs to console.error in prod mode (schema failures must not be invisible in production)', async () => {
     vi.unstubAllEnvs()
     vi.stubEnv('DEV', false)
     fetchSpy.mockResolvedValue(json([minTask()]))
     try { await fetchTasks() } catch { /* expected */ }
-    expect(consoleSpy).not.toHaveBeenCalled()
+    // The DEV guard was removed — schema validation failures are always logged
+    // so a broken client/server contract is visible in the shipped build.
+    expect(consoleSpy).toHaveBeenCalled()
   })
 })

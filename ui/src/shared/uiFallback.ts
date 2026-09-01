@@ -187,12 +187,15 @@ function stringifyError(error: unknown): string {
 }
 
 /**
- * Logs the error to the browser console in dev mode only. No-ops silently in
- * production so end-users never see diagnostics. Owned here so the render seam
- * and the error boundary share one logging side effect.
+ * Logs the error to the browser console. Always logs in dev mode. In
+ * production, only schema-validation failures are logged — they indicate a
+ * broken client/server contract that is invisible otherwise. All other errors
+ * are suppressed in prod so operators never see raw diagnostics they cannot
+ * act on. Owned here so the render seam and the error boundary share one
+ * logging side effect.
  */
 export function logFallbackError(error: unknown): void {
-  if (import.meta.env.DEV) {
+  if (import.meta.env.DEV || error instanceof SchemaError) {
     console.error(error)
   }
 }
