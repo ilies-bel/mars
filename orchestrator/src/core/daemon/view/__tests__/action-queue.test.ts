@@ -149,10 +149,10 @@ describe('buildActionQueueView — failure-kind title/body derivation', () => {
     })
 
     expect(rows).toHaveLength(1)
-    // The title carries every discriminator that exists: the signature and the
-    // warm reason. The [task …] suffix is dropped — arcGoal carries the goal.
+    // The title is just the warm reason — DEC-18 removed machine slugs from
+    // card faces. The [task …] suffix is dropped — arcGoal carries the goal.
     expect(rows[0]!.title).toBe(
-      'setup:install/install-frozen-lockfile — The coding environment could not be set up',
+      'The coding environment could not be set up',
     )
   })
 
@@ -246,8 +246,9 @@ describe('buildActionQueueView — failure-kind title/body derivation', () => {
 
     const titles = rows.map((r) => r.title)
     expect(new Set(titles).size).toBe(2)
-    expect(titles.some((t) => t.includes('verify:test/test-assertion-error'))).toBe(true)
-    expect(titles.some((t) => t.includes('code/uncommitted-changes'))).toBe(true)
+    // DEC-18 removed machine slugs — titles now carry only the warm reason.
+    expect(titles.some((t) => t.includes('The changes did not pass the tests'))).toBe(true)
+    expect(titles.some((t) => t.includes('uncommitted'))).toBe(true)
     expect(titles.every((t) => t !== 'A pipeline step did not complete')).toBe(true)
   })
 
@@ -555,14 +556,13 @@ describe('buildActionQueueView — daemon-killed batch row', () => {
 
     // Only 1 daemon-killed row → no batch synthesis, just the individual row.
     // daemon-killed is a structured task failure, so the registry owns its
-    // copy — rendered with the signature. [task …] suffix is dropped; the
-    // arcGoal field carries the task's goal as the operator-facing headline.
+    // copy — rendered as the warm title only (DEC-18 removed machine slugs).
+    // [task …] suffix is dropped; arcGoal carries the goal.
     const taskRow = rows.find((r) => r.entityId === 'task-1')
     expect(taskRow).toBeDefined()
     expect(taskRow!.title).toContain(
       'Mars was shut down while this task was still running',
     )
-    expect(taskRow!.title).toContain(DAEMON_KILLED_SIGNATURE)
     expect(taskRow!.title).not.toContain('[task')
   })
 
