@@ -48,10 +48,6 @@ const NON_TASK_FAILURE_KINDS = new Set([
   'hitl-slice-needs-operator',
   'daemon-outage',
   'health-check-alert',
-  // Operational condition kinds — not task failures; their action menus come
-  // from derivedRowActions and recipe verbs, not the failure-kind registry.
-  'signature-storm',
-  'gate-broken',
 ])
 
 /** Preserves the former failure-specific enrichment without changing labels. */
