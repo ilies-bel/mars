@@ -150,7 +150,7 @@ const insertFailedTask = async (
 
 const insertStepEndedEvent = async (
   store: TaskStore,
-  taskId: string,
+  taskId: string | null,
   inputTokens: number,
   outputTokens: number,
   timestamp = new Date().toISOString(),
@@ -255,6 +255,28 @@ describe('runReflectRecommendedDetector', () => {
     expect(result.evidence?.tokenSpike?.multipleOfMedian).toBeGreaterThanOrEqual(2)
 
     expect(await ctx.countOpenReflectRows()).toBe(1)
+  })
+
+  // Regression: null-task trace rows must not be picked as the spike winner
+  it('ignores task-less step_ended rows and names a real task as the spike', async () => {
+    const ctx = await loadContext(repo)
+
+    // Insert three modest real-task rows…
+    await insertStepEndedEvent(ctx.store, 'task-a', 1000, 500)  // ~1050 weighted
+    await insertStepEndedEvent(ctx.store, 'task-b', 1000, 500)
+    await insertStepEndedEvent(ctx.store, 'task-c', 1000, 500)
+    // …a genuine outlier…
+    await insertStepEndedEvent(ctx.store, 'task-d', 8000, 4000) // ~12000 weighted
+    // …and a task-less row that would outweigh every real task if included
+    await insertStepEndedEvent(ctx.store, null, 999_999, 999_999) // ~1,099,999 weighted
+
+    const result = await ctx.runReflectRecommendedDetector({ store: ctx.store })
+
+    expect(result.raised).toBe(true)
+    expect(result.evidence?.tokenSpike).not.toBeNull()
+    // The winner must be a real task id — never 'null' or null
+    expect(result.evidence?.tokenSpike?.taskId).toBe('task-d')
+    expect(result.evidence?.tokenSpike?.multipleOfMedian).toBeGreaterThanOrEqual(2)
   })
 
   // Acceptance criterion 4: dedup — at most one open row per window

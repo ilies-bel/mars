@@ -261,6 +261,7 @@ const computeTaskTokenSpend = async (
             FROM trace_events
            WHERE kind = 'step_ended'
              AND payload::jsonb ->> 'usageSignals' IS NOT NULL
+             AND task_id IS NOT NULL
              AND timestamp > ?
            GROUP BY task_id
           HAVING SUM(
@@ -272,9 +273,10 @@ const computeTaskTokenSpend = async (
            ORDER BY weighted_tokens DESC`,
     args: [windowStart],
   })
-  return r.rows.map((row) => {
-    const r0 = row as unknown as { task_id: string; weighted_tokens: number }
-    return { taskId: r0.task_id, weightedTokens: r0.weighted_tokens }
+  return r.rows.flatMap((row) => {
+    const r0 = row as unknown as { task_id: string | null; weighted_tokens: number }
+    if (r0.task_id === null) return []
+    return [{ taskId: r0.task_id, weightedTokens: r0.weighted_tokens }]
   })
 }
 
