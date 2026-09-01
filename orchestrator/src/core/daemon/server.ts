@@ -5416,6 +5416,61 @@ export const startDaemon = async (
       return result
     },
     handleGateRestore,
+    handleEnrichRetire: async (id) => {
+      // Resolve the failure signature from the entity id.
+      // gate-enrichment-stale entity id = `gate-enrichment-stale:${signature}`.
+      // gate-enrichment entity id = originTaskId — look up the AQ row to find signature.
+      const { resolveStateClient } = await import('../store/state-client.js')
+      const c = resolveStateClient()
+
+      let signature: string
+      if (id.startsWith('gate-enrichment-stale:')) {
+        signature = id.slice('gate-enrichment-stale:'.length)
+      } else {
+        const r = await c.execute({
+          sql: `SELECT payload FROM action_queue_items
+                 WHERE kind = 'gate-enrichment' AND status = 'open'
+                   AND json_extract(payload, '$.originTaskId') = ?
+                 ORDER BY raised_at DESC LIMIT 1`,
+          args: [id],
+        })
+        if (r.rows.length === 0) {
+          throw Object.assign(
+            new Error(`enrich-retire: no open gate-enrichment row for entity ${id}`),
+            { code: 'NOT_FOUND' as const },
+          )
+        }
+        const payloadStr = (r.rows[0] as unknown as { payload: string }).payload
+        let parsed: Record<string, unknown>
+        try {
+          parsed = JSON.parse(payloadStr) as Record<string, unknown>
+        } catch {
+          throw new Error(`enrich-retire: gate-enrichment payload for ${id} is not valid JSON`)
+        }
+        if (typeof parsed.signature !== 'string') {
+          throw new Error(`enrich-retire: gate-enrichment row for ${id} has no signature field`)
+        }
+        signature = parsed.signature
+      }
+
+      const { retireEnrichment } = await import('../lib/gate-enrichment.js')
+      await retireEnrichment(c, signature)
+
+      const { supersedeActionQueueItemsBySignature } = await import('../lib/action-queue.js')
+      await supersedeActionQueueItemsBySignature(
+        'gate-enrichment',
+        `gate-enrichment:${signature}`,
+        'enrichment-decided',
+        'http:enrich-retire',
+      )
+      await supersedeActionQueueItemsBySignature(
+        'gate-enrichment-stale',
+        `gate-enrichment-stale:${signature}`,
+        'enrichment-decided',
+        'http:enrich-retire',
+      )
+      bus.emit('view.action-queue-invalidated')
+    },
     dismissVerifyUncovered: async (id) => {
       const { setActionQueueState } = await import('../lib/action-queue')
       await setActionQueueState(id, 'resolved', { resolution: 'dismissed', by: 'operator' })

@@ -224,6 +224,7 @@ type EntityOp =
   | 'land-work'
   | 'gate-restore'
   | 'add-gate'
+  | 'enrich-retire'
 
 const TRACE_EVENT_SEVERITIES: readonly TraceEventSeverity[] = [
   'info',
@@ -408,6 +409,12 @@ export const registerRoutes = (
         throw Object.assign(new Error('add-gate not implemented'), { code: 'NOT_IMPLEMENTED' as const })
       }
       await deps.addGateFromItem(id)
+    },
+    'enrich-retire': async (id) => {
+      if (!deps.handleEnrichRetire) {
+        throw Object.assign(new Error('enrich-retire not implemented'), { code: 'NOT_IMPLEMENTED' as const })
+      }
+      await deps.handleEnrichRetire(id)
     },
   }
 

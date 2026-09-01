@@ -1,26 +1,38 @@
 /**
- * Integration tests for the `POST /actions/add-gate/:id` entity route.
+ * Integration tests for daemon entity-op routes.
  *
+ * Covers:
+ *
+ * ### POST /actions/add-gate/:id
  * Drives a real `startHttpServer` with stub deps to exercise the wiring
  * introduced in mars-ba051780: `addGateFromItem` must be supplied in
  * `HttpServerDeps` so the route resolves instead of returning a 500
  * "add-gate not implemented" error.
- *
- * Scope:
  *  - 200 OK when `addGateFromItem` is wired and succeeds
  *  - the dep is called with the correct entity id
  *  - 501 Not Implemented when `addGateFromItem` is absent (stub guard)
  *  - propagates errors from `addGateFromItem` as 500
+ *
+ * ### POST /actions/enrich-retire/:id
+ * Before the fix in mars-34c2ecbd, the `enrich-retire` op was emitted by both
+ * `gate-enrichment` and `gate-enrichment-stale` recipes but had no handler
+ * registered in `entityHandlers` — every click returned
+ * `404 { "error": "Unknown action op: enrich-retire" }`.
+ *  1. `POST /actions/enrich-retire/:id` reaches a handler (not 404 "Unknown action op").
+ *  2. Every verb op that `gate-enrichment-stale` emits reaches some registered
+ *     handler via `POST /actions/:op/:id` — i.e. none returns the "Unknown action op" 404.
  */
 
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve as resolvePath } from 'node:path'
-import type { HttpServerDeps } from './http-server.js'
+import type { HttpServerHandle, HttpServerDeps } from './http-server.js'
 import { stubAppServices, stubChatRunner } from './__tests__/app-services-stub.js'
 import { loadRecipeCatalog } from '../lib/recipes.js'
 import { nullTraceStore } from '../lib/run-tool.js'
+import { lookupRecipe, getRecipeVerbs } from '../lib/action-queue-recipes.js'
+import type { RecipeCatalog } from '../lib/recipes.js'
 
 // ── Shared setup ──────────────────────────────────────────────────────────────
 
@@ -31,9 +43,38 @@ beforeAll(async () => {
   recipeCatalog = await loadRecipeCatalog(catDir)
 })
 
+// Null recipe catalog — enrich-retire tests do not use recipe lookups.
+const nullRecipeCatalog = null as unknown as RecipeCatalog
+
+/**
+ * Ops the daemon handles via special routes or that the client dispatches
+ * without hitting `POST /actions/:op/:id` at all. These are excluded from
+ * the "every emitted op has a handler" assertion.
+ *
+ * `copy`          — client-side clipboard verb, never POSTed to the daemon.
+ * `snooze`        — handled by the dedicated `POST /actions/snooze/:id` route.
+ * `dismiss`       — handled by entityHandlers (dismissProposal), but the
+ *                   gate-enrichment-stale recipe does not emit it.
+ * `show-all`      — client-side pagination verb, never POSTed.
+ * `grill`         — client-side thread-open verb, never POSTed.
+ * `restart-daemon`, `resume-dispatch`, `run-reflect`,
+ * `continue-all-daemon-killed` — handled by dedicated process-level routes.
+ */
+const EXCLUDED_OPS = new Set([
+  'copy',
+  'snooze',
+  'show-all',
+  'grill',
+  'restart-daemon',
+  'resume-dispatch',
+  'run-reflect',
+  'continue-all-daemon-killed',
+])
+
 /**
  * Minimal required deps for `startHttpServer`. Optional fields are omitted;
  * tests pass overrides for the specific dep they are exercising.
+ * Uses a real `recipeCatalog` loaded in `beforeAll`.
  */
 const makeDeps = (overrides: Partial<HttpServerDeps> = {}): HttpServerDeps => ({
   restartTask: async () => {},
@@ -58,6 +99,39 @@ const makeDeps = (overrides: Partial<HttpServerDeps> = {}): HttpServerDeps => ({
   stepDone: async () => ({ next: null as string | null }),
   snoozeItem: async () => {},
   recipeCatalog,
+  traceStore: nullTraceStore,
+  appServices: stubAppServices(),
+  chatRunner: stubChatRunner(),
+  ...overrides,
+})
+
+/**
+ * Minimal deps variant with a null recipe catalog — for route-registration
+ * tests that do not exercise recipe lookups.
+ */
+const makeMinimalDeps = (overrides: Partial<HttpServerDeps> = {}): HttpServerDeps => ({
+  restartTask: async () => {},
+  continueTask: async () => {},
+  remergeTask: async () => {},
+  unblockTask: async () => {},
+  purgeTask: async () => {},
+  pruneWorktree: async () => {},
+  dismissProposal: async () => {},
+  promoteProposal: async () => ({ taskIds: [] }),
+  validateTask: async () => {},
+  rejectTask: async () => {},
+  landWork: async () => {},
+  investigateWorktree: async () => ({ explanation: '' }),
+  diagnoseFailure: async () => ({ diagnosis: '' }),
+  restartDaemon: async () => {},
+  continueAllDaemonKilled: async () => ({ continued: [], degraded: [], skipped: [] }),
+  isAcceptingWork: () => true,
+  inFlightCount: () => 0,
+  selfUpdate: async () => {},
+  runReflect: async () => ({ proposalsRaised: 0 }),
+  stepDone: async () => ({ next: null as string | null }),
+  snoozeItem: async () => {},
+  recipeCatalog: nullRecipeCatalog,
   traceStore: nullTraceStore,
   appServices: stubAppServices(),
   chatRunner: stubChatRunner(),
@@ -154,5 +228,141 @@ describe('POST /actions/add-gate/:id', () => {
     const bodyObj = body as Record<string, unknown>
     expect(bodyObj.ok).toBe(false)
     expect(bodyObj.error).toContain('simulated internal failure')
+  })
+})
+
+// ── POST /actions/enrich-retire/:id ───────────────────────────────────────────
+
+describe('POST /actions/enrich-retire/:id — handler registration', () => {
+  let server: HttpServerHandle | null = null
+
+  afterEach(async () => {
+    if (server) {
+      await server.close()
+      server = null
+    }
+  })
+
+  it('calls handleEnrichRetire when registered — not 404 Unknown action op', async () => {
+    const { startHttpServer } = await import('./http-server')
+    const handled = vi.fn().mockResolvedValue(undefined)
+    server = await startHttpServer(
+      makeMinimalDeps({ handleEnrichRetire: handled }),
+    )
+
+    const res = await fetch(
+      `http://127.0.0.1:${server.port}/actions/enrich-retire/gate-enrichment-stale%3Averify%3Abuild%2Ftypecheck-error`,
+      { method: 'POST' },
+    )
+
+    // The route is registered — must not be the "Unknown action op" 404.
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as Record<string, unknown>
+    expect(body).toMatchObject({ ok: true })
+    expect(body.error).toBeUndefined()
+    expect(handled).toHaveBeenCalledOnce()
+    expect(handled).toHaveBeenCalledWith(
+      'gate-enrichment-stale:verify:build/typecheck-error',
+    )
+  })
+
+  it('returns 500 (not 404 Unknown action op) when handleEnrichRetire is absent', async () => {
+    const { startHttpServer } = await import('./http-server')
+    // Provide deps WITHOUT handleEnrichRetire — it is optional.
+    server = await startHttpServer(makeMinimalDeps())
+
+    const res = await fetch(
+      `http://127.0.0.1:${server.port}/actions/enrich-retire/some-entity-id`,
+      { method: 'POST' },
+    )
+
+    // The route IS registered (it throws "not implemented"), so the response
+    // must be 500, not 404 with "Unknown action op: enrich-retire".
+    expect(res.status).toBe(500)
+    const body = (await res.json()) as Record<string, unknown>
+    // Critical: must NOT be the "Unknown action op" error.
+    expect(String(body.error)).not.toMatch('Unknown action op')
+    // The handler throws a typed "not implemented" error.
+    expect(String(body.error)).toMatch('enrich-retire not implemented')
+  })
+})
+
+// ── Recipe coverage — gate-enrichment-stale emits enrich-retire ───────────────
+
+describe('gate-enrichment-stale recipe — enrich-retire verb coverage', () => {
+  const makeCtx = (kind: string) => ({
+    kind: kind as Parameters<typeof lookupRecipe>[0],
+    entityId: 'gate-enrichment-stale:verify:build/typecheck-error',
+    payload: { signature: 'verify:build/typecheck-error', passCount: 5 },
+    context: {},
+    title: '',
+    body: '',
+    raisedAt: '2026-09-01T00:00:00.000Z',
+  })
+
+  it('gate-enrichment-stale recipe emits enrich-retire verb', () => {
+    const recipe = lookupRecipe('gate-enrichment-stale')
+    const ctx = makeCtx('gate-enrichment-stale')
+    const verbs = getRecipeVerbs(recipe, ctx)
+    expect(verbs.some((v) => v.op === 'enrich-retire')).toBe(true)
+  })
+
+  it('gate-enrichment recipe emits enrich-retire verb', () => {
+    const recipe = lookupRecipe('gate-enrichment')
+    const ctx = makeCtx('gate-enrichment')
+    const verbs = getRecipeVerbs(recipe, ctx)
+    expect(verbs.some((v) => v.op === 'enrich-retire')).toBe(true)
+  })
+
+  // ---------------------------------------------------------------------------
+  // End-to-end: every verb op gate-enrichment-stale emits that would reach
+  // POST /actions/:op/:id has a registered handler (does not 404 "Unknown action op").
+  // ---------------------------------------------------------------------------
+
+  let server: HttpServerHandle | null = null
+
+  afterEach(async () => {
+    if (server) {
+      await server.close()
+      server = null
+    }
+  })
+
+  it('every gate-enrichment-stale verb op that reaches entityHandlers has a handler', async () => {
+    const { startHttpServer } = await import('./http-server')
+    server = await startHttpServer(
+      makeMinimalDeps({ handleEnrichRetire: async () => {} }),
+    )
+
+    const recipe = lookupRecipe('gate-enrichment-stale')
+    const ctx = {
+      kind: 'gate-enrichment-stale' as const,
+      entityId: 'gate-enrichment-stale:verify:build/typecheck-error',
+      payload: { signature: 'verify:build/typecheck-error', passCount: 5 },
+      context: {},
+      title: 'Stale gate enrichment',
+      body: '',
+      raisedAt: '2026-09-01T00:00:00.000Z',
+    }
+    const verbs = getRecipeVerbs(recipe, ctx)
+
+    for (const verb of verbs) {
+      // Skip ops handled outside the entityHandlers dispatch.
+      if (EXCLUDED_OPS.has(verb.op)) continue
+
+      const res = await fetch(
+        `http://127.0.0.1:${server.port}/actions/${encodeURIComponent(verb.op)}/test-entity-id`,
+        { method: 'POST' },
+      )
+      const body = (await res.json()) as Record<string, unknown>
+
+      // The only unacceptable outcome is the "Unknown action op" 404 — that
+      // means the op is not registered at all. 200, 500, or 501 all mean
+      // the route reached a handler.
+      expect(
+        String(body.error ?? ''),
+        `op "${verb.op}" returned "Unknown action op: ${verb.op}" — not registered in entityHandlers`,
+      ).not.toMatch(`Unknown action op: ${verb.op}`)
+    }
   })
 })

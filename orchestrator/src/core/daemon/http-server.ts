@@ -467,6 +467,19 @@ export interface HttpServerDeps {
    */
   addGateFromItem?: (id: string) => Promise<void>
   /**
+   * Retire a gate-enrichment candidate by its entity id.
+   *
+   * The entity id is either `gate-enrichment-stale:${signature}` (for stale
+   * enrichment rows) or `originTaskId` (for live gate-enrichment rows). The
+   * handler resolves the failure signature, calls `retireEnrichment`, and
+   * closes both the `gate-enrichment` and `gate-enrichment-stale` action-queue
+   * rows for that signature before emitting `view.action-queue-invalidated`.
+   *
+   * Optional — when absent the endpoint returns 501 Not Implemented.
+   * Backs the `POST /actions/enrich-retire/:id` entity-op route.
+   */
+  handleEnrichRetire?: (id: string) => Promise<void>
+  /**
    * Promote a fully-shaped draft proposal: flip its status from `draft` →
    * `prd-ready`, run the slicer to create tasks, and return the resulting
    * task IDs. Throws when the proposal is not in `draft` status or the
