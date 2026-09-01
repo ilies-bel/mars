@@ -1287,47 +1287,87 @@ const orphanedFailedScan: Reconciler = {
  * `task_blockers` edges dangling). Closes via `setActionQueueState` which
  * writes a `resolved` row to `action_queue_history` and updates the item.
  */
+/**
+ * Rows→proposals direction: close open `draft-proposal` action-queue rows
+ * whose proposal is absent or no longer in `draft` status.
+ *
+ * Extracted from `staleProposalActionQueueReconcile` so it can be tested
+ * independently (mirroring the `reconcileDraftProposalRows` pattern in sweeps).
+ */
+export async function reconcileStaleProposalAqRows(log: (msg: string) => void = () => {}): Promise<{ closed: number }> {
+  const { listVisibleActionQueueItems, setActionQueueState } = await import('../lib/action-queue')
+  const { getProposalStatusForIds } = await import('../proposals')
+
+  const items = await listVisibleActionQueueItems()
+  const draftProposalRows = items.filter((item) => item.kind === 'draft-proposal')
+  if (draftProposalRows.length === 0) return { closed: 0 }
+
+  // Collect proposalIds that are present in the payload. Rows with no
+  // proposalId are also stale (mis-kinded) but they never had a real
+  // proposal — close them as well.
+  const proposalIds = draftProposalRows
+    .filter((r) => typeof r.payload['proposalId'] === 'string')
+    .map((r) => r.payload['proposalId'] as string)
+  const draftIds = await getProposalStatusForIds(proposalIds)
+
+  let closed = 0
+  for (const row of draftProposalRows) {
+    const pid = typeof row.payload['proposalId'] === 'string' ? row.payload['proposalId'] : null
+    if (pid === null || !draftIds.has(pid)) {
+      await setActionQueueState(row.id, 'resolved', {
+        resolution: 'proposal-no-longer-draft',
+        by: 'startup-reconcile',
+      }).catch(() => {
+        // Non-fatal: row may have been closed concurrently by another path.
+      })
+      closed++
+    }
+  }
+
+  if (closed > 0) {
+    log(
+      `[reconcile] stale-proposal-action-queue-reconcile: closed ${closed} draft-proposal row(s) whose proposal is absent or not draft`,
+    )
+  }
+  return { closed }
+}
+
 const staleProposalActionQueueReconcile: Reconciler = {
   name: 'stale-proposal-action-queue-reconcile',
   async run({ log }) {
     try {
-      const { listVisibleActionQueueItems, setActionQueueState } = await import('../lib/action-queue')
-      const { getProposalStatusForIds } = await import('../proposals')
-
-      const items = await listVisibleActionQueueItems()
-      const draftProposalRows = items.filter((item) => item.kind === 'draft-proposal')
-      if (draftProposalRows.length === 0) return {}
-
-      // Collect proposalIds that are present in the payload. Rows with no
-      // proposalId are also stale (mis-kinded) but they never had a real
-      // proposal — close them as well.
-      const proposalIds = draftProposalRows
-        .filter((r) => typeof r.payload['proposalId'] === 'string')
-        .map((r) => r.payload['proposalId'] as string)
-      const draftIds = await getProposalStatusForIds(proposalIds)
-
-      let closed = 0
-      for (const row of draftProposalRows) {
-        const pid = typeof row.payload['proposalId'] === 'string' ? row.payload['proposalId'] : null
-        if (pid === null || !draftIds.has(pid)) {
-          await setActionQueueState(row.id, 'resolved', {
-            resolution: 'proposal-no-longer-draft',
-            by: 'startup-reconcile',
-          }).catch(() => {
-            // Non-fatal: row may have been closed concurrently by another path.
-          })
-          closed++
-        }
-      }
-
-      if (closed > 0) {
-        log(
-          `[reconcile] stale-proposal-action-queue-reconcile: closed ${closed} draft-proposal row(s) whose proposal is absent or not draft`,
-        )
-      }
+      const { closed } = await reconcileStaleProposalAqRows(log)
       return { staleProposalRowsClosed: closed }
     } catch (err) {
       log(`[reconcile] stale-proposal-action-queue-reconcile failed: ${(err as Error).message}`)
+      return {}
+    }
+  },
+}
+
+/**
+ * Proposals→rows direction: raise a `draft-proposal` action-queue row for
+ * every draft proposal that has no open row.
+ *
+ * Delegates to `reconcileDraftProposalRows` from sweeps, which already runs
+ * with `runOnStart: true`. Adding it to the startup-reconcile registry ensures
+ * orphaned proposals are caught in the ordered startup pass as well, before the
+ * sweep interval fires.
+ */
+const draftProposalRowReconcile: Reconciler = {
+  name: 'draft-proposal-row-reconcile',
+  async run({ log }) {
+    try {
+      const { reconcileDraftProposalRows } = await import('./sweeps')
+      const { raised } = await reconcileDraftProposalRows()
+      if (raised > 0) {
+        log(
+          `[reconcile] draft-proposal-row-reconcile: raised ${raised} missing draft-proposal row(s)`,
+        )
+      }
+      return { draftProposalRowsRaised: raised }
+    } catch (err) {
+      log(`[reconcile] draft-proposal-row-reconcile failed: ${(err as Error).message}`)
       return {}
     }
   },
@@ -1370,4 +1410,5 @@ export const RECONCILERS: readonly Reconciler[] = [
   workflowInstallDriftSweep,
   ghostSubscriberSweep,
   staleProposalActionQueueReconcile,
+  draftProposalRowReconcile,
 ]

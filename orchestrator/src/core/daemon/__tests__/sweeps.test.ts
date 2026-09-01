@@ -1,18 +1,32 @@
 /**
- * Tests for reconcileDraftProposalRows — the draft-proposal action-queue
- * reconcile sweep.
+ * Tests for the draft-proposal action-queue reconcile invariant:
  *
- * The invariant: every proposal in status='draft' must have an open
- * draft-proposal action-queue row so `mars action-queue list` reliably
- * surfaces it. If the `action-queue-repopulator` subscriber misses the
- * `proposal.added` event (daemon down, crash, outbox drop), no row is created
- * and nothing ever backfills it without this sweep.
+ *   Every draft proposal has exactly one open draft-proposal row, AND
+ *   every open draft-proposal row maps to a draft proposal.
  *
- * Covers three required cases:
+ * Two reconcilers enforce the two directions:
  *
+ * - `reconcileDraftProposalRows` (sweeps.ts) — proposals → rows:
+ *   Draft proposals with no open row get one raised. Covers the case where
+ *   the `action-queue-repopulator` subscriber misses the `proposal.added`
+ *   event (daemon down, crash, outbox drop).
+ *
+ * - `reconcileStaleProposalAqRows` (reconcilers.ts) — rows → proposals:
+ *   Open draft-proposal rows whose proposal is absent or no longer draft get
+ *   closed. Covers the case where a proposal is dismissed / promoted after the
+ *   row was raised but before the row was operator-resolved.
+ *
+ * Covers:
+ *
+ * proposals → rows (reconcileDraftProposalRows):
  * 1. Draft with no action_queue_items row → gets one raised.
  * 2. Draft with a resolved action_queue_items row → untouched (not re-raised).
  * 3. Idempotency: a second sweep pass over an already-healed DB raises nothing.
+ *
+ * rows → proposals (reconcileStaleProposalAqRows):
+ * 4. Open row whose proposal is dismissed → row gets closed.
+ * 5. Open row whose proposal is still draft → row is left open.
+ * 6. Open row with no matching proposal at all → row gets closed.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
@@ -160,5 +174,118 @@ describe('reconcileDraftProposalRows', { timeout: 120_000 }, () => {
     const rows = await rowsForOrigin(client, 'prop-idempotent-001')
     expect(rows).toHaveLength(1)
     expect(rows[0].status).toBe('open')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Rows → proposals direction: reconcileStaleProposalAqRows
+// ---------------------------------------------------------------------------
+
+describe('reconcileStaleProposalAqRows', { timeout: 120_000 }, () => {
+  let repo: string
+  let client: DbClient
+
+  beforeEach(async () => {
+    repo = setupRepo()
+    process.env.MARS_REPO = repo
+    vi.resetModules()
+    client = await makeClient(repo)
+  })
+
+  afterEach(async () => {
+    await client.close()
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('closes an open draft-proposal row whose proposal has been dismissed', async () => {
+    // Insert a draft proposal and a corresponding open action-queue row.
+    await insertDraftProposal(client, 'prop-dismissed-001', {
+      title: 'Optimize startup time',
+      source: 'planner',
+    })
+    const { raiseActionQueueItem } = await import('../../lib/action-queue.js')
+    await raiseActionQueueItem({
+      kind: 'draft-proposal',
+      category: 'user',
+      priority: 'normal',
+      title: 'Draft proposal: Optimize startup time',
+      body: 'Proposal `prop-dismissed-001` from `planner` is ready for review.',
+      payload: { proposalId: 'prop-dismissed-001', source: 'planner' },
+      context: {},
+      raisedBy: 'test',
+      signature: 'prop-dismissed-001',
+      originTaskId: 'prop-dismissed-001',
+    })
+
+    // Dismiss the proposal (move it out of draft status).
+    await client.execute({
+      sql: `UPDATE proposals SET status = 'dismissed', updated_at = $1 WHERE id = $2`,
+      args: [Date.now(), 'prop-dismissed-001'],
+    })
+
+    const { reconcileStaleProposalAqRows } = await import('../reconcilers.js')
+    const { closed } = await reconcileStaleProposalAqRows()
+
+    expect(closed).toBe(1)
+
+    const rows = await rowsForOrigin(client, 'prop-dismissed-001')
+    expect(rows).toHaveLength(1)
+    expect(rows[0].status).toBe('resolved')
+  })
+
+  it('leaves an open draft-proposal row untouched when the proposal is still draft', async () => {
+    await insertDraftProposal(client, 'prop-still-draft-001', {
+      title: 'Add structured logging',
+      source: 'planner',
+    })
+    const { raiseActionQueueItem } = await import('../../lib/action-queue.js')
+    await raiseActionQueueItem({
+      kind: 'draft-proposal',
+      category: 'user',
+      priority: 'normal',
+      title: 'Draft proposal: Add structured logging',
+      body: 'Proposal `prop-still-draft-001` from `planner` is ready for review.',
+      payload: { proposalId: 'prop-still-draft-001', source: 'planner' },
+      context: {},
+      raisedBy: 'test',
+      signature: 'prop-still-draft-001',
+      originTaskId: 'prop-still-draft-001',
+    })
+
+    const { reconcileStaleProposalAqRows } = await import('../reconcilers.js')
+    const { closed } = await reconcileStaleProposalAqRows()
+
+    expect(closed).toBe(0)
+
+    const rows = await rowsForOrigin(client, 'prop-still-draft-001')
+    expect(rows).toHaveLength(1)
+    expect(rows[0].status).toBe('open')
+  })
+
+  it('closes an open draft-proposal row whose proposal does not exist at all', async () => {
+    // Raise a row for a proposal that was never inserted.
+    const { raiseActionQueueItem } = await import('../../lib/action-queue.js')
+    await raiseActionQueueItem({
+      kind: 'draft-proposal',
+      category: 'user',
+      priority: 'normal',
+      title: 'Draft proposal: Ghost proposal',
+      body: 'Proposal `ghost-proposal-001` from `planner` is ready for review.',
+      payload: { proposalId: 'ghost-proposal-001', source: 'planner' },
+      context: {},
+      raisedBy: 'test',
+      signature: 'ghost-proposal-001',
+      originTaskId: 'ghost-proposal-001',
+    })
+
+    const { reconcileStaleProposalAqRows } = await import('../reconcilers.js')
+    const { closed } = await reconcileStaleProposalAqRows()
+
+    expect(closed).toBe(1)
+
+    const rows = await rowsForOrigin(client, 'ghost-proposal-001')
+    expect(rows).toHaveLength(1)
+    expect(rows[0].status).toBe('resolved')
   })
 })

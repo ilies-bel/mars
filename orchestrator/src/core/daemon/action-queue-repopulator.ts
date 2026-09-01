@@ -5,6 +5,7 @@ import { drainWithStall } from './subscriber-drain.js'
 import { resolveFailureKind, failedTaskTitle } from '../lib/failure-kinds'
 import {
   raiseActionQueueItem,
+  raiseDraftProposalAqRow,
   resolveAllRowsForTask,
   supersedeActionQueueItemsForOrigin,
   type SupersedeReason,
@@ -311,6 +312,11 @@ async function applyActionQueueMutation(event: BusEvent): Promise<void> {
  * `draft-proposal-reconcile` startup/periodic sweep so the two callers cannot
  * produce rows with different shapes.
  *
+ * Delegates to `raiseDraftProposalAqRow` in `lib/action-queue` — the canonical
+ * implementation that `createProposal` also calls directly. Keeping the opts
+ * object signature here so existing callers (sweeps, subscriber) don't need
+ * to change.
+ *
  * {@link raiseActionQueueItem} deduplicates via the origin-keyed fingerprint —
  * a row that already exists (open or resolved) is left untouched and only its
  * `seen_count` is bumped on a re-raise of an open row.
@@ -321,21 +327,7 @@ export async function raiseDraftProposalRow(opts: {
   source: string
   raisedBy: string
 }): Promise<string> {
-  return raiseActionQueueItem({
-    kind: 'draft-proposal',
-    category: 'user',
-    priority: 'normal',
-    title: `Draft proposal: ${opts.title}`,
-    body: `Proposal \`${opts.proposalId}\` from \`${opts.source}\` is ready for review.`,
-    payload: {
-      proposalId: opts.proposalId,
-      source: opts.source,
-    },
-    context: {},
-    raisedBy: opts.raisedBy,
-    signature: opts.proposalId,
-    originTaskId: opts.proposalId,
-  })
+  return raiseDraftProposalAqRow(opts.proposalId, opts.title, opts.source, opts.raisedBy)
 }
 
 /**

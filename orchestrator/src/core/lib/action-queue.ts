@@ -1724,3 +1724,41 @@ export const closeDraftProposalAqRowsForProposal = async (
   }
   return ids
 }
+
+/**
+ * ADR-0094 primary creation-path raise: ensure every new draft proposal
+ * immediately has an open `draft-proposal` action-queue row advertising it for
+ * operator review.
+ *
+ * Mirrors `closeDraftProposalAqRowsForProposal` — both ends of the lifecycle
+ * live in this module so the invariant (one open row ↔ one draft proposal) can
+ * be enforced transactionally by the mutation paths that move status in either
+ * direction.
+ *
+ * Idempotent — `raiseActionQueueItem` folds into the existing open row when one
+ * already exists (same fingerprint / same origin-keyed row).
+ *
+ * @param proposalId  The fully-resolved proposal id.
+ * @param title       Proposal title (for the action-queue item body).
+ * @param source      Proposal source (e.g. `'planner'`, `'human'`).
+ * @param by          Actor raising the row (default: `'proposal:create'`).
+ * @returns           The action-queue item id.
+ */
+export const raiseDraftProposalAqRow = async (
+  proposalId: string,
+  title: string,
+  source: string,
+  by = 'proposal:create',
+): Promise<string> =>
+  raiseActionQueueItem({
+    kind: 'draft-proposal',
+    category: 'user',
+    priority: 'normal',
+    title: `Draft proposal: ${title}`,
+    body: `Proposal \`${proposalId}\` from \`${source}\` is ready for review.`,
+    payload: { proposalId, source },
+    context: {},
+    raisedBy: by,
+    signature: proposalId,
+    originTaskId: proposalId,
+  })

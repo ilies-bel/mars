@@ -524,6 +524,13 @@ export const createProposal = async (
   const proposal = rowToProposal(row, [])
   if (proposal.id === id) {
     await emitProposalBusEvent('proposal.added', { proposalId: id, source, title: effectiveTitle })
+    // ADR-0094 primary fix: raise the draft-proposal action-queue row in the
+    // creation path, mirroring how dismissProposal closes it. Non-fatal — a
+    // concurrent raise (e.g. from the repopulator subscriber) folds into the
+    // same open row; a DB error is swallowed so it never blocks proposal
+    // creation.
+    const { raiseDraftProposalAqRow } = await import('./lib/action-queue')
+    await raiseDraftProposalAqRow(id, effectiveTitle, source, 'proposal:create').catch(() => {})
   }
   return proposal
 }
