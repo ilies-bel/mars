@@ -21,6 +21,10 @@
  *  1. `POST /actions/enrich-retire/:id` reaches a handler (not 404 "Unknown action op").
  *  2. Every verb op that `gate-enrichment-stale` emits reaches some registered
  *     handler via `POST /actions/:op/:id` — i.e. none returns the "Unknown action op" 404.
+ *
+ * ### Deep-reflections views
+ *  - GET  /view/deep-reflections          — must include `autoEnqueue`
+ *  - GET  /view/deep-reflections/:originId — must include `autoEnqueue`
  */
 
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -28,6 +32,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve as resolvePath } from 'node:path'
 import type { HttpServerHandle, HttpServerDeps } from './http-server.js'
+import type { DeepReflectionsListResult, DeepReflectionDetail } from './http-server.js'
 import { stubAppServices, stubChatRunner } from './__tests__/app-services-stub.js'
 import { loadRecipeCatalog } from '../lib/recipes.js'
 import { nullTraceStore } from '../lib/run-tool.js'
@@ -364,5 +369,131 @@ describe('gate-enrichment-stale recipe — enrich-retire verb coverage', () => {
         `op "${verb.op}" returned "Unknown action op: ${verb.op}" — not registered in entityHandlers`,
       ).not.toMatch(`Unknown action op: ${verb.op}`)
     }
+  })
+})
+
+// ── GET /view/deep-reflections — autoEnqueue field ────────────────────────────
+
+describe('GET /view/deep-reflections includes autoEnqueue', () => {
+  let httpServer: { port: number; close: () => Promise<void> } | null = null
+
+  afterEach(async () => {
+    await httpServer?.close()
+    httpServer = null
+  })
+
+  it('includes autoEnqueue in the list response', async () => {
+    const { startHttpServer } = await import('./http-server.js')
+
+    const listResult: DeepReflectionsListResult = {
+      reports: [],
+      totalDiscovered: 0,
+      unreadableCount: 0,
+      autoRunReflect: 'on',
+      autoEnqueue: true,
+      lastReflectedAt: null,
+    }
+
+    httpServer = await startHttpServer(
+      makeDeps({ appServices: stubAppServices({ viewDeepReflections: async () => listResult }) }),
+    )
+
+    const res = await fetch(`http://127.0.0.1:${httpServer.port}/view/deep-reflections`)
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as DeepReflectionsListResult
+    expect(body.autoEnqueue).toBe(true)
+  })
+
+  it('passes autoEnqueue=false through when the feature is disabled', async () => {
+    const { startHttpServer } = await import('./http-server.js')
+
+    const listResult: DeepReflectionsListResult = {
+      reports: [],
+      totalDiscovered: 0,
+      unreadableCount: 0,
+      autoRunReflect: 'off',
+      autoEnqueue: false,
+      lastReflectedAt: null,
+    }
+
+    httpServer = await startHttpServer(
+      makeDeps({ appServices: stubAppServices({ viewDeepReflections: async () => listResult }) }),
+    )
+
+    const res = await fetch(`http://127.0.0.1:${httpServer.port}/view/deep-reflections`)
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as DeepReflectionsListResult
+    expect(body.autoEnqueue).toBe(false)
+  })
+})
+
+// ── GET /view/deep-reflections/:originId — autoEnqueue field ──────────────────
+
+describe('GET /view/deep-reflections/:originId includes autoEnqueue', () => {
+  let httpServer: { port: number; close: () => Promise<void> } | null = null
+
+  afterEach(async () => {
+    await httpServer?.close()
+    httpServer = null
+  })
+
+  it('includes autoEnqueue in the detail response', async () => {
+    const { startHttpServer } = await import('./http-server.js')
+
+    const detail: DeepReflectionDetail = {
+      originId: 'test-origin',
+      recordedAt: '2026-09-01T12:00:00.000Z',
+      status: 'complete',
+      totalToolCalls: 10,
+      dissonantCallCount: 0,
+      verifyMismatchCount: 0,
+      thrashingPatternCount: 0,
+      verdictResult: { saved: 0, absorbed: 0, dropped: 0 },
+      sourceTaskId: null,
+      autoRunReflect: 'on',
+      autoEnqueue: true,
+      report: null,
+    }
+
+    httpServer = await startHttpServer(
+      makeDeps({ appServices: stubAppServices({ viewDeepReflection: async () => detail }) }),
+    )
+
+    const res = await fetch(
+      `http://127.0.0.1:${httpServer.port}/view/deep-reflections/${encodeURIComponent('test-origin')}`,
+    )
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as DeepReflectionDetail
+    expect(body.autoEnqueue).toBe(true)
+  })
+
+  it('passes autoEnqueue=false through for the detail view when disabled', async () => {
+    const { startHttpServer } = await import('./http-server.js')
+
+    const detail: DeepReflectionDetail = {
+      originId: 'test-origin-2',
+      recordedAt: '2026-09-01T12:00:00.000Z',
+      status: 'complete',
+      totalToolCalls: 5,
+      dissonantCallCount: 0,
+      verifyMismatchCount: 0,
+      thrashingPatternCount: 0,
+      verdictResult: { saved: 0, absorbed: 0, dropped: 0 },
+      sourceTaskId: null,
+      autoRunReflect: 'off',
+      autoEnqueue: false,
+      report: null,
+    }
+
+    httpServer = await startHttpServer(
+      makeDeps({ appServices: stubAppServices({ viewDeepReflection: async () => detail }) }),
+    )
+
+    const res = await fetch(
+      `http://127.0.0.1:${httpServer.port}/view/deep-reflections/${encodeURIComponent('test-origin-2')}`,
+    )
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as DeepReflectionDetail
+    expect(body.autoEnqueue).toBe(false)
   })
 })

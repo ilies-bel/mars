@@ -321,6 +321,8 @@ export type ReflectionSuggestionOutcome =
 export interface DeepReflectionDetail extends DeepReflectionSummary {
   sourceTaskId: string | null
   autoRunReflect: 'on' | 'off'
+  /** Whether accepted reflection suggestions are auto-enqueued as tasks. */
+  autoEnqueue: boolean
   report: {
     summary: string
     rootCause: string
@@ -351,6 +353,8 @@ export interface DeepReflectionsListResult {
   /** Number of .json files that could not be read or parsed (malformed). */
   unreadableCount: number
   autoRunReflect: 'on' | 'off'
+  /** Whether accepted reflection suggestions are auto-enqueued as tasks. */
+  autoEnqueue: boolean
   lastReflectedAt: string | null
 }
 

@@ -21,6 +21,7 @@ import { join, resolve } from 'node:path'
 const SELF_EVOLVE_FIELDS = [
   'driftThresholdPct',
   'reflectCooldownDays',
+  'autoEnqueue',
 ] as const
 
 // Derived from ScoringConfig in config.ts.

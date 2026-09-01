@@ -150,6 +150,13 @@ export interface SelfEvolveConfig {
    * next detector sweep. Default 7. Set to 0 to disable the cooldown.
    */
   reflectCooldownDays: number
+  /**
+   * When true, accepted reflection suggestions are automatically enqueued as
+   * tasks rather than surfaced as draft proposals for operator review.
+   * Persisted under `selfEvolve.autoEnqueue` in daemon.json. Default false.
+   * Gesture: `mars lever set self-evolve.auto-enqueue <true|false>`.
+   */
+  autoEnqueue: boolean
 }
 
 /**
@@ -255,6 +262,7 @@ export const daemonConfigSchema = z
       .object({
         driftThresholdPct: z.number().optional(),
         reflectCooldownDays: z.number().optional(),
+        autoEnqueue: z.boolean().optional(),
       })
       .partial()
       .optional(),
@@ -458,6 +466,7 @@ export const DEFAULTS: DaemonCaps = {
 export const DEFAULT_SELF_EVOLVE: SelfEvolveConfig = {
   driftThresholdPct: 10,
   reflectCooldownDays: 7,
+  autoEnqueue: false,
 }
 
 /** Exported for `src/core/config/registry.ts` — see {@link DEFAULTS}. */
@@ -981,6 +990,7 @@ export const loadDaemonConfig = (): DaemonConfig => {
   let fileCaps: Partial<DaemonCaps> = {}
   let fileDriftPct: number | undefined
   let fileReflectCooldownDays: number | undefined
+  let fileAutoEnqueue: boolean | undefined
   let fileScoringAutoTrigger: boolean | undefined
   let fileScoringThreshold: number | undefined
   let fileScoringWindow: number | undefined
@@ -1023,6 +1033,9 @@ export const loadDaemonConfig = (): DaemonConfig => {
       seCooldown >= 0
     ) {
       fileReflectCooldownDays = seCooldown
+    }
+    if (typeof se.autoEnqueue === 'boolean') {
+      fileAutoEnqueue = se.autoEnqueue
     }
     const sc = parsed.scoring ?? {}
     if (typeof sc.autoTrigger === 'boolean') {
@@ -1095,6 +1108,7 @@ export const loadDaemonConfig = (): DaemonConfig => {
     selfEvolve: {
       driftThresholdPct: fileDriftPct ?? envDriftPct,
       reflectCooldownDays: fileReflectCooldownDays ?? DEFAULT_SELF_EVOLVE.reflectCooldownDays,
+      autoEnqueue: fileAutoEnqueue ?? DEFAULT_SELF_EVOLVE.autoEnqueue,
     },
     scoring: {
       autoTrigger: fileScoringAutoTrigger ?? envScoringAutoTrigger,

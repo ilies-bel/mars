@@ -50,7 +50,7 @@ import { listAlerts, showAlert, type Alert, type AlertSources } from './lib/aler
 import type { RaiseActionQueueItem } from './lib/action-queue'
 import { loadRecentTaskCorpus, type ReflectCorpus, type LoadCorpusOptions } from './lib/reflect-query'
 import { listDeepReflectArcCandidates, type ArcCandidate } from './lib/deep-reflect-query'
-import { readControlLevers } from './daemon/config'
+import { readControlLevers, loadDaemonConfig } from './daemon/config'
 import {
   computeScorerTrend,
   listScorerResults,
@@ -1502,15 +1502,16 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     listDeepReflectArcCandidates(opts)
 
   /**
-   * Read the reflection control state (autoRunReflect lever).
+   * Read the reflection control state (autoRunReflect lever + autoEnqueue flag).
    * Falls back to safe defaults when the config file is absent or malformed.
    */
-  const readReflectState = (): { autoRunReflect: 'on' | 'off' } => {
+  const readReflectState = (): { autoRunReflect: 'on' | 'off'; autoEnqueue: boolean } => {
     try {
       const levers = readControlLevers()
-      return { autoRunReflect: levers.autoRunReflect }
+      const config = loadDaemonConfig()
+      return { autoRunReflect: levers.autoRunReflect, autoEnqueue: config.selfEvolve.autoEnqueue }
     } catch {
-      return { autoRunReflect: 'on' }
+      return { autoRunReflect: 'on', autoEnqueue: false }
     }
   }
 
@@ -1521,8 +1522,8 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
       entries = await readdir(dir)
     } catch {
       // Directory absent — no reports yet.
-      const { autoRunReflect } = readReflectState()
-      return { reports: [], totalDiscovered: 0, unreadableCount: 0, autoRunReflect, lastReflectedAt: null }
+      const { autoRunReflect, autoEnqueue } = readReflectState()
+      return { reports: [], totalDiscovered: 0, unreadableCount: 0, autoRunReflect, autoEnqueue, lastReflectedAt: null }
     }
 
     // Accept every .json file regardless of prefix — naming conventions have
@@ -1583,8 +1584,8 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     const limit = opts?.limit ?? 100
     const reports = parsed.slice(0, limit)
 
-    const { autoRunReflect } = readReflectState()
-    return { reports, totalDiscovered, unreadableCount, autoRunReflect, lastReflectedAt }
+    const { autoRunReflect, autoEnqueue } = readReflectState()
+    return { reports, totalDiscovered, unreadableCount, autoRunReflect, autoEnqueue, lastReflectedAt }
   }
 
   const viewDeepReflection: AppServices['viewDeepReflection'] = async (originId, at) => {
@@ -1707,7 +1708,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
       }
     }
 
-    const { autoRunReflect } = readReflectState()
+    const { autoRunReflect, autoEnqueue } = readReflectState()
 
     return {
       originId: typeof data.originId === 'string' ? data.originId : originId,
@@ -1724,6 +1725,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
       },
       sourceTaskId: typeof data.sourceTaskId === 'string' ? data.sourceTaskId : null,
       autoRunReflect,
+      autoEnqueue,
       report: report === null ? null : {
         summary: typeof report.summary === 'string' ? report.summary : '',
         rootCause: typeof report.rootCause === 'string' ? report.rootCause : '',

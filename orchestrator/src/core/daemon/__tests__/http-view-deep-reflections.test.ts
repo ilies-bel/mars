@@ -114,6 +114,7 @@ describe('GET /view/deep-reflections', () => {
       totalDiscovered: 1,
       unreadableCount: 0,
       autoRunReflect: 'on',
+      autoEnqueue: true,
       lastReflectedAt: '2026-08-06T18:42:55.791Z',
     }
 
@@ -129,6 +130,7 @@ describe('GET /view/deep-reflections', () => {
       expect(body.reports[0]?.originId).toBe('origin-abc')
       expect(body.reports[0]?.dissonantCallCount).toBe(1)
       expect(body.autoRunReflect).toBe('on')
+      expect(body.autoEnqueue).toBe(true)
       expect(body.lastReflectedAt).toBe('2026-08-06T18:42:55.791Z')
     } finally {
       await close()
@@ -145,6 +147,7 @@ describe('GET /view/deep-reflections', () => {
           totalDiscovered: 0,
           unreadableCount: 0,
           autoRunReflect: 'off',
+          autoEnqueue: false,
           lastReflectedAt: null,
         }),
       }),
@@ -169,7 +172,7 @@ describe('GET /view/deep-reflections', () => {
       makeDeps({
         viewDeepReflections: async (opts) => {
           capturedOpts = opts
-          return { reports: [], totalDiscovered: 0, unreadableCount: 0, autoRunReflect: 'on', lastReflectedAt: null }
+          return { reports: [], totalDiscovered: 0, unreadableCount: 0, autoRunReflect: 'on', autoEnqueue: false, lastReflectedAt: null }
         },
       }),
     )
@@ -226,6 +229,7 @@ describe('GET /view/deep-reflections/:originId', () => {
       ...sampleReport,
       sourceTaskId: 'reflect-abc123',
       autoRunReflect: 'on',
+      autoEnqueue: true,
       report: {
         summary: 'Arc completed with some issues.',
         rootCause: 'Isolated test loops produced local confidence.',
@@ -281,6 +285,7 @@ describe('GET /view/deep-reflections/:originId', () => {
       expect(body.report?.verifyMismatch?.claimed).toBe('All tests pass')
       expect(body.report?.thrashingPatterns).toHaveLength(1)
       expect(body.autoRunReflect).toBe('on')
+      expect(body.autoEnqueue).toBe(true)
     } finally {
       await close()
     }
@@ -320,6 +325,7 @@ describe('GET /view/deep-reflections/:originId', () => {
       verdictResult: { saved: 0, absorbed: 0, dropped: 0 },
       sourceTaskId: null,
       autoRunReflect: 'on',
+      autoEnqueue: false,
       report: null,
     }
 
