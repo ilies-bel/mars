@@ -847,6 +847,22 @@ export const setProposalField = async (
   }
   const id = resolved.id
   const c = stateClient()
+  // Guard: a dismissed proposal cannot be moved back to 'draft'. Dismissal is
+  // an explicit operator decision; silently reversing it would lose the audit
+  // trail and could re-ask the operator a question they already answered.
+  // This mirrors the `AND status = 'draft'` guard in `dismissProposal` — the
+  // same conditional-update pattern applied in the opposite direction.
+  // Use `reviveProposal` to move an 'expired' proposal back to 'draft'; that
+  // path explicitly checks the precondition and emits the right bus event.
+  if (field === 'status' && value === 'draft') {
+    const current = await getProposal(id)
+    if (current?.status === 'dismissed') {
+      throw new Error(
+        `proposal ${id} is 'dismissed'; a dismissed proposal cannot be moved back to 'draft'. ` +
+          `Use 'mars proposal revive' only on expired proposals.`,
+      )
+    }
+  }
   const now = Date.now()
   await c.execute({
     sql: `UPDATE proposals SET ${fieldColumn[field]} = ?, updated_at = ? WHERE id = ?`,
