@@ -182,7 +182,7 @@ describe('continue degrades to restart for pre-setup failures', () => {
 
     // Insert a recovery fix-task pointing at the source. enqueueTask rejects
     // kind='fix', so we use the task store directly.
-    const { getDefaultTaskStore } = (await import('../../store/task-store')) as typeof import('../../store/task-store')
+    const { getDefaultTaskStore } = (await import('../../store/task-store-default')) as typeof import('../../store/task-store-default')
     const store = await getDefaultTaskStore()
     const recoveryId = `mars-fix-00`
     const now = new Date().toISOString()
@@ -231,7 +231,7 @@ describe('continue degrades to restart for pre-setup failures', () => {
       worktreePath,
     })
 
-    const { getDefaultTaskStore } = (await import('../../store/task-store')) as typeof import('../../store/task-store')
+    const { getDefaultTaskStore } = (await import('../../store/task-store-default')) as typeof import('../../store/task-store-default')
     const store = await getDefaultTaskStore()
     const recoveryId = 'mars-fix-watchdog'
     const now = new Date().toISOString()
@@ -981,7 +981,7 @@ describe('continue degrades to restart for pre-setup failures', () => {
     })
 
     // Insert a settled failed recovery task for the origin.
-    const { getDefaultTaskStore } = (await import('../../store/task-store')) as typeof import('../../store/task-store')
+    const { getDefaultTaskStore } = (await import('../../store/task-store-default')) as typeof import('../../store/task-store-default')
     const store = await getDefaultTaskStore()
     const recoveryId = `mars-fix-exhausted-00`
     const now = new Date().toISOString()
@@ -1229,7 +1229,7 @@ describe('continue degrades to restart for pre-setup failures', () => {
 
     // Insert a FAILED recovery task for the origin. Its status='failed' means
     // it has settled and must not be treated as in-flight.
-    const { getDefaultTaskStore } = (await import('../../store/task-store')) as typeof import('../../store/task-store')
+    const { getDefaultTaskStore } = (await import('../../store/task-store-default')) as typeof import('../../store/task-store-default')
     const store = await getDefaultTaskStore()
     const recoveryId = `mars-fix-settled`
     const now = new Date().toISOString()

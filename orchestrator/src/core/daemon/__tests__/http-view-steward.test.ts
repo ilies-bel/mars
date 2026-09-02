@@ -151,7 +151,7 @@ describe('GET /view/steward', () => {
     const { __resetDbRegistryForTests } = await import('../../lib/db')
     const { createAppServices } = await import('../../app-services')
     const { nullTraceStore: realNullTraceStore } = await import('../../lib/run-tool')
-    const { getCompositionRootClient, runCompositionRootMigrations } = await import('../../store/task-store')
+    const { getCompositionRootClient, runCompositionRootMigrations } = await import('../../store/task-store-default')
 
     __resetContextCacheForTests()
     await __resetDbRegistryForTests()

@@ -32,7 +32,7 @@ beforeEach(async () => {
   vi.resetModules()
   process.env.MARS_REPO = repo
   dbModule = await import('../lib/db.js')
-  const { runCompositionRootMigrations } = await import('../store/task-store.js')
+  const { runCompositionRootMigrations } = await import('../store/task-store-default.js')
   await runCompositionRootMigrations()
 })
 
@@ -46,7 +46,7 @@ afterEach(async () => {
 describe('AppServices.viewSteward gate health', () => {
   it('groups active and quarantined gates by scope and exposes their latest failure evidence', async () => {
     const { addVerifyGate, listVerifyGates, quarantineVerifyGate } = await import('../verify-gates.js')
-    const { getCompositionRootClient } = await import('../store/task-store.js')
+    const { getCompositionRootClient } = await import('../store/task-store-default.js')
     await addVerifyGate({ scope: 'apps/web', name: 'test', cmd: 'npm', args: ['test'] })
     const typecheck = await addVerifyGate({ scope: '.', name: 'typecheck', cmd: 'npx', args: ['tsc', '--noEmit'] })
     await addVerifyGate({ scope: '.', name: 'lint', cmd: 'eslint', required: false, source: 'operator' })

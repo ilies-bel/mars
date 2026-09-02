@@ -152,7 +152,7 @@ describe('AppServices action queue view', () => {
     await __resetDbRegistryForTests()
 
     const { getCompositionRootClient, runCompositionRootMigrations } =
-      await import('../store/task-store.js')
+      await import('../store/task-store-default.js')
     const { raiseActionQueueItem } = await import('../lib/action-queue.js')
     const { createAppServices } = await import('../app-services.js')
     const { nullTraceStore } = await import('../lib/run-tool.js')

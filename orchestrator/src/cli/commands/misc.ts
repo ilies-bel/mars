@@ -130,7 +130,7 @@ const kpiSnapshot: Command = {
   usage: 'usage: mars kpi snapshot',
   run: async (_args, deps) => {
     const { takeKpiSnapshot } = await import('../../core/lib/kpi-snapshots.js')
-    const { getDefaultTaskStore } = await import('../../core/store/task-store.js')
+    const { getDefaultTaskStore } = await import('../../core/store/task-store-default.js')
     const surface = await getDefaultTaskStore()
     const snapshot = await takeKpiSnapshot({
       surface,

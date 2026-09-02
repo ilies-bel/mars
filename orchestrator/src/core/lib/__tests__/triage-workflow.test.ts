@@ -488,9 +488,8 @@ describe('triage workflow — optimised data access', () => {
     // Enough tasks that the graph would be non-trivial if fetched
     await fillGraph(queue, busyGraph)
 
-    const { createTaskStore, getCompositionRootClient } = await import(
-      '../../../core/store/task-store'
-    )
+    const { createTaskStore } = await import('../../../core/store/task-store')
+    const { getCompositionRootClient } = await import('../../../core/store/task-store-default')
     const store = createTaskStore(getCompositionRootClient())
     const spy = vi.spyOn(store, 'listNonDoneTasks')
 
@@ -516,9 +515,8 @@ describe('triage workflow — optimised data access', () => {
       },
     })
 
-    const { createTaskStore, getCompositionRootClient } = await import(
-      '../../../core/store/task-store'
-    )
+    const { createTaskStore } = await import('../../../core/store/task-store')
+    const { getCompositionRootClient } = await import('../../../core/store/task-store-default')
     const store = createTaskStore(getCompositionRootClient())
     const spy = vi.spyOn(store, 'listNonDoneTasks')
 
@@ -560,9 +558,8 @@ describe('triage workflow — optimised data access', () => {
     // Lone task — open graph (excluding self) is empty
     const task = await queue.enqueueTask('lone free-prose task')
 
-    const { createTaskStore, getCompositionRootClient } = await import(
-      '../../../core/store/task-store'
-    )
+    const { createTaskStore } = await import('../../../core/store/task-store')
+    const { getCompositionRootClient } = await import('../../../core/store/task-store-default')
     const store = createTaskStore(getCompositionRootClient())
     const spy = vi.spyOn(store, 'listNonDoneTasks')
 
@@ -584,9 +581,8 @@ describe('triage workflow — optimised data access', () => {
     const t3 = await queue.enqueueTask('newest task')
     const excluded = await queue.enqueueTask('task being triaged (excluded)')
 
-    const { createTaskStore, getCompositionRootClient } = await import(
-      '../../../core/store/task-store'
-    )
+    const { createTaskStore } = await import('../../../core/store/task-store')
+    const { getCompositionRootClient } = await import('../../../core/store/task-store-default')
     const store = createTaskStore(getCompositionRootClient())
 
     const result = await store.listNonDoneTasks(excluded.id, 30)
@@ -609,9 +605,8 @@ describe('triage workflow — optimised data access', () => {
     const queue = await import('../../queue')
     await queue.migrateQueueSchema()
 
-    const { createTaskStore, getCompositionRootClient } = await import(
-      '../../../core/store/task-store'
-    )
+    const { createTaskStore } = await import('../../../core/store/task-store')
+    const { getCompositionRootClient } = await import('../../../core/store/task-store-default')
     const store = createTaskStore(getCompositionRootClient())
     const result = await store.filterExistingTaskIds([])
     expect(result).toEqual([])
@@ -624,9 +619,8 @@ describe('triage workflow — optimised data access', () => {
     const t1 = await queue.enqueueTask('task 1')
     const t2 = await queue.enqueueTask('task 2')
 
-    const { createTaskStore, getCompositionRootClient } = await import(
-      '../../../core/store/task-store'
-    )
+    const { createTaskStore } = await import('../../../core/store/task-store')
+    const { getCompositionRootClient } = await import('../../../core/store/task-store-default')
     const store = createTaskStore(getCompositionRootClient())
 
     const result = await store.filterExistingTaskIds([t1.id, 'nonexistent-id', t2.id])
@@ -647,9 +641,8 @@ describe('triage workflow — optimised data access', () => {
     await fillGraph(queue, busyGraph)
     const task = await queue.enqueueTask('main task')
 
-    const { createTaskStore, getCompositionRootClient } = await import(
-      '../../../core/store/task-store'
-    )
+    const { createTaskStore } = await import('../../../core/store/task-store')
+    const { getCompositionRootClient } = await import('../../../core/store/task-store-default')
     const store = createTaskStore(getCompositionRootClient())
     const spy = vi.spyOn(store, 'filterExistingTaskIds')
 

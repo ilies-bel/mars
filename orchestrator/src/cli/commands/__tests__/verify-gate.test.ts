@@ -206,7 +206,7 @@ describe('mars verify-gate list — with gates', () => {
       { store, ctx, daemon },
     )
     const { quarantineVerifyGate } = await import('../../../core/verify-gates')
-    const { getCompositionRootClient } = await import('../../../core/store/task-store')
+    const { getCompositionRootClient } = await import('../../../core/store/task-store-default')
     await quarantineVerifyGate(
       getCompositionRootClient(),
       added.out[0]!,
@@ -675,7 +675,7 @@ describe('mars verify-gate restore', () => {
     originId = 'origin-abc',
   ) => {
     const { quarantineVerifyGate } = await import('../../../core/verify-gates')
-    const { getCompositionRootClient } = await import('../../../core/store/task-store')
+    const { getCompositionRootClient } = await import('../../../core/store/task-store-default')
     await quarantineVerifyGate(getCompositionRootClient(), id, signature, originId)
   }
 

@@ -183,7 +183,7 @@ describe('Arc.setTaskStatus', () => {
 
   it('routes the row write + event through store.batch when a store is provided', async () => {
     const q = await loadMods(repo)
-    const { getDefaultTaskStore } = await import('../store/task-store')
+    const { getDefaultTaskStore } = await import('../store/task-store-default')
     const store = await getDefaultTaskStore()
     const task = await q.enqueueTask('test task', undefined, { skipTriage: true })
 
@@ -256,7 +256,7 @@ describe('failure field cleanup on done transition', () => {
 
   it('Arc.setTaskStatus with store clears failure fields on done transition', async () => {
     const q = await loadMods(repo)
-    const { getDefaultTaskStore } = await import('../store/task-store')
+    const { getDefaultTaskStore } = await import('../store/task-store-default')
     const store = await getDefaultTaskStore()
     const task = await q.enqueueTask('test task', undefined, { skipTriage: true })
 
