@@ -310,4 +310,49 @@ describe('detectVerifyGates', () => {
     expect(knipGate?.required).toBe(false)
     expect(knipGate?.source).toBe('detected')
   })
+
+  it('detects arch as an integration-tier gate when an arch script is present', () => {
+    const repo = makeRepo()
+    writeFileSync(
+      resolve(repo, 'package.json'),
+      JSON.stringify({
+        scripts: {
+          typecheck: 'tsc --noEmit',
+          arch: 'node scripts/arch-guard.mjs',
+        },
+      }),
+    )
+
+    const gates = detectVerifyGates(repo)
+    const archGate = gates.find((g) => g.name === 'arch')
+    expect(archGate).toBeDefined()
+    expect(archGate?.tier).toBe('integration')
+    expect(archGate?.required).toBe(true)
+    expect(archGate?.cmd).toBe('npm')
+    expect(archGate?.args).toEqual(['run', 'arch'])
+    expect(archGate?.scope).toBe('.')
+    expect(archGate?.evidence).toBe('package.json script "arch"')
+  })
+
+  it('detects both arch and test:integration as integration-tier gates alongside task-tier gates', () => {
+    const repo = makeRepo()
+    writeFileSync(
+      resolve(repo, 'package.json'),
+      JSON.stringify({
+        scripts: {
+          test: 'vitest run',
+          typecheck: 'tsc --noEmit',
+          'test:integration': 'vitest run --config integration',
+          arch: 'node scripts/arch-guard.mjs',
+        },
+      }),
+    )
+
+    const gates = detectVerifyGates(repo)
+    const tiers = Object.fromEntries(gates.map((g) => [g.name, g.tier]))
+    expect(tiers['test']).toBe('task')
+    expect(tiers['typecheck']).toBe('task')
+    expect(tiers['test:integration']).toBe('integration')
+    expect(tiers['arch']).toBe('integration')
+  })
 })

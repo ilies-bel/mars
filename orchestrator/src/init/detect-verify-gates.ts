@@ -37,7 +37,14 @@ export const normalizeDetectedVerifyGates = (
     }
   })
 
-const NODE_SCRIPTS = ['typecheck', 'lint', 'test', 'test:integration'] as const
+const NODE_SCRIPTS = ['typecheck', 'lint', 'test'] as const
+/**
+ * Scripts auto-detected as integration-tier gates — deferred to the
+ * post-fast-forward merge boundary (INTEGRATION_GATE_TIMEOUT_MS cap applies).
+ * `arch` runs the env-reads ratchet so the task that breaks it is the one
+ * reported, not a later unrelated task.
+ */
+const NODE_SCRIPTS_INTEGRATION = ['test:integration', 'arch'] as const
 /** Scripts detected as advisory (required=false) because they commonly report
  * pre-existing violations in established repos and should not block the queue on day one. */
 const NODE_SCRIPTS_ADVISORY = ['knip'] as const
@@ -176,7 +183,20 @@ export const detectVerifyGates = (repoRoot: string): DetectedVerifyGate[] => {
         cmd: packageManager,
         args: ['run', name],
         required: true,
-        tier: name === 'test:integration' ? 'integration' : 'task',
+        tier: 'task',
+        source: 'detected',
+        evidence: `package.json script "${name}"`,
+      })
+    }
+    for (const name of NODE_SCRIPTS_INTEGRATION) {
+      if (typeof scripts[name] !== 'string' || scripts[name].trim() === '') continue
+      byScopeAndName.set(`${pkg.scope}\x00${name}`, {
+        scope: pkg.scope,
+        name,
+        cmd: packageManager,
+        args: ['run', name],
+        required: true,
+        tier: 'integration',
         source: 'detected',
         evidence: `package.json script "${name}"`,
       })

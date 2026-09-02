@@ -1,6 +1,6 @@
 {
   "_comment": "Ratchet for `process.env` reads outside orchestrator/src/core/config/ (scripts/arch-guard.mjs checkEnvReads()). EXACT match, not a ceiling: `arch` fails if any file's actual count differs from what is recorded here, in EITHER direction — fix a read and regenerate this file (`node scripts/arch-guard.mjs --env-baseline`) in the same change. Counts are occurrences, not lines — a line with two reads counts twice.",
-  "totalViolations": 216,
+  "totalViolations": 217,
   "violations": {
     "orchestrator/src/bus/log.ts": 1,
     "orchestrator/src/cli.ts": 2,
@@ -28,7 +28,7 @@
     "orchestrator/src/core/daemon/chat-mcp.ts": 1,
     "orchestrator/src/core/daemon/client.ts": 1,
     "orchestrator/src/core/daemon/codex-api.ts": 2,
-    "orchestrator/src/core/daemon/config.ts": 11,
+    "orchestrator/src/core/daemon/config.ts": 10,
     "orchestrator/src/core/daemon/daemon-outage-sweep.ts": 1,
     "orchestrator/src/core/daemon/db-busy-watchdog.ts": 2,
     "orchestrator/src/core/daemon/deployment-status-sweeper.ts": 1,
@@ -96,7 +96,7 @@
     "orchestrator/src/core/workers/run-pty-session.ts": 1,
     "orchestrator/src/init/detect-verify-gates.ts": 1,
     "orchestrator/src/outbox/subscribers/steward-runtime-tune.ts": 3,
-    "orchestrator/src/registry/projects.ts": 3,
+    "orchestrator/src/registry/projects.ts": 5,
     "orchestrator/src/tools/coder/coder-exit.ts": 3,
     "orchestrator/src/tools/coder/setup-worktree.ts": 1,
     "orchestrator/src/tools/coder/worktree-currency.ts": 1,
