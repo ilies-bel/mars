@@ -36,6 +36,12 @@ mock.module('@/widgets/ProjectSelector', () => ({
   ProjectSelector: () => null,
 }))
 
+// BellMenu uses hooks (useState, useQueryClient, useActionQueue, …) that are
+// unavailable under renderToStaticMarkup; stub it the same way as ProjectSelector.
+mock.module('@/widgets/BellMenu', () => ({
+  BellMenu: () => null,
+}))
+
 // useDispatchState — Shell renders the global paused chip from it. These tests
 // render with renderToStaticMarkup and no QueryClientProvider, so stub it out
 // the same way useActionQueue is. Dispatch running ⇒ the chip renders nothing.
