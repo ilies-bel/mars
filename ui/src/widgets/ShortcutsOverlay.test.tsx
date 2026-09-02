@@ -53,7 +53,7 @@ describe('ShortcutsOverlay – shortcut content', () => {
   it('shows the t triage shortcut', () => {
     const html = render()
     expect(html).toContain('>t<')
-    expect(html).toContain('action queue')
+    expect(html).toContain('Needs You')
   })
 
   it('shows the ? help shortcut', () => {

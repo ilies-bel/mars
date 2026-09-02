@@ -3,7 +3,7 @@
  *
  * ShellSidebar is tested directly with controlled props (no hooks) to verify:
  *   - active route is highlighted (aria-current, flame bg, right-edge accent, amber text)
- *   - "Action Queue" badge appears only when decisionBadge > 0
+ *   - "Needs You" badge appears only when decisionBadge > 0
  *   - no badge on any other nav entry
  *   - proposals/progress mutual-exclusion logic
  *
@@ -81,17 +81,17 @@ describe('SHELL_NAV_GROUPS', () => {
     expect(total).toBe(9)
   })
 
-  it('Workspace group contains Action Queue, Chat, Progress, Control Room', () => {
+  it('Workspace group contains Needs You, Chat, Progress, Control Room', () => {
     const workspace = SHELL_NAV_GROUPS[0]
     const labels = workspace.entries.map((e) => e.label)
-    expect(labels).toContain('Action Queue')
+    expect(labels).toContain('Needs You')
     expect(labels).toContain('Chat')
     expect(labels).toContain('Progress')
     expect(labels).toContain('Control Room')
   })
 
-  it('Action Queue is the first entry in the Workspace group', () => {
-    expect(SHELL_NAV_GROUPS[0].entries[0].label).toBe('Action Queue')
+  it('Needs You is the first entry in the Workspace group', () => {
+    expect(SHELL_NAV_GROUPS[0].entries[0].label).toBe('Needs You')
     expect(SHELL_NAV_GROUPS[0].entries[0].href).toBe('#/triage')
   })
 
