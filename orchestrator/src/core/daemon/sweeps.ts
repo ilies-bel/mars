@@ -815,22 +815,30 @@ export const SWEEPS: readonly SweepSpec[] = [
 
 /**
  * Raise a `draft-proposal` action-queue row for every proposal in
- * status=`'draft'` that currently has NO `action_queue_items` row of any
- * status keyed to its id.
+ * status=`'draft'` that currently has NO OPEN `draft-proposal` row keyed
+ * to its id.
  *
- * This is the idempotent safety net for the single missed-event failure mode:
- * if the `action-queue-repopulator` subscriber is not draining when
- * `proposal.added` fires (daemon down, crash, outbox drop), no row is created
- * and nothing ever backfills it. Running this at startup and periodically
- * closes that gap permanently.
+ * This is the idempotent safety net for two failure modes:
  *
- * - Drafts with an existing open row → `raiseActionQueueItem` bumps
- *   `seen_count` (NOT EXISTS prevents even reaching this path, but
- *   `raiseActionQueueItem` is idempotent as belt-and-suspenders).
- * - Drafts with a resolved row → NOT selected by the NOT EXISTS predicate,
- *   so they are never touched.
- * - Running twice → second pass finds no proposals that pass NOT EXISTS
- *   (rows were raised by the first pass), so `raised = 0`.
+ * 1. **Missed event**: the `action-queue-repopulator` subscriber was not
+ *    draining when `proposal.added` fired (daemon down, crash, outbox drop),
+ *    so no row was ever created.
+ *
+ * 2. **Stale resolution**: a prior code path resolved the row (e.g. as
+ *    `superseded`) without updating the proposal status out of `draft`. The
+ *    proposal is still actionable but invisible to operators.
+ *
+ * Both cases are healed by re-raising. Running this at startup and
+ * periodically closes both gaps permanently.
+ *
+ * - Drafts with an existing **open** `draft-proposal` row → excluded by the
+ *   NOT EXISTS predicate; `raiseActionQueueItem` is idempotent as belt-and-
+ *   suspenders if they somehow reach the raise call.
+ * - Drafts with a resolved (or no) row → selected and re-raised, producing a
+ *   fresh open row. `raiseActionQueueItem` inserts a new row because the prior
+ *   one is no longer open.
+ * - Running twice → second pass finds open rows from the first pass and raises
+ *   nothing (idempotent).
  *
  * @returns The number of action-queue rows raised by this pass.
  */
@@ -847,6 +855,8 @@ export async function reconcileDraftProposalRows(): Promise<{ raised: number }> 
                SELECT 1
                  FROM action_queue_items a
                 WHERE a.origin_task_id = p.id
+                  AND a.status = 'open'
+                  AND a.kind = 'draft-proposal'
              )`,
   })
 

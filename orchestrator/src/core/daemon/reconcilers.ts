@@ -1293,6 +1293,14 @@ const orphanedFailedScan: Reconciler = {
  *
  * Extracted from `staleProposalActionQueueReconcile` so it can be tested
  * independently (mirroring the `reconcileDraftProposalRows` pattern in sweeps).
+ *
+ * **Join-key unification**: both directions of the invariant now key on
+ * `origin_task_id` (exposed as `row.originTaskId` on the TS type). The raise
+ * half (`reconcileDraftProposalRows` in sweeps.ts) already uses
+ * `a.origin_task_id = p.id`; this direction uses `row.originTaskId` to match.
+ * All correctly-raised `draft-proposal` rows carry `origin_task_id = proposalId`
+ * (set by `raiseDraftProposalAqRow`). Rows without `origin_task_id` are
+ * treated as mis-kinded orphans and closed.
  */
 export async function reconcileStaleProposalAqRows(log: (msg: string) => void = () => {}): Promise<{ closed: number }> {
   const { listVisibleActionQueueItems, setActionQueueState } = await import('../lib/action-queue')
@@ -1302,17 +1310,16 @@ export async function reconcileStaleProposalAqRows(log: (msg: string) => void = 
   const draftProposalRows = items.filter((item) => item.kind === 'draft-proposal')
   if (draftProposalRows.length === 0) return { closed: 0 }
 
-  // Collect proposalIds that are present in the payload. Rows with no
-  // proposalId are also stale (mis-kinded) but they never had a real
-  // proposal — close them as well.
+  // Collect proposalIds from origin_task_id (the canonical join key). Rows
+  // with no origin_task_id are mis-kinded orphans — close them too.
   const proposalIds = draftProposalRows
-    .filter((r) => typeof r.payload['proposalId'] === 'string')
-    .map((r) => r.payload['proposalId'] as string)
+    .filter((r) => r.originTaskId !== null)
+    .map((r) => r.originTaskId as string)
   const draftIds = await getProposalStatusForIds(proposalIds)
 
   let closed = 0
   for (const row of draftProposalRows) {
-    const pid = typeof row.payload['proposalId'] === 'string' ? row.payload['proposalId'] : null
+    const pid = row.originTaskId ?? null
     if (pid === null || !draftIds.has(pid)) {
       await setActionQueueState(row.id, 'resolved', {
         resolution: 'proposal-no-longer-draft',

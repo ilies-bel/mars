@@ -7,26 +7,31 @@
  * Two reconcilers enforce the two directions:
  *
  * - `reconcileDraftProposalRows` (sweeps.ts) — proposals → rows:
- *   Draft proposals with no open row get one raised. Covers the case where
- *   the `action-queue-repopulator` subscriber misses the `proposal.added`
- *   event (daemon down, crash, outbox drop).
+ *   Draft proposals with no OPEN row get one raised. Covers two failure modes:
+ *   (a) missed event: the `action-queue-repopulator` subscriber was not
+ *       draining when `proposal.added` fired (daemon down, crash, outbox drop).
+ *   (b) stale resolution: a prior path resolved the row (e.g. as `superseded`)
+ *       without updating the proposal status — the proposal is still `draft`
+ *       but invisible to operators.
  *
  * - `reconcileStaleProposalAqRows` (reconcilers.ts) — rows → proposals:
  *   Open draft-proposal rows whose proposal is absent or no longer draft get
  *   closed. Covers the case where a proposal is dismissed / promoted after the
  *   row was raised but before the row was operator-resolved.
+ *   Join key: `origin_task_id` (unified with the raise half).
  *
  * Covers:
  *
  * proposals → rows (reconcileDraftProposalRows):
  * 1. Draft with no action_queue_items row → gets one raised.
- * 2. Draft with a resolved action_queue_items row → untouched (not re-raised).
- * 3. Idempotency: a second sweep pass over an already-healed DB raises nothing.
+ * 2. Draft with a resolved action_queue_items row → re-raised (Reading 2).
+ * 3. Re-raise is idempotent: after first re-raise, second pass raises nothing.
+ * 4. Idempotency: a second sweep pass over an already-healed DB raises nothing.
  *
  * rows → proposals (reconcileStaleProposalAqRows):
- * 4. Open row whose proposal is dismissed → row gets closed.
- * 5. Open row whose proposal is still draft → row is left open.
- * 6. Open row with no matching proposal at all → row gets closed.
+ * 5. Open row whose proposal is dismissed → row gets closed.
+ * 6. Open row whose proposal is still draft → row is left open.
+ * 7. Open row with no matching proposal at all → row gets closed.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
@@ -116,7 +121,11 @@ describe('reconcileDraftProposalRows', { timeout: 120_000 }, () => {
     expect(rows[0].kind).toBe('draft-proposal')
   })
 
-  it('does not raise a new row for a draft whose action-queue row is already resolved', async () => {
+  it('re-raises a row for a draft whose only action-queue row is already resolved', async () => {
+    // Reading 2 (chosen): a draft proposal that has no OPEN row must be
+    // re-raised even when a resolved row already exists. A resolved row means
+    // some path closed the notification without updating the proposal's status;
+    // the proposal is still actionable and the operator must see it.
     await insertDraftProposal(client, 'prop-resolved-001', {
       title: 'Add caching layer',
       source: 'planner',
@@ -138,7 +147,8 @@ describe('reconcileDraftProposalRows', { timeout: 120_000 }, () => {
       signature: 'prop-resolved-001',
       originTaskId: 'prop-resolved-001',
     })
-    // …then resolve it to simulate a prior operator decision.
+    // …then resolve it to simulate a stale resolution (row closed without
+    // updating the proposal status — the invariant violation we are healing).
     await supersedeActionQueueItemsForOrigin('prop-resolved-001', 'origin-done', 'test')
 
     const rowsBefore = await rowsForOrigin(client, 'prop-resolved-001')
@@ -148,12 +158,53 @@ describe('reconcileDraftProposalRows', { timeout: 120_000 }, () => {
     const { reconcileDraftProposalRows } = await import('../sweeps.js')
     const { raised } = await reconcileDraftProposalRows()
 
-    // The sweep must not touch a proposal that already has a row (any status).
-    expect(raised).toBe(0)
+    // The sweep must re-raise: the proposal is still draft but has no open row.
+    expect(raised).toBe(1)
 
     const rowsAfter = await rowsForOrigin(client, 'prop-resolved-001')
-    expect(rowsAfter).toHaveLength(1)
-    expect(rowsAfter[0].status).toBe('resolved')
+    // There should now be two rows: the old resolved one and the new open one.
+    expect(rowsAfter).toHaveLength(2)
+    const openRows = rowsAfter.filter((r) => r.status === 'open')
+    expect(openRows).toHaveLength(1)
+    expect(openRows[0].kind).toBe('draft-proposal')
+  })
+
+  it('does not re-raise when the open row already exists (idempotent re-raise)', async () => {
+    // After the first re-raise heals a resolved-row proposal, a second pass
+    // must find the new open row and skip — no duplicate row.
+    await insertDraftProposal(client, 'prop-resolved-idem-001', {
+      title: 'Add caching layer v2',
+      source: 'planner',
+    })
+
+    const { raiseActionQueueItem, supersedeActionQueueItemsForOrigin } = await import(
+      '../../lib/action-queue.js'
+    )
+    await raiseActionQueueItem({
+      kind: 'draft-proposal',
+      category: 'user',
+      priority: 'normal',
+      title: 'Draft proposal: Add caching layer v2',
+      body: 'Proposal `prop-resolved-idem-001` from `planner` is ready for review.',
+      payload: { proposalId: 'prop-resolved-idem-001', source: 'planner' },
+      context: {},
+      raisedBy: 'test',
+      signature: 'prop-resolved-idem-001',
+      originTaskId: 'prop-resolved-idem-001',
+    })
+    await supersedeActionQueueItemsForOrigin('prop-resolved-idem-001', 'origin-done', 'test')
+
+    const { reconcileDraftProposalRows } = await import('../sweeps.js')
+
+    const first = await reconcileDraftProposalRows()
+    expect(first.raised).toBe(1) // heals the resolved row
+
+    const second = await reconcileDraftProposalRows()
+    expect(second.raised).toBe(0) // open row now exists → no re-raise
+
+    const rows = await rowsForOrigin(client, 'prop-resolved-idem-001')
+    const openRows = rows.filter((r) => r.status === 'open')
+    expect(openRows).toHaveLength(1)
   })
 
   it('is idempotent — a second pass raises no duplicate rows', async () => {
