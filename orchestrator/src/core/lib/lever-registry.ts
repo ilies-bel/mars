@@ -554,6 +554,40 @@ const REGISTRY: LeverRegistryEntry[] = [
     consumer: { file: 'src/workflows/implement-workflow.ts', symbol: 'codeStep' },
   },
 
+  // ── verify params (daemon.json-backed, operator-tunable) ─────────────────
+  {
+    id: 'verify.scope',
+    label: 'Verify command file-scope pattern',
+    family: 'verify',
+    scope: 'global',
+    readCurrent: () => {
+      try {
+        return loadDaemonConfig().verify.scope
+      } catch {
+        return null
+      }
+    },
+    allowedValues: { type: 'freeform' },
+    gesture: 'mars operator set verify.scope <glob>',
+    appliesWithoutRestart: false,
+  },
+  {
+    id: 'verify.gate-timeout',
+    label: 'Per-gate timeout (ms)',
+    family: 'verify',
+    scope: 'global',
+    readCurrent: () => {
+      try {
+        return String(loadDaemonConfig().verify.gateTimeoutMs)
+      } catch {
+        return null
+      }
+    },
+    allowedValues: { type: 'range', min: 5000 },
+    gesture: 'mars operator set verify.gate-timeout <ms>',
+    appliesWithoutRestart: false,
+  },
+
   // ── verify (recipes folded in from improvement-recipes.ts) ────────────────
   {
     id: 'verify.add-typecheck',

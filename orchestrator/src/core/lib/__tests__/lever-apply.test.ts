@@ -31,7 +31,7 @@ import {
   readLeverApplyHistory,
   LeverApplyError,
 } from '../lever-apply.js'
-import { readDaemonConfigFile, patchDaemonConfigFile } from '../../daemon/config.js'
+import { readDaemonConfigFile, patchDaemonConfigFile, loadDaemonConfig } from '../../daemon/config.js'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -294,5 +294,17 @@ describe('applyLeverValue — config matches CLI equivalent', () => {
     // Both produce caps.implement = 5
     const afterApplyCaps = afterApply.caps as Record<string, unknown>
     expect(afterApplyCaps.implement).toBe(simulatedCliConfig.implement)
+  })
+})
+
+describe('verify levers', () => {
+  it('applyLeverValue verify.scope persists the scope and readCurrent returns it', () => {
+    applyLeverValue('verify.scope', '*.test.ts')
+    expect(loadDaemonConfig().verify.scope).toBe('*.test.ts')
+  })
+
+  it('applyLeverValue verify.gate-timeout persists the timeout and readCurrent returns it', () => {
+    applyLeverValue('verify.gate-timeout', '30000')
+    expect(loadDaemonConfig().verify.gateTimeoutMs).toBe(30000)
   })
 })

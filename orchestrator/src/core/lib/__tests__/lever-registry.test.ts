@@ -140,6 +140,29 @@ describe('loadLeverRegistry()', () => {
     }
   })
 
+  it('includes verify.scope lever with correct shape', () => {
+    const e = loadLeverRegistry().find((x) => x.id === 'verify.scope')
+    expect(e, 'verify.scope missing from registry').toBeDefined()
+    expect(e!.family).toBe('verify')
+    expect(e!.scope).toBe('global')
+    expect(e!.allowedValues.type).toBe('freeform')
+    expect(e!.gesture).toContain('verify.scope')
+    expect(typeof e!.readCurrent).toBe('function')
+  })
+
+  it('includes verify.gate-timeout lever with correct shape', () => {
+    const e = loadLeverRegistry().find((x) => x.id === 'verify.gate-timeout')
+    expect(e, 'verify.gate-timeout missing from registry').toBeDefined()
+    expect(e!.family).toBe('verify')
+    expect(e!.scope).toBe('global')
+    expect(e!.allowedValues.type).toBe('range')
+    if (e!.allowedValues.type === 'range') {
+      expect(e!.allowedValues.min).toBe(5000)
+    }
+    expect(e!.gesture).toContain('verify.gate-timeout')
+    expect(typeof e!.readCurrent).toBe('function')
+  })
+
   it('verify.add-integration-tests has no verifyGate (gate is per-repo)', () => {
     const e = loadLeverRegistry().find((x) => x.id === 'verify.add-integration-tests')
     expect(e).toBeDefined()
@@ -372,6 +395,36 @@ describe('readCurrent() against seeded daemon.json', () => {
     )
     const e = loadLeverRegistry().find((x) => x.id === 'steward.autotune-max-implement')!
     expect(e.readCurrent()).toBe('8')
+  })
+
+  it('verify.scope returns the configured scope pattern', () => {
+    writeFileSync(
+      join(tmpDir, '.mars', 'daemon.json'),
+      JSON.stringify({ verify: { scope: 'src/**/*.test.ts' } }),
+    )
+    const e = loadLeverRegistry().find((x) => x.id === 'verify.scope')!
+    expect(e.readCurrent()).toBe('src/**/*.test.ts')
+  })
+
+  it('verify.scope returns default when verify block is absent', () => {
+    writeFileSync(join(tmpDir, '.mars', 'daemon.json'), JSON.stringify({}))
+    const e = loadLeverRegistry().find((x) => x.id === 'verify.scope')!
+    expect(e.readCurrent()).toBe('*')
+  })
+
+  it('verify.gate-timeout returns the configured timeout in ms', () => {
+    writeFileSync(
+      join(tmpDir, '.mars', 'daemon.json'),
+      JSON.stringify({ verify: { gateTimeoutMs: 60000 } }),
+    )
+    const e = loadLeverRegistry().find((x) => x.id === 'verify.gate-timeout')!
+    expect(e.readCurrent()).toBe('60000')
+  })
+
+  it('verify.gate-timeout returns default 120000 when absent', () => {
+    writeFileSync(join(tmpDir, '.mars', 'daemon.json'), JSON.stringify({}))
+    const e = loadLeverRegistry().find((x) => x.id === 'verify.gate-timeout')!
+    expect(e.readCurrent()).toBe('120000')
   })
 
   it('per-task levers return a sentinel (not a config value)', () => {

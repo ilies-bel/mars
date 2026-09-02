@@ -252,6 +252,13 @@ export const applyLeverValue = (id: string, value: string): ApplyLeverResult => 
         ? { retryBudget: Number(value) }
         : { timeoutMin: Number(value) },
     )
+  } else if (id === 'verify.scope') {
+    patchDaemonConfigFile({ verify: { scope: value } })
+  } else if (id === 'verify.gate-timeout') {
+    if (!Number.isFinite(Number(value))) {
+      throw new LeverApplyError(`'${id}' requires a number; got '${value}'`, 'INVALID_VALUE')
+    }
+    patchDaemonConfigFile({ verify: { gateTimeoutMs: Number(value) } })
   } else if (id.startsWith('code.')) {
     // Code-step config levers. All code.* levers are daemon.json-backed;
     // no recipe-style code entries exist, so startsWith is safe here.
