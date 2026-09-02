@@ -38,6 +38,7 @@ import { countNeedsYou } from './clusterRows'
 import { ChatGreeting } from '@/widgets/chat/ChatGreeting'
 import { TriagePage } from '@/pages/TriagePage'
 import { Shell } from '@/widgets/Shell'
+import { BellMenu } from '@/widgets/BellMenu'
 import type { ActionQueueItem } from '@/shared/schemas'
 
 // ---------------------------------------------------------------------------
@@ -113,6 +114,7 @@ vi.mock('@/shared/api', () => ({
   invokeAction: vi.fn().mockResolvedValue(undefined),
   postDecision: vi.fn().mockResolvedValue(new Response(null, { status: 200 })),
   createChatThread: vi.fn().mockResolvedValue({ id: 'thread-id' }),
+  dismissActionQueueItem: vi.fn().mockResolvedValue(undefined),
 }))
 
 vi.mock('@/entities/alerts/api', () => ({
@@ -217,6 +219,19 @@ describe('needs-you count parity — one fixture, every surface agrees', () => {
     expect(container.textContent).toContain(`${EXPECTED_NEEDS_YOU} need you`)
     act(() => root.unmount())
   })
+
+  it('BellMenu badge shows the same integer as countNeedsYou', () => {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    act(() => {
+      root.render(<BellMenu />)
+    })
+    expect(
+      container.querySelector(`[aria-label="${EXPECTED_NEEDS_YOU} items need attention"]`),
+    ).not.toBeNull()
+    act(() => root.unmount())
+  })
 })
 
 describe('needs-you count parity — one entityId, several condition rows, every surface agrees', () => {
@@ -266,6 +281,20 @@ describe('needs-you count parity — one entityId, several condition rows, every
       )
     })
     expect(container.textContent).toContain(`${EXPECTED_GROUPED_NEEDS_YOU} need you`)
+    act(() => root.unmount())
+  })
+
+  it('BellMenu badge reports the same deduped subject count', () => {
+    currentQueueItems = groupedFixture
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    act(() => {
+      root.render(<BellMenu />)
+    })
+    expect(
+      container.querySelector(`[aria-label="${EXPECTED_GROUPED_NEEDS_YOU} items need attention"]`),
+    ).not.toBeNull()
     act(() => root.unmount())
   })
 })
