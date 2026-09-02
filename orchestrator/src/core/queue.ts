@@ -13,7 +13,11 @@ import {
   removeBlockerEdge,
   transferProposalBlockerEdges,
 } from './arc/blockers'
-import { getDefaultDomainTaskStore } from './store/task-store'
+// ADR-0101: value import from the leaf module (not './store/task-store'), so
+// the queue.ts → task-store.ts value edge that closes the no-circular cycle
+// (task-store.ts → queue.ts → task-store.ts) is gone. The type-only import
+// below is fine: dependency-cruiser excludes type-only edges from no-circular.
+import { getDefaultArcStoreSync as getDefaultDomainTaskStore } from './store/arc-store-port'
 import type { DomainTaskStore as TaskStore } from './store/task-store'
 
 // ADR-0101: Pure types, validators, row mappers, and getTask extracted to

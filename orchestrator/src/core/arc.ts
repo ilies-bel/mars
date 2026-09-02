@@ -48,11 +48,15 @@ import {
 import { ensureQueueSchema, resolveQueueClient } from './lib/queue-client'
 import { upsertTranscript } from './lib/transcript'
 import type { ReviewPacket } from './lib/review-packet.js'
+// ADR-0101 edge 2: import from the leaf ArcStorePort (no arc→task-store edge)
+// instead of DomainTaskStore from task-store, which imports Arc back and closes
+// the task-store→arc→task-store cycle. DomainTaskStore satisfies ArcStorePort
+// structurally, so all callers that pass a DomainTaskStore continue to type-check.
 import {
-  getDefaultTaskStore,
-  getDefaultDomainTaskStore,
-  type DomainTaskStore,
-} from './store/task-store'
+  type ArcStorePort,
+  getDefaultArcStore,
+  getDefaultArcStoreSync,
+} from './store/arc-store-port'
 import { getStateDir, getRepoRoot, resolveContext } from './context'
 import { resolveVcs } from './ports/vcs/registry'
 import { provisionWorktreeDeps } from './lib/worktree-deps'
@@ -272,7 +276,7 @@ export class Arc {
    * arc id (the origin task's id).
    */
   private constructor(
-    private readonly store: DomainTaskStore,
+    private readonly store: ArcStorePort,
     public readonly arcId: string,
   ) {}
 
@@ -283,8 +287,8 @@ export class Arc {
    * to the process-wide default store (synchronous accessor; the migration is
    * driven on first domain call).
    */
-  static load(arcId: string, store?: DomainTaskStore): Arc {
-    return new Arc(store ?? getDefaultDomainTaskStore(), arcId)
+  static load(arcId: string, store?: ArcStorePort): Arc {
+    return new Arc(store ?? getDefaultArcStoreSync(), arcId)
   }
 
   /**
@@ -299,9 +303,9 @@ export class Arc {
    */
   static async createOrigin(
     spec: CreateOriginSpec,
-    store?: DomainTaskStore,
+    store?: ArcStorePort,
   ): Promise<Task> {
-    const resolvedStore = store ?? (await getDefaultTaskStore())
+    const resolvedStore = store ?? (await getDefaultArcStore())
     const { prompt, plan, opts } = spec
 
     let promptText = coerceToString(prompt, 'enqueueTask: prompt')
@@ -649,7 +653,7 @@ export class Arc {
     fields: string[]
     args: unknown[]
     eventStmts: DbStatement[]
-    store?: DomainTaskStore
+    store?: ArcStorePort
     appendSessionId?: boolean
     sessionIdStmt?: DbStatement
   }): Promise<void> {
@@ -714,7 +718,7 @@ export class Arc {
    */
   static async promoteDraftToQueued(
     taskId: string,
-    store?: DomainTaskStore,
+    store?: ArcStorePort,
   ): Promise<Task | null> {
     await ensureQueueSchema()
     const now = new Date().toISOString()
@@ -862,7 +866,7 @@ export class Arc {
     taskId: string,
     newStatus: TaskStatus,
     extras?: { error?: string; result?: unknown; dropReason?: TaskDropReason },
-    store?: DomainTaskStore,
+    store?: ArcStorePort,
   ): Promise<void> {
     const now = new Date().toISOString()
     const eventType = mapStatusToEvent(newStatus)
@@ -1238,7 +1242,7 @@ export class Arc {
   static async reopenTerminalTask(
     id: string,
     reason: string,
-    store?: DomainTaskStore,
+    store?: ArcStorePort,
   ): Promise<void> {
     const task = await getTask(id, store)
     if (task === null) throw new Error(`task ${id} not found`)
@@ -1319,9 +1323,9 @@ export class Arc {
   static async recordStructuredWrite(
     id: string,
     prompt: string,
-    store?: DomainTaskStore,
+    store?: ArcStorePort,
   ): Promise<void> {
-    const resolvedStore = store ?? (await getDefaultTaskStore())
+    const resolvedStore = store ?? (await getDefaultArcStore())
     await ensureQueueSchema()
     const now = new Date().toISOString()
     await resolvedStore.execute({
@@ -1828,7 +1832,7 @@ export class Arc {
    * NOT this method's — a thrown error here surfaces to the caller's catch.
    */
   static async dropTasksForProposal(
-    taskStore: DomainTaskStore,
+    taskStore: ArcStorePort,
     ids: string[],
     dropReason: TaskDropReason,
   ): Promise<void> {
@@ -1876,7 +1880,7 @@ export class Arc {
    * the original swallow on both the SELECT and the atomic), NOT this method's.
    */
   static async dropProposalSlices(
-    taskStore: DomainTaskStore,
+    taskStore: ArcStorePort,
     proposalId: string,
     dropReason: TaskDropReason,
   ): Promise<void> {
@@ -1960,7 +1964,7 @@ export class Arc {
       return { blockerTaskId, outcomes: [], diagnoseVerdictPending: true }
     }
 
-    const store = await getDefaultTaskStore()
+    const store = await getDefaultArcStore()
     const now = new Date().toISOString()
 
     const r = await store.query({
@@ -2154,7 +2158,7 @@ export class Arc {
   static async blockByTaskFailure(
     failedBlockerTaskId: string,
   ): Promise<BlockByFailureResult> {
-    const store = await getDefaultTaskStore()
+    const store = await getDefaultArcStore()
     const now = new Date().toISOString()
 
     const r = await store.query({
@@ -2337,7 +2341,7 @@ export class Arc {
   static async cascadeCancellation(
     blockerTaskId: string,
   ): Promise<UnblockByTaskResult> {
-    const store = await getDefaultTaskStore()
+    const store = await getDefaultArcStore()
 
     const r = await store.query({
       sql: `SELECT t.id AS id, t.recovery_spawned_count AS recovery_spawned_count
@@ -2428,7 +2432,7 @@ export class Arc {
     }
 
     const recoverySpawnedCount = task.recoverySpawnedCount ?? 0
-    const store = await getDefaultTaskStore()
+    const store = await getDefaultArcStore()
 
     // A task whose blockers have all resolved always proceeds to re-dispatch,
     // regardless of recovery_spawned_count. (No retry-budget gate: it used to fail
@@ -2531,7 +2535,7 @@ export class Arc {
    * recovered through its own `Arc.load(id).recoverBlocked()` instance call.
    */
   static async recoverAllBlocked(): Promise<RecoverAllBlockedTasksResult> {
-    const store = await getDefaultTaskStore()
+    const store = await getDefaultArcStore()
     const r = await store.query({
       sql: `SELECT id FROM tasks WHERE status = 'blocked'`,
       args: [],
@@ -2565,7 +2569,7 @@ export class Arc {
     committerTaskId: string,
     log: (msg: string) => void,
   ): Promise<{ released: number; total: number }> {
-    const s = await getDefaultTaskStore()
+    const s = await getDefaultArcStore()
     const now = new Date().toISOString()
 
     // Find all tasks currently `blocked` that should be released: both via
@@ -2686,7 +2690,7 @@ export class Arc {
     newCommitterId: string,
     integrationBranch: string,
   ): Promise<{ reparented: number }> {
-    const s = await getDefaultTaskStore()
+    const s = await getDefaultArcStore()
     const now = Date.now()
 
     // Find all (stranded_task_id, failed_committer_id) pairs where the task is
@@ -2800,7 +2804,7 @@ export class Arc {
     // upstream writer previously stamped. Failed and dropped rows must first
     // cross the audited reopen seam so the database trigger permits the
     // terminal transition.
-    const store = await getDefaultTaskStore()
+    const store = await getDefaultArcStore()
     if (origin.status === 'failed' || origin.status === 'dropped') {
       await Arc.reopenTerminalTask(originTaskId, 'successful recovery', store)
     }
@@ -2840,10 +2844,10 @@ export class Arc {
    */
   static async appendProgress(
     params: AppendProgressParams,
-    store?: DomainTaskStore,
+    store?: ArcStorePort,
   ): Promise<ProgressEntry> {
     await ensureQueueSchema()
-    const resolvedStore = store ?? getDefaultDomainTaskStore()
+    const resolvedStore = store ?? getDefaultArcStoreSync()
     const task = await getTask(params.taskId, resolvedStore)
     if (!task) {
       throw new Error(`task ${params.taskId} not found`)
@@ -2908,10 +2912,10 @@ export class Arc {
   static async listProgress(
     taskId: string,
     opts?: { limit?: number },
-    store?: DomainTaskStore,
+    store?: ArcStorePort,
   ): Promise<ProgressEntry[]> {
     await ensureQueueSchema()
-    const resolvedStore = store ?? getDefaultDomainTaskStore()
+    const resolvedStore = store ?? getDefaultArcStoreSync()
     const limitClause =
       opts?.limit !== undefined ? ` LIMIT ${Math.floor(opts.limit)}` : ''
     const r = await resolvedStore.query({
@@ -2994,11 +2998,11 @@ export class Arc {
       status: AcceptanceStatus
       note?: string | null
     }>,
-    store?: DomainTaskStore,
+    store?: ArcStorePort,
   ): Promise<void> {
     if (entries.length === 0) return
     await ensureQueueSchema()
-    const resolvedStore = store ?? getDefaultDomainTaskStore()
+    const resolvedStore = store ?? getDefaultArcStoreSync()
     const now = Date.now()
     for (const entry of entries) {
       const accId = `acc-${taskId.slice(-8)}-${entry.position}`
@@ -3024,10 +3028,10 @@ export class Arc {
    */
   static async listAcceptance(
     taskId: string,
-    store?: DomainTaskStore,
+    store?: ArcStorePort,
   ): Promise<AcceptanceEntry[]> {
     await ensureQueueSchema()
-    const resolvedStore = store ?? getDefaultDomainTaskStore()
+    const resolvedStore = store ?? getDefaultArcStoreSync()
     const r = await resolvedStore.query({
       sql: `SELECT id, task_id, position, text, status, note, updated_at
               FROM task_acceptance
@@ -3153,7 +3157,7 @@ export const updateTask = async (
       verifyOutput?: string | null
     }
   >,
-  store?: DomainTaskStore,
+  store?: ArcStorePort,
 ): Promise<void> => {
   const fields: string[] = []
   const args: unknown[] = []
@@ -3648,7 +3652,7 @@ export const markTaskFailed = async (
     ...errorPatch,
   })
   // Clear outbound blocker edges through the Arc aggregate (ADR-0052 sole-writer).
-  await clearBlockerEdges(getDefaultDomainTaskStore(), taskId)
+  await clearBlockerEdges(getDefaultArcStoreSync(), taskId)
   // Blocking downstream queued tasks whose only path to running was this
   // failed prerequisite (Arc.blockByTaskFailure) used to happen here via a
   // dynamic `./arc` import, best-effort. That created a genuine mutual-

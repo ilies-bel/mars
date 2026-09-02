@@ -6,7 +6,8 @@
  * would create an `arc.ts` ⇄ `arc/blockers.ts` cycle. Both the aggregate and the
  * edge module depend on this leaf module; nothing here depends on either.
  */
-import type { DomainTaskStore } from '../store/task-store'
+// ADR-0101: ArcStorePort (leaf) — same rationale as arc/blockers.ts.
+import type { ArcStorePort } from '../store/arc-store-port'
 
 /**
  * Thrown when an Arc-aggregate write would leave (or has left) the task graph
@@ -62,7 +63,7 @@ class ArcInvariantError extends Error {
  */
 const assertArcInvariant = async (
   arcId: string,
-  store: DomainTaskStore,
+  store: ArcStorePort,
 ): Promise<void> => {
   // INVARIANT A: the Action's own row exists post-commit.
   const actionRes = await store.query({
@@ -120,7 +121,7 @@ const assertArcInvariant = async (
  */
 export const maybeAssertArcInvariant = async (
   arcId: string,
-  store: DomainTaskStore,
+  store: ArcStorePort,
 ): Promise<void> => {
   if (process.env.MARS_ARC_INVARIANT_CHECK === '1') {
     await assertArcInvariant(arcId, store)

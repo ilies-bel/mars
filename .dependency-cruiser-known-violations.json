@@ -134,36 +134,6 @@
     ]
   },
   {
-    "type": "cycle",
-    "from": "orchestrator/src/core/queue.ts",
-    "to": "orchestrator/src/core/store/task-store.ts",
-    "unresolvedTo": "./store/task-store",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-circular"
-    },
-    "cycle": [
-      {
-        "name": "orchestrator/src/core/store/task-store.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      },
-      {
-        "name": "orchestrator/src/core/queue.ts",
-        "dependencyTypes": [
-          "local",
-          "import"
-        ]
-      }
-    ]
-  },
-  {
     "type": "dependency",
     "from": "orchestrator/src/cli/action-queue-raise-schema.ts",
     "to": "orchestrator/src/core/lib/action-queue-kinds.ts",

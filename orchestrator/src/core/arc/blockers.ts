@@ -27,7 +27,9 @@ import { type DbStatement } from '../lib/db'
 // vanishes at compile time (dependency-cruiser's `no-circular` excludes it).
 import { ensureQueueSchema, resolveQueueClient } from '../lib/queue-client'
 import type { UnblockTaskResult } from '../queue'
-import type { DomainTaskStore } from '../store/task-store'
+// ADR-0101: ArcStorePort (leaf) lets arc.ts pass ArcStorePort directly;
+// DomainTaskStore satisfies ArcStorePort structurally so all callers unchanged.
+import type { ArcStorePort } from '../store/arc-store-port'
 import { buildEventInsert, withWriteTx } from '../lib/outbox'
 import { assertNotRecoveryEdge } from '../lib/blocker-invariant'
 import { maybeAssertArcInvariant } from './invariant'
@@ -42,7 +44,7 @@ import { maybeAssertArcInvariant } from './invariant'
  * nothing to insert.
  */
 const resolveEdgeTargets = async (
-  store: DomainTaskStore,
+  store: ArcStorePort,
   taskId: string,
   blockerIds: readonly string[],
 ): Promise<string[]> => {
@@ -87,7 +89,7 @@ const resolveEdgeTargets = async (
  * reaching `task_blockers` directly — the ADR-0040 guard does not apply there.
  */
 export const addBlockerEdges = async (
-  store: DomainTaskStore,
+  store: ArcStorePort,
   taskId: string,
   blockerIds: readonly string[],
   options?: { provenance?: 'file-overlap' | 'inferred' },
@@ -120,7 +122,7 @@ export const addBlockerEdges = async (
  * operator confirms it.
  */
 export const addPendingReviewBlockerEdges = async (
-  store: DomainTaskStore,
+  store: ArcStorePort,
   taskId: string,
   blockerIds: readonly string[],
 ): Promise<void> => {
@@ -146,7 +148,7 @@ export const addPendingReviewBlockerEdges = async (
  * `{ removed: true }` when a row was deleted, `false` otherwise.
  */
 export const removeBlockerEdge = async (
-  store: DomainTaskStore,
+  store: ArcStorePort,
   taskId: string,
   blockerId: string,
 ): Promise<{ removed: boolean }> => {
@@ -165,7 +167,7 @@ export const removeBlockerEdge = async (
  * callers update status separately via `updateTask`.
  */
 export const clearBlockerEdges = async (
-  store: DomainTaskStore,
+  store: ArcStorePort,
   taskId: string,
 ): Promise<void> => {
   await ensureQueueSchema()
@@ -185,13 +187,13 @@ export const clearBlockerEdges = async (
  *
  * Spans multiple task IDs, so no single Arc instance owns it — but like every
  * other writer in this module it takes its store explicitly (ADR-0101 item 1:
- * reaching for `getDefaultDomainTaskStore()` here was the last value-level
+ * reaching for `getDefaultArcStorePort()` here was the last value-level
  * import of `store/task-store.ts`, which imports `Arc`, so it closed an
  * `arc/blockers.ts -> store/task-store.ts` cycle). The caller supplies the
  * process-wide default store.
  */
 export const transferProposalBlockerEdges = async (
-  store: DomainTaskStore,
+  store: ArcStorePort,
   dependents: string[],
   newBlockerTaskId: string,
   proposalId: string,
@@ -247,7 +249,7 @@ export const failAndClearBlockerEdges = async (
 ): Promise<UnblockTaskResult> => {
   await ensureQueueSchema()
   // TODO(mars-8a44f22d): this drives a write transaction via the raw client.
-  // Thread a `store?: DomainTaskStore` parameter and use
+  // Thread a `store?: ArcStorePort` parameter and use
   // `store.atomic(scope => ...)` for the UPDATE + event inserts so that this
   // can retire its resolveQueueClient() usage.
   const c = resolveQueueClient()
