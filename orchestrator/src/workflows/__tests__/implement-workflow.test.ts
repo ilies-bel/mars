@@ -20,7 +20,7 @@ import {
   resolveWorkerSystemPrompt,
   measureWorkerDispatchPrompt,
 } from '../primitives/shared'
-import { implementInputSchema } from '../implement-workflow'
+import { implementInputSchema, resolveEffectiveVerifyCmd } from '../implement-workflow'
 import { WorkflowTerminalError } from '../../core/lib/workflow-terminal-error'
 import { CONTEXT_GATHERING_BRIEF } from '../context-gathering-brief'
 
@@ -1324,6 +1324,36 @@ describe('composePrompt — verify-failure block is task-specific suffix (not pr
 // must be byte-identical across different task invocations so providers can
 // cache it and only process the task-specific suffix on each new call.
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// resolveEffectiveVerifyCmd — verify.scope lever wiring (slice 6 of 9,
+// PRD 8e15a3f5 — DEC-10 falsified: workflow.steps lever binds every
+// reflection finding to built-in pipelines no consumer can edit)
+//
+// Acceptance criterion: when daemon config has verify.scope set to
+// 'src/core/**', the verify step's assembled command includes that pattern.
+// ---------------------------------------------------------------------------
+describe('resolveEffectiveVerifyCmd — verify.scope lever wiring', () => {
+  it('uses verify.scope as the default verifyCmd when daemon config has an explicit scope', () => {
+    // This is the AC: scope='src/core/**' → assembled command contains 'src/core/**'.
+    // In production, `scope` is sourced from `loadDaemonConfig().verify.scope`;
+    // passing it as a parameter keeps the function pure and the test free of I/O.
+    const cmd = resolveEffectiveVerifyCmd(null, 'src/core/**')
+    expect(cmd).not.toBeNull()
+    expect(cmd).toContain('src/core/**')
+  })
+
+  it('leaves an explicit task-spec verifyCmd unchanged regardless of scope', () => {
+    const explicit = 'cd orchestrator && npx vitest run src/foo.test.ts'
+    expect(resolveEffectiveVerifyCmd(explicit, 'src/core/**')).toBe(explicit)
+  })
+
+  it('returns null when scope is the default wildcard and no explicit verifyCmd', () => {
+    // Default scope '*' means "no specific scope restriction" — no synthetic
+    // command is generated; the review step runs its configured gate steps only.
+    expect(resolveEffectiveVerifyCmd(null, '*')).toBeNull()
+  })
+})
 
 describe('composePrompt — stable prefix is byte-identical across tasks', () => {
   it('two calls with different prompt/taskId/plan/spec share the same leading bytes up to the first task-specific section', () => {

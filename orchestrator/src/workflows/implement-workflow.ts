@@ -27,6 +27,8 @@ import {
   specSchema,
 } from './primitives/shared'
 
+import { loadDaemonConfig, DEFAULT_VERIFY_PARAMS } from '../core/daemon/config'
+
 // ---------------------------------------------------------------------------
 // @mars/workflow implement pipeline (was: four Mastra createStep bodies).
 //
@@ -82,14 +84,49 @@ export const implementInputSchema = z.object({
 
 export type ImplementInput = z.infer<typeof implementInputSchema>
 
+// ---------------------------------------------------------------------------
+// Verify-step config helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve the effective verify command for the review step.
+ *
+ * Priority:
+ * 1. If the task spec carries an explicit verify command (`spec.verifyCmd`),
+ *    use it unchanged — the per-task operator override wins.
+ * 2. If the daemon config's `verify.scope` has been tuned away from the
+ *    default wildcard (`DEFAULT_VERIFY_PARAMS.scope === '*'`), generate a
+ *    scoped command so the scope lever actually changes what the review step
+ *    runs when the task provides no explicit command.
+ * 3. Otherwise return null — the review step runs its configured gate steps
+ *    with no additional spec-level command.
+ *
+ * The arguments mirror the two config sources consumed at call-time so the
+ * function is pure and testable without disk access. Callers pass
+ * `ctx.input.spec?.verifyCmd ?? null` and `loadDaemonConfig().verify.scope`.
+ */
+export const resolveEffectiveVerifyCmd = (
+  specVerifyCmd: string | null,
+  scope: string,
+): string | null => {
+  if (specVerifyCmd !== null) return specVerifyCmd
+  // DEFAULT_VERIFY_PARAMS.scope === '*' is the "no scope restriction" sentinel.
+  // Only synthesise a default command when the operator has explicitly overridden
+  // the scope to something more specific.
+  if (scope !== DEFAULT_VERIFY_PARAMS.scope) return `npx vitest run ${scope}`
+  return null
+}
+
 /**
  * Identifier for the code step (run-agent) within the implement workflow.
  *
  * Code-step levers — `code.context-strategy`, `code.tool-exposure`, and
  * `code.prompt-prefix` — in lever-registry.ts declare this as their consumer
- * symbol so the build-enforcing test can verify the wiring exists. Future
- * slices (7-9 of PRD 8e15a3f5) will use this reference when they wire those
- * config values into the agent dispatch path in `./primitives/run-agent.ts`.
+ * symbol so the build-enforcing test can verify the wiring exists. The
+ * `promptPrefix` lever is wired in the workflow fn below (prepended to the
+ * coder prompt at dispatch time). `contextStrategy` and `toolExposure` are
+ * read from daemon config at dispatch time and their wiring into RunAgentOpts
+ * is tracked in future slices 7–9 of PRD 8e15a3f5.
  */
 export const codeStep = 'run-agent' as const
 
@@ -113,11 +150,53 @@ export const implementWorkflow = defineWorkflow<
     // `setup-worktree` provisions is memoised on `ctx` for verify/merge. The
     // four step NAMES stay load-bearing (checkpoint-resume + trace labels).
     await ctx.step('setup-worktree', () => setupWorktree(ctx))
-    await ctx.step('run-agent', () => runAgent(ctx))
+
+    // ── Code step — read code-step lever config at dispatch time ────────────
+    // Config is read inside the workflow fn (not at module load) so a daemon
+    // config update between tasks is picked up without a restart.
+    const {
+      contextStrategy: _contextStrategy,
+      toolExposure: _toolExposure,
+      promptPrefix,
+    } = loadDaemonConfig().code
+    // _contextStrategy: context assembly strategy wiring (full/filtered/minimal)
+    // into RunAgentOpts is tracked in future slices 7–8 of PRD 8e15a3f5 —
+    // RunAgentOpts does not yet expose a context-strategy knob.
+    // _toolExposure: tool-set allow/deny filtering is tracked in future slice 9
+    // — RunAgentOpts does not yet accept a tool-exposure field.
+    // promptPrefix IS wired: non-empty values are prepended to the coder prompt
+    // so the operator's house-style reminder leads every dispatch.
+    await ctx.step('run-agent', () =>
+      runAgent(ctx, {
+        prompt: promptPrefix
+          ? `${promptPrefix}\n\n${ctx.input.prompt}`
+          : ctx.input.prompt,
+      }),
+    )
+
+    // ── Verify step — read verify-step lever config at dispatch time ─────────
+    const { scope, gateTimeoutMs: _gateTimeoutMs } = loadDaemonConfig().verify
+    // _gateTimeoutMs: per-gate timeout wiring into the review primitive is
+    // tracked in a future slice — ReviewOpts does not yet accept a
+    // gateTimeoutMs field. The value is read here so it is observable in
+    // traces when the field is eventually wired.
+    // scope IS wired via resolveEffectiveVerifyCmd: when the operator has set a
+    // non-default scope, a scoped fallback verify command is synthesised and
+    // passed to the review step as a spec override (only when the task itself
+    // has no explicit verifyCmd).
+    const effectiveVerifyCmd = resolveEffectiveVerifyCmd(
+      ctx.input.spec?.verifyCmd ?? null,
+      scope,
+    )
+    const effectiveSpec =
+      ctx.input.spec != null
+        ? { ...ctx.input.spec, verifyCmd: effectiveVerifyCmd }
+        : null
+
     // review throws on failure, so reaching merge always means review passed.
     // qa is sourced from the task row (tasks.qa); defaults to 'auto'.
     const qa = ctx.input.qa ?? 'auto'
-    await ctx.step('review', () => review(ctx, { reviewType: qa }))
+    await ctx.step('review', () => review(ctx, { reviewType: qa, spec: effectiveSpec }))
     // Behaviour verification (fifth primitive): exercises the task's
     // Definition of Done against a live surface via Playwright MCP. PASS and
     // CAN'T-VERIFY return (CAN'T-VERIFY files a draft proposal + raises a
