@@ -133,6 +133,24 @@ export interface BaselineGate {
   /** Repo-relative scope directory; '.' means the repo root. */
   scope: string
   required: boolean
+  /**
+   * Per-gate wall-clock limit in minutes.
+   *
+   * Timeout semantics: an implementation of `runGate` SHOULD enforce this
+   * limit (e.g. by passing `timeoutMs = timeoutMin * 60_000` to `execProbe`).
+   * When the child process is killed for exceeding the limit it exits with a
+   * signal (SIGTERM → exit 143, SIGKILL → exit 137), which is a non-zero exit
+   * code and therefore treated as a gate FAILURE (`broken = true`) by
+   * {@link isBaselineBroken}.  A timeout is NOT a conservative pass.
+   *
+   * Only an unexpected `runGate` throw — e.g. a spawn error when the binary
+   * is missing — is treated as a conservative pass (the gate was not runnable,
+   * not that it failed).
+   *
+   * `null` or absent means no per-gate timeout; implementations should apply
+   * whatever process-wide default is appropriate (e.g. 15 minutes).
+   */
+  timeoutMin?: number | null
 }
 
 /** Result of running one gate. */

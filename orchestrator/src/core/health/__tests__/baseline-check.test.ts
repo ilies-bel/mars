@@ -229,6 +229,108 @@ describe('baseline.broken health check', () => {
   })
 })
 
+// ── Timeout semantics ────────────────────────────────────────────────────────
+//
+// Answers the open question: "is a gate that exceeds timeout_min treated as
+// failing or as inconclusive?"
+//
+// Answer: **failing**.  When a child process is killed for exceeding
+// `timeoutMin`, the OS delivers SIGTERM (exit 143) then SIGKILL (exit 137).
+// `isBaselineBroken` sees exitCode !== 0 and returns broken=true.  A timeout
+// is a gate FAILURE, not a conservative pass.
+//
+// Conservative pass is reserved for *unexpected throw* from `runGate` — e.g.
+// a spawn error because the executable is not found — where the gate was not
+// runnable at all, not that it failed.
+
+describe('timeout semantics', () => {
+  beforeEach(() => {
+    vi.resetModules()
+  })
+
+  it('runGate returning SIGTERM exit code (143) is treated as a gate failure', async () => {
+    /**
+     * When a gate child is killed after exceeding timeout_min, runTool maps
+     * SIGTERM → exitCode 143.  isBaselineBroken sees exitCode !== 0 and
+     * returns broken=true.  Timeout is FAILURE, not inconclusive.
+     */
+    const { wireBaselineBrokenCheck } = await import('../checks/baseline-broken.js')
+    const { listChecks } = await import('../registry.js')
+
+    wireBaselineBrokenCheck({
+      repoRoot: '/repo',
+      loadGates: async () => [makeGate({ name: 'typecheck' })],
+      // Simulate child killed by SIGTERM after exceeding timeoutMin.
+      runGate: async (g) => ({
+        gate: g,
+        exitCode: 143,
+        stdout: '',
+        stderr: '[runTool: killed after 900000ms]\n',
+      }),
+    })
+
+    const check = listChecks().find((c) => c.id === 'baseline.broken')!
+    const outcome = await check.run({ prereqs: new Set(['daemon', 'git']) })
+
+    expect(outcome.ok).toBe(false)
+    expect(outcome.findingKey).toBe('baseline-broken')
+    expect(outcome.detail).toContain('typecheck')
+  })
+
+  it('runGate returning SIGKILL exit code (137) is also treated as a gate failure', async () => {
+    /**
+     * After SIGTERM grace, runTool escalates to SIGKILL → exitCode 137.
+     * Regardless of which signal fired, isBaselineBroken treats non-zero
+     * exit as broken=true.
+     */
+    const { wireBaselineBrokenCheck } = await import('../checks/baseline-broken.js')
+    const { listChecks } = await import('../registry.js')
+
+    wireBaselineBrokenCheck({
+      repoRoot: '/repo',
+      loadGates: async () => [makeGate({ name: 'unit-tests' })],
+      runGate: async (g) => ({
+        gate: g,
+        exitCode: 137,
+        stdout: '',
+        stderr: '[runTool: killed after 900000ms]\n',
+      }),
+    })
+
+    const check = listChecks().find((c) => c.id === 'baseline.broken')!
+    const outcome = await check.run({ prereqs: new Set(['daemon', 'git']) })
+
+    expect(outcome.ok).toBe(false)
+    expect(outcome.detail).toContain('unit-tests')
+  })
+
+  it('runGate throwing (spawn error / binary not found) is treated as conservative pass', async () => {
+    /**
+     * An unexpected runGate throw — e.g. spawn ENOENT because the executable
+     * is not found — is NOT the same as a gate failure.  isBaselineBroken
+     * catches it and continues to the next gate (conservative: treat as pass).
+     * A stale $PATH or a missing tool should not report a poisoned baseline.
+     */
+    const { wireBaselineBrokenCheck } = await import('../checks/baseline-broken.js')
+    const { listChecks } = await import('../registry.js')
+
+    wireBaselineBrokenCheck({
+      repoRoot: '/repo',
+      loadGates: async () => [makeGate()],
+      runGate: async () => {
+        throw new Error('spawn ENOENT: no such file or directory, spawn npx')
+      },
+    })
+
+    const check = listChecks().find((c) => c.id === 'baseline.broken')!
+    const outcome = await check.run({ prereqs: new Set(['daemon', 'git']) })
+
+    // Conservative: spawn errors mean the gate was not runnable, not that it
+    // failed.  ok=true prevents false positives from environment issues.
+    expect(outcome.ok).toBe(true)
+  })
+})
+
 // ── startBaselinePauseWatcher ────────────────────────────────────────────────
 
 describe('startBaselinePauseWatcher', () => {

@@ -5837,12 +5837,21 @@ export const startDaemon = async (
             args: Array.from(s.args),
             scope: scope.scope,
             required: s.required,
+            timeoutMin: s.timeoutMin ?? null,
           })),
       )
     },
     runGate: async (gate, cwd) => {
       const { execProbe } = await import('../lib/git/internal')
-      const result = await execProbe(gate.cmd, gate.args, { cwd })
+      // Enforce the gate's own timeout budget so a hung command does not stall
+      // the baseline check indefinitely.  A process killed for timeout exits
+      // with SIGTERM (143) / SIGKILL (137) — isBaselineBroken sees exitCode
+      // !== 0 and records the gate as failed (broken=true), NOT a conservative
+      // pass.  Absent or null timeoutMin falls back to a 15-minute process-wide
+      // default so no gate runs unbounded.
+      const DEFAULT_TIMEOUT_MIN = 15
+      const timeoutMs = (gate.timeoutMin ?? DEFAULT_TIMEOUT_MIN) * 60_000
+      const result = await execProbe(gate.cmd, gate.args, { cwd, timeout: timeoutMs })
       return { gate, exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr }
     },
     // Same idea as the per-worktree install-skip in setup-worktree.ts: cheap
