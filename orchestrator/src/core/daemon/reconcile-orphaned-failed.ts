@@ -20,7 +20,7 @@
  * any future crash window.
  */
 
-import { getDefaultDomainTaskStore } from '../store/task-store'
+import { getDefaultDomainTaskStore } from '../store/task-store-default'
 import { raiseActionQueueItem } from '../lib/action-queue'
 
 /**

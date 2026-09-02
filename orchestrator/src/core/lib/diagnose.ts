@@ -1,4 +1,4 @@
-import { getDefaultTaskStore } from '../store/task-store'
+import { getDefaultTaskStore } from '../store/task-store-default'
 
 /**
  * Structured verdict recorded by a diagnose Chore against a stuck task.

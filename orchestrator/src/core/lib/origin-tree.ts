@@ -28,7 +28,7 @@
  * naturally. The view nests them under their parent task when the parent is
  * in the tree.
  */
-import { getDefaultTaskStore } from '../store/task-store'
+import { getDefaultTaskStore } from '../store/task-store-default'
 import { getProposal } from '../proposals'
 
 type OriginNodeKind = 'proposal' | 'prd' | 'task' | 'fix'

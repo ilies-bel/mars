@@ -3,7 +3,7 @@ import { getStateDir, resolveDbTarget } from '../context'
 import { listTasks, updateTask } from '../queue'
 import { recycleDbPool } from '../lib/db'
 import { EVENT_RETENTION, pruneEvents } from '../../bus/retention'
-import { getDefaultDomainTaskStore } from '../store/task-store'
+import { getDefaultDomainTaskStore } from '../store/task-store-default'
 import type { TraceEventStore } from '../lib/trace-events-store'
 import type { TaskFlightTracker } from './task-flight-tracker'
 import type { DaemonSemaphores } from './scheduler'
@@ -221,7 +221,7 @@ export const SWEEPS: readonly SweepSpec[] = [
       const { parseMainCommiterPayload, MAIN_COMMITER_RECIPE } = await import(
         '../lib/main-dirty'
       )
-      const { getDefaultDomainTaskStore: getDomainStore } = await import('../store/task-store')
+      const { getDefaultDomainTaskStore: getDomainStore } = await import('../store/task-store-default')
       const threshold = new Date(Date.now() - STALE_QUEUED_COMMITTER_THRESHOLD_MS).toISOString()
       const r = await getDomainStore().query(
         `SELECT DISTINCT t.id AS id, t.recovery_payload AS recovery_payload
@@ -270,7 +270,7 @@ export const SWEEPS: readonly SweepSpec[] = [
     run: async ({ log, bus, repoRoot, traceStore }) => {
       const { parseMainCommiterPayload, MAIN_COMMITER_RECIPE, settleCommitterDoneIfClean } =
         await import('../lib/main-dirty')
-      const { getDefaultDomainTaskStore: getDomainStore } = await import('../store/task-store')
+      const { getDefaultDomainTaskStore: getDomainStore } = await import('../store/task-store-default')
       const threshold = new Date(Date.now() - RUNNING_COMMITTER_LIFETIME_MS).toISOString()
 
       const r = await getDomainStore().query(
@@ -843,7 +843,7 @@ export const SWEEPS: readonly SweepSpec[] = [
  * @returns The number of action-queue rows raised by this pass.
  */
 export async function reconcileDraftProposalRows(): Promise<{ raised: number }> {
-  const { getDefaultDomainTaskStore } = await import('../store/task-store')
+  const { getDefaultDomainTaskStore } = await import('../store/task-store-default')
   const { raiseDraftProposalRow } = await import('./action-queue-repopulator')
 
   const store = getDefaultDomainTaskStore()

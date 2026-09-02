@@ -84,7 +84,7 @@ export const makeProductionDeps = async (
   if (repo) process.env.MARS_REPO = resolve(repo)
 
   const { resolveContext } = await import('../core/context')
-  const { getDefaultDomainTaskStore } = await import('../core/store/task-store')
+  const { getDefaultDomainTaskStore } = await import('../core/store/task-store-default')
   const { sendRequest } = await import('../core/daemon/client')
 
   let resolvedCtx: ReturnType<typeof resolveContext> | undefined

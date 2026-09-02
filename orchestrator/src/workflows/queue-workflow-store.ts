@@ -11,7 +11,7 @@ import type {
   WorkflowStore,
 } from '@mars/workflow'
 import type { DbClient } from '../core/lib/db'
-import { getCompositionRootClient } from '../core/store/task-store'
+import { getCompositionRootClient } from '../core/store/task-store-default'
 import { getRepoRoot } from '../core/context'
 import { readWorkflowProvenance } from './agent-draft'
 

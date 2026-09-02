@@ -5,7 +5,7 @@ import {
   updateTask,
 } from '../queue'
 import { removeBlockerEdge } from '../arc/blockers'
-import { getDefaultDomainTaskStore, getDefaultTaskStore } from '../store/task-store'
+import { getDefaultDomainTaskStore, getDefaultTaskStore } from '../store/task-store-default'
 import { getDiagnosis, type StoredDiagnosis } from './diagnose'
 import { raiseActionQueueItem } from './action-queue'
 

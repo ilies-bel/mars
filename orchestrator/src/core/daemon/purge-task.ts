@@ -10,7 +10,7 @@ import {
 } from '../queue'
 import { Arc } from '../arc'
 import { teardownDeploymentsForTask } from '../lib/deployment/teardown'
-import { getDefaultDomainTaskStore } from '../store/task-store'
+import { getDefaultDomainTaskStore } from '../store/task-store-default'
 import { getDefaultMergeJobStore } from '../store/merge-job-store'
 import {
   listUniqueCommitsAhead,

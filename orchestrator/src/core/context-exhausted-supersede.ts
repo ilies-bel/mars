@@ -61,7 +61,7 @@ import {
   updateTask,
   type Task,
 } from './queue'
-import { getDefaultTaskStore, type DomainTaskStore } from './store/task-store'
+import { getDefaultTaskStore, type DomainTaskStore } from './store/task-store-default'
 import { removeBlockerEdge } from './arc/blockers'
 import { hintDispatch } from './daemon/dispatch-hint'
 import { isContextExhaustedSignature } from './lib/failure-signature'

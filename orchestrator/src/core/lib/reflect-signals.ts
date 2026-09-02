@@ -1,4 +1,4 @@
-import { getDefaultTaskStore, type DomainTaskStore as TaskStore } from '../store/task-store'
+import { getDefaultTaskStore, type DomainTaskStore as TaskStore } from '../store/task-store-default'
 import type { UsageTotals } from './claude-usage'
 
 export const isReflectDisabled = (): boolean =>

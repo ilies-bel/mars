@@ -39,7 +39,7 @@ import {
   getDefaultDomainTaskStore,
   getCompositionRootClient,
   runCompositionRootMigrations,
-} from './store/task-store'
+} from './store/task-store-default'
 import { buildSessionsView } from './daemon/view/sessions'
 import { listTerminalEvents } from './daemon/view/terminal-events'
 import { listReleaseNotes } from './daemon/view/release-notes'

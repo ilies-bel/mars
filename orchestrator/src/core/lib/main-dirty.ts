@@ -22,7 +22,7 @@
 import { runTool, type TraceCtx } from './run-tool'
 import { probeWorkerLiveness } from './worker-liveness'
 import { attachToExistingFixTask } from '../queue-fix-tasks'
-import { getDefaultTaskStore, type DomainTaskStore as TaskStore } from '../store/task-store'
+import { getDefaultTaskStore, type DomainTaskStore as TaskStore } from '../store/task-store-default'
 import { Arc } from '../arc'
 import { spawnMainCommitterRecovery } from '../arc/recovery'
 import { maybeAssertArcInvariant } from '../arc/invariant'

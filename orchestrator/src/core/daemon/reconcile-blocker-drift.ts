@@ -17,7 +17,7 @@
 
 import { Arc } from '../arc'
 import { hasIncompleteBlockers, listTasks, updateTask } from '../queue'
-import { getDefaultDomainTaskStore, runCompositionRootMigrations } from '../store/task-store'
+import { getDefaultDomainTaskStore, runCompositionRootMigrations } from '../store/task-store-default'
 
 /**
  * Scan all `queued` tasks and demote any that still have incomplete blocker

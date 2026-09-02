@@ -38,7 +38,7 @@ import {
   type ProposalSource,
 } from '../../core/proposals'
 import { isDaemonReachable } from '../../core/daemon/paths'
-import { getDefaultTaskStore } from '../../core/store/task-store'
+import { getDefaultTaskStore } from '../../core/store/task-store-default'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { resolveVcs } from '../../core/ports/vcs/registry'

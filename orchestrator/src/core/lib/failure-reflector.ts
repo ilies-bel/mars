@@ -6,7 +6,7 @@ import {
   addProposalUserStory,
   recordFailureReflectionOccurrence,
 } from '../proposals'
-import { getDefaultTaskStore } from '../store/task-store'
+import { getDefaultTaskStore } from '../store/task-store-default'
 import { loadLeverRegistry, formatRecipeCatalog } from './lever-registry'
 import { collectAssistantText, extractFirstJsonDocument } from './reflector'
 import type { Reflector, ReflectorRunOutcome } from '../ports/reflector/types'

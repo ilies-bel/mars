@@ -21,7 +21,7 @@
 import { getTask, enqueueTask } from '../queue'
 import { corePurgeTask, type CorePurgeTaskOptions } from './purge-task'
 import { listUniqueCommitsAhead } from '../lib/sweep'
-import { getDefaultDomainTaskStore } from '../store/task-store'
+import { getDefaultDomainTaskStore } from '../store/task-store-default'
 import { collectIntegrationEvidence } from '../lib/collect-integration-evidence'
 import { buildCompensationPrompt, type EvidenceEntry } from './compensation-prompt'
 

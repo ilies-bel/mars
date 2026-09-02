@@ -1,5 +1,5 @@
 import type { EventEmitter } from 'node:events'
-import { getCompositionRootClient } from '../store/task-store'
+import { getCompositionRootClient } from '../store/task-store-default'
 import { listTasks, updateTask } from '../queue'
 import { CANCELLED_FAILURE_REASON } from '../lib/blocker-resolution-primitives'
 import { drainAlertDismissals } from './alert-dismisser'

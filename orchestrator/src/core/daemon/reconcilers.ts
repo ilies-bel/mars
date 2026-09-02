@@ -16,7 +16,7 @@
  */
 
 import { hasIncompleteBlockers, listTasks, updateTask } from '../queue'
-import { getDefaultDomainTaskStore } from '../store/task-store'
+import { getDefaultDomainTaskStore } from '../store/task-store-default'
 import { listProposals, revertSlicingProposalToReady } from '../proposals'
 import { sweepOrphanRunningSpans } from '../lib/trace-events-store'
 import { Arc } from '../arc'
@@ -347,7 +347,7 @@ const mergeJobsStartupReconcile: Reconciler = {
     try {
       const { reconcileMergeJobs } = await import('./startup-reconcile')
       const { getDefaultMergeJobStore } = await import('../store/merge-job-store')
-      const { getDefaultDomainTaskStore } = await import('../store/task-store')
+      const { getDefaultDomainTaskStore } = await import('../store/task-store-default')
       const result = await reconcileMergeJobs({
         store: getDefaultMergeJobStore(),
         taskStore: getDefaultDomainTaskStore(),
@@ -855,7 +855,7 @@ const staleQueuedMergeJobCancel: Reconciler = {
   name: 'stale-queued-merge-job-cancel',
   async run({ log }) {
     try {
-      const { getDefaultDomainTaskStore } = await import('../store/task-store')
+      const { getDefaultDomainTaskStore } = await import('../store/task-store-default')
       const taskStore = getDefaultDomainTaskStore()
 
       // Queued merge jobs for tasks that are no longer in 'merging' status.

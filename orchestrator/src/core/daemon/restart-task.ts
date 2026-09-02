@@ -8,7 +8,7 @@ import {
   updateTask,
 } from '../queue'
 import { supersedeActionQueueItemsForOrigin } from '../lib/action-queue'
-import { getDefaultTaskStore } from '../store/task-store'
+import { getDefaultTaskStore } from '../store/task-store-default'
 import { getDefaultMergeJobStore } from '../store/merge-job-store'
 
 export type RestartErrorCode = 'NOT_FOUND' | 'WRONG_STATUS'

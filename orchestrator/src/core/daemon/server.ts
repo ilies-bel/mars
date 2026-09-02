@@ -114,7 +114,7 @@ import {
   getDefaultDomainTaskStore,
   getCompositionRootClient,
   runCompositionRootMigrations,
-} from '../store/task-store'
+} from '../store/task-store-default'
 import { promoteProposal } from '../proposals'
 import { CANCELLED_FAILURE_REASON } from '../lib/blocker-resolution-primitives'
 import type { RecoverAllBlockedTasksResult } from '../blocker-resolution'

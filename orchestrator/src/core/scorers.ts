@@ -110,7 +110,7 @@ async function emitScorerBusEvent<T extends EventName>(
   payload: EventPayload<T>,
 ): Promise<void> {
   try {
-    const { getDefaultTaskStore } = await import('./store/task-store')
+    const { getDefaultTaskStore } = await import('./store/task-store-default')
     const store = await getDefaultTaskStore()
     await store.atomic(async (scope) => {
       await scope.execute(buildEventInsert(type, payload))

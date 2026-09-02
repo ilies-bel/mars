@@ -45,7 +45,7 @@ import { resolveStateClient } from '../store/state-client'
 import { isReflectDisabled } from './reflect-signals'
 import { resolveControlLevers } from '../config/levers'
 import type { ControlLevers } from '../daemon/config'
-import { getDefaultTaskStore } from '../store/task-store'
+import { getDefaultTaskStore } from '../store/task-store-default'
 import type { TraceEventStore } from './trace-events-store'
 import type { AgentEvent } from './claude-stream'
 

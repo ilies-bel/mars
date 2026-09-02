@@ -1,6 +1,6 @@
 import type { FixRecipeContext } from '../lib/fix-recipes'
 import { getRetryBudget } from '../lib/retry-budget'
-import { getDefaultTaskStore } from '../store/task-store'
+import { getDefaultTaskStore } from '../store/task-store-default'
 import { countFixTaskAttempts, upsertFixTask } from '../queue-fix-tasks'
 import { recordStewardIntervention } from '../steward-ledger'
 

@@ -37,7 +37,7 @@
  */
 export const RESCUE_OPERATOR_TAG = 'rescue-operator' as const
 
-import { getDefaultTaskStore, type DomainTaskStore as TaskStore } from './store/task-store'
+import { getDefaultTaskStore, type DomainTaskStore as TaskStore } from './store/task-store-default'
 import { IN_FLIGHT_RECOVERY_STATUSES, type Task } from './queue'
 import type { FixRecipeContext } from './lib/fix-recipes'
 import {

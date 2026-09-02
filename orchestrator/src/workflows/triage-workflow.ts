@@ -1,7 +1,7 @@
 import { defineWorkflow, runWorkflow, type WorkflowCtx } from '@mars/workflow'
 import { z } from 'zod'
 import { type Task } from '../core/queue'
-import { type DomainTaskStore, getDefaultDomainTaskStore } from '../core/store/task-store'
+import { type DomainTaskStore, getDefaultDomainTaskStore } from '../core/store/task-store-default'
 import { Workers } from '../core/workers'
 import { parseWorkerJsonResult } from '../core/lib/worker-json'
 import { getRepoRoot } from '../core/context'

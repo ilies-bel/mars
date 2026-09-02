@@ -73,7 +73,7 @@ describe('store-layer worktree cross-boundary guard', () => {
 
     vi.resetModules()
     const { getDefaultTaskStore, __resetDefaultTaskStoreForTests } = await import(
-      '../task-store'
+      '../task-store-default'
     )
     __resetDefaultTaskStoreForTests()
 
@@ -96,7 +96,7 @@ describe('store-layer worktree cross-boundary guard', () => {
 
     vi.resetModules()
     const { getDefaultTaskStore, __resetDefaultTaskStoreForTests } = await import(
-      '../task-store'
+      '../task-store-default'
     )
     // Import resolveQueueClient from the same fresh module set so we can
     // close PGLite before afterEach removes parentDir.
@@ -118,7 +118,7 @@ describe('store-layer worktree cross-boundary guard', () => {
     cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(worktreeCwd)
 
     vi.resetModules()
-    const { getDefaultDomainTaskStore } = await import('../task-store')
+    const { getDefaultDomainTaskStore } = await import('../task-store-default')
 
     expect(() => getDefaultDomainTaskStore()).toThrow(
       /getDefaultDomainTaskStore\(\) refused.*worktree/,
@@ -133,7 +133,7 @@ describe('store-layer worktree cross-boundary guard', () => {
     cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(worktreeCwd)
 
     vi.resetModules()
-    const { getDefaultDomainTaskStore } = await import('../task-store')
+    const { getDefaultDomainTaskStore } = await import('../task-store-default')
     // Import resolveQueueClient from the same fresh module set so we can close
     // PGLite before afterEach removes parentDir.
     const { resolveQueueClient } = await import('../../queue')
@@ -192,7 +192,7 @@ describe('vitest hermetic store guard', () => {
 
     vi.resetModules()
     const { getDefaultTaskStore, __resetDefaultTaskStoreForTests } = await import(
-      '../task-store'
+      '../task-store-default'
     )
     __resetDefaultTaskStoreForTests()
 
@@ -207,7 +207,7 @@ describe('vitest hermetic store guard', () => {
 
     vi.resetModules()
     const { getDefaultTaskStore, __resetDefaultTaskStoreForTests } = await import(
-      '../task-store'
+      '../task-store-default'
     )
     // Import resolveQueueClient from the same fresh module set so we can
     // close PGLite before removing the temp directory.

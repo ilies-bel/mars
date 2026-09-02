@@ -17,7 +17,7 @@ import { truncateFailure } from './lib/truncate-failure'
 import { getTask, reopenTerminalTask, updateTask, type Task } from './queue'
 import { raiseRecoveryExhaustedActionQueue } from './lib/recovery-exhausted-action-queue'
 import { getRetryBudget, markTaskFailed } from './queue-retry'
-import { getDefaultTaskStore, type DomainTaskStore as TaskStore } from './store/task-store'
+import { getDefaultTaskStore, type DomainTaskStore as TaskStore } from './store/task-store-default'
 import {
   attachToRecovery,
   spawnRecovery,

@@ -27,8 +27,8 @@ import {
   supersedeActionQueueItemsForOrigin,
 } from '../lib/action-queue'
 import { resolveStateClient } from '../store/state-client'
-import { getDefaultTaskStore } from '../store/task-store'
-import type { DomainTaskStore as TaskStore } from '../store/task-store'
+import { getDefaultTaskStore } from '../store/task-store-default'
+import type { DomainTaskStore as TaskStore } from '../store/task-store-default'
 import { MAIN_COMMITER_RECIPE, checkIntegrationBranchDirty } from '../lib/main-dirty'
 import { nullTraceStore } from '../lib/run-tool'
 import { updateTask } from '../queue'

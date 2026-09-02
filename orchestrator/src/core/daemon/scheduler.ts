@@ -1,6 +1,6 @@
 import type { EventEmitter } from 'node:events'
 import type { Semaphore } from './semaphore'
-import { getCompositionRootClient } from '../store/task-store'
+import { getCompositionRootClient } from '../store/task-store-default'
 import { getTask, hasIncompleteBlockers, listTasks, updateTask, type Task } from '../queue'
 import type { PauseController } from './pause-state'
 import type { DispatchKind, TaskFlightTracker } from './task-flight-tracker'

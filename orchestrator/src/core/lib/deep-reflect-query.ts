@@ -1,6 +1,6 @@
 import { gunzip } from 'node:zlib'
 import { promisify } from 'node:util'
-import { getDefaultTaskStore } from '../store/task-store'
+import { getDefaultTaskStore } from '../store/task-store-default'
 import { getRepoRoot, getStateDir } from '../context'
 import type { AgentEvent } from './claude-stream'
 import { isReflectDisabled, listTaskSignals, type TaskSignalRow } from './reflect-signals'
