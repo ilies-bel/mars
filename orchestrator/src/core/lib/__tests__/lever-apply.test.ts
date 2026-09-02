@@ -215,6 +215,64 @@ describe('lever apply history', () => {
   })
 })
 
+describe('code-step levers', () => {
+  it('code.context-strategy round-trip: apply + readCurrent returns new value', () => {
+    const result = applyLeverValue('code.context-strategy', 'filtered')
+
+    expect(result.leverId).toBe('code.context-strategy')
+    expect(result.appliedValue).toBe('filtered')
+    expect(result.requiresRestart).toBe(true) // appliesWithoutRestart: false
+
+    // readCurrent returns the persisted value from daemon.json
+    const config = readConfig()
+    const codeBlock = config.code as Record<string, unknown>
+    expect(codeBlock.contextStrategy).toBe('filtered')
+  })
+
+  it('code.context-strategy: invalid enum value throws INVALID_VALUE', () => {
+    const err = (() => {
+      try { applyLeverValue('code.context-strategy', 'extreme') } catch (e) { return e }
+    })() as LeverApplyError
+    expect(err).toBeInstanceOf(LeverApplyError)
+    expect(err.code).toBe('INVALID_VALUE')
+  })
+
+  it('code.tool-exposure round-trip: apply + readCurrent returns new value', () => {
+    const result = applyLeverValue('code.tool-exposure', 'restricted')
+
+    expect(result.leverId).toBe('code.tool-exposure')
+    expect(result.appliedValue).toBe('restricted')
+
+    const config = readConfig()
+    const codeBlock = config.code as Record<string, unknown>
+    expect(codeBlock.toolExposure).toBe('restricted')
+  })
+
+  it('code.prompt-prefix round-trip: apply + readCurrent returns new value', () => {
+    const prefix = 'Always write TypeScript.'
+    const result = applyLeverValue('code.prompt-prefix', prefix)
+
+    expect(result.leverId).toBe('code.prompt-prefix')
+    expect(result.appliedValue).toBe(prefix)
+
+    const config = readConfig()
+    const codeBlock = config.code as Record<string, unknown>
+    expect(codeBlock.promptPrefix).toBe(prefix)
+  })
+
+  it('code.* levers do not overwrite each other when applied sequentially', () => {
+    applyLeverValue('code.context-strategy', 'minimal')
+    applyLeverValue('code.tool-exposure', 'extended')
+    applyLeverValue('code.prompt-prefix', 'Be concise.')
+
+    const config = readConfig()
+    const codeBlock = config.code as Record<string, unknown>
+    expect(codeBlock.contextStrategy).toBe('minimal')
+    expect(codeBlock.toolExposure).toBe('extended')
+    expect(codeBlock.promptPrefix).toBe('Be concise.')
+  })
+})
+
 describe('applyLeverValue — config matches CLI equivalent', () => {
   it('caps.implement apply produces same config as mars daemon set-cap implement', () => {
     // Step 1: Apply via the shared function (used by the HTTP endpoint)

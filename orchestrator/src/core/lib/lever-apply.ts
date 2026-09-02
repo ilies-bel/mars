@@ -24,6 +24,7 @@ import {
   persistScoringPatch,
   persistVerifyStepPatch,
   persistCodeStepPatch,
+  persistCodeParamsPatch,
   type ControlLeverValue,
 } from '../daemon/config'
 import { writeBudgetConfig, parseDurationToMs } from './spend-meter'
@@ -256,6 +257,12 @@ export const applyLeverValue = (id: string, value: string): ApplyLeverResult => 
     // no recipe-style code entries exist, so startsWith is safe here.
     if (id === 'code.checkpoint-interval-ms') {
       persistCodeStepPatch({ checkpointIntervalMs: Number(value) })
+    } else if (id === 'code.context-strategy') {
+      persistCodeParamsPatch({ contextStrategy: value as 'full' | 'filtered' | 'minimal' })
+    } else if (id === 'code.tool-exposure') {
+      persistCodeParamsPatch({ toolExposure: value })
+    } else if (id === 'code.prompt-prefix') {
+      persistCodeParamsPatch({ promptPrefix: value })
     } else {
       throw new LeverApplyError(
         `lever '${id}' cannot be applied via this endpoint; use: ${entry.gesture}`,

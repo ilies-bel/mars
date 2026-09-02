@@ -501,6 +501,59 @@ const REGISTRY: LeverRegistryEntry[] = [
     },
   },
 
+  // ── code-step params ─────────────────────────────────────────────────────
+  {
+    id: 'code.context-strategy',
+    label: 'Code step context assembly strategy',
+    family: 'workflow',
+    scope: 'global',
+    readCurrent: () => {
+      try {
+        return loadDaemonConfig().code.contextStrategy
+      } catch {
+        return null
+      }
+    },
+    allowedValues: { type: 'enum', values: ['full', 'filtered', 'minimal'] as const },
+    gesture: 'mars operator set code.context-strategy <full|filtered|minimal>',
+    appliesWithoutRestart: false,
+    consumer: { file: 'src/workflows/implement-workflow.ts', symbol: 'codeStep' },
+  },
+  {
+    id: 'code.tool-exposure',
+    label: 'Code step tool exposure set',
+    family: 'workflow',
+    scope: 'global',
+    readCurrent: () => {
+      try {
+        return loadDaemonConfig().code.toolExposure
+      } catch {
+        return null
+      }
+    },
+    allowedValues: { type: 'freeform' },
+    gesture: 'mars operator set code.tool-exposure <tool-set>',
+    appliesWithoutRestart: false,
+    consumer: { file: 'src/workflows/implement-workflow.ts', symbol: 'codeStep' },
+  },
+  {
+    id: 'code.prompt-prefix',
+    label: 'Code step prompt prefix',
+    family: 'workflow',
+    scope: 'global',
+    readCurrent: () => {
+      try {
+        return loadDaemonConfig().code.promptPrefix || '(none)'
+      } catch {
+        return null
+      }
+    },
+    allowedValues: { type: 'freeform' },
+    gesture: 'mars operator set code.prompt-prefix @<path>',
+    appliesWithoutRestart: false,
+    consumer: { file: 'src/workflows/implement-workflow.ts', symbol: 'codeStep' },
+  },
+
   // ── verify (recipes folded in from improvement-recipes.ts) ────────────────
   {
     id: 'verify.add-typecheck',

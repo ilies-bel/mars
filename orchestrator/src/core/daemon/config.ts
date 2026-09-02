@@ -680,6 +680,23 @@ export const persistVerifyStepPatch = (patch: Partial<VerifyStepConfig>): void =
 }
 
 /**
+ * Persist a code-params patch to daemon.json, merging into the existing
+ * `code` block. Any fields not in `patch` are preserved. Called by
+ * `applyLeverValue` for `code.context-strategy`, `code.tool-exposure`, and
+ * `code.prompt-prefix` levers.
+ */
+export const persistCodeParamsPatch = (patch: Partial<CodeParamsConfig>): void => {
+  const existing = readDaemonConfigFileLenient()
+  const existingC =
+    existing.code !== null &&
+    typeof existing.code === 'object' &&
+    !Array.isArray(existing.code)
+      ? (existing.code as Record<string, unknown>)
+      : {}
+  patchDaemonConfigFile({ code: { ...existingC, ...patch } })
+}
+
+/**
  * Persist a code-step patch to daemon.json, merging into the existing
  * `codeStep` block. Any fields not in `patch` are preserved. Called by
  * `applyLeverValue` for `code.*` levers.

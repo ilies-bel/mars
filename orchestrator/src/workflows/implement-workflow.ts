@@ -82,6 +82,17 @@ export const implementInputSchema = z.object({
 
 export type ImplementInput = z.infer<typeof implementInputSchema>
 
+/**
+ * Identifier for the code step (run-agent) within the implement workflow.
+ *
+ * Code-step levers — `code.context-strategy`, `code.tool-exposure`, and
+ * `code.prompt-prefix` — in lever-registry.ts declare this as their consumer
+ * symbol so the build-enforcing test can verify the wiring exists. Future
+ * slices (7-9 of PRD 8e15a3f5) will use this reference when they wire those
+ * config values into the agent dispatch path in `./primitives/run-agent.ts`.
+ */
+export const codeStep = 'run-agent' as const
+
 export interface ImplementOutput {
   taskId: string
   success: boolean
