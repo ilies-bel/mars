@@ -733,3 +733,85 @@ export const detectNonexistentNpmScript = (
   if (!repoRoot) return null
   return checkNpmScriptExists(verifyCmd, loadAllPkgScripts(repoRoot))
 }
+
+// ---------------------------------------------------------------------------
+// vitest test-file existence validation
+// ---------------------------------------------------------------------------
+
+/**
+ * Pure core: validates literal vitest test-file paths in `verifyCmd` against
+ * the filesystem. Called at enqueue time so a non-existent path is surfaced
+ * immediately rather than after the task's coder has run for tens of minutes.
+ *
+ * Returns a user-facing warning string when a literal (non-glob) path
+ * argument to `vitest run` does not resolve to an existing file. Returns
+ * `null` when every literal path exists (or is a glob/pattern).
+ *
+ * Paths that contain `*`, `?`, or `{` are treated as glob patterns and
+ * skipped — glob expansion cannot be evaluated without a live shell.
+ *
+ * Injecting `exists` and `resolveDir` lets callers test without filesystem
+ * access. In production, `resolveDir(relDir)` should return
+ * `join(repoRoot, relDir)` (or `repoRoot` itself for `'.'`).
+ */
+export const checkVitestPathsExist = (
+  verifyCmd: string,
+  exists: (absPath: string) => boolean,
+  resolveDir: (relDir: string) => string,
+): string | null => {
+  let cwd = '.'
+
+  for (const raw of verifyCmd.split(/&&|\|\||;/)) {
+    const tokens = raw.trim().split(/\s+/).filter(Boolean)
+    if (tokens.length === 0) continue
+
+    // Track `cd <dir>` so subsequent segments resolve correctly.
+    if (tokens[0] === 'cd' && tokens[1]) {
+      cwd = tokens[1]
+      continue
+    }
+
+    const vitestIdx = tokens.indexOf('vitest')
+    if (vitestIdx === -1 || tokens[vitestIdx + 1] !== 'run') continue
+
+    // Collect non-flag arguments after `vitest run` — these are the test
+    // file paths (or patterns) passed to the runner.
+    const rest = tokens.slice(vitestIdx + 2)
+    const filePaths = rest.filter((t) => !t.startsWith('-'))
+
+    for (const p of filePaths) {
+      // Glob patterns cannot be validated statically — skip them.
+      if (p.includes('*') || p.includes('?') || p.includes('{')) continue
+
+      const absPath = join(resolveDir(cwd), p)
+      if (!exists(absPath)) {
+        const cwdDesc = cwd === '.' ? 'the repo root' : `${cwd}/`
+        return (
+          `[mars] --verify names test file '${p}' in ${cwdDesc} which does not exist. ` +
+          `Check the path, or add it to --files if this task is about to create it. ` +
+          `Proceeding with enqueue — the verify step will fail if the file is still missing then.`
+        )
+      }
+    }
+  }
+  return null
+}
+
+/**
+ * I/O wrapper: resolves vitest file paths against the repo root and delegates
+ * to {@link checkVitestPathsExist}.
+ *
+ * Returns `null` when `repoRoot` is empty or when all literal paths exist.
+ * Returns a user-facing warning string when a literal path does not exist.
+ */
+export const detectNonexistentVitestPath = (
+  verifyCmd: string,
+  repoRoot: string,
+): string | null => {
+  if (!repoRoot) return null
+  return checkVitestPathsExist(
+    verifyCmd,
+    existsSync,
+    (relDir) => (relDir === '.' ? repoRoot : join(repoRoot, relDir)),
+  )
+}

@@ -21,6 +21,7 @@ import {
   containsAbsoluteRepoPath,
   isFullSuiteVerifyCmd,
   detectNonexistentNpmScript,
+  detectNonexistentVitestPath,
   parseBlockedBy,
   parseTags,
   hasFlag,
@@ -286,6 +287,17 @@ const taskAdd: Command = {
       if (scriptErr !== null) {
         deps.err(scriptErr)
         return { code: 2 }
+      }
+      // Warn (but do not reject) when --verify names a literal vitest test
+      // file that does not exist on disk. Tasks that are about to create the
+      // file are not blocked; the verify step will fail fast if the file is
+      // still missing after the coder runs.
+      const vitestPathWarn = detectNonexistentVitestPath(
+        specResult.value.verifyCmd,
+        deps.ctx.repoRoot,
+      )
+      if (vitestPathWarn !== null) {
+        deps.err(vitestPathWarn)
       }
     }
     const intentFlag = args.flags['--intent']?.trim()
@@ -812,6 +824,11 @@ the command was authored without a 'cd <subdir> &&' prefix:
     if (scriptErrSetVerify !== null) {
       deps.err(scriptErrSetVerify)
       return { code: 2 }
+    }
+    // Same vitest-path warning as `task add --verify`.
+    const vitestPathWarnSetVerify = detectNonexistentVitestPath(cmd, deps.ctx.repoRoot)
+    if (vitestPathWarnSetVerify !== null) {
+      deps.err(vitestPathWarnSetVerify)
     }
     try {
       const result = (await deps.daemon.sendRequest({
