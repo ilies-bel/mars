@@ -42,7 +42,7 @@ export const SHELL_NAV_GROUPS: NavGroup[] = [
   {
     label: 'Workspace',
     entries: [
-      { route: 'triage', label: 'Action Queue', href: '#/triage', icon: '◉' },
+      { route: 'triage', label: 'Needs You', href: '#/triage', icon: '◉' },
       { route: 'chat', label: 'Chat', href: '#/chat', icon: '⊙' },
       { route: 'progress', label: 'Progress', href: '#/progress', icon: '◈' },
       { route: 'control', label: 'Control Room', href: '#/control', icon: '⌂' },

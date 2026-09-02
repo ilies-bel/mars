@@ -1,17 +1,16 @@
 // @vitest-environment happy-dom
 /**
- * Regression test for the "four different names" bug: the sidebar nav, the
- * TriagePage header, and the `?` keyboard-shortcuts overlay used to call the
- * same surface three different things ("Needs you", "Needs you", and
- * "action queue (triage)"), so a user reading the shortcut overlay could not
- * tell that `t` goes to the entry the sidebar calls "Needs you".
+ * Regression test for naming parity: the sidebar nav, the TriagePage header,
+ * and the `?` keyboard-shortcuts overlay must all call the operational triage
+ * surface by the same name — 'Needs You'.
  *
- * "action queue" is the term of record (it is what the glossary, ADR-0057,
- * and the CLI already use). This test pins the sidebar label
- * (`SHELL_NAV_GROUPS`), the rendered TriagePage header, and the rendered
- * shortcuts-overlay entry for `t` to all agree on that name, so a future
- * rename of one surface without the others fails loudly here instead of
- * shipping silently.
+ * This test pins the sidebar label (`SHELL_NAV_GROUPS`), the rendered
+ * TriagePage header, and the rendered shortcuts-overlay entry for `t` to all
+ * agree on 'Needs You', so a future rename of one surface without the others
+ * fails loudly here instead of shipping silently.
+ *
+ * It also rejects 'action queue' from the page header and shortcut overlay so
+ * that a partial rollback is caught immediately.
  */
 
 import { vi, describe, expect, it } from 'vitest'
@@ -75,22 +74,22 @@ const { TriagePage } = await import('@/pages/TriagePage')
 const { ShortcutsOverlay } = await import('@/widgets/ShortcutsOverlay')
 
 describe('action-queue naming parity — sidebar, page header, and shortcut overlay agree', () => {
-  it('all three surfaces name the surface "action queue"', () => {
+  it('all three surfaces name the surface "needs you"', () => {
     const sidebarEntry = SHELL_NAV_GROUPS.flatMap((g) => g.entries).find(
       (e) => e.route === 'triage',
     )
-    expect(sidebarEntry?.label.toLowerCase()).toBe('action queue')
+    expect(sidebarEntry?.label.toLowerCase()).toBe('needs you')
 
     const headerHtml = renderToStaticMarkup(<TriagePage />)
-    expect(headerHtml.toLowerCase()).toContain('action queue')
+    expect(headerHtml.toLowerCase()).toContain('needs you')
 
     const overlayHtml = renderToStaticMarkup(<ShortcutsOverlay onClose={() => {}} />)
-    expect(overlayHtml.toLowerCase()).toContain('action queue')
+    expect(overlayHtml.toLowerCase()).toContain('needs you')
 
     // None of the three surfaces should leak the internal `triage` route id
     // into user-facing copy.
     expect(sidebarEntry?.label.toLowerCase()).not.toContain('triage')
-    expect(headerHtml.toLowerCase()).not.toMatch(/>\s*needs you\s*</)
-    expect(overlayHtml.toLowerCase()).not.toContain('(triage)')
+    expect(headerHtml.toLowerCase()).not.toMatch(/>\s*action queue\s*</)
+    expect(overlayHtml.toLowerCase()).not.toContain('action queue')
   })
 })

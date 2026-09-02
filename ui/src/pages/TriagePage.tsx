@@ -865,8 +865,8 @@ export const TriagePage = () => {
   useEffect(() => {
     document.title =
       connected && needsYouCount > 0
-        ? `(${needsYouCount}) Action Queue — mars`
-        : 'Action Queue — mars'
+        ? `(${needsYouCount}) Needs You — mars`
+        : 'Needs You — mars'
   }, [needsYouCount, connected])
 
   // Only show the empty state when every feed succeeded AND there is genuinely
@@ -891,7 +891,7 @@ export const TriagePage = () => {
       {/* Header strip */}
       <div className="flex shrink-0 items-center border-b border-border px-5 py-3.5">
         <h1 className="font-mono text-title font-semibold text-foreground">
-          Action Queue
+          Needs You
         </h1>
         {needsYouCount > 0 && (
           <span
