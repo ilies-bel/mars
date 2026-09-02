@@ -10,6 +10,7 @@ import { DaemonDownBanner } from './DaemonDownBanner'
 import { DispatchPausedChip } from './DispatchPausedChip'
 import { LiveParkedChip } from './LiveParkedChip'
 import { ProjectSelector } from './ProjectSelector'
+import { BellMenu } from './BellMenu'
 
 // ── Nav groups ────────────────────────────────────────────────────────────────
 
@@ -158,6 +159,7 @@ const ShellTopbar = ({ hash }: ShellTopbarProps) => {
         )}
         <DispatchPausedChip />
         <LiveParkedChip />
+        <BellMenu />
       </div>
     </header>
   )
