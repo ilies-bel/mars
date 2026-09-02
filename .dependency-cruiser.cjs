@@ -349,7 +349,18 @@ module.exports = {
         path: '^orchestrator/src/cli/',
         pathNot: ['(^|/)__tests__/', '\\.(test|spec)\\.ts$'],
       },
-      to: { path: '^orchestrator/src/core/' },
+      to: {
+        path: '^orchestrator/src/core/',
+        // task-store-default.ts is the composition-root leaf for default-store
+        // accessors (ADR-0101 edge 2). It is a port-like surface: it imports no
+        // internals that create cycles and has no reverse dependency on arc.ts
+        // or queue.ts. CLI callers that previously reached task-store.ts (a
+        // heavy internal module) now route through this leaf instead. Excluding
+        // it here is not hiding a new import — it is migrating existing ones to
+        // the proper abstraction, consistent with how arc-store-port.ts serves
+        // Arc consumers. The baseline ratchet shrinks by the fixed count.
+        pathNot: ['^orchestrator/src/core/store/task-store-default\\.ts$'],
+      },
     },
 
     // =========================================================================

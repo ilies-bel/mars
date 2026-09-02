@@ -16,7 +16,7 @@
 import { resolve } from 'node:path'
 import { route, type CommandRegistry } from './registry'
 import type { CommandDeps, CommandResult } from './command'
-import type { DomainTaskStore } from '../core/store/task-store'
+import type { DomainTaskStore } from '../core/store/task-store-default'
 import type { ParsedArgs } from './args'
 
 /**

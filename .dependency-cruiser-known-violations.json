@@ -208,21 +208,6 @@
   },
   {
     "type": "dependency",
-    "from": "orchestrator/src/cli/command.ts",
-    "to": "orchestrator/src/core/store/task-store.ts",
-    "unresolvedTo": "../core/store/task-store",
-    "dependencyTypes": [
-      "local",
-      "type-only",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-cli-to-core"
-    }
-  },
-  {
-    "type": "dependency",
     "from": "orchestrator/src/cli/commands/action-queue.ts",
     "to": "orchestrator/src/core/daemon/lifecycle-reconcile.ts",
     "unresolvedTo": "../../core/daemon/lifecycle-reconcile",
@@ -787,21 +772,6 @@
   },
   {
     "type": "dependency",
-    "from": "orchestrator/src/cli/commands/kpi-compare.ts",
-    "to": "orchestrator/src/core/store/task-store.ts",
-    "unresolvedTo": "../../core/store/task-store",
-    "dependencyTypes": [
-      "local",
-      "type-only",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-cli-to-core"
-    }
-  },
-  {
-    "type": "dependency",
     "from": "orchestrator/src/cli/commands/lever.ts",
     "to": "orchestrator/src/core/daemon/config.ts",
     "unresolvedTo": "../../core/daemon/config",
@@ -1040,20 +1010,6 @@
   },
   {
     "type": "dependency",
-    "from": "orchestrator/src/cli/commands/misc.ts",
-    "to": "orchestrator/src/core/store/task-store.ts",
-    "unresolvedTo": "../../core/store/task-store.js",
-    "dependencyTypes": [
-      "local",
-      "dynamic-import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-cli-to-core"
-    }
-  },
-  {
-    "type": "dependency",
     "from": "orchestrator/src/cli/commands/notice.ts",
     "to": "orchestrator/src/core/lib/action-queue-kinds.ts",
     "unresolvedTo": "../../core/lib/action-queue-kinds",
@@ -1253,20 +1209,6 @@
     "from": "orchestrator/src/cli/commands/proposal.ts",
     "to": "orchestrator/src/core/proposals.ts",
     "unresolvedTo": "../../core/proposals",
-    "dependencyTypes": [
-      "local",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-cli-to-core"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "orchestrator/src/cli/commands/proposal.ts",
-    "to": "orchestrator/src/core/store/task-store.ts",
-    "unresolvedTo": "../../core/store/task-store",
     "dependencyTypes": [
       "local",
       "import"
@@ -2051,20 +1993,6 @@
   },
   {
     "type": "dependency",
-    "from": "orchestrator/src/cli/dispatch.ts",
-    "to": "orchestrator/src/core/store/task-store.ts",
-    "unresolvedTo": "../core/store/task-store",
-    "dependencyTypes": [
-      "local",
-      "dynamic-import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-cli-to-core"
-    }
-  },
-  {
-    "type": "dependency",
     "from": "orchestrator/src/cli/release-notes-watch.tsx",
     "to": "orchestrator/src/core/daemon/view/release-notes.ts",
     "unresolvedTo": "../core/daemon/view/release-notes",
@@ -2097,21 +2025,6 @@
     "from": "orchestrator/src/cli/test-adapter.ts",
     "to": "orchestrator/src/core/context.ts",
     "unresolvedTo": "../core/context",
-    "dependencyTypes": [
-      "local",
-      "type-only",
-      "import"
-    ],
-    "rule": {
-      "severity": "error",
-      "name": "no-cli-to-core"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "orchestrator/src/cli/test-adapter.ts",
-    "to": "orchestrator/src/core/store/task-store.ts",
-    "unresolvedTo": "../core/store/task-store",
     "dependencyTypes": [
       "local",
       "type-only",

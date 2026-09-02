@@ -27,7 +27,7 @@
  */
 
 import type { Command } from '../command'
-import type { DomainTaskStore } from '../../core/store/task-store'
+import type { DomainTaskStore } from '../../core/store/task-store-default'
 
 // ── Window resolution ─────────────────────────────────────────────────────────
 

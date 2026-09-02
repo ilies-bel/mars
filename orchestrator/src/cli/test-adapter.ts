@@ -17,7 +17,7 @@ import { parseArgs } from './args'
 import { registry } from './commands'
 import { dispatch, isUnknown } from './dispatch'
 import type { CommandDeps, DaemonClient } from './command'
-import type { DomainTaskStore } from '../core/store/task-store'
+import type { DomainTaskStore } from '../core/store/task-store-default'
 import type { OrchestratorContext } from '../core/context'
 
 export interface InProcessResult {

@@ -23,7 +23,7 @@
  */
 
 import type { OrchestratorContext } from '../core/context'
-import type { DomainTaskStore } from '../core/store/task-store'
+import type { DomainTaskStore } from '../core/store/task-store-default'
 import type { DaemonRequest } from '../core/daemon/protocol'
 import type { ParsedArgs } from './args'
 
