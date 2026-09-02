@@ -51,19 +51,6 @@ export const ensureVerifyGatesSchema = async (client: DbTx): Promise<void> => {
   await client.execute(`ALTER TABLE verify_gates ADD COLUMN IF NOT EXISTS timeout_min REAL`)
   await client.execute(`ALTER TABLE verify_gates ADD COLUMN IF NOT EXISTS evidence TEXT`)
   await client.execute(`UPDATE verify_gates SET state = 'active' WHERE state IS NULL`)
-  // Data migration 2026-09-02: the `scope=orchestrator, name=test` gate runs
-  // `npm test` (vitest run over the full suite — 844 files, maxForks=1).
-  // Measured wall-clock: ~3 h 20 min.  The original timeout_min=20 was off by
-  // ~10×; the gate always timed out at the integration boundary and the signal
-  // was never actionable.  Drop required=1 so it no longer blocks merges.
-  // A scoped task-tier gate (fast unit subset) should be added to restore the
-  // merge-time signal at a tractable budget.
-  await client.execute(
-    `UPDATE verify_gates
-        SET required = 0
-      WHERE scope = 'orchestrator' AND name = 'test'
-        AND tier = 'integration' AND required = 1 AND (timeout_min IS NULL OR timeout_min <= 20)`,
-  )
 }
 
 /** Runtime validation shared by gate creation, onboarding, and workflow input. */

@@ -121,6 +121,57 @@ describe('migration 0002 PostgreSQL cutover', () => {
     }
   })
 
+  it('runs the orchestrator/test required=0 data migration on daemon start (schema 0040)', async () => {
+    // Regression: the migration was placed in ensureVerifyGatesSchema, which is
+    // only called by `mars init`. On every EXISTING repo the migration was
+    // dead code — it ran only against a brand-new database created by `mars
+    // init`, never via runCompositionRootMigrations → ensureSchema.
+    //
+    // This test asserts the migration is reachable from the daemon's startup
+    // path specifically.  It simulates an existing install that already has the
+    // gate row (required=1) and has NOT yet applied schema 0040.
+    const db = openDb(`pglite://verify-gates-required-migration-${randomUUID()}`)
+    try {
+      // 1. Bootstrap the full schema (all tables + SCHEMA_VERSION recorded).
+      await ensureSchema(db)
+
+      // 2. Insert the matching gate row as an existing install would have it.
+      await db.execute({
+        sql: `INSERT INTO verify_gates
+                (id, scope, name, cmd, args_json, required, tier, source, created_at, state, timeout_min)
+              VALUES (?, 'orchestrator', 'test', 'npm', '["test"]', 1, 'integration', 'human', ?, 'active', 20)`,
+        args: ['gate-orch-test', 1000],
+      })
+
+      // 3. Confirm the row exists with required=1 before the migration runs.
+      const before = await db.execute(
+        `SELECT required FROM verify_gates WHERE scope = 'orchestrator' AND name = 'test'`,
+      )
+      expect(before.rows[0]).toMatchObject({ required: 1 })
+
+      // 4. Simulate the daemon restarting with the new binary (schema 0040
+      //    not yet recorded): remove SCHEMA_VERSION from schema_migrations so
+      //    ensureSchema runs the full DDL batch again.
+      await db.execute({
+        sql: `DELETE FROM schema_migrations WHERE version = ?`,
+        args: [SCHEMA_VERSION],
+      })
+
+      // 5. Daemon startup: runCompositionRootMigrations calls ensureSchema.
+      //    SCHEMA_VERSION is NOT in schema_migrations → full DDL runs → data
+      //    migration sets required = 0 for the matching gate.
+      await ensureSchema(db)
+
+      // 6. The gate must now have required=0.
+      const after = await db.execute(
+        `SELECT required FROM verify_gates WHERE scope = 'orchestrator' AND name = 'test'`,
+      )
+      expect(after.rows[0]).toMatchObject({ required: 0 })
+    } finally {
+      await db.close()
+    }
+  })
+
   it('supports time-window task queries without callers casting updated_at', async () => {
     const db = openDb(`pglite://task-timestamp-range-${randomUUID()}`)
     try {
