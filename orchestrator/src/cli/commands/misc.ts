@@ -124,10 +124,31 @@ const uiLaunch: Command = {
 
 // ── kpi ───────────────────────────────────────────────────────────────────
 
+/**
+ * KPI metric keys that support per-arc drill-down and drift acknowledgment.
+ * Used by `kpi drill` and `kpi ack` to validate the <key> positional.
+ */
+const KPI_METRIC_KEYS = [
+  'cost_per_arc',
+  'failure_rate',
+  'autonomous_completion_rate',
+  'recovery_success_rate',
+] as const
+type KpiMetricKey = (typeof KPI_METRIC_KEYS)[number]
+const isKpiMetricKey = (k: string | undefined): k is KpiMetricKey =>
+  k !== undefined && (KPI_METRIC_KEYS as readonly string[]).includes(k)
+
 const kpiSnapshot: Command = {
   path: 'kpi snapshot',
   summary: 'take a KPI snapshot (JSON to stdout)',
-  usage: 'usage: mars kpi snapshot',
+  usage: 'usage: mars kpi snapshot [--exclude-planner-slicer]',
+  flags: [
+    {
+      syntax: '--exclude-planner-slicer',
+      description:
+        'exclude Planner/Slicer trace events from the cost_per_arc distribution',
+    },
+  ],
   run: async (_args, deps) => {
     const { takeKpiSnapshot } = await import('../../core/lib/kpi-snapshots.js')
     const { getDefaultTaskStore } = await import('../../core/store/task-store-default.js')
@@ -157,12 +178,69 @@ const kpiShow: Command = {
   },
 }
 
+const kpiDrill: Command = {
+  path: 'kpi drill',
+  summary: 'show per-arc breakdown for a KPI key (JSON to stdout)',
+  usage: `usage: mars kpi drill <${KPI_METRIC_KEYS.join('|')}>`,
+  run: async (args, deps) => {
+    const key = args.positional[0]
+    if (!isKpiMetricKey(key)) {
+      deps.err(
+        `mars kpi drill: unknown key '${key ?? ''}'\n` +
+          `usage: mars kpi drill <${KPI_METRIC_KEYS.join('|')}>`,
+      )
+      return { code: 1 }
+    }
+    const { listKpiArcs } = await import('../../core/daemon/kpi-store.js')
+    const result = await listKpiArcs(key)
+    deps.out(JSON.stringify(result, null, 2))
+    return { code: 0 }
+  },
+}
+
+const kpiAck: Command = {
+  path: 'kpi ack',
+  summary: 'acknowledge the current KPI drift level as the new baseline',
+  usage: `usage: mars kpi ack <${KPI_METRIC_KEYS.join('|')}> [--reason <text>]`,
+  flags: [
+    {
+      syntax: '--reason <text>',
+      description: 'note explaining why this drift level is expected',
+    },
+  ],
+  run: async (args, deps) => {
+    const key = args.positional[0]
+    if (!isKpiMetricKey(key)) {
+      deps.err(
+        `mars kpi ack: missing or unknown key '${key ?? ''}'\n` +
+          `usage: mars kpi ack <${KPI_METRIC_KEYS.join('|')}>`,
+      )
+      return { code: 1 }
+    }
+    const reason = args.flags['--reason'] ?? ''
+    const { resolve } = await import('node:path')
+    const { readFileSync, writeFileSync } = await import('node:fs')
+    const ackPath = resolve(deps.ctx.stateDir, 'kpi-acks.json')
+    let acks: Record<string, { ackedAt: string; reason: string }> = {}
+    try {
+      acks = JSON.parse(readFileSync(ackPath, 'utf8')) as typeof acks
+    } catch {
+      // file absent — start fresh
+    }
+    const ackedAt = new Date().toISOString()
+    acks[key] = { ackedAt, reason }
+    writeFileSync(ackPath, JSON.stringify(acks, null, 2) + '\n')
+    deps.out(`acknowledged ${key} drift baseline (ackedAt: ${ackedAt})`)
+    return { code: 0 }
+  },
+}
+
 const kpiGroup: Command = {
   path: 'kpi',
   summary: 'kpi subcommands',
-  usage: 'usage: mars kpi <snapshot|show|compare>',
+  usage: 'usage: mars kpi <snapshot|show|drill|ack|compare>',
   run: (_args, deps) => {
-    deps.err('usage: mars kpi <snapshot|show|compare>')
+    deps.err('usage: mars kpi <snapshot|show|drill|ack|compare>')
     return { code: 1 }
   },
 }
@@ -585,6 +663,8 @@ export const miscCommands: readonly Command[] = [
   uiStatus,
   kpiSnapshot,
   kpiShow,
+  kpiDrill,
+  kpiAck,
   kpiGroup,
   worktreePrune,
   worktreeClean,
