@@ -3133,6 +3133,7 @@ export const updateTask = async (
       | 'requeueDispatchUptimeMs'
       | 'stallDiagnostics'
       | 'quotaRejectedAttempts'
+      | 'envApiUnreachableAttempts'
     > & {
       /** Typed explanation persisted when a task is deliberately dropped. */
       dropReason?: TaskDropReason | null
@@ -3392,6 +3393,10 @@ export const updateTask = async (
   if (patch.quotaRejectedAttempts !== undefined) {
     fields.push('quota_rejected_attempts = ?')
     args.push(patch.quotaRejectedAttempts)
+  }
+  if (patch.envApiUnreachableAttempts !== undefined) {
+    fields.push('env_api_unreachable_attempts = ?')
+    args.push(patch.envApiUnreachableAttempts)
   }
   fields.push('updated_at = ?')
   args.push(new Date().toISOString())

@@ -149,6 +149,7 @@ export interface Task {
   requeueAnchorMs?: number | null
   requeueDispatchUptimeMs?: number | null
   quotaRejectedAttempts?: number
+  envApiUnreachableAttempts?: number
   qaReport?: QaReport | null
   deferrable: boolean
   createdAt: string
@@ -303,6 +304,7 @@ SELECT
   t.qa_report_json,
   t.deferrable,
   t.quota_rejected_attempts,
+  t.env_api_unreachable_attempts,
   t.created_at, t.updated_at
 FROM tasks t`
 
@@ -468,6 +470,7 @@ export const rowToTask = (row: Record<string, unknown>): Task => {
     qaReport: parseQaReport(row.qa_report_json),
     deferrable: Number(row.deferrable ?? 0) === 1,
     quotaRejectedAttempts: Number(row.quota_rejected_attempts ?? 0),
+    envApiUnreachableAttempts: Number(row.env_api_unreachable_attempts ?? 0),
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
   }

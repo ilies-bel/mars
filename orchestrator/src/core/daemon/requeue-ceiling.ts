@@ -120,12 +120,17 @@ export const checkAndEscalateRequeueCeiling = async (
   // A fresh task with no step records is not stuck in the re-queue cycle.
   if (maxAttempt === 0) return false
 
-  // Quota-rejected attempts (provider rate/spend-limit rejections) do not
-  // represent work the coder performed: the coder never ran, the worktree is
-  // untouched, and the rejection is a fleet-wide environmental condition that
-  // no per-task retry can resolve. Subtracting them from the attempt count
-  // gives the number of real dispatch attempts that count toward the ceiling.
-  const effectiveAttempts = Math.max(0, maxAttempt - (t.quotaRejectedAttempts ?? 0))
+  // Quota-rejected attempts (provider rate/spend-limit rejections) and
+  // env-api-unreachable attempts (DNS/network failure before any code ran)
+  // do not represent work the coder performed: the coder never ran, the
+  // worktree is untouched, and the rejection is a fleet-wide environmental
+  // condition that no per-task retry can resolve. Subtracting both from the
+  // attempt count gives the number of real dispatch attempts that count
+  // toward the ceiling.
+  const effectiveAttempts = Math.max(
+    0,
+    maxAttempt - (t.quotaRejectedAttempts ?? 0) - (t.envApiUnreachableAttempts ?? 0),
+  )
   if (effectiveAttempts === 0) return false
 
   // Compute the retry-start anchor.

@@ -137,6 +137,20 @@ export const errorClassRules: readonly ErrorClassRule[] = [
     matchFull: /hit your usage limit|usage limit reached|rate\/usage limit/i,
   },
   {
+    // API connectivity failure: the coder exited because the network was
+    // unreachable (DNS resolution, TCP connect, or socket timeout) rather
+    // than because the task code was wrong. classifyCoderExit re-queues
+    // these without consuming the fix-task recovery budget; this rule fires
+    // only when the env-api-unreachable ceiling is reached and the failure
+    // is stamped for real. Distinct from `provider-quota` (which is a
+    // successful TCP connection rejected at the API layer) and
+    // `provider-transport-dropped` (a stream severed mid-response after a
+    // successful connect).
+    errorClass: 'api-unreachable',
+    match: /ENOTFOUND|ECONNREFUSED|EAI_AGAIN|Unable to connect to API/i,
+    matchFull: /ENOTFOUND|ECONNREFUSED|EAI_AGAIN|Unable to connect to API|terminal_reason.*api_error/i,
+  },
+  {
     // Behaviour verification (the behaviour-verify step) reached the live
     // surface and found at least one Definition-of-Done criterion observably
     // contradicted, with screenshot evidence. The step emits this exact

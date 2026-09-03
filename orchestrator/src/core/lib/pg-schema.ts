@@ -347,6 +347,7 @@ const DDL: readonly string[] = [
     requeue_anchor_ms    bigint,
     requeue_dispatch_uptime_ms bigint,
     quota_rejected_attempts bigint NOT NULL DEFAULT 0,
+    env_api_unreachable_attempts bigint NOT NULL DEFAULT 0,
     created_at           timestamptz NOT NULL,
     updated_at           timestamptz NOT NULL
   )`,
@@ -965,6 +966,13 @@ const DDL: readonly string[] = [
   // The poll-fallback ceiling subtracts this from maxAttempt to compute the
   // effective real-work attempt count, so quota storms do not burn the ceiling.
   `ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS quota_rejected_attempts bigint NOT NULL DEFAULT 0`,
+  // Counter of API-connectivity-failure re-queues: attempts where the coder
+  // exited because the network was unreachable (ENOTFOUND, ECONNREFUSED, etc.),
+  // NOT because of a code defect. The poll-fallback ceiling subtracts these from
+  // the effective attempt count so network outages do not burn the code-failure
+  // retry ceiling. A separate per-task ceiling (ENV_API_UNREACHABLE_MAX_ATTEMPTS)
+  // is enforced in classifyCoderExit before the fix-task path is reached.
+  `ALTER TABLE IF EXISTS tasks ADD COLUMN IF NOT EXISTS env_api_unreachable_attempts bigint NOT NULL DEFAULT 0`,
   // `evaporated_at` -> `closed_at`. This block must stay idempotent: the whole
   // DDL batch replays on EVERY daemon boot inside one transaction, so a single
   // failing statement aborts the batch and the daemon can never start again.

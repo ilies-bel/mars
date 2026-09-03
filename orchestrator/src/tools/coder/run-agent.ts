@@ -674,8 +674,10 @@ export const runAgent = async (
           continue
         }
 
-        // Any other disposition (success, terminal-recovery on attempt 1, any exit
-        // on attempt 2) falls through to the existing handlers below.
+        // Any other disposition (success, terminal-recovery, terminal-env-unreachable
+        // on attempt 1, any exit on attempt 2) falls through to the existing handlers
+        // below. terminal-env-unreachable is handled in classifyCoderExit, which
+        // re-queues the task without consuming the fix-task recovery budget.
         break
       }
     } finally {

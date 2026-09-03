@@ -122,6 +122,21 @@ export type WorkflowTerminalKind =
    * splitting the task, not investigating the merge machinery.
    */
   | 'merge-salvage-checkpoint-tip-no-progress'
+  /**
+   * The coder exited because the API was network-unreachable (ENOTFOUND /
+   * ECONNREFUSED / EAI_AGAIN) rather than due to a code defect. The task
+   * has been re-queued without touching the fix-task recovery budget
+   * (ADR-0040). A distinct kind from `coder-exit-nonzero` so the storm
+   * breaker and action queue can tell them apart.
+   */
+  | 'env-api-unreachable'
+  /**
+   * The per-task env-api-unreachable ceiling (ENV_API_UNREACHABLE_MAX_ATTEMPTS)
+   * was reached. The task has been marked `failed` with an `env:api-unreachable`
+   * signature and an operator action-queue item raised. No fix-task was spawned;
+   * resolve by checking network connectivity and using `mars continue <id>`.
+   */
+  | 'env-api-unreachable-ceiling'
 
 export interface WorkflowTerminalMeta {
   /** Unix epoch seconds at which the provider quota resets. Only set for `quota-rejected`. */

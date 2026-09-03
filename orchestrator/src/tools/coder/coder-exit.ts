@@ -363,6 +363,101 @@ export const classifyCoderExit = async (args: {
     throw new WorkflowTerminalError('quota-rejected', QUOTA_REJECTED_ABORT_MESSAGE(taskId, r.quotaRejected.resetsAt), { resetsAt: r.quotaRejected.resetsAt })
   }
 
+  // API connectivity failure (ENOTFOUND / ECONNREFUSED / EAI_AGAIN /
+  // api_retry@max_retries / terminal_reason:api_error).
+  //
+  // Design decisions (2026-09-03 dns-outage incident post-mortem):
+  //
+  // 1. BACKOFF: No explicit per-task backoff timer. The dispatch loop's
+  //    natural overhead (queue polling, semaphore scheduling) provides de facto
+  //    spacing between attempts, and DNS outages resolve in seconds to minutes
+  //    — well inside the 2-hour requeue-ceiling window. Adding a per-task
+  //    sleep-then-requeue would require either a background timer (complexity)
+  //    or a new scheduler field (schema change). The existing
+  //    REQUEUE_MAX_RETRY_MS guard (2 h) is the backstop if a network partition
+  //    persists. Revisit if future incidents show a need for explicit delay.
+  //
+  // 2. BOUNDING: ENV_API_UNREACHABLE_MAX_ATTEMPTS (10) — a generous ceiling
+  //    matching the Claude CLI's own api_retry limit. After this many env-
+  //    unreachable re-queues the task fails with `env:api-unreachable` and an
+  //    operator action-queue item. The fix-task recovery budget (ADR-0040) is
+  //    NOT consumed — this path never calls handleTaskFailureWithFixTask.
+  //    The envApiUnreachableAttempts counter is discounted from the
+  //    requeue-ceiling effective-attempt count so env failures do not trigger
+  //    the "stuck in re-queue" escalation.
+  if (r.exitCode !== 0 && isApiConnectivityFailure(r)) {
+    const currentTask = await getTask(taskId, store)
+    const nextAttempts = (currentTask?.envApiUnreachableAttempts ?? 0) + 1
+
+    if (nextAttempts <= ENV_API_UNREACHABLE_MAX_ATTEMPTS) {
+      // Below ceiling — re-queue WITHOUT consuming the fix-task recovery slot.
+      await updateTask(
+        taskId,
+        { status: 'queued', envApiUnreachableAttempts: nextAttempts },
+        store,
+      )
+      console.log(
+        `[code] task ${taskId}: env-api-unreachable (attempt ${nextAttempts}/${ENV_API_UNREACHABLE_MAX_ATTEMPTS}); re-queued without fix-task`,
+      )
+      throw new WorkflowTerminalError(
+        'env-api-unreachable',
+        `task ${taskId} re-queued: API unreachable (attempt ${nextAttempts}/${ENV_API_UNREACHABLE_MAX_ATTEMPTS}); network connectivity failure, not a code defect`,
+      )
+    }
+
+    // Ceiling reached — fail for real with a distinct signature so the storm
+    // breaker and action queue can distinguish it from code:coder-exit-nonzero.
+    // Still no fix-task: an operator alert is the correct escalation when the
+    // network has been broken for this many consecutive attempts.
+    const errorMsg = `env-api-unreachable ceiling reached (${nextAttempts} attempts): API was unreachable for all ${nextAttempts} dispatch attempts — DNS or network failure, not a code defect`
+    await updateTask(
+      taskId,
+      {
+        status: 'failed',
+        error: errorMsg,
+        failedPhase: 'code',
+        failureReason: 'env:api-unreachable',
+        failureReasonCode: 'env:api-unreachable',
+        failureSignature: computeFailureSignature(
+          'env:api-unreachable',
+          'API Error: Unable to connect to API ENOTFOUND',
+        ),
+        envApiUnreachableAttempts: nextAttempts,
+      },
+      store,
+    )
+    await raiseActionQueueItem({
+      kind: 'failed',
+      category: 'orchestrator',
+      priority: 'urgent',
+      title: `Task ${taskId}: env-api-unreachable ceiling reached (${nextAttempts} attempts)`,
+      body: [
+        `Task ${taskId} failed to reach the API ${nextAttempts} consecutive times (ceiling: ${ENV_API_UNREACHABLE_MAX_ATTEMPTS}).`,
+        `This is a network-level failure (ENOTFOUND / ECONNREFUSED / EAI_AGAIN), not a code defect.`,
+        `The fix-task recovery budget was NOT consumed — this is an operator-resolvable condition.`,
+        ``,
+        `Resolve: check network connectivity, then \`mars continue ${taskId}\` to resume.`,
+      ].join('\n'),
+      payload: { taskId, envApiUnreachableAttempts: nextAttempts },
+      context: { repoRoot: process.env.MARS_REPO ?? null },
+      raisedBy: 'workflow:code:env-api-unreachable-ceiling',
+      signature: `env-api-unreachable-ceiling:${taskId}`,
+      originTaskId: taskId,
+    }).catch((raiseErr) => {
+      console.error(
+        `[code] task ${taskId}: env-api-unreachable ceiling action-queue raise errored:`,
+        raiseErr,
+      )
+    })
+    console.log(
+      `[code] task ${taskId}: env-api-unreachable ceiling reached (${nextAttempts} attempts); task failed with env:api-unreachable signature`,
+    )
+    throw new WorkflowTerminalError(
+      'env-api-unreachable-ceiling',
+      `task ${taskId} failed: env-api-unreachable ceiling reached (${nextAttempts} attempts)`,
+    )
+  }
+
   // Catch-all for any OTHER non-zero coder exit (138/context-exhausted is the
   // only sentinel handled above). Previously such an exit fell straight through
   // to the normal return: verify then no-ops on the untouched worktree and an
@@ -1027,6 +1122,87 @@ export interface CoderRunOutcome {
    * identically to `false` — only the Claude adapter currently populates it.
    */
   transportDropped?: boolean
+  /**
+   * True when the run failed due to an API connectivity failure (ENOTFOUND,
+   * ECONNREFUSED, EAI_AGAIN, etc.) rather than a code defect. Optional/
+   * undefined is treated as `false`. Callers may set this explicitly; the
+   * classifier also derives it from `stderr` and `conversation` when absent.
+   */
+  apiUnreachable?: boolean
+}
+
+/**
+ * Maximum number of env-api-unreachable re-queues before the task is failed
+ * for real (with an `env:api-unreachable` signature, no fix-task spawned).
+ * Matches the Claude CLI's own built-in api_retry ceiling so the task never
+ * outlives a failure the CLI already retried exhaustively.
+ *
+ * Deliberately generous: DNS outages resolve in seconds to minutes; 10
+ * attempts across natural dispatch delays gives ~10–30 minutes of tolerance.
+ */
+const ENV_API_UNREACHABLE_MAX_ATTEMPTS = 10
+
+/**
+ * Detect whether a finished coder run failed due to API connectivity failure —
+ * a network-level unreachability (ENOTFOUND, ECONNREFUSED, EAI_AGAIN, …) that
+ * is independent of the task's code.
+ *
+ * Detection sources (highest to lowest confidence):
+ *  1. Caller pre-set `r.apiUnreachable === true` (explicit override).
+ *  2. Stderr text matching known connectivity error codes.
+ *  3. Event-stream events: `{ type: 'system', subtype: 'api_retry', attempt,
+ *     max_retries }` where `attempt >= max_retries` (CLI exhausted its own
+ *     retry loop), or `{ type: 'result', terminal_reason: 'api_error' }`.
+ *  4. Result-event text containing connectivity error codes.
+ *
+ * Used by both {@link classifyCoderExitDisposition} (pure classifier) and
+ * {@link classifyCoderExit} (full handler), so it takes the minimal shared
+ * shape present on both {@link CoderRunOutcome} and {@link CoderWorkerRunResult}.
+ */
+function isApiConnectivityFailure(r: {
+  stderr: string
+  conversation: readonly unknown[]
+  apiUnreachable?: boolean
+}): boolean {
+  if (r.apiUnreachable === true) return true
+
+  // Stderr: plain-text connectivity error codes from the CLI or Node.js.
+  if (/ENOTFOUND|ECONNREFUSED|EAI_AGAIN|Unable to connect to API/i.test(r.stderr)) return true
+
+  // Event stream: scan for api_retry-at-max and result:api_error.
+  for (const event of r.conversation) {
+    if (event === null || typeof event !== 'object') continue
+    const e = event as Record<string, unknown>
+
+    // { type: 'system', subtype: 'api_retry', attempt: N, max_retries: N }
+    // The CLI emits this on every retry attempt; reaching max_retries means it
+    // exhausted its own bounded retry loop — identical to the 2026-09-03 incident.
+    if (e['type'] === 'system' && e['subtype'] === 'api_retry') {
+      const attempt = e['attempt']
+      const maxRetries = e['max_retries']
+      if (
+        typeof attempt === 'number' &&
+        typeof maxRetries === 'number' &&
+        attempt >= maxRetries
+      ) {
+        return true
+      }
+    }
+
+    // { type: 'result', terminal_reason: 'api_error' }
+    if (e['type'] === 'result' && e['terminal_reason'] === 'api_error') return true
+
+    // Result text containing connectivity error codes (fallback).
+    const resultText = e['result']
+    if (
+      typeof resultText === 'string' &&
+      /ENOTFOUND|ECONNREFUSED|EAI_AGAIN|Unable to connect to API/i.test(resultText)
+    ) {
+      return true
+    }
+  }
+
+  return false
 }
 
 /**
@@ -1037,6 +1213,10 @@ export interface CoderRunOutcome {
  *   single lightweight re-dispatch on the same worktree is safe.
  * - `terminal-recovery` — the existing fix-task / recovery path applies; the
  *   run must not enter the retry loop.
+ * - `terminal-env-unreachable` — network-level connectivity failure; the task
+ *   should be re-queued WITHOUT consuming the fix-task recovery budget. The
+ *   full handler ({@link classifyCoderExit}) enforces a separate ceiling
+ *   ({@link ENV_API_UNREACHABLE_MAX_ATTEMPTS}) after which it fails for real.
  * - `terminal-manual` — operator intervention required (reserved for future use).
  * - `terminal-operator-stop` — operator cancelled; no retry, no recovery.
  */
@@ -1044,6 +1224,7 @@ export type CoderExitDisposition =
   | { kind: 'success' }
   | { kind: 'retryable-transient'; reason: string }
   | { kind: 'terminal-recovery'; reason: string }
+  | { kind: 'terminal-env-unreachable'; reason: string }
   | { kind: 'terminal-manual' }
   | { kind: 'terminal-operator-stop' }
 
@@ -1062,6 +1243,12 @@ export type CoderExitDisposition =
  *    (has its own recovery path; must not enter the retry loop)
  * 4. `quotaRejected !== null` → `terminal-recovery`
  *    (has its own re-queue mechanism; must not enter the retry loop)
+ * 4.5. API connectivity failure (ENOTFOUND / ECONNREFUSED / EAI_AGAIN /
+ *    api_retry@max_retries / terminal_reason:api_error) →
+ *    `terminal-env-unreachable`  (re-queued without consuming the fix-task
+ *    recovery budget; checked BEFORE the message-count rules because the
+ *    CLI's own retry-exhaustion event can land in the conversation regardless
+ *    of how many messages were exchanged)
  * 5. `transportDropped === true` → `retryable-transient`
  *    (the provider's own connection was severed mid-response — nothing about
  *    the task was tested, regardless of exit code or message count; safe to
@@ -1105,6 +1292,22 @@ export function classifyCoderExitDisposition({
   // mechanism; the retry loop must not interfere.
   if (r.quotaRejected !== null) {
     return { kind: 'terminal-recovery', reason: 'quota-rejected' }
+  }
+
+  // Rule 4.5 — API connectivity failure (ENOTFOUND / ECONNREFUSED /
+  // EAI_AGAIN / api_retry@max_retries / terminal_reason:api_error).
+  //
+  // Checked BEFORE the message-count rules because the CLI's own retry-
+  // exhaustion event (`api_retry` with attempt === max_retries) can appear
+  // in the conversation regardless of how many real messages were exchanged.
+  // Without this guard, a connectivity failure with messages would fall
+  // through to Rule 9 (`natural-exit`) and spawn a fix-task — exactly the
+  // 2026-09-03 incident that burned eight recovery slots on a DNS outage.
+  //
+  // The full handler (classifyCoderExit) enforces a per-task ceiling and
+  // re-queues without touching the fix-task recovery budget.
+  if (isApiConnectivityFailure(r)) {
+    return { kind: 'terminal-env-unreachable', reason: 'api-unreachable' }
   }
 
   // Rule 5 — provider transport failure: the connection to the API was

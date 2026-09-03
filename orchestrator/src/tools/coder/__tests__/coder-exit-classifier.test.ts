@@ -319,4 +319,159 @@ describe('classifyCoderExitDisposition', () => {
       expect(result.reason).toBe('context-budget-exhausted')
     })
   })
+
+  // ---------------------------------------------------------------------------
+  // Regression: 2026-09-03 DNS-outage incident (8 tasks burned recovery budget)
+  // ---------------------------------------------------------------------------
+  //
+  // A DNS outage caused every coder running at the time to exhaust its 10 API
+  // retries and exit 1. Each was classified as `code:coder-exit-nonzero`,
+  // spawned a fix-task (consuming its single recovery slot), and the fix-tasks
+  // died the same way — leaving 8 origins permanently failed with no remaining
+  // recovery budget and nothing wrong with their code.
+  //
+  // The fix: classify API-connectivity failures as `terminal-env-unreachable`
+  // so classifyCoderExit re-queues without touching the fix-task budget.
+  describe('terminal-env-unreachable — API connectivity failures', () => {
+    it('classifies ENOTFOUND in stderr as terminal-env-unreachable (2026-09-03 regression)', () => {
+      // The exact shape that burned 8 recovery slots: the Claude CLI's own
+      // "API Error: Unable to connect to API (ENOTFOUND)" appears in stderr
+      // after exhausting its api_retry budget.
+      const result = classifyCoderExitDisposition({
+        r: makeOutcome({
+          exitCode: 1,
+          stderr: 'API Error: Unable to connect to API (ENOTFOUND api.anthropic.com)',
+          conversation: [{}], // one message — the natural-exit rule would fire here without the fix
+        }),
+        aborted: NOT_ABORTED,
+      })
+      expect(result.kind).toBe('terminal-env-unreachable')
+      if (result.kind !== 'terminal-env-unreachable') return
+      expect(result.reason).toBe('api-unreachable')
+    })
+
+    it('classifies ECONNREFUSED in stderr as terminal-env-unreachable', () => {
+      const result = classifyCoderExitDisposition({
+        r: makeOutcome({
+          exitCode: 1,
+          stderr: 'Error: connect ECONNREFUSED 127.0.0.1:443',
+          conversation: [{}],
+        }),
+        aborted: NOT_ABORTED,
+      })
+      expect(result.kind).toBe('terminal-env-unreachable')
+    })
+
+    it('classifies EAI_AGAIN in stderr as terminal-env-unreachable', () => {
+      const result = classifyCoderExitDisposition({
+        r: makeOutcome({
+          exitCode: 1,
+          stderr: 'getaddrinfo EAI_AGAIN api.anthropic.com',
+          conversation: [],
+        }),
+        aborted: NOT_ABORTED,
+      })
+      expect(result.kind).toBe('terminal-env-unreachable')
+    })
+
+    it('classifies api_retry@max_retries in the event stream as terminal-env-unreachable', () => {
+      // The exact event shape from the 2026-09-03 incident log:
+      //   {"type":"system","subtype":"api_retry","attempt":10,"max_retries":10,...}
+      // This appears in the conversation (event stream) after the CLI exhausts
+      // its own retry budget. Without the fix, a non-zero exit with messages
+      // would classify as `natural-exit` (terminal-recovery).
+      const result = classifyCoderExitDisposition({
+        r: makeOutcome({
+          exitCode: 1,
+          stderr: '',
+          conversation: [
+            { type: 'system', subtype: 'api_retry', attempt: 10, max_retries: 10 },
+            { type: 'result', is_error: true },
+          ],
+        }),
+        aborted: NOT_ABORTED,
+      })
+      expect(result.kind).toBe('terminal-env-unreachable')
+      if (result.kind !== 'terminal-env-unreachable') return
+      expect(result.reason).toBe('api-unreachable')
+    })
+
+    it('classifies terminal_reason:api_error in the event stream as terminal-env-unreachable', () => {
+      const result = classifyCoderExitDisposition({
+        r: makeOutcome({
+          exitCode: 1,
+          stderr: '',
+          conversation: [
+            { type: 'result', is_error: true, terminal_reason: 'api_error' },
+          ],
+        }),
+        aborted: NOT_ABORTED,
+      })
+      expect(result.kind).toBe('terminal-env-unreachable')
+    })
+
+    it('classifies explicit apiUnreachable=true as terminal-env-unreachable', () => {
+      // Callers that pre-compute the flag (e.g. after parsing stdout JSON) can
+      // set it explicitly without pattern-matching stderr or conversation.
+      const result = classifyCoderExitDisposition({
+        r: makeOutcome({
+          exitCode: 1,
+          stderr: '',
+          conversation: [],
+          apiUnreachable: true,
+        }),
+        aborted: NOT_ABORTED,
+      })
+      expect(result.kind).toBe('terminal-env-unreachable')
+    })
+
+    it('does NOT classify a genuine code failure as terminal-env-unreachable', () => {
+      // A real coder failure (non-zero exit, real conversation, no connectivity
+      // signals) must still route to fix-task recovery, unaffected by the fix.
+      const result = classifyCoderExitDisposition({
+        r: makeOutcome({
+          exitCode: 1,
+          stderr: 'TypeError: Cannot read properties of undefined (reading "id")',
+          conversation: [{}, {}, {}],
+        }),
+        aborted: NOT_ABORTED,
+      })
+      expect(result.kind).toBe('terminal-recovery')
+      if (result.kind !== 'terminal-recovery') return
+      expect(result.reason).toBe('natural-exit')
+    })
+
+    it('does NOT classify a partial api_retry (below max_retries) as unreachable', () => {
+      // api_retry events at attempt < max_retries are mid-flight retries, not
+      // exhaustion — the CLI may still succeed on a subsequent attempt.
+      const result = classifyCoderExitDisposition({
+        r: makeOutcome({
+          exitCode: 0,
+          stderr: '',
+          conversation: [
+            { type: 'system', subtype: 'api_retry', attempt: 3, max_retries: 10 },
+          ],
+        }),
+        aborted: NOT_ABORTED,
+      })
+      // Exit 0 → success; the api_retry is not exhausted
+      expect(result.kind).toBe('success')
+    })
+
+    it('terminal-env-unreachable beats natural-exit when ENOTFOUND appears in result text', () => {
+      // The ENOTFOUND string can also appear in a result event's text field;
+      // the classifier should catch it there too.
+      const result = classifyCoderExitDisposition({
+        r: makeOutcome({
+          exitCode: 1,
+          stderr: '',
+          conversation: [
+            { type: 'result', is_error: true, result: 'API Error: Unable to connect to API (ENOTFOUND)' },
+          ],
+        }),
+        aborted: NOT_ABORTED,
+      })
+      expect(result.kind).toBe('terminal-env-unreachable')
+    })
+  })
 })
