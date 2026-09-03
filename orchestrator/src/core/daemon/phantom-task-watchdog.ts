@@ -71,6 +71,37 @@ export const PHANTOM_TASK_KIND: ActionQueueKind = 'phantom-task'
 export const DEFAULT_CEILING_MS = 30 * 60_000
 
 /**
+ * Minimum sleep duration (in ms) that causes the phantom watchdog to skip a
+ * sweep pass. When the host was suspended, the wall clock advanced but the
+ * monotonic clock (process.hrtime.bigint) did not, so in-flight tasks appear
+ * to have exceeded the ceiling even though no actual stall occurred.
+ *
+ * 60 seconds is safely below the 30-minute phantom ceiling — a genuine
+ * 60-second scheduling delay cannot produce a false phantom — while being
+ * large enough to ignore sub-minute NTP clock adjustments and scheduling jitter.
+ */
+export const SLEEP_SKIP_THRESHOLD_MS = 60_000
+
+/**
+ * Clock snapshot passed by the sweep runner to enable sleep detection.
+ * Both wall-clock and monotonic timestamps are recorded at the start of the
+ * previous sweep so the current sweep can compute the elapsed time on both
+ * clocks and detect a divergence caused by host suspension.
+ */
+export interface SweepClock {
+  /** Wall-clock time (Date.now()) at the start of the previous sweep. */
+  prevWallMs: number
+  /**
+   * Monotonic time (process.hrtime.bigint() / 1_000_000, in ms) at the start
+   * of the previous sweep. Does NOT advance during host suspension on macOS
+   * and Linux, unlike the wall clock.
+   */
+  prevMonoMs: number
+  /** Monotonic time at the start of the current sweep (same reference as prevMonoMs). */
+  nowMonoMs: number
+}
+
+/**
  * Override this daemon-wide progress ceiling with
  * `MARS_PHANTOM_WATCHDOG_CEILING_MS`. It applies only after a worker has
  * emitted activity; an alive worker that has not emitted an event is never
@@ -192,10 +223,34 @@ export const sweepPhantomTasks = async (
   nowMs?: number,
   hasActiveMergeJob?: (taskId: string) => Promise<boolean>,
   isVerifyRunning?: (taskId: string) => boolean,
-): Promise<{ failed: string[]; requeued: string[] }> => {
+  sweepClock?: SweepClock,
+): Promise<{ failed: string[]; requeued: string[]; skippedSleepMs?: number }> => {
+  const now = nowMs ?? Date.now()
+
+  // ── Sleep detection ───────────────────────────────────────────────────────
+  // When the host is suspended, Date.now() (wall clock) advances by the full
+  // sleep duration while process.hrtime.bigint() (monotonic) does not. A sweep
+  // that fires immediately after a wake-up would see all in-flight tasks as
+  // far older than they really are, triggering spurious phantom failures.
+  //
+  // If the caller supplies a SweepClock and the divergence between wall-clock
+  // and monotonic elapsed time since the last sweep exceeds SLEEP_SKIP_THRESHOLD_MS,
+  // skip this sweep entirely. The next tick (5 min later) evaluates tasks fresh
+  // against accurate elapsed time.
+  //
+  // Reference incident: mars-f65bf202 was declared phantom THREE SECONDS before
+  // its setup step completed normally, solely because the machine had slept 16.4h.
+  if (sweepClock !== undefined) {
+    const wallElapsed = now - sweepClock.prevWallMs
+    const monoElapsed = sweepClock.nowMonoMs - sweepClock.prevMonoMs
+    const sleptMs = wallElapsed - monoElapsed
+    if (sleptMs > SLEEP_SKIP_THRESHOLD_MS) {
+      return { failed: [], requeued: [], skippedSleepMs: sleptMs }
+    }
+  }
+
   const { isProcessAlive } = await import('./paths')
   const alive = isAlive ?? isProcessAlive
-  const now = nowMs ?? Date.now()
   const ceiling = resolvedCeilingMs()
 
   // Index the in-flight snapshot for O(1) lookup by taskId.

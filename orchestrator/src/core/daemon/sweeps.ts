@@ -85,6 +85,13 @@ let dbBusyStage: import('./db-busy-watchdog').BusyEscalationStage | null = null
 // when not currently backlogged. Same rationale as dbBusyStage above.
 let backlogSince: number | null = null
 
+// Clock state for the phantom-watchdog sleep-detection (sweepPhantomTasks).
+// Carries the wall-clock and monotonic timestamps from the previous sweep tick
+// so the current tick can detect a divergence caused by host suspension.
+// Undefined until the first tick runs.
+let phantomLastWallMs: number | undefined
+let phantomLastMonoMs: number | undefined
+
 /**
  * The daemon's periodic reclamation sweeps, in one list instead of a run of
  * inline `setInterval` blocks in `server.ts`. Each entry is self-describing:
@@ -671,7 +678,28 @@ export const SWEEPS: readonly SweepSpec[] = [
     run: async ({ log, bus, tracker, drain, activeVerifyingTaskIds }) => {
       const { sweepPhantomTasks } = await import('./phantom-task-watchdog')
       const { getDefaultMergeJobStore } = await import('../store/merge-job-store')
-      const { failed, requeued } = await sweepPhantomTasks(
+
+      // Capture both clocks at the start of this tick so the sleep-detection
+      // comparison is consistent with the nowMs passed to sweepPhantomTasks.
+      const nowMs = Date.now()
+      const nowMonoMs = Number(process.hrtime.bigint()) / 1_000_000
+
+      // Build a SweepClock for sleep detection if we have a previous tick's
+      // snapshot. The first tick has no previous state so sleep detection is
+      // skipped for that one pass (acceptable: we cannot distinguish a daemon
+      // start from a wakeup on the very first tick).
+      const sweepClock =
+        phantomLastWallMs !== undefined && phantomLastMonoMs !== undefined
+          ? { prevWallMs: phantomLastWallMs, prevMonoMs: phantomLastMonoMs, nowMonoMs }
+          : undefined
+
+      // Always update the stored clock state, even when we end up skipping the
+      // sweep. This ensures the *next* tick's baseline is the wakeup moment, not
+      // the last pre-sleep tick, so the detection window stays accurate.
+      phantomLastWallMs = nowMs
+      phantomLastMonoMs = nowMonoMs
+
+      const { failed, requeued, skippedSleepMs } = await sweepPhantomTasks(
         tracker.inFlightSnapshot(),
         (id, _kind) => {
           // Mirror handleDrop(force=true): force-clear ONLY the tracker entry
@@ -683,10 +711,18 @@ export const SWEEPS: readonly SweepSpec[] = [
           void drain()
         },
         undefined,
-        undefined,
+        nowMs,
         (taskId) => getDefaultMergeJobStore().getActiveMergeJob(taskId).then((j) => j !== null),
         (taskId) => activeVerifyingTaskIds().has(taskId),
+        sweepClock,
       )
+
+      if (skippedSleepMs !== undefined) {
+        const sleptHours = (skippedSleepMs / 3_600_000).toFixed(1)
+        log(`[phantom-watchdog] skipped sweep: host slept ~${sleptHours}h since last pass`)
+        return
+      }
+
       if (failed.length > 0) {
         log(
           `[phantom-watchdog] auto-failed ${failed.length} phantom in-flight task(s): ${failed.join(', ')}`,

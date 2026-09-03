@@ -1612,3 +1612,143 @@ describe('sweepPhantomTasks — hung verify runner (child died, heartbeat stoppe
     expect(reloaded?.failureReasonCode).toBe('phantom-task:ceiling')
   })
 })
+
+// ── Host-sleep detection ─────────────────────────────────────────────────────
+//
+// Root cause of the mars-f65bf202 incident: the machine slept 16.4 h between
+// the setup step starting and the phantom-watchdog sweep firing on wake. The
+// wall clock advanced by the full sleep duration; the monotonic clock
+// (process.hrtime.bigint) did not. Every in-flight task appeared to have
+// exceeded the 30-minute ceiling even though the workers had been idle for
+// only seconds.
+//
+// Fix: sweepPhantomTasks accepts an optional SweepClock. When the wall-clock
+// elapsed since the last sweep is significantly larger than the monotonic
+// elapsed (divergence > SLEEP_SKIP_THRESHOLD_MS), the sweep is skipped and
+// skippedSleepMs is returned. The next tick fires ~5 min later and evaluates
+// tasks against accurate elapsed time.
+//
+// Two tests:
+//   a. Sleep scenario (wall >> mono): task NOT auto-failed, skippedSleepMs set.
+//   b. Genuine stall (wall ≈ mono, task old): task IS auto-failed as normal.
+
+describe('sweepPhantomTasks — host-sleep detection', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    delete process.env.MARS_PHANTOM_WATCHDOG_CEILING_MS
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('skips sweep entirely and returns skippedSleepMs when monotonic delta reveals host slept', async () => {
+    // Reproduces the mars-f65bf202 incident: the setup step completed, the
+    // machine slept 16.4 h, the phantom watchdog fired on wake. The task's
+    // updatedAt was 16h+ old — well past the 30-min ceiling — but the actual
+    // monotonic time elapsed since the last sweep was only ~5 minutes (the
+    // setInterval fired almost immediately on wake after the pre-sleep tick).
+    //
+    // The watchdog must detect the divergence and skip the sweep pass instead
+    // of auto-failing the task.
+    const { q, actionQueue, watchdog } = await loadModules(repo)
+    const nowMs = Date.now()
+    const task = await q.enqueueTask('long-running setup', undefined, { skipTriage: true })
+
+    // Task's updatedAt reflects the pre-sleep start: ~16 h ago in wall-clock.
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'running', updated_at = ? WHERE id = ?`,
+      args: [new Date(nowMs - 16 * 60 * 60_000).toISOString(), task.id],
+    })
+
+    const reclaimSlot = vi.fn()
+    const inFlightEntries = [
+      { taskId: task.id, kind: 'implement' as const, startedAt: nowMs - 16 * 60 * 60_000 },
+    ]
+
+    // SweepClock: wall-clock elapsed = 16 h, monotonic elapsed = 5 min.
+    // The large divergence (16 h - 5 min ≈ 16 h) exceeds SLEEP_SKIP_THRESHOLD_MS.
+    const sweepClock = {
+      prevWallMs: nowMs - 16 * 60 * 60_000,
+      prevMonoMs: 1_000,
+      nowMonoMs: 1_000 + 5 * 60_000,
+    }
+
+    const result = await watchdog.sweepPhantomTasks(
+      inFlightEntries,
+      reclaimSlot,
+      undefined,
+      nowMs,
+      undefined,
+      undefined,
+      sweepClock,
+    )
+
+    // Sweep was skipped: no tasks touched, slept duration reported back.
+    expect(result.failed).toHaveLength(0)
+    expect(result.requeued).toHaveLength(0)
+    expect(result.skippedSleepMs).toBeGreaterThan(0)
+
+    // Task must remain 'running' — the watchdog did nothing.
+    const reloaded = await q.getTask(task.id)
+    expect(reloaded?.status).toBe('running')
+
+    // No action-queue item raised.
+    const items = await actionQueue.listActionQueueItems('open')
+    expect(items).toHaveLength(0)
+
+    // reclaimSlot was never called.
+    expect(reclaimSlot).not.toHaveBeenCalled()
+  })
+
+  it('still auto-fails a genuinely stalled task when both clocks agree (no sleep)', async () => {
+    // Companion test: when wall-clock and monotonic elapsed are close (the
+    // machine was not sleeping), the task's updatedAt age is the authoritative
+    // signal and the ceiling must still fire normally.
+    const { q, watchdog } = await loadModules(repo)
+    const nowMs = Date.now()
+    const task = await q.enqueueTask('stalled work', undefined, { skipTriage: true })
+
+    // 31 minutes old — past the 30-min default ceiling.
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'running', updated_at = ? WHERE id = ?`,
+      args: [OLD_UPDATED_AT(nowMs), task.id],
+    })
+
+    const reclaimSlot = vi.fn()
+    const inFlightEntries = [
+      { taskId: task.id, kind: 'implement' as const, startedAt: nowMs - 35 * 60_000 },
+    ]
+
+    // SweepClock: both wall-clock and monotonic elapsed ≈ 5 min (normal tick).
+    // Divergence = 0 → no sleep detected → sweep proceeds as normal.
+    const sweepClock = {
+      prevWallMs: nowMs - 5 * 60_000,
+      prevMonoMs: 1_000,
+      nowMonoMs: 1_000 + 5 * 60_000,
+    }
+
+    const { failed, skippedSleepMs } = await watchdog.sweepPhantomTasks(
+      inFlightEntries,
+      reclaimSlot,
+      undefined,
+      nowMs,
+      undefined,
+      undefined,
+      sweepClock,
+    )
+
+    // No sleep detected.
+    expect(skippedSleepMs).toBeUndefined()
+
+    // Task must be failed: ceiling exceeded, in-flight entry present.
+    expect(failed).toContain(task.id)
+    const reloaded = await q.getTask(task.id)
+    expect(reloaded?.status).toBe('failed')
+    expect(reloaded?.failedPhase).toBe('code')
+    expect(reclaimSlot).toHaveBeenCalledWith(task.id, 'implement')
+  })
+})
