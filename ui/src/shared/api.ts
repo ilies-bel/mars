@@ -523,6 +523,55 @@ export const fetchCostPerMergedTask = async (
 }
 
 /**
+ * POST a proposal action (promote, dismiss, proposal.mockup, proposal.implement-live)
+ * to the `/api/actions` endpoint. Returns the response body so callers can
+ * extract `taskIds` / `taskId` from the result.
+ *
+ * Used by `ProposalActionRow` for all five action-button state machines.
+ * Exported here so it is importable from `@/shared/api` without duplicating
+ * the fetch boilerplate inside the component.
+ */
+export async function postAction(
+  op: string,
+  entityId: string,
+): Promise<{ taskIds?: string[] }> {
+  const r = await fetch(`${BASE}/api/actions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ op, entityId }),
+  })
+  if (!r.ok) {
+    let message = `POST /api/actions → ${r.status}`
+    try {
+      const body = await r.json() as { error?: string }
+      if (typeof body.error === 'string' && body.error.length > 0) message = body.error
+    } catch { /* ignore JSON parse errors */ }
+    throw new Error(message)
+  }
+  return r.json() as Promise<{ taskIds?: string[] }>
+}
+
+/**
+ * Open (or create) the grill chat thread seeded from a proposal.
+ * Returns the new thread id so the caller can navigate to `#/chat?thread=<id>`.
+ *
+ * Used by `ProposalActionRow`'s Grill handler. Exported alongside `postAction`
+ * so both are importable from `@/shared/api`.
+ */
+export async function startThreadFromProposal(
+  proposalId: string,
+): Promise<{ threadId: string }> {
+  const r = await fetch(
+    `${BASE}/api/proposals/${encodeURIComponent(proposalId)}/thread`,
+    { method: 'POST' },
+  )
+  if (!r.ok) {
+    throw new Error(`POST /api/proposals/${proposalId}/thread → ${r.status}`)
+  }
+  return r.json() as Promise<{ threadId: string }>
+}
+
+/**
  * Invoke a recovery action against the daemon (via the UI server proxy). `op`
  * is the registry verb; `entityId` is the task/worktree id, omitted for
  * process-level ops (`restart-daemon`). Throws an `ApiError` so the caller can

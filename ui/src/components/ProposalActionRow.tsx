@@ -1,64 +1,44 @@
-/**
- * ProposalActionRow — action buttons for draft proposals.
- *
- * Self-contained: owns all per-action state machines and calls the action API
- * helpers internally. The parent only needs to supply the proposal ID and
- * current status.
- *
- * Currently rendered for `draft` proposals (the parent guards the status before
- * mounting this component). The `status` prop is exposed so future callers that
- * gate different action sets per-status can pass the full lifecycle value without
- * a breaking interface change.
- */
-
 import { useCallback, useState } from 'react'
+import { postAction, startThreadFromProposal } from '@/shared/api'
 
-const BASE =
-  typeof import.meta !== 'undefined' && import.meta.env
-    ? (import.meta.env.VITE_API_BASE ?? '')
-    : ''
-
-async function postAction(op: string, entityId: string): Promise<{ taskIds?: string[]; taskId?: string }> {
-  const r = await fetch(`${BASE}/api/actions`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ op, entityId }),
-  })
-  if (!r.ok) {
-    let message = `POST /api/actions → ${r.status}`
-    try {
-      const body = (await r.json()) as { error?: string }
-      if (typeof body.error === 'string' && body.error.length > 0) message = body.error
-    } catch {
-      /* ignore JSON parse errors */
-    }
-    throw new Error(message)
-  }
-  return r.json() as Promise<{ taskIds?: string[]; taskId?: string }>
-}
-
-async function startThreadFromProposal(proposalId: string): Promise<{ threadId: string }> {
-  const r = await fetch(`${BASE}/api/proposals/${encodeURIComponent(proposalId)}/thread`, {
-    method: 'POST',
-  })
-  if (!r.ok) throw new Error(`POST /api/proposals/${proposalId}/thread → ${r.status}`)
-  return r.json() as Promise<{ threadId: string }>
-}
-
+/**
+ * Props for the `ProposalActionRow` component.
+ *
+ * The component is self-contained: it owns all per-action state machines and
+ * calls the action API helpers internally. The parent only needs to supply the
+ * minimal context that cannot be derived inside the component.
+ */
 export interface ProposalActionRowProps {
   /** ID of the proposal to act on. */
   proposalId: string
-  /** Current proposal lifecycle status; informational — parent should gate mounting on 'draft'. */
+  /** Current proposal lifecycle status; reserved for future conditional rendering. */
   status: string
   /**
-   * Called after a navigation-triggering action (Grill redirects to a chat
-   * thread). Lets the parent skip its own close animation, since the hash
-   * change will unmount it anyway.
+   * Called after a successful Dismiss so the parent can react (e.g. close the drawer).
+   * Optional — omit when no parent-level cleanup is needed on dismiss.
    */
-  onNavigate?: () => void
+  onDismissed?: () => void
+  /**
+   * Called when a navigation-triggering action (e.g. Grill) needs the parent to
+   * close without scheduling its own exit animation. Optional — the hash change
+   * from Grill already unmounts the drawer; pass only when an explicit pre-nav
+   * close is desirable.
+   */
+  onClose?: () => void
 }
 
-export const ProposalActionRow = ({ proposalId, onNavigate }: ProposalActionRowProps) => {
+/**
+ * Shared action row rendered inside the proposal detail drawer (and any other
+ * proposal surface that needs the same five actions). Encapsulates all async
+ * state machines for Promote / Grill / Mockup / Implement live / Dismiss.
+ *
+ * `postAction` and `startThreadFromProposal` are imported from `@/shared/api`
+ * so both are independently testable without mounting this component.
+ */
+export const ProposalActionRow = ({
+  proposalId,
+  onDismissed,
+}: ProposalActionRowProps) => {
   const [promoteState, setPromoteState] = useState<
     | { kind: 'idle' }
     | { kind: 'pending' }
@@ -85,10 +65,7 @@ export const ProposalActionRow = ({ proposalId, onNavigate }: ProposalActionRowP
   >({ kind: 'idle' })
 
   const [dismissState, setDismissState] = useState<
-    | { kind: 'idle' }
-    | { kind: 'pending' }
-    | { kind: 'done' }
-    | { kind: 'error'; message: string }
+    { kind: 'idle' } | { kind: 'pending' } | { kind: 'done' } | { kind: 'error'; message: string }
   >({ kind: 'idle' })
 
   const handlePromote = useCallback(async () => {
@@ -107,23 +84,26 @@ export const ProposalActionRow = ({ proposalId, onNavigate }: ProposalActionRowP
     setGrillState({ kind: 'pending' })
     try {
       const { threadId } = await startThreadFromProposal(proposalId)
-      // Signal the parent that navigation is about to happen, so it can skip
-      // its own close animation (the hash change unmounts the drawer anyway).
-      onNavigate?.()
+      // Navigate to the created thread. Do NOT call onClose() here —
+      // handleClose schedules onClose() for 180 ms later, which would call
+      // navigateReplace('#/progress') and overwrite the #/chat?thread=<id>
+      // destination. The hash change itself causes App.tsx to re-render, setting
+      // proposalId → null, which unmounts the drawer without any explicit close.
       if (typeof window !== 'undefined') {
         window.location.hash = `#/chat?thread=${encodeURIComponent(threadId)}`
       }
     } catch (err) {
       setGrillState({ kind: 'error', message: (err as Error).message })
     }
-  }, [proposalId, grillState.kind, onNavigate])
+  }, [proposalId, grillState.kind])
 
   const handleMockup = useCallback(async () => {
     if (mockupState.kind === 'pending') return
     setMockupState({ kind: 'pending' })
     try {
       const result = await postAction('proposal.mockup', proposalId)
-      setMockupState({ kind: 'done', taskId: result.taskId ?? '' })
+      const taskId = (result as { taskId?: string }).taskId ?? ''
+      setMockupState({ kind: 'done', taskId })
     } catch (err) {
       setMockupState({ kind: 'error', message: (err as Error).message })
     }
@@ -134,7 +114,8 @@ export const ProposalActionRow = ({ proposalId, onNavigate }: ProposalActionRowP
     setImplementLiveState({ kind: 'pending' })
     try {
       const result = await postAction('proposal.implement-live', proposalId)
-      setImplementLiveState({ kind: 'done', taskId: result.taskId ?? '' })
+      const taskId = (result as { taskId?: string }).taskId ?? ''
+      setImplementLiveState({ kind: 'done', taskId })
     } catch (err) {
       setImplementLiveState({ kind: 'error', message: (err as Error).message })
     }
@@ -146,10 +127,11 @@ export const ProposalActionRow = ({ proposalId, onNavigate }: ProposalActionRowP
     try {
       await postAction('dismiss', proposalId)
       setDismissState({ kind: 'done' })
+      onDismissed?.()
     } catch (err) {
       setDismissState({ kind: 'error', message: (err as Error).message })
     }
-  }, [proposalId, dismissState.kind])
+  }, [proposalId, dismissState.kind, onDismissed])
 
   return (
     <div
@@ -159,27 +141,25 @@ export const ProposalActionRow = ({ proposalId, onNavigate }: ProposalActionRowP
       {/* Promote */}
       {promoteState.kind === 'done' ? (
         <span className="font-mono text-micro text-primary">
-          {promoteState.taskId ? (
-            <>
-              Promoted →{' '}
-              <a
-                href={`#/task/${encodeURIComponent(promoteState.taskId)}`}
-                className="underline"
-              >
-                {promoteState.taskId}
-              </a>
-            </>
-          ) : (
-            'Promoted'
-          )}
+          {promoteState.taskId
+            ? (
+              <>
+                Promoted →{' '}
+                <a
+                  href={`#/task/${encodeURIComponent(promoteState.taskId)}`}
+                  className="underline"
+                >
+                  {promoteState.taskId}
+                </a>
+              </>
+            )
+            : 'Promoted'}
         </span>
       ) : (
         <button
           type="button"
           data-testid="btn-promote"
-          onClick={() => {
-            void handlePromote()
-          }}
+          onClick={() => { void handlePromote() }}
           disabled={promoteState.kind === 'pending'}
           className="rounded border border-primary/40 px-2 py-0.5 font-mono text-body text-primary hover:bg-primary/10 disabled:opacity-50"
         >
@@ -194,9 +174,7 @@ export const ProposalActionRow = ({ proposalId, onNavigate }: ProposalActionRowP
       <button
         type="button"
         data-testid="btn-grill"
-        onClick={() => {
-          void handleGrill()
-        }}
+        onClick={() => { void handleGrill() }}
         disabled={grillState.kind === 'pending'}
         className="rounded border border-primary/40 px-2 py-0.5 font-mono text-body text-primary hover:bg-primary/10 disabled:opacity-50"
       >
@@ -220,9 +198,7 @@ export const ProposalActionRow = ({ proposalId, onNavigate }: ProposalActionRowP
         <button
           type="button"
           data-testid="btn-mockup"
-          onClick={() => {
-            void handleMockup()
-          }}
+          onClick={() => { void handleMockup() }}
           disabled={mockupState.kind === 'pending'}
           className="rounded border border-primary/40 px-2 py-0.5 font-mono text-body text-primary hover:bg-primary/10 disabled:opacity-50"
         >
@@ -248,9 +224,7 @@ export const ProposalActionRow = ({ proposalId, onNavigate }: ProposalActionRowP
         <button
           type="button"
           data-testid="btn-implement-live"
-          onClick={() => {
-            void handleImplementLive()
-          }}
+          onClick={() => { void handleImplementLive() }}
           disabled={implementLiveState.kind === 'pending'}
           className="rounded border border-primary/40 px-2 py-0.5 font-mono text-body text-primary hover:bg-primary/10 disabled:opacity-50"
         >
@@ -268,9 +242,7 @@ export const ProposalActionRow = ({ proposalId, onNavigate }: ProposalActionRowP
         <button
           type="button"
           data-testid="btn-dismiss"
-          onClick={() => {
-            void handleDismiss()
-          }}
+          onClick={() => { void handleDismiss() }}
           disabled={dismissState.kind === 'pending'}
           className="rounded border border-primary/40 px-2 py-0.5 font-mono text-body text-muted-foreground hover:bg-primary/5 disabled:opacity-50"
         >

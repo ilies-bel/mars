@@ -3,48 +3,8 @@ import type { ReactNode } from 'react'
 import type { ProposalDetail, ProgressTask } from '@/shared/schemas'
 import { CopyButton } from '@/components/CopyButton'
 import { CollapsibleSection } from '@/components/CollapsibleSection'
+import { ProposalActionRow } from '@/components/ProposalActionRow'
 import { formatAbsoluteDate } from '@/shared/time'
-
-/**
- * Generic discriminated-union type for an async action button's lifecycle.
- * `TDone` carries any extra fields present in the `done` variant (e.g. `taskId`).
- *
- * Exported so the extracted `ProposalActionRow` component (consumer slice 1) can
- * reuse it for each of its per-action state machines without redeclaring the
- * union inline.
- */
-export type ActionButtonState<TDone extends Record<string, unknown> = Record<never, never>> =
-  | { kind: 'idle' }
-  | { kind: 'pending' }
-  | ({ kind: 'done' } & TDone)
-  | { kind: 'error'; message: string }
-
-/**
- * Props for the extracted `ProposalActionRow` component (consumer slice 1).
- *
- * The component is self-contained: it owns all per-action state machines and
- * calls the action API helpers internally. The parent only needs to supply the
- * minimal context that cannot be derived inside the component.
- *
- * Exported here so both the owner file (this drawer) and the new standalone
- * `ProposalActionRow` component share one canonical definition.
- */
-export interface ProposalActionRowProps {
-  /** ID of the proposal to act on. */
-  proposalId: string
-  /** Current proposal lifecycle status; controls which actions are visible. */
-  status: string
-  /** Whether a mockup file has already been generated for this proposal. */
-  mockupExists: boolean
-  /** Absolute URL of the mockup HTML file (for the "View mockup" link). */
-  mockupUrl: string
-  /**
-   * Called after a navigation-triggering action (e.g. Grill, which redirects
-   * to a chat thread). Lets the drawer skip its own close animation, since the
-   * hash change will unmount it anyway.
-   */
-  onNavigate?: () => void
-}
 
 interface ProposalDetailDrawerProps {
   /** Full proposal record sourced from GET /api/proposals/:id. */
@@ -181,40 +141,9 @@ export const BodySection = ({
   )
 }
 
-/** Navigate to a chat thread by writing the `#/chat?thread=<id>` hash. */
-const navigateToThread = (threadId: string): void => {
-  if (typeof window === 'undefined') return
-  window.location.hash = `#/chat?thread=${encodeURIComponent(threadId)}`
-}
-
 const BASE = typeof import.meta !== 'undefined' && import.meta.env
   ? (import.meta.env.VITE_API_BASE ?? '')
   : ''
-
-async function postAction(op: string, entityId: string): Promise<{ taskIds?: string[] }> {
-  const r = await fetch(`${BASE}/api/actions`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ op, entityId }),
-  })
-  if (!r.ok) {
-    let message = `POST /api/actions → ${r.status}`
-    try {
-      const body = await r.json() as { error?: string }
-      if (typeof body.error === 'string' && body.error.length > 0) message = body.error
-    } catch { /* ignore JSON parse errors */ }
-    throw new Error(message)
-  }
-  return r.json() as Promise<{ taskIds?: string[] }>
-}
-
-async function startThreadFromProposal(proposalId: string): Promise<{ threadId: string }> {
-  const r = await fetch(`${BASE}/api/proposals/${encodeURIComponent(proposalId)}/thread`, {
-    method: 'POST',
-  })
-  if (!r.ok) throw new Error(`POST /api/proposals/${proposalId}/thread → ${r.status}`)
-  return r.json() as Promise<{ threadId: string }>
-}
 
 /**
  * PATCH /api/proposals/:id/user-stories — add, edit, or remove a single
@@ -278,31 +207,7 @@ export const ProposalDetailDrawer = ({
   // Synchronous guard — prevents double-scheduling the close timer.
   const closingRef = useRef(false)
 
-  const [promoteState, setPromoteState] = useState<
-    | { kind: 'idle' }
-    | { kind: 'pending' }
-    | { kind: 'done'; taskId?: string }
-    | { kind: 'error'; message: string }
-  >({ kind: 'idle' })
-  const [grillState, setGrillState] = useState<
-    { kind: 'idle' } | { kind: 'pending' } | { kind: 'error'; message: string }
-  >({ kind: 'idle' })
-  const [mockupState, setMockupState] = useState<
-    | { kind: 'idle' }
-    | { kind: 'pending' }
-    | { kind: 'done'; taskId: string }
-    | { kind: 'error'; message: string }
-  >({ kind: 'idle' })
-  const [implementLiveState, setImplementLiveState] = useState<
-    | { kind: 'idle' }
-    | { kind: 'pending' }
-    | { kind: 'done'; taskId: string }
-    | { kind: 'error'; message: string }
-  >({ kind: 'idle' })
   const [mockupExists, setMockupExists] = useState<boolean>(initialMockupExists)
-  const [dismissState, setDismissState] = useState<
-    { kind: 'idle' } | { kind: 'pending' } | { kind: 'done' } | { kind: 'error'; message: string }
-  >({ kind: 'idle' })
 
   /**
    * Initiates the exit animation (180 ms) then calls the onClose prop.
@@ -366,69 +271,6 @@ export const ProposalDetailDrawer = ({
       document.removeEventListener('keydown', handleKeyDown)
     }
   }, [handleClose])
-
-  const handlePromote = useCallback(async () => {
-    if (promoteState.kind === 'pending') return
-    setPromoteState({ kind: 'pending' })
-    try {
-      const result = await postAction('promote', proposal.id)
-      // Surface the first created task ID so the user can navigate to it.
-      setPromoteState({ kind: 'done', taskId: result.taskIds?.[0] })
-    } catch (err) {
-      setPromoteState({ kind: 'error', message: (err as Error).message })
-    }
-  }, [proposal.id, promoteState.kind])
-
-  const handleGrill = useCallback(async () => {
-    if (grillState.kind === 'pending') return
-    setGrillState({ kind: 'pending' })
-    try {
-      const { threadId } = await startThreadFromProposal(proposal.id)
-      // Navigate to the created thread. Do NOT call handleClose() here —
-      // handleClose schedules onClose() for 180 ms later, which would call
-      // navigateReplace('#/progress') and overwrite the #/chat?thread=<id>
-      // destination. The hash change itself causes App.tsx to re-render, setting
-      // proposalId → null, which unmounts this drawer without any explicit close.
-      navigateToThread(threadId)
-    } catch (err) {
-      setGrillState({ kind: 'error', message: (err as Error).message })
-    }
-  }, [proposal.id, grillState.kind])
-
-  const handleDismiss = useCallback(async () => {
-    if (dismissState.kind === 'pending') return
-    setDismissState({ kind: 'pending' })
-    try {
-      await postAction('dismiss', proposal.id)
-      setDismissState({ kind: 'done' })
-    } catch (err) {
-      setDismissState({ kind: 'error', message: (err as Error).message })
-    }
-  }, [proposal.id, dismissState.kind])
-
-  const handleMockup = useCallback(async () => {
-    if (mockupState.kind === 'pending') return
-    setMockupState({ kind: 'pending' })
-    try {
-      const result = await postAction('proposal.mockup', proposal.id)
-      const taskId = (result as { taskId?: string }).taskId ?? ''
-      setMockupState({ kind: 'done', taskId })
-    } catch (err) {
-      setMockupState({ kind: 'error', message: (err as Error).message })
-    }
-  }, [proposal.id, mockupState.kind])
-
-  const handleImplementLive = useCallback(async () => {
-    if (implementLiveState.kind === 'pending') return
-    setImplementLiveState({ kind: 'pending' })
-    try {
-      const result = await postAction('proposal.implement-live', proposal.id)
-      const taskId = (result as { taskId?: string }).taskId ?? ''
-      setImplementLiveState({ kind: 'done', taskId })
-    } catch (err) {
-      setImplementLiveState({ kind: 'error', message: (err as Error).message })
-    }
-  }, [proposal.id, implementLiveState.kind])
 
   // Check whether a mockup file has been generated for this proposal.
   const mockupUrl = useMemo(() => `${BASE}/mockups/${encodeURIComponent(proposal.id)}.html`, [proposal.id])
@@ -541,112 +383,12 @@ export const ProposalDetailDrawer = ({
         </button>
       </header>
 
-      {/* Action row — Promote / Grill / Dismiss — visible for actionable statuses */}
-      {(isDraft) && (
-        <div
-          data-testid="proposal-action-row"
-          className="flex items-center gap-2 border-b border-primary/40 px-4 py-2"
-        >
-          {/* Promote */}
-          {promoteState.kind === 'done' ? (
-            <span className="font-mono text-micro text-primary">
-              {promoteState.taskId
-                ? <>Promoted → <a href={`#/task/${encodeURIComponent(promoteState.taskId)}`} className="underline">{promoteState.taskId}</a></>
-                : 'Promoted'}
-            </span>
-          ) : (
-            <button
-              type="button"
-              data-testid="btn-promote"
-              onClick={() => { void handlePromote() }}
-              disabled={promoteState.kind === 'pending'}
-              className="rounded border border-primary/40 px-2 py-0.5 font-mono text-body text-primary hover:bg-primary/10 disabled:opacity-50"
-            >
-              {promoteState.kind === 'pending' ? 'Promoting…' : 'Promote'}
-            </button>
-          )}
-          {promoteState.kind === 'error' && (
-            <span className="font-mono text-micro text-destructive">{promoteState.message}</span>
-          )}
-
-          {/* Grill */}
-          <button
-            type="button"
-            data-testid="btn-grill"
-            onClick={() => { void handleGrill() }}
-            disabled={grillState.kind === 'pending'}
-            className="rounded border border-primary/40 px-2 py-0.5 font-mono text-body text-primary hover:bg-primary/10 disabled:opacity-50"
-          >
-            {grillState.kind === 'pending' ? 'Opening…' : 'Grill'}
-          </button>
-          {grillState.kind === 'error' && (
-            <span data-testid="grill-error" className="font-mono text-micro text-destructive">{grillState.message}</span>
-          )}
-
-          {/* Mockup */}
-          {mockupState.kind === 'done' ? (
-            <span className="font-mono text-micro text-primary">
-              Mockup queued →{' '}
-              <a href={`#/task/${encodeURIComponent(mockupState.taskId)}`} className="underline">
-                {mockupState.taskId}
-              </a>
-            </span>
-          ) : (
-            <button
-              type="button"
-              data-testid="btn-mockup"
-              onClick={() => { void handleMockup() }}
-              disabled={mockupState.kind === 'pending'}
-              className="rounded border border-primary/40 px-2 py-0.5 font-mono text-body text-primary hover:bg-primary/10 disabled:opacity-50"
-            >
-              {mockupState.kind === 'pending' ? 'Queuing…' : 'Mockup'}
-            </button>
-          )}
-          {mockupState.kind === 'error' && (
-            <span className="font-mono text-micro text-destructive">{mockupState.message}</span>
-          )}
-
-          {/* Implement live */}
-          {implementLiveState.kind === 'done' ? (
-            <span className="font-mono text-micro text-primary">
-              Live task →{' '}
-              <a href={`#/task/${encodeURIComponent(implementLiveState.taskId)}`} className="underline">
-                {implementLiveState.taskId}
-              </a>
-            </span>
-          ) : (
-            <button
-              type="button"
-              data-testid="btn-implement-live"
-              onClick={() => { void handleImplementLive() }}
-              disabled={implementLiveState.kind === 'pending'}
-              className="rounded border border-primary/40 px-2 py-0.5 font-mono text-body text-primary hover:bg-primary/10 disabled:opacity-50"
-            >
-              {implementLiveState.kind === 'pending' ? 'Queuing…' : 'Implement live'}
-            </button>
-          )}
-          {implementLiveState.kind === 'error' && (
-            <span className="font-mono text-micro text-destructive">{implementLiveState.message}</span>
-          )}
-
-          {/* Dismiss */}
-          {dismissState.kind === 'done' ? (
-            <span className="font-mono text-micro text-muted-foreground">Dismissed</span>
-          ) : (
-            <button
-              type="button"
-              data-testid="btn-dismiss"
-              onClick={() => { void handleDismiss() }}
-              disabled={dismissState.kind === 'pending'}
-              className="rounded border border-primary/40 px-2 py-0.5 font-mono text-body text-muted-foreground hover:bg-primary/5 disabled:opacity-50"
-            >
-              {dismissState.kind === 'pending' ? 'Dismissing…' : 'Dismiss'}
-            </button>
-          )}
-          {dismissState.kind === 'error' && (
-            <span className="font-mono text-micro text-destructive">{dismissState.message}</span>
-          )}
-        </div>
+      {/* Action row — Promote / Grill / Mockup / Implement live / Dismiss — visible for draft */}
+      {isDraft && (
+        <ProposalActionRow
+          proposalId={proposal.id}
+          status={proposal.status}
+        />
       )}
 
       {/* Scrollable body — problem, solution, user stories, outOfScope, notes, sliced tasks */}
