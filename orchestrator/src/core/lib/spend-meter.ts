@@ -225,3 +225,32 @@ export const computeBudgetStatus = async (
 
   return { configured: true, config, window, arcs, openRows }
 }
+
+/**
+ * Compute the total weighted token spend for a given arc.
+ *
+ * An arc is identified by its root task id (`COALESCE(origin_id, id) = arcId`).
+ * This sums over ALL tasks in the arc — the origin task plus any recovery/fix
+ * tasks — and their `step_ended` trace events that carry `usageSignals`.
+ *
+ * Used by the per-arc token ceiling gate in `queue-fix-tasks.ts` (PRD
+ * d7b4e72c slice 2). The `computeBudgetStatus` query only covers live arcs;
+ * this helper targets a single specific arc regardless of member status.
+ */
+export const computeArcSpend = async (
+  arcId: string,
+  store: DomainTaskStore,
+): Promise<number> => {
+  const result = await store.query({
+    sql: `SELECT COALESCE(SUM(${weightedTokens}), 0) AS weighted_tokens
+          FROM tasks t
+          JOIN trace_events te ON te.task_id = t.id
+            AND te.kind = 'step_ended'
+            AND te.payload::jsonb ->> 'usageSignals' IS NOT NULL
+          WHERE COALESCE(t.origin_id, t.id) = ?`,
+    args: [arcId],
+  })
+  return Number(
+    (result.rows[0] as { weighted_tokens?: number } | undefined)?.weighted_tokens ?? 0,
+  )
+}

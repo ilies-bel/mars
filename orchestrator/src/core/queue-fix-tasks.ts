@@ -32,6 +32,7 @@ import { maybeAssertArcInvariant } from './arc/invariant'
 // guards that read `TERMINAL_VERDICT_PREFIXES`, which is how a self-written
 // reason ended up unrecognised and looping (mars-76fef59f).
 import {
+  BUDGET_ARC_EXCEEDED_PREFIX,
   composeRecoveryFailureReason,
   isTerminalVerdictReason,
   NON_CODE_RETRY_EXHAUSTED_PREFIX,
@@ -854,6 +855,44 @@ export const handleTaskFailureWithFixTask = async (
       outcome: 'failed',
       failureSignature,
       recoverySpawnedCount: task.recoverySpawnedCount,
+    }
+  }
+
+  // ── Arc token-ceiling gate (PRD d7b4e72c slice 2) ─────────────────────────
+  // When budget.arcTokens is configured and the arc's cumulative weighted token
+  // spend meets or exceeds that ceiling, skip recovery spawning entirely for
+  // origin tasks. Without this gate, recovery compounds spend on an already-
+  // runaway arc; this converts the alert (slice 1) into real token savings.
+  //
+  // Applied to origin tasks only (fixForTaskId === null) — recovery task
+  // failures are handled by the escalation block below, which is the right
+  // operator path for a recovery that itself ran over budget.
+  //
+  // The prefixed reason is in TERMINAL_VERDICT_PREFIXES so the anti-loop gate
+  // in recovery-spawn.ts recognises it and does not reopen the row.
+  if (task.fixForTaskId === null) {
+    const { readBudgetConfig, computeArcSpend } = await import('./lib/spend-meter')
+    const budgetConfig = readBudgetConfig()
+    if (budgetConfig?.arcTokens != null) {
+      const arcSpend = await computeArcSpend(task.originId, s)
+      if (arcSpend >= budgetConfig.arcTokens) {
+        await markTaskFailed(
+          input.taskId,
+          `${BUDGET_ARC_EXCEEDED_PREFIX}${failureSignature}`,
+          undefined,
+          { error: truncatedError, failureSignature },
+        )
+        // eslint-disable-next-line no-console
+        console.log(
+          `[failure-handler] task ${input.taskId}: arc ${task.originId} spent ${arcSpend} ` +
+            `>= ceiling ${budgetConfig.arcTokens} — recovery suppressed (${BUDGET_ARC_EXCEEDED_PREFIX})`,
+        )
+        return {
+          outcome: 'failed',
+          failureSignature,
+          recoverySpawnedCount: task.recoverySpawnedCount,
+        }
+      }
     }
   }
 

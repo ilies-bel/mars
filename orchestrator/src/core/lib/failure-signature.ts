@@ -729,6 +729,14 @@ export const SPEND_CONTROL_SUPPRESSED_PREFIX = 'spend_control_suppressed:'
 export const ORIGIN_RECOVERY_FAILED_PREFIX = 'origin_recovery_failed:'
 
 /**
+ * `budget-arc-exceeded:<sig>` — the per-arc token ceiling gate in
+ * `queue-fix-tasks.ts`. When an arc's cumulative weighted token spend meets or
+ * exceeds `budget.arcTokens`, recovery spawning is skipped and the task is
+ * marked failed with this prefix so subsequent failure events are not re-driven.
+ */
+export const BUDGET_ARC_EXCEEDED_PREFIX = 'budget-arc-exceeded:'
+
+/**
  * THE COMPLETE VOCABULARY of `failure_reason` prefixes the orchestrator writes
  * for ITSELF — a terminal verdict it reached about a row, as opposed to
  * captured evidence from the failing command.
@@ -767,6 +775,7 @@ export const TERMINAL_VERDICT_PREFIXES = [
   SIGNATURE_STORM_PREFIX,
   SPEND_CONTROL_SUPPRESSED_PREFIX,
   ORIGIN_RECOVERY_FAILED_PREFIX,
+  BUDGET_ARC_EXCEEDED_PREFIX,
 ] as const
 
 const escapeForRegex = (s: string): string => s.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&')
