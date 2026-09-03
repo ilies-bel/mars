@@ -73,6 +73,7 @@ import {
   readWorkflowInput as input,
   resolveTaskId,
   buildPhaseCtx,
+  buildTraceIdentity,
   spanStore,
 } from '../context'
 import { validationRecorder } from '../validate-recorder'
@@ -501,6 +502,7 @@ export const review = async (
         const restored = await resolveVcs().restoreWorktreeIfMissing({
           taskId,
           ref: { path: worktreePath, branch },
+          trace: buildTraceIdentity(trace, taskId, 'verify'),
         })
         if (restored === 'rebuilt') {
           console.log(

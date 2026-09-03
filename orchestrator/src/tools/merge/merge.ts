@@ -46,6 +46,7 @@ import {
   readWorkflowInput as input,
   resolveTaskId,
   buildPhaseCtx,
+  buildTraceIdentity,
   spanStore,
 } from '../context'
 import { validationRecorder } from '../validate-recorder'
@@ -183,6 +184,7 @@ export const merge = async (
         force: true,
         keepBranch: false,
         tombstone: { taskId, reason: 'diagnose' },
+        trace: buildTraceIdentity(trace, taskId, 'merge'),
       })
     }
     await updateTask(taskId, { status: 'done', failedPhase: null }, store)
@@ -296,6 +298,7 @@ export const merge = async (
                 force: true,
                 keepBranch: false,
                 tombstone: { taskId, reason: 'zero-commit-main-committer-noop' },
+                trace: buildTraceIdentity(trace, taskId, 'merge'),
               })
             }
             await updateTask(taskId, { status: 'done', failedPhase: null }, store)
@@ -1008,6 +1011,7 @@ export const merge = async (
               reason: 'merged',
               mergeCommitSha: capturedMergeShas?.mergePostSha ?? null,
             },
+            trace: buildTraceIdentity(trace, taskId, 'merge'),
           })
         }
         await updateTask(taskId, { status: 'done', failedPhase: null }, store)
