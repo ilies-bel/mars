@@ -1,7 +1,7 @@
 import { lstat, mkdir, readdir, readFile, readlink, rm, symlink } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { load as parseYaml } from 'js-yaml'
-import { repoRoot } from './git/internal'
+import { resolveVcs } from '../ports/vcs/registry'
 
 /**
  * Fallback workspace list used when `pnpm-workspace.yaml` is absent,
@@ -108,11 +108,13 @@ export interface ProvisionWorktreeDepsArgs {
  */
 export const provisionWorktreeDeps = async ({
   worktreeRoot,
-  sourceRoot = repoRoot(),
+  sourceRoot,
 }: ProvisionWorktreeDepsArgs): Promise<void> => {
+  const resolvedSource =
+    sourceRoot ?? (await resolveVcs().repoRoot({ cwd: process.cwd() })) ?? process.cwd()
   const workspaces = await resolveDependencyWorkspaces(worktreeRoot)
   for (const workspace of workspaces) {
-    const source = resolve(sourceRoot, workspace, 'node_modules')
+    const source = resolve(resolvedSource, workspace, 'node_modules')
     const target = resolve(worktreeRoot, workspace, 'node_modules')
 
     try {
