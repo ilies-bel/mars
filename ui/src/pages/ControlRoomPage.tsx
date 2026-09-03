@@ -29,7 +29,7 @@ import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
 import { useDispatchState, pauseReasonLabel } from '@/entities/operator/useDispatchState'
 import { useFocusedProject } from '@/shared/useFocusedProject'
 import type { ActionQueueItem } from '@/shared/schemas'
-import { PageHeader, SectionLabel } from '@/widgets/primitives/DensityPrimitives'
+import { SectionLabel } from '@/widgets/primitives/DensityPrimitives'
 import { ErrorState } from '@/components/ErrorState'
 import { SkeletonList } from '@/components/Skeleton'
 import {
@@ -151,9 +151,9 @@ const LeversSection = () => {
       <section>
         <div className="mb-4"><SectionLabel>Levers</SectionLabel></div>
 
-        <div className="space-y-4">
+        <div className="space-y-3">
           {/* Dispatch lever */}
-          <div className="flex items-start justify-between gap-4 rounded border border-primary/20 px-3 py-3">
+          <div className="mars-card flex items-start justify-between gap-4 rounded bg-surface px-4 py-3">
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
                 <span
@@ -168,17 +168,17 @@ const LeversSection = () => {
                 </span>
                 <span
                   className={[
-                    'rounded px-1.5 py-0.5 font-mono text-micro uppercase tracking-wide',
+                    'rounded-full px-2 py-0.5 font-mono text-micro font-medium uppercase tracking-wide',
                     isDispatchPaused
-                      ? 'bg-warn/15 text-warn'
-                      : 'bg-success/15 text-success',
+                      ? 'bg-warn/10 text-warn'
+                      : 'bg-success/10 text-success',
                   ].join(' ')}
                 >
                   {isDispatchPaused ? 'paused' : 'running'}
                 </span>
               </div>
               {isDispatchPaused && dispatch.reason && (
-                <p className="mt-1 font-mono text-micro text-foreground/50">
+                <p className="mt-1 font-mono text-micro text-muted-foreground/70">
                   Reason: {pauseReasonLabel(dispatch)}
                   {dispatch.since ? ` · since ${new Date(dispatch.since).toLocaleTimeString()}` : ''}
                 </p>
@@ -188,19 +188,14 @@ const LeversSection = () => {
               onClick={() =>
                 openConfirm(isDispatchPaused ? { kind: 'dispatch-on' } : { kind: 'dispatch-off' })
               }
-              className={[
-                'shrink-0 rounded border px-3 py-1.5 font-mono text-label transition-colors',
-                isDispatchPaused
-                  ? 'border-success/40 text-success hover:border-success/80 hover:text-success/80'
-                  : 'border-primary/30 text-primary hover:border-primary/60 hover:text-foreground',
-              ].join(' ')}
+              className="shrink-0 rounded-md border border-border px-3 py-1.5 font-mono text-label text-foreground hover:bg-surface transition-colors"
             >
               {isDispatchPaused ? 'Resume' : 'Pause'}
             </button>
           </div>
 
           {/* Recovery lever */}
-          <div className="flex items-start justify-between gap-4 rounded border border-primary/20 px-3 py-3">
+          <div className="mars-card flex items-start justify-between gap-4 rounded bg-surface px-4 py-3">
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
                 <span
@@ -215,16 +210,16 @@ const LeversSection = () => {
                 </span>
                 <span
                   className={[
-                    'rounded px-1.5 py-0.5 font-mono text-micro uppercase tracking-wide',
+                    'rounded-full px-2 py-0.5 font-mono text-micro font-medium uppercase tracking-wide',
                     controlLevers.recovery === 'off'
-                      ? 'bg-error/15 text-error'
-                      : 'bg-success/15 text-success',
+                      ? 'bg-error/10 text-error'
+                      : 'bg-success/10 text-success',
                   ].join(' ')}
                 >
                   {controlLevers.recovery}
                 </span>
               </div>
-              <p className="mt-1 font-mono text-micro text-foreground/50">
+              <p className="mt-1 font-mono text-micro text-muted-foreground/70">
                 {controlLevers.recovery === 'off'
                   ? 'Fix-task spawning disabled — failures will accumulate.'
                   : 'Fix tasks spawn automatically on worker failure.'}
@@ -238,25 +233,20 @@ const LeversSection = () => {
                     : { kind: 'recovery-off' },
                 )
               }
-              className={[
-                'shrink-0 rounded border px-3 py-1.5 font-mono text-label transition-colors',
-                controlLevers.recovery === 'off'
-                  ? 'border-success/40 text-success hover:border-success/80 hover:text-success/80'
-                  : 'border-error/40 text-error hover:border-error/80 hover:text-error/80',
-              ].join(' ')}
+              className="shrink-0 rounded-md border border-border px-3 py-1.5 font-mono text-label text-foreground hover:bg-surface transition-colors"
             >
               {controlLevers.recovery === 'off' ? 'Enable' : 'Disable'}
             </button>
           </div>
 
           {/* Caps — read-only */}
-          <div className="rounded border border-primary/20 px-3 py-3">
-            <div className="mb-2">
-              <span className="font-mono text-micro uppercase tracking-wide text-primary/50">
+          <div className="mars-card rounded bg-surface px-4 py-3">
+            <div className="mb-3">
+              <span className="font-mono text-micro uppercase tracking-widest text-muted-foreground">
                 Concurrency caps
               </span>
             </div>
-            <div className="grid grid-cols-3 gap-x-4 gap-y-2 sm:grid-cols-5">
+            <div className="grid grid-cols-5 gap-4">
               <CapStat label="implement" value={caps.implement} />
               <CapStat label="triage" value={caps.triage} />
               <CapStat label="refine" value={caps.refine} />
@@ -283,7 +273,7 @@ const LeversSection = () => {
               )}
               <DialogFooter>
                 <DialogClose asChild>
-                  <button className="rounded border border-primary/30 px-3 py-1.5 font-mono text-label text-foreground/70 hover:border-primary/60">
+                  <button className="rounded border border-border px-3 py-1.5 font-mono text-label text-foreground/70 hover:border-border/80">
                     Cancel
                   </button>
                 </DialogClose>
@@ -304,11 +294,11 @@ const LeversSection = () => {
 }
 
 const CapStat = ({ label, value }: { label: string; value: number }) => (
-  <div className="flex flex-col">
-    <span className="font-mono text-base leading-none tabular-nums text-foreground">
+  <div className="flex flex-col items-center gap-1">
+    <span className="font-mono text-title font-semibold leading-none tabular-nums text-foreground">
       {value}
     </span>
-    <span className="mt-0.5 font-mono text-micro uppercase tracking-wide text-primary/50">
+    <span className="font-mono text-micro uppercase tracking-widest text-muted-foreground text-center">
       {label}
     </span>
   </div>
@@ -330,29 +320,51 @@ const NowSection = () => {
     <section>
       <div className="mb-3"><SectionLabel>Now</SectionLabel></div>
 
-      <div className="mb-3 flex items-center gap-2">
-        <span
-          className={[
-            'h-2 w-2 rounded-full',
-            dispatch.paused ? 'bg-warn' : connected ? 'bg-success' : 'bg-primary/30',
-          ].join(' ')}
-          aria-hidden="true"
-        />
-        <span className="font-mono text-label text-foreground/70">
-          {dispatch.paused
-            ? `⏸ Paused · ${pauseReasonLabel(dispatch)}`
-            : connected
-              ? 'Live'
-              : 'Connecting…'}
-        </span>
-      </div>
+      <div className="mars-card rounded bg-surface px-4 py-3">
+        <div className="mb-4 flex items-center gap-1.5">
+          <span
+            className={[
+              'h-1.5 w-1.5 rounded-full',
+              dispatch.paused ? 'bg-warn' : connected ? 'bg-success' : 'bg-primary/30',
+            ].join(' ')}
+            aria-hidden="true"
+          />
+          <span className="font-mono text-micro text-muted-foreground">
+            {dispatch.paused
+              ? `⏸ Paused · ${pauseReasonLabel(dispatch)}`
+              : connected
+                ? 'Live'
+                : 'Connecting…'}
+          </span>
+        </div>
 
-      <div className="grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-4">
-        <Stat label="Queued" value={queued} />
-        <Stat label="In progress" value={inProgress} />
-        <Stat label="Blocked" value={blocked} />
-        <Stat label="Failed" value={failed} highlight={failed > 0} />
-        <Stat label="Done today" value={doneToday} />
+        <div className="grid grid-cols-3 gap-x-4 gap-y-3 sm:grid-cols-5">
+          <Stat
+            label="Queued"
+            value={queued}
+            colorClass={queued > 0 ? 'text-foreground' : undefined}
+          />
+          <Stat
+            label="In progress"
+            value={inProgress}
+            colorClass={inProgress > 0 ? 'text-foreground' : undefined}
+          />
+          <Stat
+            label="Blocked"
+            value={blocked}
+            colorClass={blocked > 0 ? 'text-foreground' : undefined}
+          />
+          <Stat
+            label="Failed"
+            value={failed}
+            colorClass={failed > 0 ? 'text-status-failed' : undefined}
+          />
+          <Stat
+            label="Done today"
+            value={doneToday}
+            colorClass={doneToday > 0 ? 'text-status-done' : undefined}
+          />
+        </div>
       </div>
     </section>
   )
@@ -361,20 +373,20 @@ const NowSection = () => {
 interface StatProps {
   label: string
   value: number
-  highlight?: boolean
+  colorClass?: string
 }
 
-const Stat = ({ label, value, highlight }: StatProps) => (
+const Stat = ({ label, value, colorClass }: StatProps) => (
   <div className="flex flex-col">
     <span
       className={[
-        'font-mono text-lg leading-none tabular-nums',
-        highlight ? 'text-error' : 'text-foreground',
+        'font-mono text-title font-semibold leading-none tabular-nums',
+        colorClass ?? 'text-muted-foreground/50',
       ].join(' ')}
     >
       {value}
     </span>
-    <span className="mt-0.5 font-mono text-micro uppercase tracking-wide text-primary/50">
+    <span className="mt-0.5 font-mono text-micro uppercase tracking-widest text-muted-foreground">
       {label}
     </span>
   </div>
@@ -398,38 +410,38 @@ const AdvisorySection = () => {
     <section>
       <div className="mb-3"><SectionLabel>Advisory Digest</SectionLabel></div>
 
-      <div className="mb-4 flex gap-3">
+      <div className="mb-4 flex gap-4">
         <a
           href="#/steward"
-          className="rounded border border-primary/30 px-3 py-1.5 font-mono text-label text-primary hover:border-primary/60 hover:text-foreground"
+          className="font-mono text-label text-muted-foreground hover:text-foreground transition-colors"
         >
           → Steward ledgers
         </a>
         <a
           href="#/reflections"
-          className="rounded border border-primary/30 px-3 py-1.5 font-mono text-label text-primary hover:border-primary/60 hover:text-foreground"
+          className="font-mono text-label text-muted-foreground hover:text-foreground transition-colors"
         >
           → Deep reflections
         </a>
       </div>
 
       {advisories.length === 0 ? (
-        <p className="font-mono text-label text-primary/40">No pending advisories.</p>
+        <p className="font-mono text-label text-muted-foreground/50">No pending advisories.</p>
       ) : (
         <ul className="space-y-2">
           {advisories.map((item) => (
             <li
               key={item.id}
-              className="rounded border border-primary/20 px-3 py-2"
+              className="mars-card rounded bg-surface px-3 py-2"
             >
               <div className="flex items-start gap-2">
                 <span className="mt-0.5 shrink-0 rounded bg-primary/10 px-1.5 py-0.5 font-mono text-micro uppercase tracking-wide text-primary/60">
                   {ADVISORY_LABELS[item.kind] ?? item.kind.replace(/-/g, ' ')}
                 </span>
-                <span className="font-mono text-label text-foreground/80">{item.title}</span>
+                <span className="font-mono text-body text-foreground/80">{item.title}</span>
               </div>
               {item.body && (
-                <p className="mt-1 font-mono text-label text-foreground/50 leading-snug">
+                <p className="mt-1 font-mono text-label text-muted-foreground leading-snug">
                   {item.body}
                 </p>
               )}
@@ -468,16 +480,22 @@ const RulesSection = () => {
 
   return (
     <section>
-      <div className="mb-3 flex items-center justify-between">
+      <button
+        onClick={() => setExpanded((v) => !v)}
+        className="mb-3 flex w-full items-center justify-between"
+        aria-expanded={expanded}
+      >
         <SectionLabel>Rules &amp; Language</SectionLabel>
-        <button
-          onClick={() => setExpanded((v) => !v)}
-          className="font-mono text-micro text-primary/50 hover:text-primary"
-          aria-expanded={expanded}
+        <span
+          className={[
+            'font-mono text-micro text-muted-foreground transition-transform duration-200',
+            expanded ? 'rotate-180' : '',
+          ].join(' ')}
+          aria-hidden="true"
         >
-          {expanded ? '▲ collapse' : '▼ expand'}
-        </button>
-      </div>
+          ▾
+        </span>
+      </button>
 
       {expanded && (
         <div className="space-y-4">
@@ -486,7 +504,7 @@ const RulesSection = () => {
             placeholder="Filter glossary + ADRs…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full rounded border border-primary/20 bg-transparent px-3 py-1.5 font-mono text-label text-foreground placeholder:text-primary/30 focus:border-primary/50 focus:outline-none"
+            className="w-full rounded border border-border bg-transparent px-3 py-1.5 font-mono text-label text-foreground placeholder:text-muted-foreground/40 focus:border-primary/50 focus:outline-none"
           />
 
           {filteredTerms.length > 0 && (
@@ -497,7 +515,7 @@ const RulesSection = () => {
                   <span
                     key={t.term}
                     title={t.definition}
-                    className="rounded border border-primary/20 px-2 py-0.5 font-mono text-label text-foreground/80 hover:border-primary/50 hover:text-foreground"
+                    className="rounded border border-border px-2 py-0.5 font-mono text-label text-foreground/80 hover:border-primary/40 hover:text-foreground"
                   >
                     {t.term}
                   </span>
@@ -512,7 +530,7 @@ const RulesSection = () => {
               <ul className="space-y-0.5">
                 {filteredAdrs.map((adr) => (
                   <li key={adr.slug} className="flex items-baseline gap-2">
-                    <span className="w-10 shrink-0 font-mono text-micro text-primary/40">
+                    <span className="w-10 shrink-0 font-mono text-micro text-muted-foreground/50">
                       {String(adr.number).padStart(4, '0')}
                     </span>
                     <span className="font-mono text-label text-foreground/70">{adr.title}</span>
@@ -523,7 +541,7 @@ const RulesSection = () => {
           )}
 
           {filteredTerms.length === 0 && filteredAdrs.length === 0 && (
-            <p className="font-mono text-label text-primary/40">
+            <p className="font-mono text-label text-muted-foreground/50">
               {q ? 'No matches.' : 'No glossary terms or ADRs found.'}
             </p>
           )}
@@ -539,7 +557,7 @@ const RulesSection = () => {
 
 export const ControlRoomPage = () => (
   <main className="flex h-full min-h-0 flex-1 flex-col gap-8 overflow-y-auto bg-background p-6">
-    <PageHeader title="Control Room" />
+    <h1 className="font-mono text-title font-semibold text-foreground">Control Room</h1>
     <LeversSection />
     <NowSection />
     <AdvisorySection />
