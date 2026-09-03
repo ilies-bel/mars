@@ -47,6 +47,7 @@ import {
   readWorkflowInput as input,
   resolveTaskId,
   buildPhaseCtx,
+  buildTraceIdentity,
   spanStore,
   cacheWorktree,
   cacheIndexCard,
@@ -213,6 +214,7 @@ export const setupWorktree = async (
         originTaskId,
         originBranch,
         originWorktreePath,
+        trace: buildTraceIdentity(trace, taskId, 'setup'),
       })
     } catch (err) {
       if (!(err instanceof OriginWorktreeMissingError)) throw err
@@ -398,6 +400,7 @@ export const setupWorktree = async (
                 taskId,
                 baseSha: integHeadSha,
                 headSha: integHeadSha,
+                trace: buildTraceIdentity(trace, taskId, 'setup'),
               })
               if (autoCommit.committed) {
                 await speakOperatorAutoCommitNotice({
@@ -538,6 +541,7 @@ export const setupWorktree = async (
         ref = await resolveVcs().provisionCommitterWorktree({
           recoveryTaskId: taskId,
           integrationBranch,
+          trace: buildTraceIdentity(trace, taskId, 'setup'),
         })
       } else {
         // Check whether the existing linked worktree for this task is
@@ -577,6 +581,7 @@ export const setupWorktree = async (
           ref = await resolveVcs().createWorktree({
             taskId,
             integrationBranch,
+            trace: buildTraceIdentity(trace, taskId, 'setup'),
           })
         }
       }
@@ -648,6 +653,7 @@ export const setupWorktree = async (
         phase: 'setup',
         onConflict: _effectiveOnConflict,
         store,
+        trace: buildTraceIdentity(trace, taskId, 'setup'),
       })
 
       // Capture the integration HEAD sha at setup time (non-fatal).

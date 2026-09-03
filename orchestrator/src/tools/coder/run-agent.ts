@@ -43,6 +43,7 @@ import {
   readWorkflowInput as input,
   resolveTaskId,
   buildPhaseCtx,
+  buildTraceIdentity,
   spanStore,
   readCachedIndexCard,
 } from '../context'
@@ -301,6 +302,7 @@ export const runAgent = async (
     const restored = await resolveVcs().restoreWorktreeIfMissing({
       taskId,
       ref: { path: worktreePath, branch },
+      trace: buildTraceIdentity(trace, taskId, 'code'),
     })
     if (restored === 'rebuilt') {
       console.log(
@@ -346,6 +348,7 @@ export const runAgent = async (
     phase: 'code',
     onConflict: 'reconcile',
     store,
+    trace: buildTraceIdentity(trace, taskId, 'code'),
   })
 
   // Sweep stray untracked files from a prior failed attempt BEFORE the agent
