@@ -1152,3 +1152,64 @@ describe('startMergeWorker — onVerifyRebasedTree rebased-tree verify wiring (A
     expect(_mockVerifierRun).not.toHaveBeenCalled()
   })
 })
+
+// ---------------------------------------------------------------------------
+// DEC-3: auto-commit Notice carries a revert action
+//
+// VISION.md DEC-3: "Every autonomous change is revertible by construction and
+// announced as a Notice carrying its revert."
+//
+// The wip(operator) auto-commit is an autonomous act. The Notice it raises must
+// carry BOTH:
+//   - a revert OFFER (one-click chip: id='revert', op='revert-auto-commit')
+//   - a revert COMMAND in the render body (`git revert <sha>`) for CLI/headless
+//
+// These tests fail on unfixed code (missing revert chip or missing body command)
+// and pass once the conversation-copy registry entry is complete.
+// ---------------------------------------------------------------------------
+
+describe('merge.operator-auto-commit Notice — DEC-3 revert action', () => {
+  it('offers include a revert chip carrying the commit sha and affected files', async () => {
+    const { offersForConversationNotice } = await import('../../lib/conversation-copy.js')
+    const sha = 'a'.repeat(40)
+    const files = ['src/index.ts', 'src/util.ts']
+
+    const offers = offersForConversationNotice('merge.operator-auto-commit', {
+      taskId: 'task-abc',
+      branch: 'main',
+      commitSha: sha,
+      files,
+    })
+
+    const revertOffer = offers.find((o) => o.id === 'revert')
+    expect(revertOffer, 'auto-commit Notice must carry a revert offer (DEC-3)').toBeDefined()
+
+    // Target must be a verb that invokes the revert-auto-commit op, with the sha
+    // and affected files encoded in entityId so the handler knows exactly what to
+    // revert — the handler sources `files` from here to restore the working tree.
+    const target = revertOffer!.target as { type: string; op: string; entityId: string }
+    expect(target.type).toBe('verb')
+    expect(target.op).toBe('revert-auto-commit')
+
+    const entity = JSON.parse(target.entityId) as { commitSha: string; files: string[] }
+    expect(entity.commitSha).toBe(sha)
+    expect(entity.files).toEqual(files)
+  })
+
+  it('render body includes git revert <sha> for CLI/headless contexts', async () => {
+    const { renderConversationNotice } = await import('../../lib/conversation-copy.js')
+    const sha = 'b'.repeat(40)
+
+    const body = renderConversationNotice('merge.operator-auto-commit', {
+      taskId: 'task-xyz',
+      branch: 'main',
+      commitSha: sha,
+      files: ['README.md'],
+    })
+
+    expect(
+      body,
+      'render body must include `git revert <sha>` so the operator can undo from any context',
+    ).toContain(`git revert ${sha}`)
+  })
+})
