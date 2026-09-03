@@ -237,6 +237,19 @@ export const runSelfEvolveTrigger = async (opts?: {
     }
     const notes = JSON.stringify(notesPayload, null, 2)
 
+    // A stable fingerprint per (metric, comparison window) makes the proposal
+    // raise idempotent under concurrent sweeps.  The `ON CONFLICT (source,
+    // fingerprint)` clause in createProposal's INSERT is the atomic backstop:
+    // two concurrent calls with the same fingerprint collapse to one row even
+    // when both pass the findOpenReflectionDraftForKpi read-then-write gap.
+    //
+    // Judgment on worsening drift: same finding, update in place.  If the
+    // metric worsens within the same comparison window (same snapshot pair),
+    // the ON CONFLICT appends the updated notes to the existing draft.  A new
+    // snapshot pair produces a different fingerprint and a fresh proposal, so a
+    // dismissed finding from a prior window does not block a new one.
+    const fingerprint = `kpi-drift:${finding.kpi}:${persistedCurrent.id}:${persistedPrior.id}`
+
     const proposal = await createProposal(title, {
       source: 'reflection',
       author: { kind: 'agent', name: 'self-evolve' },
@@ -244,6 +257,7 @@ export const runSelfEvolveTrigger = async (opts?: {
       solution,
       notes,
       kpiTag: finding.kpi,
+      fingerprint,
     })
     raised.push(proposal.id)
   }

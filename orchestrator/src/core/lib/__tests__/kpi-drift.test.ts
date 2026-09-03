@@ -1,4 +1,8 @@
-import { describe, it, expect } from 'vitest';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
+import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { resolve } from 'node:path'
+import { execFileSync } from 'node:child_process'
 import { detectKpiDrift, type KpiSnapshot } from '../kpi-drift.js';
 
 // ---------------------------------------------------------------------------
@@ -229,4 +233,137 @@ describe('detectKpiDrift — vector payload', () => {
     expect(Object.keys(findings[0].vector)).not.toContain('newMetric');
     expect(findings[0].vector.successRate).toBeDefined();
   });
+});
+
+// ---------------------------------------------------------------------------
+// 6. runSelfEvolveTrigger — proposal dedup (integration)
+//
+// These tests verify that the KPI drift raiser is idempotent per
+// (metric, comparison window).  Each test gets a fresh git repo + in-memory
+// PGlite state so module-level singletons are isolated between tests.
+//
+// Store seam: everything DB-related is imported inside loadTriggerContext
+// (after vi.resetModules) so the test shares openDb's client registry with
+// the module under test — the same pattern used by
+// reflect-recommended-detector.test.ts.
+// ---------------------------------------------------------------------------
+
+const setupRepo = (): string => {
+  const repo = mkdtempSync(resolve(tmpdir(), 'mars-kpi-dedup-test-'))
+  execFileSync('git', ['init', '-q'], { cwd: repo })
+  mkdirSync(resolve(repo, '.mars'), { recursive: true })
+  return repo
+}
+
+interface TriggerContext {
+  runSelfEvolveTrigger: typeof import('../self-evolve-trigger.js')['runSelfEvolveTrigger']
+  store: import('../../store/task-store.js').DomainTaskStore
+  countDraftProposalsForKpi: (kpi: string) => Promise<number>
+  getProposalFingerprint: (id: string) => Promise<string | null>
+}
+
+const loadTriggerContext = async (repo: string): Promise<TriggerContext> => {
+  vi.resetModules()
+  process.env.MARS_REPO = repo
+
+  const { resolveStateClient } = await import('../../store/state-client.js')
+  const { createTaskStore } = await import('../../store/task-store.js')
+  const store = createTaskStore(resolveStateClient())
+  const { runSelfEvolveTrigger } = await import('../self-evolve-trigger.js')
+
+  const countDraftProposalsForKpi = async (kpi: string): Promise<number> => {
+    const r = await store.query({
+      sql: `SELECT COUNT(*) AS n FROM proposals
+             WHERE source = 'reflection' AND status = 'draft' AND kpi_tag = ?`,
+      args: [kpi],
+    })
+    const row = r.rows[0] as unknown as { n: number | bigint }
+    return typeof row.n === 'bigint' ? Number(row.n) : row.n
+  }
+
+  const getProposalFingerprint = async (id: string): Promise<string | null> => {
+    const r = await store.query({
+      sql: `SELECT fingerprint FROM proposals WHERE id = ?`,
+      args: [id],
+    })
+    if (r.rows.length === 0) return null
+    const row = r.rows[0] as unknown as { fingerprint: string | null }
+    return row.fingerprint
+  }
+
+  return { runSelfEvolveTrigger, store, countDraftProposalsForKpi, getProposalFingerprint }
+}
+
+const insertKpiSnapshot = async (
+  store: import('../../store/task-store.js').DomainTaskStore,
+  id: string,
+  takenAt: string,
+  failureRate: number,
+): Promise<void> => {
+  await store.execute({
+    sql: `INSERT INTO kpi_snapshots
+            (id, taken_at, window_start, window_end,
+             cost_per_arc_sample_count, cost_per_arc_low_confidence,
+             failure_rate_sample_count, failure_rate_low_confidence,
+             autonomous_completion_rate_sample_count, autonomous_completion_rate_low_confidence,
+             recovery_success_rate_sample_count, recovery_success_rate_low_confidence,
+             cost_per_arc_p50, cost_per_arc_p90,
+             failure_rate, autonomous_completion_rate, recovery_success_rate)
+          VALUES (?, ?, ?, ?, 0, 1, ?, 0, 0, 1, 0, 1, NULL, NULL, ?, NULL, NULL)`,
+    args: [id, takenAt, takenAt, takenAt, 10, failureRate],
+  })
+}
+
+describe('runSelfEvolveTrigger — proposal dedup', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('sets a non-null fingerprint on the raised KPI drift proposal', async () => {
+    const ctx = await loadTriggerContext(repo)
+
+    // prior: failure_rate=0.10, current: 0.25 → +150 % (well above default 10 % threshold)
+    await insertKpiSnapshot(ctx.store, 'snap-prior', '2026-01-01T00:00:00Z', 0.10)
+    await insertKpiSnapshot(ctx.store, 'snap-current', '2026-01-02T00:00:00Z', 0.25)
+
+    const result = await ctx.runSelfEvolveTrigger({ store: ctx.store })
+    expect(result.raised).toHaveLength(1)
+
+    const fingerprint = await ctx.getProposalFingerprint(result.raised[0]!)
+    // A fingerprint MUST be set so the ON CONFLICT (source, fingerprint) clause
+    // in createProposal can atomically deduplicate concurrent raises.
+    expect(fingerprint).not.toBeNull()
+    expect(fingerprint).toMatch(/^kpi-drift:failure_rate:snap-current:snap-prior$/)
+  })
+
+  it('raising the same metric drift twice in one window yields exactly one proposal', async () => {
+    const ctx = await loadTriggerContext(repo)
+
+    // prior: failure_rate=0.10, current: 0.25 → regression
+    await insertKpiSnapshot(ctx.store, 'snap-prior', '2026-01-01T00:00:00Z', 0.10)
+    await insertKpiSnapshot(ctx.store, 'snap-current', '2026-01-02T00:00:00Z', 0.25)
+
+    // First raise
+    const first = await ctx.runSelfEvolveTrigger({ store: ctx.store })
+    expect(first.raised).toHaveLength(1)
+    expect(await ctx.countDraftProposalsForKpi('failure_rate')).toBe(1)
+
+    // Second raise with identical snapshots — must not create a second proposal.
+    // On current code (no fingerprint) a concurrent sweep would produce a
+    // second row; with the fingerprint the ON CONFLICT folds them into one.
+    const second = await ctx.runSelfEvolveTrigger({ store: ctx.store })
+    // The sequential dedup (findOpenReflectionDraftForKpi) catches this case;
+    // the fingerprint is the backstop for the concurrent case.
+    expect(second.skipped).toContainEqual({ kpi: 'failure_rate', reason: 'duplicate' })
+
+    // Either way: exactly one draft proposal in the DB.
+    expect(await ctx.countDraftProposalsForKpi('failure_rate')).toBe(1)
+  })
 });
