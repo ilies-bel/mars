@@ -9,6 +9,7 @@
 import { resolveVcs } from '../../core/ports/vcs/registry'
 import { WorktreeRebaseConflictError } from '../../core/ports/vcs/errors'
 import {
+  type TraceIdentity,
   type WorktreeConflictPolicy,
   type WorktreeResult as WorktreeRef,
 } from '../../core/ports/vcs/types'
@@ -93,14 +94,16 @@ export const ensureWorktreeCurrent = async (args: {
   phase: 'setup' | 'code'
   onConflict: WorktreeConflictPolicy
   store: TaskStore
+  trace?: TraceIdentity
 }): Promise<void> => {
-  const { taskId, ref, integrationBranch, phase, onConflict, store } = args
+  const { taskId, ref, integrationBranch, phase, onConflict, store, trace } = args
   try {
     const outcome = await resolveVcs().syncWorktreeToIntegration({
       taskId,
       ref,
       integrationBranch,
       onConflict,
+      trace,
     })
     if (outcome.kind === 'rebased') {
       console.log(

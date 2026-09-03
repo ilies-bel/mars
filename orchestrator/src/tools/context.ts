@@ -18,7 +18,7 @@ import type { WorkflowCtx } from '@mars/workflow'
 
 import { nullTraceStore, type TraceCtx } from '../core/lib/run-tool'
 import { type ManualParkArgs } from '../core/lib/park-for-human'
-import { type WorktreeResult as WorktreeRef } from '../core/ports/vcs/types'
+import { type TraceIdentity, type WorktreeResult as WorktreeRef } from '../core/ports/vcs/types'
 import { type MergeResult } from '../core/lib/git/merge'
 import { getTask, type TaskTag, type TaskSpec } from '../core/queue'
 import { resolveOriginIdForTask } from '../core/lib/origin'
@@ -302,6 +302,22 @@ export { input as readWorkflowInput }
  */
 export const resolveTaskId = (ctx: MarsCtx, override?: string): string =>
   override ?? input(ctx).taskId ?? ctx.runId
+
+/**
+ * Build a serializable {@link TraceIdentity} for a VCS port call. This is the
+ * serializable counterpart of {@link buildPhaseCtx}: same identity fields, but
+ * without the non-serializable `TraceEventStore`, so it can ride along on any
+ * VCS spec object (which must be JSON-serializable per ADR-0097).
+ */
+export const buildTraceIdentity = (
+  trace: PrimitiveTraceArgs,
+  taskId: string,
+  phase: 'setup' | 'code' | 'verify' | 'merge',
+): TraceIdentity => ({
+  taskId,
+  originId: trace.originId,
+  phase,
+})
 
 /** Build the per-phase {@link TraceCtx} a primitive threads into git shell-outs. */
 export const buildPhaseCtx = (

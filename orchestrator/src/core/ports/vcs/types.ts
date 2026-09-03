@@ -34,6 +34,21 @@
  * separately from the port itself.
  */
 
+/**
+ * Serializable trace identity threaded through VCS port calls so the
+ * underlying implementation can attribute git subprocess events (worktree
+ * provisioning, syncs, restores) back to their originating task and phase.
+ *
+ * This is the serializable counterpart of `TraceCtx` (which carries the
+ * non-serializable `TraceEventStore`). Every field here can cross a process
+ * boundary, per ADR-0097's serializability rule for port contracts.
+ */
+export interface TraceIdentity {
+  taskId: string
+  originId: string
+  phase: string
+}
+
 /** Args for {@link Vcs.createWorktree}. */
 export interface WorktreeSpec {
   taskId: string
@@ -42,6 +57,8 @@ export interface WorktreeSpec {
   baseSha?: string
   /** Suffix appended to the branch/directory name, e.g. `task/<id>-<suffix>`. */
   branchSuffix?: string
+  /** Optional trace identity for subprocess attribution. */
+  trace?: TraceIdentity
 }
 
 /** Result of {@link Vcs.createWorktree}. */
@@ -309,6 +326,8 @@ export interface AttachToOriginWorktreeSpec {
   originBranch: string
   /** The origin task's worktree path, as recorded on its row. */
   originWorktreePath: string
+  /** Optional trace identity for subprocess attribution. */
+  trace?: TraceIdentity
 }
 
 /** Args for {@link Vcs.provisionCommitterWorktree}. */
@@ -316,6 +335,8 @@ export interface CommitterWorktreeSpec {
   /** Recovery task id used for path + branch naming. */
   recoveryTaskId: string
   integrationBranch: string
+  /** Optional trace identity for subprocess attribution. */
+  trace?: TraceIdentity
 }
 
 /**
@@ -333,6 +354,8 @@ export interface SyncWorktreeSpec {
   integrationBranch: string
   /** Conflict policy. Defaults to `'escalate'` — the caller opts into recreate/reconcile. */
   onConflict?: WorktreeConflictPolicy
+  /** Optional trace identity for subprocess attribution. */
+  trace?: TraceIdentity
 }
 
 /** A single commit parked off a recreated branch — `<shortSha> <subject>`. */
@@ -370,6 +393,8 @@ export type WorktreeSyncOutcome =
 export interface RestoreWorktreeSpec {
   taskId: string
   ref: WorktreeResult
+  /** Optional trace identity for subprocess attribution. */
+  trace?: TraceIdentity
 }
 
 /** Result of {@link Vcs.restoreWorktreeIfMissing}. */
@@ -452,6 +477,8 @@ export interface VcsAutoCommitOperatorDirtSpec {
   baseSha: string
   /** The just-merged tip `refs/heads/<integrationBranch>` now points at. */
   headSha: string
+  /** Optional trace identity for subprocess attribution. */
+  trace?: TraceIdentity
 }
 
 /** Result of {@link Vcs.autoCommitOperatorDirt}. */
