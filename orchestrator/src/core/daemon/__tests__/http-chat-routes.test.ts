@@ -48,7 +48,7 @@ describe('GET /view/chat/conversation', () => {
           id: 'message-1', seq: 42, threadId: 'subthread-1', subjectId: 'subthread-1', subjectTitle: 'A subthread', subjectClosed: false,
           role: 'assistant', content: 'Persisted narration', segments: [], createdAt: '2026-01-01T00:00:00.000Z',
           kind: 'acknowledgment', backingEntityId: null, resolution: null,
-        }], boundaries: [{
+        }], breadcrumbs: [], boundaries: [{
           subjectId: 'subthread-1', startedAt: '2026-01-01T00:00:00.000Z', closedAt: null, producedTokens: 25, carriedTokens: 20,
         }], memoryStartsAfterSeq: 42, memoryCutAt: 1_700_000_000_000, memoryCutReason: 'capacity' }),
       }),

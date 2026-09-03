@@ -22,6 +22,7 @@ interface ChatStoreModule {
   setMessageFeedback: typeof import('./chat-store').setMessageFeedback
   clearMessageFeedback: typeof import('./chat-store').clearMessageFeedback
   startThreadFromAlert: typeof import('./chat-store').startThreadFromAlert
+  listClosedSubjectBreadcrumbs: typeof import('./chat-store').listClosedSubjectBreadcrumbs
 }
 
 const makeSegment = (title: string): import('./chat-store').AlertSegment => ({
@@ -246,7 +247,7 @@ describe('chat-store', () => {
     expect(result!.thread.status).toBe('idle')
   })
 
-  it('keeps a closed Subthread and its messages in conversation history', async () => {
+  it('keeps a closed Subthread accessible via getThread and listClosedSubjects but excludes its messages from listConversationEntries', async () => {
     const m = await loadModule(repo)
     const subthread = await m.createThread('preserve this Subthread')
     await m.appendMessage(subthread.id, 'user', 'keep every word')
@@ -254,12 +255,42 @@ describe('chat-store', () => {
 
     await m.closeSubject(subthread.id)
 
+    // getThread and listClosedSubjects still expose the full thread.
     expect((await m.getThread(subthread.id))?.messages.map((message) => message.content)).toEqual([
       'keep every word',
       'and this reply',
     ])
     expect((await m.listClosedSubjects()).map((thread) => thread.id)).toContain(subthread.id)
-    expect((await m.listConversationEntries()).filter((entry) => entry.subjectId === subthread.id)).toHaveLength(2)
+    // Closed subthread messages no longer appear in the conversation feed.
+    expect((await m.listConversationEntries()).filter((entry) => entry.subjectId === subthread.id)).toHaveLength(0)
+  })
+
+  it('listConversationEntries excludes closed-subthread messages while listClosedSubjectBreadcrumbs returns a breadcrumb for each', async () => {
+    const m = await loadModule(repo)
+    const open = await m.createThread('open subject')
+    const closed = await m.createThread('closed subject')
+
+    await m.appendMessage(open.id, 'user', 'open message')
+    await m.appendMessage(closed.id, 'user', 'closed message')
+
+    await m.closeSubject(closed.id)
+
+    const entries = await m.listConversationEntries()
+    // Open-subthread message appears in the feed.
+    expect(entries.some((e) => e.subjectId === open.id)).toBe(true)
+    // Closed-subthread message is absent from the feed.
+    expect(entries.some((e) => e.subjectId === closed.id)).toBe(false)
+
+    const breadcrumbs = await m.listClosedSubjectBreadcrumbs()
+    // Breadcrumb exists for the closed subject.
+    const crumb = breadcrumbs.find((b) => b.id === closed.id)
+    expect(crumb).toBeDefined()
+    expect(crumb!.title).toBe('closed subject')
+    expect(crumb!.messageCount).toBe(1)
+    expect(crumb!.taskCount).toBe(0)
+    expect(crumb!.alertResolved).toBe(false)
+    // Open subject is not in breadcrumbs.
+    expect(breadcrumbs.some((b) => b.id === open.id)).toBe(false)
   })
 
   it('returns a Subthread closed beyond the former archive window', async () => {

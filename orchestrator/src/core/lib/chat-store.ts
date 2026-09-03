@@ -186,6 +186,20 @@ export interface ChatConversationEntryApiView {
   resolution: 'resolved' | null
 }
 
+/**
+ * Compact summary of a closed non-archived Subject. Returned alongside the
+ * filtered conversation entries so the UI can render a breadcrumb card for
+ * each closed thread without sending its full message body over the wire.
+ */
+export interface ClosedSubjectBreadcrumb {
+  id: string
+  title: string
+  closedAt: number
+  messageCount: number
+  taskCount: number
+  alertResolved: boolean
+}
+
 /** Aggregate token weight and lifetime for one Subject in the conversation. */
 export interface SubjectBoundaryApiView {
   subjectId: string
@@ -808,6 +822,14 @@ export const listThreads = async (options: ThreadListOptions = {}): Promise<Thre
  * List the persisted conversation across every Subject in the one global
  * insertion order. `chat_messages.seq` is deliberately the sole sort key: it
  * is the ordering the persistence layer assigned, even when timestamps tie.
+ *
+ * Closed subthread messages are excluded: once a Subject closes, only its
+ * breadcrumb (see {@link listClosedSubjectBreadcrumbs}) is surfaced. Two
+ * exceptions remain visible regardless of closed_at:
+ *   - Messages from the main-thread sentinel (t.id = 'main'), which carries
+ *     notices, situations, and context_line summaries.
+ *   - Messages with kind='context_line', which are always stored on the main
+ *     thread but the clause also guards any legacy outliers.
  */
 export const listConversationEntries = async (): Promise<ChatConversationEntryApiView[]> => {
   const c = stateClient()
@@ -818,6 +840,7 @@ export const listConversationEntries = async (): Promise<ChatConversationEntryAp
       JOIN chat_threads t ON t.id = m.thread_id
  LEFT JOIN tasks backing_task ON backing_task.id = m.backing_entity_id
      WHERE t.archived_at IS NULL
+       AND (t.closed_at IS NULL OR t.id = 'main' OR m.kind = 'context_line')
      ORDER BY m.seq ASC
   `)
   return (result.rows as unknown as Record<string, unknown>[]).map((row) => {
@@ -840,6 +863,36 @@ export const listConversationEntries = async (): Promise<ChatConversationEntryAp
         : null,
     }
   })
+}
+
+/**
+ * Return one breadcrumb per closed non-archived Subject, newest-first.
+ *
+ * Closed subthread messages are excluded from {@link listConversationEntries};
+ * callers use these breadcrumbs to render a compact card for each closed
+ * Subject without fetching its full message body.
+ */
+export const listClosedSubjectBreadcrumbs = async (): Promise<ClosedSubjectBreadcrumb[]> => {
+  const c = stateClient()
+  const result = await c.execute({
+    sql: `
+    SELECT t.id, t.title, t.closed_at, t.alert_resolved,
+           (SELECT COUNT(*) FROM chat_messages m WHERE m.thread_id = t.id) AS message_count,
+           (SELECT COUNT(*) FROM chat_thread_tasks tt WHERE tt.thread_id = t.id) AS task_count
+      FROM chat_threads t
+     WHERE t.closed_at IS NOT NULL AND t.archived_at IS NULL AND t.id != 'main'
+     ORDER BY t.closed_at DESC
+    `,
+    args: [],
+  })
+  return (result.rows as unknown as Record<string, unknown>[]).map((row) => ({
+    id: row.id as string,
+    title: row.title as string,
+    closedAt: Number(row.closed_at),
+    messageCount: Number(row.message_count),
+    taskCount: Number(row.task_count),
+    alertResolved: Boolean(row.alert_resolved),
+  }))
 }
 
 /**
