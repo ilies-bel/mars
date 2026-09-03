@@ -330,6 +330,44 @@ export const CODING_DISCIPLINE = [
   '- **Iterate against the narrowest test file first.** Run only the test file(s) directly touched by your change on each iteration; run the full suite once at the end to confirm nothing else broke.',
 ].join('\n')
 
+/**
+ * Prepended to every report-pipeline agent prompt. Replaces the commit-mandate
+ * prefix (no commit is required or expected) and adds the durability rule:
+ * file writes inside the worktree do NOT survive — the worktree is removed by
+ * `finalizeReport` — so all findings must be emitted as text in the final
+ * response, not written to files.
+ *
+ * A legitimately empty audit ("I checked, all is fine") is a valid outcome:
+ * return it as the final response too. Do NOT write empty files or placeholder
+ * reports just to produce an artifact.
+ *
+ * Not exported: only `composePrompt` (below) uses it. External callers that
+ * need to inspect report-pipeline prompt content should call `composePrompt`
+ * with `workflow='report'` and inspect the returned string.
+ */
+const REPORT_PIPELINE_BRIEF = [
+  '## Report pipeline — read-only run',
+  '',
+  'You are running in a **read-only report pipeline**. No commit is required and',
+  'no merge will be attempted. The worktree is available for reading the codebase;',
+  'do NOT write or commit files.',
+  '',
+  '**File writes do not survive this pipeline.** The worktree is reclaimed by the',
+  'finalize step after your run completes. Any file you write to the worktree will',
+  'be permanently lost, including markdown reports, JSON outputs, or draft documents.',
+  '',
+  '**Return all findings as text in your final response.** The pipeline captures',
+  'your final response text and persists it to the task record (reachable via',
+  '`mars task show <id>`). Structure the response clearly so it is actionable:',
+  '',
+  '- State what you audited and what you found.',
+  '- If you identify concrete fixes, file them as proposals (`mars proposal add`).',
+  '- If everything is fine, say so explicitly — a clean audit is a valid outcome.',
+  '',
+  'Do NOT write reports to files like `docs/reports/*.md`. Write them here, as',
+  'your final response text.',
+].join('\n')
+
 // Build the Coder Worker's standing Session instructions.
 const defaultCoderSystemPrompt = (): string =>
   [CONTEXT_GATHERING_BRIEF, DEVIATION_RULES].join('\n\n')
@@ -559,10 +597,12 @@ export const composePrompt = (
   // can cache it. Push these FIRST, before any task-specific content. The
   // commit-mandate blocks are omitted for the read-only report pipeline (see
   // the `workflow` param doc above); CODING_DISCIPLINE stays — it is generic
-  // engineering guidance, not a commit instruction.
+  // engineering guidance, not a commit instruction. For report tasks, the
+  // REPORT_PIPELINE_BRIEF replaces the commit prefix and adds the durability
+  // rule: file writes do not survive, findings must be text in the response.
   const sections: string[] =
     workflow === 'report'
-      ? [CODING_DISCIPLINE]
+      ? [REPORT_PIPELINE_BRIEF, CODING_DISCIPLINE]
       : [COMMIT_EXIT_CONDITION, CODING_DISCIPLINE, workerPromptBlock('COMMIT_FOOTER')]
 
   // Task-specific suffix — all content that varies per task follows here.
