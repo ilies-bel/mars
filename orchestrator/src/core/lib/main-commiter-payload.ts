@@ -103,11 +103,10 @@ export const SOURCE_ERROR_SUMMARY = (
 // ---------------------------------------------------------------------------
 
 /**
- * Shape of the JSON blob persisted on `tasks.recovery_payload` for a
- * `verify:test/test-assertion-error` failure. Discriminated by
- * `kind: 'verify-output'` so consumers can safely call
- * `parseMainCommiterPayload` on the same column — it returns `null` for this
- * kind, leaving the two payload shapes independent.
+ * Shape of the JSON blob persisted on `tasks.recovery_payload` for any
+ * `verify:*` failure. Discriminated by `kind: 'verify-output'` so consumers
+ * can safely call `parseMainCommiterPayload` on the same column — it returns
+ * `null` for this kind, leaving the two payload shapes independent.
  *
  * Written by `handleTaskFailureWithFixTask` (queue-fix-tasks.ts) immediately
  * before `upsertFixTask` is called, so it is available to the fix-task brief

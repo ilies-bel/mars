@@ -1715,14 +1715,14 @@ export const handleTaskFailureWithFixTask = async (
   }
 
   // ── Persist verify output into recovery_payload (PRD 3b00ccd0, Slice 1) ────
-  // For test-assertion failures, write the raw verify step output into the
-  // source task's `recovery_payload` column so the fix-task brief can include
-  // precise reproduction context (failing file path, test name, assertion
-  // diff, expected-vs-received) without re-parsing the potentially-truncated
-  // `error` column.
+  // For all verify gate failures (any `verify:*` signature), write the raw
+  // verify step output into the source task's `recovery_payload` column so the
+  // fix-task brief can include precise reproduction context (failing file path,
+  // test name, assertion diff, expected-vs-received, tsc error text, etc.)
+  // without re-parsing the potentially-truncated `error` column.
   //
   // Gated on the failure signature rather than `input.verifyTestOutput` so
-  // the payload is always present for this class of failure even when the
+  // the payload is always present for any verify gate failure even when the
   // caller did not supply structured test output — the raw errorOutput
   // carries all the context the recovery agent needs.
   //
@@ -1731,10 +1731,9 @@ export const handleTaskFailureWithFixTask = async (
   // re-queue, budget gate, etc.) exits before reaching here, so the payload
   // is never persisted for failures that do not produce a fix task.
   //
-  // A non-test-assertion signature (e.g. verify:typecheck/ts-error) leaves
-  // `recovery_payload` untouched; `parseMainCommiterPayload` returns null
-  // for `VerifyOutputPayload` rows, so existing main-commiter consumers are
-  // unaffected.
+  // `parseMainCommiterPayload` returns null for `VerifyOutputPayload` rows
+  // (discriminated by `kind`), so existing main-commiter consumers are
+  // unaffected regardless of which verify signature wrote the payload.
   if (shouldPersistVerifyOutputPayload(failureSignature)) {
     await updateTask(
       input.taskId,

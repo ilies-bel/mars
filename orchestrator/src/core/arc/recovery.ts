@@ -256,11 +256,11 @@ export const spawnRecovery = async (
   // `originalPrompt`; backfill from the source row if a direct caller
   // forgot. Default to '' only when the source genuinely has no prompt.
   const incomingPrompt = input.recipeContext.originalPrompt
-  // Extract the verify-output payload (written by queue-fix-tasks.ts for
-  // verify:test/test-assertion-error failures) so the testAssertionErrorRecipe
-  // can embed the exact failing assertion diff in the fix-coder's brief.
-  // Returns null for NULL payloads, legacy rows, and non-test-assertion
-  // signatures — safe to call unconditionally.
+  // Extract the verify-output payload (written by queue-fix-tasks.ts for all
+  // verify:* failures) so recipes can embed the exact verify output (failing
+  // assertion diff, tsc error text, lint output, etc.) in the fix-coder's
+  // brief. Returns null for NULL payloads and legacy rows — safe to call
+  // unconditionally.
   const verifyOutputPayload = parseVerifyOutputPayload(source.recoveryPayload ?? null)
   const recipeContextWithSource: FixRecipeContext = {
     ...input.recipeContext,
