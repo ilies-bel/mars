@@ -15,6 +15,12 @@ import { resolve } from 'node:path'
 import type { DaemonActionResult } from './daemonHttp.ts'
 import { startServer } from './index.ts'
 
+// Re-exported for the proposal-thread describe block below.
+interface ProxyPostCall {
+  path: string
+  body: unknown
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -207,5 +213,196 @@ describe('POST /api/actions — proposal dismiss', () => {
     const body = (await res.json()) as { ok: boolean; error: string }
     expect(body.ok).toBe(false)
     expect(body.error).toContain('dependent tasks')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// POST /api/proposals/:id/thread — grill thread with seeded context message
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a paired proxyGet + proxyPost stub for the proposal-thread handler.
+ *
+ * proxyGet always returns the supplied `proposal` for any path that looks like
+ * /view/proposal/:id, and 404 otherwise (so stale-daemon-code detection in the
+ * withSkewDetection wrapper falls through harmlessly).
+ *
+ * proxyPost records every call and dispatches by path:
+ *   /chat/threads          → returns { id: 'thread-seed-001' }
+ *   /chat/threads/:id/message → returns the supplied seedResult (default 200)
+ */
+const makeProposalThreadStubs = (
+  proposal: {
+    title?: string
+    problem?: string
+    solution?: string
+    userStories?: string[]
+    outOfScope?: string
+  },
+  seedResult: DaemonActionResult = { status: 200, body: { ok: true } },
+): {
+  proxyGet: (stateDir: string, path: string) => Promise<DaemonActionResult>
+  proxyPost: (stateDir: string, path: string, body: unknown) => Promise<DaemonActionResult>
+  postCalls: ProxyPostCall[]
+} => {
+  const postCalls: ProxyPostCall[] = []
+  return {
+    postCalls,
+    proxyGet: async (_stateDir, path) => {
+      if (path.startsWith('/view/proposal/')) {
+        return { status: 200, body: proposal }
+      }
+      return { status: 404, body: { error: `stub: unhandled GET ${path}` } }
+    },
+    proxyPost: async (_stateDir, path, body) => {
+      postCalls.push({ path, body })
+      if (path === '/chat/threads') {
+        return { status: 200, body: { id: 'thread-seed-001' } }
+      }
+      if (path.startsWith('/chat/threads/') && path.endsWith('/message')) {
+        return seedResult
+      }
+      return { status: 404, body: { error: `stub: unhandled POST ${path}` } }
+    },
+  }
+}
+
+describe('POST /api/proposals/:id/thread — seed message', () => {
+  let repo: string
+  let server: ReturnType<typeof Bun.serve> | null = null
+  let baseUrl: string
+
+  beforeEach(async () => {
+    repo = setupRepo()
+  })
+
+  afterEach(() => {
+    if (server) server.stop(true)
+    server = null
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('creates thread with title "Grill: <title>" and posts seed message', async () => {
+    const { proxyGet, proxyPost, postCalls } = makeProposalThreadStubs({
+      title: 'Better alerts UX',
+      problem: 'Alerts are hard to find.',
+      solution: 'Surface them in the sidebar.',
+    })
+    server = await startServer({ repo, port: 0, host: '127.0.0.1' }, { proxyGet, proxyPost })
+    baseUrl = `http://${server.hostname}:${server.port}`
+
+    const res = await fetch(`${baseUrl}/api/proposals/prop-abc/thread`, { method: 'POST' })
+    expect(res.status).toBe(200)
+    const resBody = (await res.json()) as { threadId: string }
+    expect(resBody.threadId).toBe('thread-seed-001')
+
+    // Thread creation call
+    const createCall = postCalls.find(c => c.path === '/chat/threads')
+    expect(createCall).toBeDefined()
+    expect((createCall!.body as { title: string }).title).toBe('Grill: Better alerts UX')
+
+    // Seed message call
+    const seedCall = postCalls.find(c => c.path.endsWith('/message'))
+    expect(seedCall).toBeDefined()
+    const seedBody = seedCall!.body as { role: string; content: string }
+    expect(seedBody.role).toBe('context')
+    expect(seedBody.content).toContain('## Problem')
+    expect(seedBody.content).toContain('Alerts are hard to find.')
+    expect(seedBody.content).toContain('## Solution')
+    expect(seedBody.content).toContain('Surface them in the sidebar.')
+  })
+
+  it('omits empty sections from the seed message', async () => {
+    const { proxyGet, proxyPost, postCalls } = makeProposalThreadStubs({
+      title: 'Minimal proposal',
+      problem: 'The only non-empty field.',
+      solution: '',         // empty → omitted
+      outOfScope: '   ',   // whitespace-only → omitted
+    })
+    server = await startServer({ repo, port: 0, host: '127.0.0.1' }, { proxyGet, proxyPost })
+    baseUrl = `http://${server.hostname}:${server.port}`
+
+    const res = await fetch(`${baseUrl}/api/proposals/prop-min/thread`, { method: 'POST' })
+    expect(res.status).toBe(200)
+
+    const seedCall = postCalls.find(c => c.path.endsWith('/message'))
+    expect(seedCall).toBeDefined()
+    const content = (seedCall!.body as { content: string }).content
+    expect(content).toContain('## Problem')
+    expect(content).not.toContain('## Solution')
+    expect(content).not.toContain('## Out of Scope')
+  })
+
+  it('includes numbered user stories when present', async () => {
+    const { proxyGet, proxyPost, postCalls } = makeProposalThreadStubs({
+      title: 'Stories proposal',
+      problem: 'Need stories.',
+      solution: 'Add them.',
+      userStories: ['As a user I can view alerts', 'As a user I can dismiss alerts'],
+    })
+    server = await startServer({ repo, port: 0, host: '127.0.0.1' }, { proxyGet, proxyPost })
+    baseUrl = `http://${server.hostname}:${server.port}`
+
+    await fetch(`${baseUrl}/api/proposals/prop-stories/thread`, { method: 'POST' })
+
+    const seedCall = postCalls.find(c => c.path.endsWith('/message'))
+    expect(seedCall).toBeDefined()
+    const content = (seedCall!.body as { content: string }).content
+    expect(content).toContain('## User Stories')
+    expect(content).toContain('1. As a user I can view alerts')
+    expect(content).toContain('2. As a user I can dismiss alerts')
+  })
+
+  it('includes out-of-scope section when non-empty', async () => {
+    const { proxyGet, proxyPost, postCalls } = makeProposalThreadStubs({
+      title: 'Scoped proposal',
+      problem: 'Scope it.',
+      outOfScope: 'No mobile support.',
+    })
+    server = await startServer({ repo, port: 0, host: '127.0.0.1' }, { proxyGet, proxyPost })
+    baseUrl = `http://${server.hostname}:${server.port}`
+
+    await fetch(`${baseUrl}/api/proposals/prop-scope/thread`, { method: 'POST' })
+
+    const seedCall = postCalls.find(c => c.path.endsWith('/message'))
+    expect(seedCall).toBeDefined()
+    const content = (seedCall!.body as { content: string }).content
+    expect(content).toContain('## Out of Scope')
+    expect(content).toContain('No mobile support.')
+  })
+
+  it('still returns { threadId } when all sections are empty (no seed posted)', async () => {
+    // A proposal with no meaningful content should still open a thread.
+    const { proxyGet, proxyPost, postCalls } = makeProposalThreadStubs({
+      title: 'Empty body',
+      problem: '',
+      solution: '',
+    })
+    server = await startServer({ repo, port: 0, host: '127.0.0.1' }, { proxyGet, proxyPost })
+    baseUrl = `http://${server.hostname}:${server.port}`
+
+    const res = await fetch(`${baseUrl}/api/proposals/prop-empty/thread`, { method: 'POST' })
+    expect(res.status).toBe(200)
+    const resBody = (await res.json()) as { threadId: string }
+    expect(resBody.threadId).toBe('thread-seed-001')
+
+    // No seed message should have been posted
+    const seedCall = postCalls.find(c => c.path.endsWith('/message'))
+    expect(seedCall).toBeUndefined()
+  })
+
+  it('returns { threadId } even when the seed message post fails', async () => {
+    // Seed failures are swallowed — the thread is still usable.
+    const { proxyGet, proxyPost } = makeProposalThreadStubs(
+      { title: 'Resilient proposal', problem: 'Something.' },
+      { status: 500, body: { error: 'daemon exploded' } },
+    )
+    server = await startServer({ repo, port: 0, host: '127.0.0.1' }, { proxyGet, proxyPost })
+    baseUrl = `http://${server.hostname}:${server.port}`
+
+    const res = await fetch(`${baseUrl}/api/proposals/prop-fail/thread`, { method: 'POST' })
+    expect(res.status).toBe(200)
+    const resBody = (await res.json()) as { threadId: string }
+    expect(resBody.threadId).toBe('thread-seed-001')
   })
 })

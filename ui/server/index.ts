@@ -712,9 +712,10 @@ export const startServer = async (
             }
             const proposal = proposalResult.body as {
               title?: string
-              description?: string
-              body?: string
-              userStories?: Array<{ title?: string; description?: string }>
+              problem?: string
+              solution?: string
+              userStories?: string[]
+              outOfScope?: string
             }
             const threadTitle = `Grill: ${String(proposal.title ?? proposalId)}`
             const threadResult = await proxyPost(ctx.stateDir, '/chat/threads', { title: threadTitle })
@@ -725,26 +726,26 @@ export const startServer = async (
             const threadId = String(thread.id ?? '')
 
             // Seed the thread with proposal context so Grill starts with full background.
-            // Build a structured markdown block from whatever proposal fields are present.
-            const contextLines: string[] = [`# ${String(proposal.title ?? proposalId)}`]
-            const bodyText = proposal.body ?? proposal.description
-            if (bodyText) {
-              contextLines.push('', bodyText)
-            }
+            // Each non-empty field gets its own labeled ## section; empty sections
+            // are omitted entirely. Sections are joined with a blank line between them.
+            const contextParts: string[] = []
+            const problem = (proposal.problem ?? '').trim()
+            if (problem) contextParts.push(`## Problem\n${problem}`)
+            const solution = (proposal.solution ?? '').trim()
+            if (solution) contextParts.push(`## Solution\n${solution}`)
             if (Array.isArray(proposal.userStories) && proposal.userStories.length > 0) {
-              contextLines.push('', '## User Stories')
-              for (const story of proposal.userStories) {
-                const label = String(story.title ?? '').trim()
-                const detail = String(story.description ?? '').trim()
-                contextLines.push(`- **${label}**${detail ? `: ${detail}` : ''}`)
-              }
+              const storiesText = proposal.userStories.map((s, i) => `${i + 1}. ${s}`).join('\n')
+              contextParts.push(`## User Stories\n${storiesText}`)
             }
-            if (contextLines.length > 1 && threadId) {
+            const outOfScope = (proposal.outOfScope ?? '').trim()
+            if (outOfScope) contextParts.push(`## Out of Scope\n${outOfScope}`)
+
+            if (contextParts.length > 0 && threadId) {
               // Non-fatal: thread is already created. A seed-message failure is cosmetic.
               await proxyPost(
                 ctx.stateDir,
                 `/chat/threads/${encodeURIComponent(threadId)}/message`,
-                { role: 'context', content: contextLines.join('\n') },
+                { role: 'context', content: contextParts.join('\n\n') },
               ).catch(() => { /* swallow — seed failure must not fail thread creation */ })
             }
 
