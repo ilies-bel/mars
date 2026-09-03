@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { checkNpmScriptExists, containsAbsoluteRepoPath, hasFlag, isFullSuiteVerifyCmd, parseArgs } from '../args'
+import { checkNpmScriptExists, containsAbsoluteRepoPath, hasFlag, isFullSuiteVerifyCmd, isNoOpVerifyCmd, parseArgs } from '../args'
 
 describe('boolean flags', () => {
   it('reports a supplied boolean flag even though it is not positional', () => {
@@ -381,5 +381,112 @@ describe('checkNpmScriptExists', () => {
 
   it('returns null when the command is from the root and the script exists there', () => {
     expect(checkNpmScriptExists('npm run build', scripts)).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// isNoOpVerifyCmd — structural no-op gate detection
+// ---------------------------------------------------------------------------
+
+describe('isNoOpVerifyCmd', () => {
+  it('returns null for a legitimate scoped vitest command', () => {
+    expect(
+      isNoOpVerifyCmd('cd orchestrator && npx vitest run src/foo.test.ts'),
+    ).toBeNull()
+  })
+
+  it('returns null for an empty string (absent gate is a valid choice)', () => {
+    expect(isNoOpVerifyCmd('')).toBeNull()
+  })
+
+  // Pattern 1 — whitespace-only
+  it('returns a non-null error for whitespace-only input', () => {
+    const result = isNoOpVerifyCmd('   ')
+    expect(result).not.toBeNull()
+    expect(result).toContain('[mars] --verify')
+  })
+
+  // Pattern 2 — --no-exit-code in terminal segment
+  it('returns a non-null error when --no-exit-code is in the terminal segment', () => {
+    const result = isNoOpVerifyCmd('knip --no-exit-code')
+    expect(result).not.toBeNull()
+    expect(result).toContain('[mars] --verify')
+    expect(result).toContain('--no-exit-code')
+  })
+
+  it('returns null when --no-exit-code is in a non-terminal segment (tsc still gates)', () => {
+    expect(isNoOpVerifyCmd('knip --no-exit-code && tsc --noEmit')).toBeNull()
+  })
+
+  it('returns a non-null error when --no-exit-code is the last ;-separated segment', () => {
+    const result = isNoOpVerifyCmd('tsc --noEmit; knip --no-exit-code')
+    expect(result).not.toBeNull()
+    expect(result).toContain('--no-exit-code')
+  })
+
+  // Pattern 3 — terminal || true / ; true
+  it('returns a non-null error for a command ending in || true', () => {
+    const result = isNoOpVerifyCmd('npm run lint || true')
+    expect(result).not.toBeNull()
+    expect(result).toContain('[mars] --verify')
+  })
+
+  it('returns a non-null error for a command ending in ; true', () => {
+    const result = isNoOpVerifyCmd('npm run lint; true')
+    expect(result).not.toBeNull()
+    expect(result).toContain('[mars] --verify')
+  })
+
+  // Pattern 4 — terminal ; exit 0 / || exit 0
+  it('returns a non-null error for a command ending in ; exit 0', () => {
+    const result = isNoOpVerifyCmd('npm run lint; exit 0')
+    expect(result).not.toBeNull()
+    expect(result).toContain('[mars] --verify')
+  })
+
+  it('returns a non-null error for a command ending in || exit 0', () => {
+    const result = isNoOpVerifyCmd('npm run lint || exit 0')
+    expect(result).not.toBeNull()
+    expect(result).toContain('[mars] --verify')
+  })
+
+  // Pattern 5 — last pipe stage is grep/tail/head
+  it('returns a non-null error when the last pipeline stage is grep', () => {
+    const result = isNoOpVerifyCmd('npx vitest run src/foo.test.ts | grep PASS')
+    expect(result).not.toBeNull()
+    expect(result).toContain('[mars] --verify')
+    expect(result).toContain('grep')
+  })
+
+  it('returns a non-null error when the last pipeline stage is tail', () => {
+    const result = isNoOpVerifyCmd('npx vitest run src/foo.test.ts | tail -10')
+    expect(result).not.toBeNull()
+    expect(result).toContain('tail')
+  })
+
+  it('returns a non-null error when the last pipeline stage is head', () => {
+    const result = isNoOpVerifyCmd('npx vitest run src/foo.test.ts | head -5')
+    expect(result).not.toBeNull()
+    expect(result).toContain('head')
+  })
+
+  it('returns null when grep/tail/head appear in a non-terminal compound segment', () => {
+    // grep is in the first compound segment; tsc gates the final result
+    expect(isNoOpVerifyCmd('cmd | grep foo && npx tsc --noEmit')).toBeNull()
+  })
+
+  // Error message format
+  it('error messages include actionable guidance', () => {
+    const cases = [
+      isNoOpVerifyCmd('   '),
+      isNoOpVerifyCmd('knip --no-exit-code'),
+      isNoOpVerifyCmd('cmd || true'),
+      isNoOpVerifyCmd('cmd; exit 0'),
+      isNoOpVerifyCmd('cmd | grep PASS'),
+    ]
+    for (const msg of cases) {
+      expect(msg).not.toBeNull()
+      expect(msg).toContain('[mars] --verify')
+    }
   })
 })

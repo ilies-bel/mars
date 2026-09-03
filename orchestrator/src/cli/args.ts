@@ -599,6 +599,93 @@ export const findAtPathToken = (
   return null
 }
 
+/**
+ * Detect structurally no-op `--verify` commands — ones that can never report
+ * a failure regardless of what the underlying tool finds.
+ *
+ * Returns a user-facing error string when a no-op pattern is detected, or
+ * `null` when the command looks structurally sound. An empty string is also
+ * `null` — an absent verify gate is a valid choice, not a problem.
+ *
+ * Checks five patterns in order:
+ *   1. Whitespace-only input — not an absent gate, just invalid.
+ *   2. `--no-exit-code` in the last `&&`/`;`-separated segment (`||` is
+ *      excluded so 'knip --no-exit-code && tsc --noEmit' is not flagged).
+ *   3. Terminal `|| true` or `; true` — unconditional exit 0.
+ *   4. Terminal `; exit 0` or `|| exit 0` — forced success override.
+ *   5. Last `|`-pipe stage of the last compound segment is `grep`, `tail`, or
+ *      `head` — these mask the upstream exit code.
+ */
+export const isNoOpVerifyCmd = (verifyCmd: string): string | null => {
+  // Pattern 1: whitespace-only input is not an absent gate — it is invalid.
+  if (/^\s+$/.test(verifyCmd)) {
+    return (
+      `[mars] --verify is whitespace-only and would never run a real command — ` +
+      `specify a meaningful verification command or omit --verify entirely.`
+    )
+  }
+
+  const trimmed = verifyCmd.trim()
+
+  // Pattern 2: --no-exit-code in the last &&/;-separated segment.
+  // Splitting on || is intentionally excluded: 'knip --no-exit-code && tsc --noEmit'
+  // has 'tsc --noEmit' as the gating tail, so the gate is not a no-op.
+  const andSemiSegments = trimmed.split(/&&|;/).map((s) => s.trim()).filter(Boolean)
+  if (andSemiSegments.length > 0) {
+    const lastSeg = andSemiSegments[andSemiSegments.length - 1]!
+    if (lastSeg.split(/\s+/).includes('--no-exit-code')) {
+      return (
+        `[mars] --verify contains '--no-exit-code' in its terminal command segment, ` +
+        `which suppresses the non-zero exit code and makes the gate always exit 0 — ` +
+        `this gate asserts nothing. ` +
+        `Remove '--no-exit-code' or add a gating command after it ` +
+        `(e.g. '&& npx tsc --noEmit').`
+      )
+    }
+  }
+
+  // Pattern 3: terminal || true / ; true — unconditional exit 0.
+  if (/(?:\|\|\s*true|;\s*true)\s*$/.test(trimmed)) {
+    return (
+      `[mars] --verify ends in '|| true' or '; true' which unconditionally exits 0 ` +
+      `regardless of the preceding command's result — this gate asserts nothing. ` +
+      `Remove the trailing '|| true' / '; true' to let the real exit code propagate.`
+    )
+  }
+
+  // Pattern 4: terminal ; exit 0 / || exit 0 — forced success override.
+  if (/(?:;\s*exit\s+0|\|\|\s*exit\s+0)\s*$/.test(trimmed)) {
+    return (
+      `[mars] --verify ends in '; exit 0' or '|| exit 0' which overrides the ` +
+      `preceding command's exit code and always exits 0 — this gate asserts nothing. ` +
+      `Remove the trailing exit-0 override.`
+    )
+  }
+
+  // Pattern 5: last pipe stage in the last compound segment is grep/tail/head.
+  // These mask the upstream exit code (grep exits 0 when the pattern matches,
+  // regardless of whether the main command found errors).
+  const compoundSegments = trimmed.split(/&&|\|\||;/).map((s) => s.trim()).filter(Boolean)
+  if (compoundSegments.length > 0) {
+    const lastCompound = compoundSegments[compoundSegments.length - 1]!
+    const pipeStages = lastCompound.split('|').map((s) => s.trim()).filter(Boolean)
+    if (pipeStages.length > 1) {
+      const firstToken = pipeStages[pipeStages.length - 1]!.split(/\s+/)[0] ?? ''
+      if (['grep', 'tail', 'head'].includes(firstToken)) {
+        return (
+          `[mars] --verify pipes into '${firstToken}' as its final stage, which masks ` +
+          `the upstream exit code — '${firstToken}' exits 0 when the pattern matches ` +
+          `regardless of what the main command found. ` +
+          `Remove '| ${firstToken} …' or capture output to a file and check the main ` +
+          `command's exit code directly.`
+        )
+      }
+    }
+  }
+
+  return null
+}
+
 /** `--blocked-by`: the repeatable blocker-id list (possibly empty). */
 export const parseBlockedBy = (
   args: Pick<ParsedArgs, 'multiFlags'>,
