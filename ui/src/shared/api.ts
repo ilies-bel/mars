@@ -1532,6 +1532,103 @@ export const applyLever = async (
   return body as { leverId: string; fromValue: string | null; appliedValue: string; requiresRestart: boolean; appliedAt: string }
 }
 
+// ---------------------------------------------------------------------------
+// Proposal mutations — field edits and user-story management
+// ---------------------------------------------------------------------------
+
+/**
+ * Mirror of the orchestrator's `ProposalField` union.
+ * Enumerates every field that can be updated via `patchProposalField`.
+ */
+export type ProposalField =
+  | 'title'
+  | 'problem'
+  | 'solution'
+  | 'out-of-scope'
+  | 'notes'
+  | 'status'
+
+/**
+ * Update a single named field on a proposal.
+ * Proxied to the daemon's PATCH /proposals/:id/field endpoint.
+ * Throws `ApiError` on failure.
+ */
+export const patchProposalField = async (
+  id: string,
+  field: ProposalField,
+  value: string,
+  projectId?: string,
+): Promise<ProposalDetail> => {
+  const path = appendProject(
+    `/api/proposals/${encodeURIComponent(id)}/field`,
+    projectId,
+  )
+  const r = await fetch(`${BASE}${path}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ field, value }),
+  })
+  if (!r.ok) await throwMutationError(path, r)
+  const raw = await r.json()
+  const result = proposalDetailSchema.safeParse(raw)
+  if (!result.success) {
+    throw new Error(`PATCH ${path} → response failed schema validation: ${result.error.message}`)
+  }
+  return result.data
+}
+
+/**
+ * Append a user story to a proposal's story list.
+ * Proxied to POST /api/proposals/:id/stories on the daemon.
+ * Returns the updated `ProposalDetail`. Throws `ApiError` on failure.
+ */
+export const addProposalStory = async (
+  id: string,
+  story: string,
+  projectId?: string,
+): Promise<ProposalDetail> => {
+  const path = appendProject(
+    `/api/proposals/${encodeURIComponent(id)}/stories`,
+    projectId,
+  )
+  const r = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ story }),
+  })
+  if (!r.ok) await throwMutationError(path, r)
+  const raw = await r.json()
+  const result = proposalDetailSchema.safeParse(raw)
+  if (!result.success) {
+    throw new Error(`POST ${path} → response failed schema validation: ${result.error.message}`)
+  }
+  return result.data
+}
+
+/**
+ * Remove the user story at the given 0-based position index from a proposal.
+ * Proxied to DELETE /api/proposals/:id/stories/:index on the daemon.
+ * Returns the updated `ProposalDetail`. Throws `ApiError` on failure.
+ */
+export const removeProposalStory = async (
+  id: string,
+  index: number,
+  projectId?: string,
+): Promise<ProposalDetail> => {
+  const path = appendProject(
+    `/api/proposals/${encodeURIComponent(id)}/stories/${index}`,
+    projectId,
+  )
+  const r = await fetch(`${BASE}${path}`, { method: 'DELETE' })
+  if (!r.ok) await throwMutationError(path, r)
+  const raw = await r.json()
+  const result = proposalDetailSchema.safeParse(raw)
+  if (!result.success) {
+    throw new Error(`DELETE ${path} → response failed schema validation: ${result.error.message}`)
+  }
+  return result.data
+}
+
 export type {
   ActionQueueHistoryResponse,
   ActionQueueItem,
