@@ -6,7 +6,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, utimesSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { existsSync } from 'node:fs'
@@ -337,11 +337,10 @@ describe('getWorktreeFootprint', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('returns count=0 totalBytes=0 when the worktrees directory is empty', async () => {
+  it('returns count=0 when the worktrees directory is empty', async () => {
     const { r } = await loadModules(repo)
     const fp = await r.getWorktreeFootprint(repo)
     expect(fp.count).toBe(0)
-    expect(fp.totalBytes).toBe(0)
   })
 
   it('returns count of worktree dirs', async () => {
@@ -368,7 +367,6 @@ describe('getWorktreeFootprint', () => {
     try {
       const fp = await freshR.getWorktreeFootprint(freshRepo)
       expect(fp.count).toBe(0)
-      expect(fp.totalBytes).toBe(0)
     } finally {
       rmSync(freshRepo, { recursive: true, force: true })
     }
@@ -410,35 +408,6 @@ describe('checkDiskSpace', () => {
       expect(check.freeBytes).toBeGreaterThan(0)
       expect(check.thresholdBytes).toBe(Number.MAX_SAFE_INTEGER)
     }
-  })
-})
-
-describe('writeFileSync in worktree dir creates measurable size', () => {
-  let repo: string
-
-  beforeEach(() => {
-    repo = setupRepo()
-  })
-
-  afterEach(() => {
-    delete process.env.MARS_REPO
-    rmSync(repo, { recursive: true, force: true })
-  })
-
-  it('totalBytes increases when files are written into a worktree dir', async () => {
-    const { r } = await loadModules(repo)
-
-    const fp0 = await r.getWorktreeFootprint(repo)
-    expect(fp0.count).toBe(0)
-
-    makeWorktreeDir(repo, 'mars-aabbccdd')
-    writeFileSync(join(repo, '.mars', 'worktrees', 'mars-aabbccdd', 'big.txt'), 'x'.repeat(1024))
-
-    const fp1 = await r.getWorktreeFootprint(repo)
-    expect(fp1.count).toBe(1)
-    // totalBytes is the stat() size of the directory entry itself;
-    // it will be > 0 on most systems.
-    expect(fp1.totalBytes).toBeGreaterThanOrEqual(0) // at least non-negative
   })
 })
 

@@ -4259,7 +4259,7 @@ export const startDaemon = async (
     const { readSignatureStormState } = await import('../lib/signature-storm-monitor')
     const signatureStorm = await readSignatureStormState(getCompositionRootClient())
     // Worktree footprint — best-effort; null on failure (never throws).
-    let worktrees: { count: number; totalBytes: number } | null = null
+    let worktrees: { count: number } | null = null
     try {
       worktrees = await getWorktreeFootprint(resolveContext().repoRoot)
     } catch {

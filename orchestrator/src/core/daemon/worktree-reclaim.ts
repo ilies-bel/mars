@@ -22,7 +22,7 @@
  * state from the database, never by directory mtime alone.
  *
  * Additionally exposes:
- *   - `getWorktreeFootprint` — count + total bytes for the `.mars/worktrees/`
+ *   - `getWorktreeFootprint` — directory count for the `.mars/worktrees/`
  *     tree, suitable for surfacing in `mars daemon status`.
  *   - `getWorktreeFreeBytes` — bytes available to unprivileged users on the
  *     filesystem hosting the worktrees directory. Returns null when the path
@@ -322,42 +322,29 @@ export async function reclaimExcessFailedWorktrees(
 export interface WorktreeFootprint {
   /** Number of direct-child directories. */
   count: number
-  /** Approximate total bytes across all entries (recursive). */
-  totalBytes: number
 }
 
 /**
- * Measure the footprint of `.mars/worktrees/` — directory count and total
- * size (recursive). Returns `{ count: 0, totalBytes: 0 }` when the directory
- * does not exist.
+ * Measure the footprint of `.mars/worktrees/` — directory count only.
+ * Returns `{ count: 0 }` when the directory does not exist.
  *
- * Uses directory-entry `stat` rather than a recursive walk to avoid stalling
- * the daemon for gigabytes of worktree content. This gives a **lower bound**:
- * it sizes only direct-child entries. Callers should document this limitation.
+ * A byte figure is deliberately omitted: `stat()` on a directory returns the
+ * size of the directory inode (~few hundred bytes), not its contents, so any
+ * sum would be structurally always near zero regardless of actual disk usage.
+ * Operators who need a real figure should run `du -sh .mars/worktrees/*`.
  */
 export async function getWorktreeFootprint(
   repoRoot: string,
 ): Promise<WorktreeFootprint> {
   const dir = worktreesDir(repoRoot)
-  let entries: string[]
+  let count: number
   try {
     const dirents = await readdir(dir, { withFileTypes: true })
-    entries = dirents.filter((e) => e.isDirectory()).map((e) => e.name)
+    count = dirents.filter((e) => e.isDirectory()).length
   } catch {
-    return { count: 0, totalBytes: 0 }
+    return { count: 0 }
   }
-
-  const count = entries.length
-  let totalBytes = 0
-  for (const name of entries) {
-    try {
-      const s = await stat(join(dir, name))
-      totalBytes += s.size
-    } catch {
-      // ignore missing entries
-    }
-  }
-  return { count, totalBytes }
+  return { count }
 }
 
 /**

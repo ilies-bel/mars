@@ -288,11 +288,11 @@ export interface DaemonStatusPayload {
   signatureStorm: SignatureStormState
   /**
    * Footprint of `.mars/worktrees/` at the time `daemon status` was called.
-   * `count` is the number of direct-child directories; `totalBytes` is a
-   * lower-bound estimate (direct-entry stat sizes only). `null` when the
-   * directory does not exist or the measurement failed.
+   * `count` is the number of direct-child directories. No byte figure is
+   * reported — use `du -sh .mars/worktrees/*` for precise sizes. `null` when
+   * the directory does not exist or the measurement failed.
    */
-  worktrees: { count: number; totalBytes: number } | null
+  worktrees: { count: number } | null
   /**
    * Non-null when the daemon has rows in an in-flight status
    * ('running', 'verifying', 'merging', 'vega-reconciling') but zero live

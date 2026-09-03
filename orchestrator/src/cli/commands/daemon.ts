@@ -270,7 +270,7 @@ const daemonStatus: Command = {
       pause: DispatchPauseState
       signatureStorm: { tripped: boolean; signature: string | null; streak: number; lastTaskId: string | null }
       draining?: boolean
-      worktrees?: { count: number; totalBytes: number } | null
+      worktrees?: { count: number } | null
       phantomWarning?: string | null
     }
     // Drain state takes precedence over pause and staleness notices. A draining
@@ -307,10 +307,12 @@ const daemonStatus: Command = {
     // Phantom in-flight warning: rows in in-flight status but no live jobs.
     // Normally cleared by the boot reconcile; printed when they persist.
     if (data.phantomWarning) deps.out(data.phantomWarning)
-    // Worktree footprint — helps operators spot disk-space accumulation early.
+    // Worktree count — helps operators spot accumulation early.
+    // No byte figure: stat() on a directory returns inode size (~few hundred
+    // bytes), not content size, so any sum is structurally always ~0. Use
+    // `du -sh .mars/worktrees/*` for precise sizes.
     if (data.worktrees != null) {
-      const mb = (data.worktrees.totalBytes / (1024 * 1024)).toFixed(1)
-      deps.out(`worktrees:  count=${data.worktrees.count} size≈${mb} MiB (lower-bound; use \`du -sh .mars/worktrees/*\` for precise sizes)`)
+      deps.out(`worktrees:  count=${data.worktrees.count} (use \`du -sh .mars/worktrees/*\` for disk usage)`)
     }
     // Signature-storm breaker state. Always printed so the operator can tell
     // whether a stale `tripped=true` row is present even when dispatch is
