@@ -1,10 +1,10 @@
 import { stat, rm, readFile, lstat, readlink, writeFile } from 'node:fs/promises'
 import { isAbsolute, resolve, relative } from 'node:path'
-import { acquireLock } from './git/lock'
+import { acquireLock } from './lock'
 import { type RunSubprocessResult } from '../ports/executor/types'
 import { getStateDir } from '../context'
 import { runTool, nullTraceStore, type TraceCtx } from './run-tool'
-import { execProbe } from './git/internal'
+import { execProbe } from './internal'
 import { provisionWorktreeDeps } from './worktree-deps'
 
 export const DEFAULT_INSTALL_TIMEOUT_MS = 8 * 60_000

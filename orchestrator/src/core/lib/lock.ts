@@ -1,9 +1,12 @@
 /**
- * lib/lock.ts — file-lock primitives at the lib/ level.
+ * Process-level file-lock primitive.
  *
- * The implementation lives in `./git/lock`; this module re-exports it so
- * callers can import from `lib/lock` without a `git/` path dependency.
- * The "Relocate acquireLock from lib/git/lock to lib/lock" slice will move
- * the implementation here and update `lib/git/lock` to re-export from `../lock`.
+ * This module is the canonical import path for `acquireLock`. It re-exports
+ * from `./git/lock` while the consumer slice "Relocate acquireLock from
+ * lib/git/lock to lib/lock" is pending; that slice will replace this barrel
+ * with the moved implementation and update `./git/lock` in turn.
+ *
+ * Callers must import from here, not from `./git/lock`, so that the
+ * relocation only touches one file.
  */
 export { acquireLock } from './git/lock'
