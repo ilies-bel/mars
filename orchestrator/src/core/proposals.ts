@@ -863,6 +863,25 @@ export const setProposalField = async (
       )
     }
   }
+  // Guard: a proposal with no substantive body cannot be moved to 'prd-ready'.
+  // The Slicer requires at least a problem or a solution to decompose the PRD;
+  // a row with both empty produces a wasted agent run and a 'slice-failed'
+  // action-queue alert. Requiring *at least one* non-empty field (rather than
+  // both) intentionally allows a well-stated problem with the solution left
+  // open — that is a legitimate PRD. The promoteProposal path already validates
+  // via validateProposalShaped; this guard closes the gap for the raw
+  // `mars proposal set <id> status prd-ready` write path.
+  if (field === 'status' && value === 'prd-ready') {
+    const current = await getProposal(id)
+    const hasProblem = (current?.problem ?? '').trim().length > 0
+    const hasSolution = (current?.solution ?? '').trim().length > 0
+    if (!hasProblem && !hasSolution) {
+      throw new Error(
+        `proposal ${id} has no problem or solution text, so the Slicer has nothing to decompose. ` +
+          `Add one with:\n  mars proposal set ${id} problem @<file>\nor dismiss the proposal.`,
+      )
+    }
+  }
   const now = Date.now()
   await c.execute({
     sql: `UPDATE proposals SET ${fieldColumn[field]} = ?, updated_at = ? WHERE id = ?`,

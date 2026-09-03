@@ -114,4 +114,52 @@ describe('proposals — lifecycle-transition guards', () => {
       expect(updated.status).toBe('dismissed')
     })
   })
+
+  describe('prd-ready body guard', () => {
+    it('setProposalField rejects status=prd-ready when both problem and solution are empty', async () => {
+      const { p } = await loadMods(repo)
+
+      // A freshly-created proposal has no problem or solution text.
+      const proposal = await p.createProposal('A bodyless proposal title', { source: 'human' })
+      expect(proposal.problem).toBe('')
+      expect(proposal.solution).toBe('')
+
+      await expect(
+        p.setProposalField(proposal.id, 'status', 'prd-ready'),
+      ).rejects.toThrow(/has no problem or solution text/)
+    })
+
+    it('setProposalField allows status=prd-ready when problem is populated', async () => {
+      const { p } = await loadMods(repo)
+
+      const proposal = await p.createProposal('Problem-only proposal', { source: 'human' })
+      await p.setProposalField(proposal.id, 'problem', 'Users cannot reset their password.')
+
+      // At least one field non-empty → promotion should succeed.
+      const promoted = await p.setProposalField(proposal.id, 'status', 'prd-ready')
+      expect(promoted.status).toBe('prd-ready')
+    })
+
+    it('setProposalField allows status=prd-ready when solution is populated (problem empty)', async () => {
+      const { p } = await loadMods(repo)
+
+      const proposal = await p.createProposal('Solution-only proposal', { source: 'human' })
+      await p.setProposalField(proposal.id, 'solution', 'Add a /reset-password route.')
+
+      // solution alone is enough — a prescribed solution without a formal
+      // problem description is still sliceable.
+      const promoted = await p.setProposalField(proposal.id, 'status', 'prd-ready')
+      expect(promoted.status).toBe('prd-ready')
+    })
+
+    it('error message names the proposal id and the remediation command', async () => {
+      const { p } = await loadMods(repo)
+
+      const proposal = await p.createProposal('Empty body proposal', { source: 'human' })
+
+      await expect(
+        p.setProposalField(proposal.id, 'status', 'prd-ready'),
+      ).rejects.toThrow(new RegExp(`${proposal.id}.*problem.*solution`, 's'))
+    })
+  })
 })
