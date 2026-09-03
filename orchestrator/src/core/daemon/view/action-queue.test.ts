@@ -1216,8 +1216,8 @@ describe('buildActionQueueView — signature-storm pause-state projection', () =
       pauseState: { paused: true, reason: 'storm', since: '2026-08-06T00:00:00.000Z', detail: null },
     })
     const row = rows.find((r) => r.id === 'storm')!
-    expect(row.title).toContain('dispatch is paused')
-    expect(row.body).toContain('dispatch is paused')
+    expect(row.title).toContain('Mars has paused new work')
+    expect(row.body).toContain('paused starting new work')
   })
 
   it('includes the streak and signature in title regardless of pause state', async () => {
@@ -1288,7 +1288,7 @@ describe('buildActionQueueView — baseline-broken pause-state projection', () =
       pauseState: { paused: true, reason: 'baseline', since: '2026-08-06T00:00:00.000Z', detail: null },
     })
     const row = rows.find((r) => r.id === 'baseline')!
-    expect(row.title).toContain('dispatch is paused')
+    expect(row.title).toContain('Mars has stopped starting new tasks until it is fixed')
   })
 
   it('includes the gate name and caught-task count regardless of pause state', async () => {
