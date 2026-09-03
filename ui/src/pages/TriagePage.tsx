@@ -225,7 +225,7 @@ const TriageClusterRow = ({ kind, count, latestAt }: TriageClusterRowProps) => {
   return (
     <div
       className={[
-        'mars-card relative border-l-2 px-4 py-3',
+        'mars-card relative rounded-lg border-l-2 bg-card px-4 py-3',
         accentClass,
       ].join(' ')}
     >
@@ -233,11 +233,12 @@ const TriageClusterRow = ({ kind, count, latestAt }: TriageClusterRowProps) => {
       <div className="mb-1.5 flex items-center gap-2">
         <span
           className={[
-            'rounded border px-1.5 py-0.5 font-mono text-micro leading-none',
+            'inline-flex items-center gap-1 rounded border border-border px-1.5 py-0.5 font-mono text-micro leading-none',
             chipClass,
           ].join(' ')}
         >
-          {kindIcon} {kindLabel}
+          <span className="opacity-60">{kindIcon}</span>
+          {kindLabel}
         </span>
         <span className="ml-auto font-mono text-micro text-muted-foreground">
           {age}
@@ -434,7 +435,7 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
   return (
     <div
       className={[
-        'mars-card relative border-l-2 px-4 py-3 transition-opacity',
+        'mars-card relative rounded-lg border-l-2 bg-card px-4 py-3 transition-opacity',
         accentClass,
       ].join(' ')}
     >
@@ -442,15 +443,21 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
       <div className="mb-1.5 flex items-center gap-2">
         <span
           className={[
-            'rounded border px-1.5 py-0.5 font-mono text-micro leading-none',
+            'inline-flex items-center gap-1 rounded border border-border px-1.5 py-0.5 font-mono text-micro leading-none',
             chipClass,
           ].join(' ')}
         >
-          {kindIcon} {kindLabel}
+          <span className="opacity-60">{kindIcon}</span>
+          {kindLabel}
         </span>
         {item.priority === 'high' && (
-          <span className="rounded bg-error/10 px-1.5 py-0.5 font-mono text-micro leading-none text-error">
-            high
+          <span className="rounded bg-error/15 px-1.5 py-0.5 font-mono text-micro font-medium leading-none text-error">
+            ↑ high
+          </span>
+        )}
+        {item.priority === 'normal' && (
+          <span className="rounded bg-warn/10 px-1.5 py-0.5 font-mono text-micro leading-none text-warn">
+            normal
           </span>
         )}
         <span className="ml-auto font-mono text-micro text-muted-foreground">
@@ -553,13 +560,15 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
       <div className="flex flex-wrap items-center gap-2">
         {!isChatOnly && (
           <>
-            {/* Server-defined decision buttons (recipe-derived per failure kind) */}
+            {/* Server-defined decision buttons (recipe-derived per failure kind) —
+                Primary tier: filled background so these are the first thing the
+                operator's eye lands on when scanning the actions row. */}
             {item.decisions.slice(0, 3).map((d) => (
               <button
                 key={d.label}
                 disabled={pending !== null}
                 onClick={() => void handleDecision(d)}
-                className="rounded border border-primary/40 px-2 py-1 font-mono text-micro text-foreground transition-colors hover:bg-primary/20 disabled:opacity-50"
+                className="rounded border border-primary/30 bg-primary/10 px-2 py-1 font-mono text-micro font-medium text-primary transition-colors hover:bg-primary/20 disabled:opacity-50"
                 data-testid={`triage-decision-${d.label}`}
               >
                 {pending === d.label ? '…' : d.label}
@@ -567,7 +576,12 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
             ))}
 
             {/* Recipe verb buttons (e.g. "Restart daemon" for daemon-code-drift).
-                Styled per verb.style so destructive ops are visually distinct. */}
+                Three-tier hierarchy:
+                  primary  → highlight-filled (server marks these explicitly)
+                  default  → secondary bordered (neutral — "do this if unsure")
+                  snooze   → ghost (lowest commitment; tertiary)
+                  copy     → subtle ghost-border (utility, not an action)
+                  destructive → error-tinted (already handled) */}
             {verbs.map((verb) => (
               <button
                 key={verb.op === 'copy' ? `copy-${verb.label}` : verb.op}
@@ -575,12 +589,14 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
                 onClick={() => void handleVerb(verb.op, verb.hint)}
                 className={
                   verb.style === 'destructive'
-                    ? 'rounded border border-error/40 px-2 py-1 font-mono text-micro text-error transition-colors hover:bg-error/10 disabled:opacity-50'
+                    ? 'rounded border border-error/40 bg-error/5 px-2 py-1 font-mono text-micro text-error transition-colors hover:bg-error/10 disabled:opacity-50'
+                    : verb.style === 'primary'
+                    ? 'rounded border border-highlight/60 bg-highlight/10 px-2 py-1 font-mono text-micro font-medium text-highlight transition-colors hover:bg-highlight/20 disabled:opacity-50'
                     : verb.op === 'copy'
                     ? 'rounded border border-border px-1.5 py-0.5 font-mono text-micro text-muted-foreground transition-colors hover:bg-border/40 hover:text-foreground disabled:opacity-50'
                     : verb.style === 'snooze'
-                    ? 'rounded border border-border px-2 py-1 font-mono text-micro text-muted-foreground transition-colors hover:bg-border/40 hover:text-foreground disabled:opacity-50'
-                    : 'rounded border border-primary/40 px-2 py-1 font-mono text-micro text-foreground transition-colors hover:bg-primary/20 disabled:opacity-50'
+                    ? 'rounded px-2 py-1 font-mono text-micro text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50'
+                    : 'rounded border border-border px-2 py-1 font-mono text-micro text-foreground transition-colors hover:bg-border/40 hover:text-foreground disabled:opacity-50'
                 }
                 data-testid={`triage-verb-${verb.op}`}
               >
@@ -889,7 +905,7 @@ export const TriagePage = () => {
   return (
     <div className="flex h-full flex-col overflow-hidden bg-background">
       {/* Header strip */}
-      <div className="flex shrink-0 items-center border-b border-border px-5 py-3.5">
+      <div className="flex shrink-0 items-center border-b border-border px-5 py-3.5 shadow-sm">
         <h1 className="font-mono text-title font-semibold text-foreground">
           Needs You
         </h1>
@@ -900,7 +916,7 @@ export const TriagePage = () => {
                 ? '1 item needs attention'
                 : `${needsYouCount} items need attention`
             }
-            className="ml-2.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-primary/20 px-1.5 font-mono text-micro font-medium leading-none text-primary"
+            className="ml-2.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full border border-primary/20 bg-primary/15 px-1.5 font-mono text-micro font-medium leading-none text-primary"
           >
             {needsYouCount}
           </span>
@@ -922,7 +938,7 @@ export const TriagePage = () => {
         ) : !hasContent ? (
           <EmptyState running={running} doneToday={doneToday} />
         ) : (
-          <div className="flex flex-col gap-3 p-4">
+          <div className="flex flex-col gap-4 p-4">
             {/* Inline error cards — one per failing feed, never blanking the page */}
             {queueError && <FeedErrorCard label="action queue" error={queueError} />}
             {proposalsError && <FeedErrorCard label="proposals" error={proposalsError} />}

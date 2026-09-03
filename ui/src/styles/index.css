@@ -335,23 +335,30 @@ html, body, #root {
  * a low-opacity warm hairline PLUS a soft, warm-tinted drop shadow so the card
  * sits *above* its lane rather than being boxed in by a line. Applied to both
  * the arc <details> and the inner TaskCard so they share one visual language.
+ *
+ * NOTE: placed in @layer base so that Tailwind utility classes (border-l-error,
+ * border-l-warn, etc.) can override individual border properties set by the
+ * `border` shorthand here. Without this, unlayered CSS beats @layer utilities
+ * in cascade priority (Tailwind v4) and left-accent bars are silently suppressed.
  * ---------------------------------------------------------------------------*/
-.mars-card {
-  border: 1px solid color-mix(in srgb, var(--color-border) 55%, transparent);
-  box-shadow:
-    0 1px 2px rgba(26, 15, 10, 0.05),
-    0 2px 5px rgba(26, 15, 10, 0.035);
-  transition:
-    box-shadow 180ms ease-out,
-    border-color 180ms ease-out,
-    background-color 160ms ease-out,
-    transform 160ms ease-out;
-}
-.mars-card:hover {
-  border-color: color-mix(in srgb, var(--color-border) 80%, transparent);
-  box-shadow:
-    0 4px 12px rgba(26, 15, 10, 0.09),
-    0 2px 5px rgba(26, 15, 10, 0.04);
+@layer base {
+  .mars-card {
+    border: 1px solid color-mix(in srgb, var(--color-border) 55%, transparent);
+    box-shadow:
+      0 1px 2px rgba(26, 15, 10, 0.05),
+      0 2px 5px rgba(26, 15, 10, 0.035);
+    transition:
+      box-shadow 180ms ease-out,
+      border-color 180ms ease-out,
+      background-color 160ms ease-out,
+      transform 160ms ease-out;
+  }
+  .mars-card:hover {
+    border-color: color-mix(in srgb, var(--color-border) 80%, transparent);
+    box-shadow:
+      0 4px 12px rgba(26, 15, 10, 0.09),
+      0 2px 5px rgba(26, 15, 10, 0.04);
+  }
 }
 /* ── In-progress card breathe ───────────────────────────────────────────────
  * A subtle, slow flame ring that gently breathes on cards doing live work.

@@ -422,7 +422,7 @@ export const AlertCard = ({
   if (isSnoozed) {
     return (
       <div
-        className={`my-2 rounded-lg border border-primary/20 border-l-2 ${accentClass} bg-card p-3 text-body opacity-50`}
+        className={`mars-card my-2 rounded-lg border-l-2 ${accentClass} bg-card p-3 text-body opacity-50`}
         data-testid="alert-card-snoozed"
       >
         <div className="flex items-center gap-2">
@@ -453,11 +453,11 @@ export const AlertCard = ({
   return (
     <div
       className={[
-        'my-2 rounded-lg border border-l-2 p-3 text-body',
+        'mars-card my-2 rounded-lg border-l-2 p-3 text-body',
         accentClass,
         resolved
           ? 'border-primary/20 bg-card opacity-60'
-          : 'border-accent/30 bg-accent/5',
+          : 'bg-card',
       ].join(' ')}
       data-testid="alert-card"
     >
