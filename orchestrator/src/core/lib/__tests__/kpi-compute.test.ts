@@ -100,6 +100,8 @@ const insertSignal = async (
   store: TaskStore,
   opts: {
     taskId: string
+    /** Step name stored in the payload; defaults to 'code'. */
+    stepName?: string
     inputTokens?: number
     outputTokens?: number
     cacheCreateTokens?: number
@@ -107,7 +109,7 @@ const insertSignal = async (
   },
 ): Promise<void> => {
   const payload = JSON.stringify({
-    stepName: 'code',
+    stepName: opts.stepName ?? 'code',
     usageSignals: {
       inputTokens: opts.inputTokens ?? 0,
       outputTokens: opts.outputTokens ?? 0,
@@ -1199,5 +1201,273 @@ describe('dangling-origin arcs', () => {
     expect(failureArcs[0].arcId).toBe('real-origin')
     expect(failureArcs[0].originTaskId).toBe('real-origin')
     expect(failureArcs[0].title).toBe('origin prompt')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 17. listCostPerArcArcs — phaseBreakdown (per-phase cost breakdown)
+// ---------------------------------------------------------------------------
+// Consumer slice: "Per-phase cost breakdown in arc cost query"
+// The phaseBreakdown field on KpiArcRow maps each step name to its share of
+// the arc's total cache-weighted token cost.  Keys come from the `stepName`
+// field stored in each trace_event's JSON payload.
+// ---------------------------------------------------------------------------
+
+describe('listCostPerArcArcs — phaseBreakdown', () => {
+  it('contains a cost entry keyed by each step name used in signals', async () => {
+    const store = await makeStore()
+    await insertTask(store, { id: 'pb-arc', status: 'done' })
+    // Two signals with different step names
+    await insertSignal(store, { taskId: 'pb-arc', stepName: 'code', inputTokens: 1000 })
+    await insertSignal(store, { taskId: 'pb-arc', stepName: 'setup', inputTokens: 200 })
+
+    const arcs = await listCostPerArcArcs(store, WINDOW)
+
+    expect(arcs).toHaveLength(1)
+    expect(arcs[0].phaseBreakdown).toBeDefined()
+    expect(arcs[0].phaseBreakdown!['code']).toBeCloseTo(1000, 10)
+    expect(arcs[0].phaseBreakdown!['setup']).toBeCloseTo(200, 10)
+    // Total cost equals sum of phase costs
+    expect(arcs[0].costTokens).toBeCloseTo(1200, 10)
+  })
+
+  it('includes generate-slices phase from origin-level (Planner/Slicer) signals', async () => {
+    const store = await makeStore()
+    await insertTask(store, {
+      id: 'pb-ps-member',
+      status: 'done',
+      origin_id: 'pb-ps-arc',
+    })
+    // Member task code phase: 500 weighted tokens
+    await insertSignal(store, { taskId: 'pb-ps-member', stepName: 'code', inputTokens: 500 })
+    // Planner/Slicer origin-level signal: cacheReadTokens=1000 → weighted=100
+    await insertOriginSignal(store, { originId: 'pb-ps-arc', cacheReadTokens: 1000 })
+
+    const arcs = await listCostPerArcArcs(store, WINDOW)
+
+    expect(arcs).toHaveLength(1)
+    expect(arcs[0].costTokens).toBeCloseTo(600, 10)
+    expect(arcs[0].phaseBreakdown).toBeDefined()
+    expect(arcs[0].phaseBreakdown!['code']).toBeCloseTo(500, 10)
+    // insertOriginSignal uses stepName='generate-slices'
+    expect(arcs[0].phaseBreakdown!['generate-slices']).toBeCloseTo(100, 10)
+  })
+
+  it('phaseBreakdown is undefined for an arc with no signals', async () => {
+    const store = await makeStore()
+    await insertTask(store, { id: 'pb-no-sig-arc', status: 'done' })
+    // no signals inserted
+
+    const arcs = await listCostPerArcArcs(store, WINDOW)
+
+    expect(arcs).toHaveLength(1)
+    expect(arcs[0].phaseBreakdown).toBeUndefined()
+    expect(arcs[0].costTokens).toBeUndefined()
+  })
+
+  it('phase costs sum to costTokens', async () => {
+    const store = await makeStore()
+    await insertTask(store, { id: 'pb-sum-arc', status: 'done' })
+    // code phase: 300 input + 100 output = 400 weighted
+    await insertSignal(store, {
+      taskId: 'pb-sum-arc',
+      stepName: 'code',
+      inputTokens: 300,
+      outputTokens: 100,
+    })
+    // verify phase: 50 input + 500 cacheRead (×0.1 = 50) = 100 weighted
+    await insertSignal(store, {
+      taskId: 'pb-sum-arc',
+      stepName: 'verify',
+      inputTokens: 50,
+      cacheReadTokens: 500,
+    })
+
+    const arcs = await listCostPerArcArcs(store, WINDOW)
+
+    expect(arcs).toHaveLength(1)
+    const { costTokens, phaseBreakdown } = arcs[0]
+    expect(phaseBreakdown).toBeDefined()
+    // 400 (code) + 100 (verify) = 500 total
+    expect(costTokens).toBeCloseTo(500, 10)
+    const phaseSum = Object.values(phaseBreakdown!).reduce((a, b) => a + b, 0)
+    expect(phaseSum).toBeCloseTo(costTokens!, 10)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 18. computeCostPerArcDistribution — excludePlannerSlicer option
+// ---------------------------------------------------------------------------
+// Consumer slice: "Planner/Slicer cost exclusion flag in arc cost computation"
+// When excludePlannerSlicer:true, Path 3 origin-level signals (task_id IS NULL,
+// origin_id = arc_id) are excluded so only worker-phase costs are counted.
+// ---------------------------------------------------------------------------
+
+describe('computeCostPerArcDistribution — excludePlannerSlicer option', () => {
+  it('default (no option) includes Planner/Slicer origin-level signals', async () => {
+    const store = await makeStore()
+    await insertTask(store, { id: 'excl-member', status: 'done', origin_id: 'excl-arc' })
+    await insertSignal(store, { taskId: 'excl-member', inputTokens: 500 })
+    // Planner/Slicer: cacheReadTokens=1000 → weighted=100
+    await insertOriginSignal(store, { originId: 'excl-arc', cacheReadTokens: 1000 })
+
+    const result = await computeCostPerArcDistribution(store, WINDOW)
+
+    // 500 (code) + 100 (planner/slicer) = 600
+    expect(result.p50).toBeCloseTo(600, 10)
+    expect(result.sampleCount).toBe(1)
+  })
+
+  it('excludePlannerSlicer:true omits origin-level signals from the arc cost', async () => {
+    const store = await makeStore()
+    await insertTask(store, { id: 'excl2-member', status: 'done', origin_id: 'excl2-arc' })
+    await insertSignal(store, { taskId: 'excl2-member', inputTokens: 500 })
+    // Planner/Slicer: 100 weighted — must be excluded
+    await insertOriginSignal(store, { originId: 'excl2-arc', cacheReadTokens: 1000 })
+
+    const result = await computeCostPerArcDistribution(store, WINDOW, { excludePlannerSlicer: true })
+
+    // only the 500 task-level signal counts; origin-level excluded
+    expect(result.p50).toBeCloseTo(500, 10)
+    expect(result.sampleCount).toBe(1)
+  })
+
+  it('excludePlannerSlicer:true with only origin-level signals: arc excluded from distribution', async () => {
+    const store = await makeStore()
+    await insertTask(store, {
+      id: 'ps-only-member3',
+      status: 'done',
+      origin_id: 'ps-only-arc3',
+    })
+    // Only an origin-level signal; no task-level signals in this arc
+    await insertOriginSignal(store, { originId: 'ps-only-arc3', inputTokens: 500 })
+
+    const result = await computeCostPerArcDistribution(store, WINDOW, { excludePlannerSlicer: true })
+
+    // After exclusion no signals remain → arc excluded from distribution
+    expect(result.sampleCount).toBe(0)
+    expect(result.p50).toBeNull()
+  })
+
+  it('excludePlannerSlicer:false is equivalent to the default', async () => {
+    const store = await makeStore()
+    await insertTask(store, {
+      id: 'false-opt-member',
+      status: 'done',
+      origin_id: 'false-opt-arc',
+    })
+    await insertSignal(store, { taskId: 'false-opt-member', inputTokens: 300 })
+    await insertOriginSignal(store, { originId: 'false-opt-arc', inputTokens: 200 })
+
+    const defaultResult = await computeCostPerArcDistribution(store, WINDOW)
+    const explicitFalse = await computeCostPerArcDistribution(store, WINDOW, {
+      excludePlannerSlicer: false,
+    })
+
+    expect(explicitFalse.p50).toBeCloseTo(defaultResult.p50!, 10)
+    expect(explicitFalse.sampleCount).toBe(defaultResult.sampleCount)
+  })
+
+  it('mixed arcs: only the planner/slicer cost is shaved off when flag is set', async () => {
+    const store = await makeStore()
+    // Arc 1: worker cost 200 + planner 50 = 250 (flag excludes → 200)
+    await insertTask(store, { id: 'mix-m1', status: 'done', origin_id: 'mix-arc1' })
+    await insertSignal(store, { taskId: 'mix-m1', inputTokens: 200 })
+    await insertOriginSignal(store, { originId: 'mix-arc1', inputTokens: 50 })
+
+    // Arc 2: worker cost 400 + planner 100 = 500 (flag excludes → 400)
+    await insertTask(store, { id: 'mix-m2', status: 'done', origin_id: 'mix-arc2' })
+    await insertSignal(store, { taskId: 'mix-m2', inputTokens: 400 })
+    await insertOriginSignal(store, { originId: 'mix-arc2', inputTokens: 100 })
+
+    const withPlanner = await computeCostPerArcDistribution(store, WINDOW)
+    const withoutPlanner = await computeCostPerArcDistribution(store, WINDOW, {
+      excludePlannerSlicer: true,
+    })
+
+    // Both calls see 2 arcs
+    expect(withPlanner.sampleCount).toBe(2)
+    expect(withoutPlanner.sampleCount).toBe(2)
+    // p50 without planner must be lower than with planner
+    expect(withoutPlanner.p50!).toBeLessThan(withPlanner.p50!)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 19. listCostPerArcArcs — excludePlannerSlicer option
+// ---------------------------------------------------------------------------
+// Consumer slice: "Planner/Slicer cost exclusion flag in arc cost computation"
+// listCostPerArcArcs passes the flag through to both costTokens and
+// phaseBreakdown so the UI can show worker-only cost rows.
+// ---------------------------------------------------------------------------
+
+describe('listCostPerArcArcs — excludePlannerSlicer option', () => {
+  it('excludePlannerSlicer:true: costTokens omits origin-level phase cost', async () => {
+    const store = await makeStore()
+    await insertTask(store, { id: 'lce-member', status: 'done', origin_id: 'lce-arc' })
+    await insertSignal(store, { taskId: 'lce-member', inputTokens: 500 })
+    // Planner/Slicer: 100 weighted — excluded by flag
+    await insertOriginSignal(store, { originId: 'lce-arc', cacheReadTokens: 1000 })
+
+    const arcs = await listCostPerArcArcs(store, WINDOW, { excludePlannerSlicer: true })
+
+    expect(arcs).toHaveLength(1)
+    expect(arcs[0].costTokens).toBeCloseTo(500, 10)
+  })
+
+  it('excludePlannerSlicer:true: phaseBreakdown omits generate-slices key', async () => {
+    const store = await makeStore()
+    await insertTask(store, { id: 'lce2-member', status: 'done', origin_id: 'lce2-arc' })
+    await insertSignal(store, { taskId: 'lce2-member', stepName: 'code', inputTokens: 500 })
+    await insertOriginSignal(store, { originId: 'lce2-arc', cacheReadTokens: 1000 })
+
+    const arcs = await listCostPerArcArcs(store, WINDOW, { excludePlannerSlicer: true })
+
+    expect(arcs).toHaveLength(1)
+    expect(arcs[0].phaseBreakdown).toBeDefined()
+    expect(arcs[0].phaseBreakdown!['code']).toBeCloseTo(500, 10)
+    // generate-slices was excluded
+    expect(arcs[0].phaseBreakdown!['generate-slices']).toBeUndefined()
+  })
+
+  it('excludePlannerSlicer:true: arc with only origin-level signals has undefined costTokens', async () => {
+    const store = await makeStore()
+    await insertTask(store, {
+      id: 'ps-only-lce',
+      status: 'done',
+      origin_id: 'ps-only-lce-arc',
+    })
+    await insertOriginSignal(store, { originId: 'ps-only-lce-arc', inputTokens: 500 })
+
+    const arcs = await listCostPerArcArcs(store, WINDOW, { excludePlannerSlicer: true })
+
+    // Arc still appears in the list (it is a done arc)
+    expect(arcs).toHaveLength(1)
+    // No task-level signals remain after exclusion → costTokens and phaseBreakdown undefined
+    expect(arcs[0].costTokens).toBeUndefined()
+    expect(arcs[0].phaseBreakdown).toBeUndefined()
+  })
+
+  it('arc listing still includes all done arcs regardless of signal exclusion', async () => {
+    const store = await makeStore()
+    // Arc 1: has a task-level signal (survives the flag)
+    await insertTask(store, { id: 'lce-with-sig', status: 'done' })
+    await insertSignal(store, { taskId: 'lce-with-sig', inputTokens: 300 })
+    // Arc 2: has only an origin-level signal (excluded by the flag)
+    await insertTask(store, {
+      id: 'lce-ps-member',
+      status: 'done',
+      origin_id: 'lce-ps-arc',
+    })
+    await insertOriginSignal(store, { originId: 'lce-ps-arc', inputTokens: 200 })
+
+    const arcs = await listCostPerArcArcs(store, WINDOW, { excludePlannerSlicer: true })
+
+    // Both done arcs appear in the listing
+    expect(arcs).toHaveLength(2)
+    const withSig = arcs.find((a) => a.arcId === 'lce-with-sig')!
+    const psOnly = arcs.find((a) => a.arcId === 'lce-ps-arc')!
+    expect(withSig.costTokens).toBeCloseTo(300, 10)
+    expect(psOnly.costTokens).toBeUndefined()
   })
 })

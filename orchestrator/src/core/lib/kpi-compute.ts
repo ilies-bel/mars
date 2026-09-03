@@ -19,6 +19,10 @@ export interface KpiWindow {
  * - `status` — terminal status of the arc (or origin task for recovery rows).
  * - `passed` — whether this arc PASSED the KPI's classification criterion.
  * - `costTokens` — cache-weighted token cost (only set for cost_per_arc arcs).
+ * - `phaseBreakdown` — cache-weighted token cost broken down by step name.
+ *   Keys are step names (e.g., `'code'`, `'generate-slices'`, `'setup'`).
+ *   Only set for cost_per_arc arcs when per-phase data is available.
+ *   `undefined` when the arc has no captured usage signals.
  */
 export interface KpiArcRow {
   arcId: string
@@ -27,6 +31,23 @@ export interface KpiArcRow {
   status: string
   passed: boolean
   costTokens?: number
+  phaseBreakdown?: Record<string, number>
+}
+
+/**
+ * Options that control cost aggregation in `computeCostPerArcDistribution`
+ * and `listCostPerArcArcs`.
+ */
+export interface CostPerArcOptions {
+  /**
+   * When `true`, Path 3 origin-level signals — Planner/Slicer steps that run
+   * before any child task is created (`task_id IS NULL`, `origin_id = arc_id`)
+   * — are excluded from the arc cost computation. Use this to isolate the cost
+   * of worker execution from planning/slicing overhead.
+   *
+   * Default: `false` (all paths included).
+   */
+  excludePlannerSlicer?: boolean
 }
 
 export interface FailureRateResult {
@@ -162,6 +183,7 @@ function interpolatePercentile(sorted: readonly number[], p: number): number {
 export async function computeCostPerArcDistribution(
   surface: TaskStore,
   window: KpiWindow,
+  options?: CostPerArcOptions,
 ): Promise<CostPerArcResult> {
   // One row per done Arc with the sum of all cache-weighted tokens across every
   // task in that Arc. done_arcs selects arcs where any task in the window
@@ -172,6 +194,21 @@ export async function computeCostPerArcDistribution(
   // trace_events.task_id is either the member task's id (normal path) OR the
   // arc/origin id itself (dangling-origin path — no task row exists for that
   // id, so the member-task join would miss these rows entirely).
+  // Path 3 (origin-level Planner/Slicer signals) is omitted when
+  // options.excludePlannerSlicer is true.
+  const path3Sql = options?.excludePlannerSlicer
+    ? ''
+    : `
+            UNION
+            -- Path 3: origin-level trace event (Planner/Slicer steps that run before a
+            -- child task exists: task_id IS NULL, origin_id = arc_id). Without this the
+            -- planning/slicing phase is dropped from the arc's token total.
+            SELECT da.arc_id, te.id AS te_id, te.payload
+            FROM done_arcs da
+            JOIN trace_events te ON te.origin_id = da.arc_id
+              AND te.kind = 'step_ended'
+              AND te.payload::jsonb ->> 'usageSignals' IS NOT NULL`
+
   const result = await surface.query({
     sql: `WITH done_arcs AS (
             SELECT COALESCE(origin_id, id) AS arc_id
@@ -198,16 +235,7 @@ export async function computeCostPerArcDistribution(
             FROM done_arcs da
             JOIN trace_events te ON te.task_id = da.arc_id
               AND te.kind = 'step_ended'
-              AND te.payload::jsonb ->> 'usageSignals' IS NOT NULL
-            UNION
-            -- Path 3: origin-level trace event (Planner/Slicer steps that run before a
-            -- child task exists: task_id IS NULL, origin_id = arc_id). Without this the
-            -- planning/slicing phase is dropped from the arc's token total.
-            SELECT da.arc_id, te.id AS te_id, te.payload
-            FROM done_arcs da
-            JOIN trace_events te ON te.origin_id = da.arc_id
-              AND te.kind = 'step_ended'
-              AND te.payload::jsonb ->> 'usageSignals' IS NOT NULL
+              AND te.payload::jsonb ->> 'usageSignals' IS NOT NULL${path3Sql}
           )
           SELECT
             da.arc_id,
@@ -575,16 +603,42 @@ export async function listRecoveryArcs(
 }
 
 /**
- * List cost-per-arc arcs in the window with their cache-weighted token cost.
+ * List cost-per-arc arcs in the window with their cache-weighted token cost
+ * and per-phase breakdown.
  * Population = done arcs (same as computeCostPerArcDistribution).
  * No pass/fail — all arcs are `passed: true`; the `costTokens` field carries
  * the per-arc cost so the user sees the distribution behind p50.
+ * `phaseBreakdown` maps each step name to its share of the arc's total cost.
  * Mirrors computeCostPerArcDistribution().
  */
 export async function listCostPerArcArcs(
   surface: TaskStore,
   window: KpiWindow,
+  options?: CostPerArcOptions,
 ): Promise<KpiArcRow[]> {
+  // arc_te: one row per (arc_id, te_id) with pre-computed event_cost and
+  // step_name extracted from the JSON payload.  UNION (not UNION ALL) removes
+  // duplicate te_ids that match more than one join path.
+  // path3Sql is the origin-level Planner/Slicer branch; omit it when
+  // options.excludePlannerSlicer is true so planner cost stays out of the total.
+  const path3Sql = options?.excludePlannerSlicer
+    ? ''
+    : `
+          UNION
+          -- Path 3: origin-level trace event (Planner/Slicer steps: task_id IS NULL,
+          -- origin_id = arc_id). Omitted when excludePlannerSlicer is true.
+          SELECT da.arc_id, te.id AS te_id,
+                 COALESCE(te.payload::jsonb ->> 'stepName', 'unknown') AS step_name,
+                 CAST(te.payload::jsonb #>> '{usageSignals,inputTokens}'       AS double precision) +
+                 CAST(te.payload::jsonb #>> '{usageSignals,outputTokens}'      AS double precision) +
+                 CAST(te.payload::jsonb #>> '{usageSignals,cacheCreateTokens}' AS double precision) +
+                 CAST(te.payload::jsonb #>> '{usageSignals,cacheReadTokens}'   AS double precision) * 0.1
+                 AS event_cost
+          FROM done_arcs da
+          JOIN trace_events te ON te.origin_id = da.arc_id
+            AND te.kind = 'step_ended'
+            AND te.payload::jsonb ->> 'usageSignals' IS NOT NULL`
+
   const result = await surface.query({
     sql: `WITH done_arcs AS (
             SELECT COALESCE(origin_id, id) AS arc_id
@@ -596,27 +650,38 @@ export async function listCostPerArcArcs(
             HAVING MAX(CASE WHEN status = 'done' THEN 1 ELSE 0 END) = 1
           ),
           arc_te AS (
-            SELECT da.arc_id, te.id AS te_id, te.payload
+            -- Path 1: trace event keyed by a member task id (normal dispatch path)
+            SELECT da.arc_id, te.id AS te_id,
+                   COALESCE(te.payload::jsonb ->> 'stepName', 'unknown') AS step_name,
+                   CAST(te.payload::jsonb #>> '{usageSignals,inputTokens}'       AS double precision) +
+                   CAST(te.payload::jsonb #>> '{usageSignals,outputTokens}'      AS double precision) +
+                   CAST(te.payload::jsonb #>> '{usageSignals,cacheCreateTokens}' AS double precision) +
+                   CAST(te.payload::jsonb #>> '{usageSignals,cacheReadTokens}'   AS double precision) * 0.1
+                   AS event_cost
             FROM done_arcs da
             JOIN tasks t ON COALESCE(t.origin_id, t.id) = da.arc_id
             JOIN trace_events te ON te.task_id = t.id
               AND te.kind = 'step_ended'
               AND te.payload::jsonb ->> 'usageSignals' IS NOT NULL
             UNION
-            SELECT da.arc_id, te.id AS te_id, te.payload
+            -- Path 2: trace event keyed by the arc/origin id directly
+            -- (dangling-origin pattern: no task row has id=arc_id)
+            SELECT da.arc_id, te.id AS te_id,
+                   COALESCE(te.payload::jsonb ->> 'stepName', 'unknown') AS step_name,
+                   CAST(te.payload::jsonb #>> '{usageSignals,inputTokens}'       AS double precision) +
+                   CAST(te.payload::jsonb #>> '{usageSignals,outputTokens}'      AS double precision) +
+                   CAST(te.payload::jsonb #>> '{usageSignals,cacheCreateTokens}' AS double precision) +
+                   CAST(te.payload::jsonb #>> '{usageSignals,cacheReadTokens}'   AS double precision) * 0.1
+                   AS event_cost
             FROM done_arcs da
             JOIN trace_events te ON te.task_id = da.arc_id
               AND te.kind = 'step_ended'
-              AND te.payload::jsonb ->> 'usageSignals' IS NOT NULL
-            UNION
-            -- Path 3: origin-level trace event (Planner/Slicer steps that run before a
-            -- child task exists: task_id IS NULL, origin_id = arc_id). Without this the
-            -- planning/slicing phase is dropped from the arc's token total.
-            SELECT da.arc_id, te.id AS te_id, te.payload
-            FROM done_arcs da
-            JOIN trace_events te ON te.origin_id = da.arc_id
-              AND te.kind = 'step_ended'
-              AND te.payload::jsonb ->> 'usageSignals' IS NOT NULL
+              AND te.payload::jsonb ->> 'usageSignals' IS NOT NULL${path3Sql}
+          ),
+          phase_costs AS (
+            SELECT arc_id, step_name, SUM(event_cost) AS phase_cost
+            FROM arc_te
+            GROUP BY arc_id, step_name
           )
           SELECT
             da.arc_id,
@@ -624,12 +689,9 @@ export async function listCostPerArcArcs(
               (SELECT t_rep.id FROM tasks t_rep WHERE t_rep.id = da.arc_id LIMIT 1),
               (SELECT t_rep.id FROM tasks t_rep WHERE COALESCE(t_rep.origin_id, t_rep.id) = da.arc_id ORDER BY t_rep.id LIMIT 1)
             ) AS origin_task_id,
-            SUM(
-              CAST(ate.payload::jsonb #>> '{usageSignals,inputTokens}'        AS double precision) +
-              CAST(ate.payload::jsonb #>> '{usageSignals,outputTokens}'       AS double precision) +
-              CAST(ate.payload::jsonb #>> '{usageSignals,cacheCreateTokens}'  AS double precision) +
-              CAST(ate.payload::jsonb #>> '{usageSignals,cacheReadTokens}'    AS double precision) * 0.1
-            ) AS weighted_tokens,
+            (SELECT SUM(pc.phase_cost) FROM phase_costs pc WHERE pc.arc_id = da.arc_id) AS weighted_tokens,
+            (SELECT json_object_agg(pc.step_name, pc.phase_cost)
+             FROM phase_costs pc WHERE pc.arc_id = da.arc_id) AS phase_breakdown_json,
             COALESCE(
               (SELECT SUBSTR(t2.prompt, 1, 120)
                FROM tasks t2
@@ -642,9 +704,7 @@ export async function listCostPerArcArcs(
                ORDER BY t3.id
                LIMIT 1)
             ) AS title
-          FROM done_arcs da
-          LEFT JOIN arc_te ate ON ate.arc_id = da.arc_id
-          GROUP BY da.arc_id`,
+          FROM done_arcs da`,
     args: [window.windowStart, window.windowEnd],
   })
 
@@ -653,6 +713,7 @@ export async function listCostPerArcArcs(
       arc_id: string
       origin_task_id: string
       weighted_tokens: number | null
+      phase_breakdown_json: Record<string, number> | string | null
       title: string
     }
     const arcRow: KpiArcRow = {
@@ -662,8 +723,14 @@ export async function listCostPerArcArcs(
       status: 'done',
       passed: true,
     }
-    if (r.weighted_tokens !== null) {
+    if (r.weighted_tokens !== null && r.weighted_tokens !== undefined) {
       arcRow.costTokens = r.weighted_tokens
+    }
+    if (r.phase_breakdown_json !== null && r.phase_breakdown_json !== undefined) {
+      arcRow.phaseBreakdown =
+        typeof r.phase_breakdown_json === 'string'
+          ? (JSON.parse(r.phase_breakdown_json) as Record<string, number>)
+          : r.phase_breakdown_json
     }
     return arcRow
   })
