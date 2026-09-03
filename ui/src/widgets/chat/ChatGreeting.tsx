@@ -1,7 +1,7 @@
 import type { GreetingCounts, OpenWorkItem } from './openWork'
 
 const linkClass =
-  'text-left text-primary underline decoration-primary/40 underline-offset-4 transition-colors hover:text-foreground'
+  'text-left text-highlight text-label transition-colors hover:underline'
 
 interface ChatGreetingProps extends GreetingCounts {
   /** The single most-urgent open-work item. When present, renders an
@@ -53,10 +53,10 @@ export const ChatGreeting = ({
       : segments.join(' · ')
 
   return (
-    <div data-testid="chat-greeting">
-      <p className="font-mono text-title leading-relaxed text-foreground">{statusLine}</p>
+    <div data-testid="chat-greeting" className="mb-4">
+      <p className="font-mono text-body text-muted-foreground">{statusLine}</p>
       {nextMove != null && onNextMove != null ? (
-        <p className="font-mono text-title leading-relaxed text-foreground">
+        <p className="font-mono text-label mt-0.5">
           <button
             type="button"
             className={linkClass}
@@ -67,7 +67,7 @@ export const ChatGreeting = ({
           </button>
         </p>
       ) : needYou > 0 ? (
-        <p className="font-mono text-title leading-relaxed text-foreground">
+        <p className="font-mono text-label mt-0.5">
           <a href="#/progress" className={linkClass} data-testid="chat-greeting-board-link">
             Open the board
           </a>

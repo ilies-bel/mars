@@ -86,7 +86,7 @@ export const QueueThreadRow = memo(({
     <div
       className={[
         'relative cursor-pointer transition-colors flex items-stretch',
-        active ? 'bg-primary/20' : 'hover:bg-primary/10',
+        active ? 'bg-primary/20' : 'hover:bg-accent',
       ].join(' ')}
       style={{ contentVisibility: 'auto' }}
       role="button"
@@ -118,7 +118,7 @@ export const QueueThreadRow = memo(({
           <span className="shrink-0 font-mono text-micro uppercase text-muted-foreground">{kindBadgeLabel(item.kind)}</span>
           {kindChip === 'alert' && (
             <span
-              className="shrink-0 rounded-sm border border-primary/30 bg-primary/10 px-1 font-mono text-micro uppercase text-primary"
+              className="shrink-0 rounded bg-error/15 px-1.5 py-0.5 text-micro font-medium text-error"
               data-testid="kind-chip-alert"
             >
               alert
@@ -126,7 +126,7 @@ export const QueueThreadRow = memo(({
           )}
           {kindChip === 'decision' && (
             <span
-              className="shrink-0 rounded-sm border border-status-blocked/30 bg-status-blocked/10 px-1 font-mono text-micro uppercase text-status-blocked"
+              className="shrink-0 rounded bg-status-blocked/15 px-1.5 py-0.5 text-micro font-medium text-status-blocked"
               data-testid="kind-chip-decision"
             >
               decision

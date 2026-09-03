@@ -2,8 +2,8 @@
  * Kind-chip rendering tests for QueueThreadRow.
  *
  * Verifies that the optional `kindChip` prop renders the right chip element
- * (alert = iron-tinted, decision = ochre-tinted) and that no chip is rendered
- * when the prop is omitted or null.
+ * (alert = softened error-tinted, decision = softened status-blocked-tinted)
+ * and that no chip is rendered when the prop is omitted or null.
  */
 
 import { describe, expect, it } from 'bun:test'
@@ -72,19 +72,17 @@ describe('QueueThreadRow – kind chip', () => {
     expect(html).not.toContain('data-testid="kind-chip-alert"')
   })
 
-  it('alert chip uses iron-tinted (primary) styling', () => {
+  it('alert chip uses softened error styling', () => {
     const html = renderRow('alert')
-    // The chip must carry iron-tinted classes via the primary alias — not raw palette tokens.
-    expect(html).toContain('bg-primary/10')
-    expect(html).toContain('border-primary/30')
-    expect(html).toContain('text-primary')
+    // The chip must carry softened error classes — not raw palette tokens.
+    expect(html).toContain('bg-error/15')
+    expect(html).toContain('text-error')
   })
 
-  it('decision chip uses ochre-tinted (status-blocked) styling', () => {
+  it('decision chip uses softened status-blocked styling', () => {
     const html = renderRow('decision')
-    // The chip must carry ochre-tinted classes via the status-blocked alias.
-    expect(html).toContain('bg-status-blocked/10')
-    expect(html).toContain('border-status-blocked/30')
+    // The chip must carry softened status-blocked classes.
+    expect(html).toContain('bg-status-blocked/15')
     expect(html).toContain('text-status-blocked')
   })
 

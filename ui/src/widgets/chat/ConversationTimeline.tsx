@@ -172,16 +172,16 @@ export const ConversationTimeline = ({
                   data-thread-id={entry.threadId}
                   data-message-kind={entry.kind}
                   data-testid={isNotice ? `notice-card-${entry.id}` : undefined}
-                  className={isNotice ? 'rounded-md border border-primary/20 bg-primary/5 p-3' : undefined}
+                  className={isNotice ? 'mars-card rounded-md border-l-2 border-l-highlight/30 bg-card p-3' : undefined}
                 >
                   <header className="mb-1 flex items-center gap-2 font-mono text-micro text-muted-foreground">
                     {isNotice ? (
-                      <span className="text-primary">Mars</span>
+                      <span className="text-foreground">Mars</span>
                     ) : (
                       <span>{entry.subjectTitle || 'Untitled subject'}</span>
                     )}
                     {!isNotice && <span>closed</span>}
-                    <span>{entry.role} · {entry.kind}</span>
+                    <span className={isNotice ? 'rounded bg-muted-foreground/[0.08] px-1.5 py-0.5' : undefined}>{entry.role} · {entry.kind}</span>
                     {entry.backingEntityId && <span>{entry.backingEntityId}</span>}
                     {entry.resolution === 'resolved' && (
                       <span data-testid="conversation-message-resolved">Resolved</span>
@@ -232,16 +232,16 @@ export const ConversationTimeline = ({
                 data-thread-id={entry.threadId}
                 data-message-kind={entry.kind}
                 data-testid={isNotice ? `notice-card-${entry.id}` : undefined}
-                className={isNotice ? 'rounded-md border border-primary/20 bg-primary/5 p-3' : undefined}
+                className={isNotice ? 'mars-card rounded-md border-l-2 border-l-highlight/30 bg-card p-3' : undefined}
               >
                 <header className="mb-1 flex items-center gap-2 font-mono text-micro text-muted-foreground">
                   {isNotice ? (
-                    <span className="text-primary">Mars</span>
+                    <span className="text-foreground">Mars</span>
                   ) : (
                     <span>{entry.subjectTitle || 'Untitled subject'}</span>
                   )}
                   {!isNotice && <span>{entry.subjectClosed ? 'closed' : 'open'}</span>}
-                  <span>{entry.role} · {entry.kind}</span>
+                  <span className={isNotice ? 'rounded bg-muted-foreground/[0.08] px-1.5 py-0.5' : undefined}>{entry.role} · {entry.kind}</span>
                   {entry.backingEntityId && <span>{entry.backingEntityId}</span>}
                   {entry.resolution === 'resolved' && (
                     <span data-testid="conversation-message-resolved">Resolved</span>

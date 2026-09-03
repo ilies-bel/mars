@@ -886,12 +886,12 @@ const ThreadItem = ({ thread, isSelected, onSelect, onRename, indented = false, 
   return (
     <div
       className={[
-        'group flex flex-col rounded py-1.5 cursor-pointer',
+        'group flex flex-col rounded py-1.5 cursor-pointer transition-colors',
         // Selected: flame left-border accent + white card surface (no structural indent border).
         // Unselected: subtle indent rule for subthread hierarchy.
         isSelected
           ? `border-l-2 border-l-highlight bg-card text-foreground ${indented ? 'ml-3 pl-2 pr-2' : 'px-2'}`
-          : `border-b border-primary/10 ${indented ? 'ml-3 border-l border-primary/15 pl-2 pr-2' : 'px-2'} text-primary hover:bg-primary/10 hover:text-foreground`,
+          : `border-b border-primary/10 ${indented ? 'ml-3 border-l border-primary/15 pl-2 pr-2' : 'px-2'} text-primary hover:bg-accent hover:text-foreground`,
       ].join(' ')}
       role="button"
       tabIndex={0}
@@ -935,7 +935,7 @@ const ThreadItem = ({ thread, isSelected, onSelect, onRename, indented = false, 
           <span className="min-w-0 flex-1 truncate font-mono text-label">{title}</span>
           {kindChip === 'alert' && (
             <span
-              className="shrink-0 rounded-sm border border-primary/30 bg-primary/10 px-1 font-mono text-micro uppercase text-primary"
+              className="shrink-0 rounded bg-error/15 px-1.5 py-0.5 text-micro font-medium text-error"
               data-testid="thread-kind-chip-alert"
             >
               alert
@@ -943,7 +943,7 @@ const ThreadItem = ({ thread, isSelected, onSelect, onRename, indented = false, 
           )}
           {kindChip === 'decision' && (
             <span
-              className="shrink-0 rounded-sm border border-status-blocked/30 bg-status-blocked/10 px-1 font-mono text-micro uppercase text-status-blocked"
+              className="shrink-0 rounded bg-status-blocked/15 px-1.5 py-0.5 text-micro font-medium text-status-blocked"
               data-testid="thread-kind-chip-decision"
             >
               decision
@@ -1672,7 +1672,7 @@ export const HeroComposer = ({ onSend, isPending, prefill, onPrefillConsumed }: 
         </div>
       )}
       {/* AI-Elements PromptInput shell. */}
-      <div className="w-full divide-y divide-border overflow-hidden rounded-2xl border bg-background shadow-sm">
+      <div className="w-full divide-y divide-border overflow-hidden rounded-2xl border bg-background shadow-sm transition-[border-color,box-shadow] focus-within:border-highlight/40 focus-within:shadow-sm">
         {/* Hidden file input — wired to addFiles. */}
         <input
           ref={fileInputRef}
@@ -1771,6 +1771,7 @@ export const HeroComposer = ({ onSend, isPending, prefill, onPrefillConsumed }: 
             status={isPending ? 'submitted' : undefined}
             disabled={isPending || (text.trim().length === 0 && attachments.length === 0)}
             onClick={handleSend}
+            className="bg-highlight text-primary-foreground hover:bg-highlight/90"
           />
         </PromptInputToolbar>
       </div>
@@ -2196,7 +2197,7 @@ export const Composer = ({
           a plain container and the presentational subcomponents are composed on
           top, preserving the upload path and the composer test's file-input
           contract. */}
-      <div className="w-full divide-y divide-border overflow-hidden rounded-xl border bg-background shadow-sm">
+      <div className="w-full divide-y divide-border overflow-hidden rounded-xl border bg-background shadow-sm transition-[border-color,box-shadow] focus-within:border-highlight/40 focus-within:shadow-sm">
         {/* Hidden file input — the only file input in the composer, wired to Mars addFiles. */}
         <input
           ref={fileInputRef}
@@ -2347,6 +2348,7 @@ export const Composer = ({
               status={isUploading ? 'submitted' : undefined}
               disabled={disabled || isDisabled || (text.trim().length === 0 && attachments.length === 0)}
               onClick={handleSend}
+              className="bg-highlight text-primary-foreground hover:bg-highlight/90"
             />
           )}
         </PromptInputToolbar>
@@ -2455,7 +2457,7 @@ export const ThreadSidebar = ({
       <div className="border-b border-primary/30 px-2 py-2">
         <button
           type="button"
-          className="w-full rounded border border-primary/30 px-2 py-1 font-mono text-label text-primary hover:bg-primary/20 hover:text-foreground"
+          className="w-full rounded-md border border-border-dark bg-surface-dark px-2 py-1.5 font-mono text-label font-medium text-fg-dark transition-colors hover:bg-surface-dark/80"
           onClick={() => create()}
         >
           + New thread
@@ -2501,7 +2503,7 @@ export const ThreadSidebar = ({
             <button
               type="button"
               data-testid="stale-untitled-toggle"
-              className="w-full px-2 py-1 text-left font-mono text-micro uppercase tracking-wide text-muted-foreground hover:text-foreground"
+              className="w-full border-t border-border px-2 py-2 text-left font-mono text-micro text-muted-foreground transition-colors hover:text-foreground"
               onClick={() => setStaleUntitledOpen((v) => !v)}
               aria-expanded={staleUntitledOpen}
             >
@@ -2526,7 +2528,7 @@ export const ThreadSidebar = ({
             <button
               type="button"
               data-testid="archived-toggle"
-              className="w-full px-2 py-1 text-left font-mono text-micro uppercase tracking-wide text-muted-foreground hover:text-foreground"
+              className="w-full border-t border-border px-2 py-2 text-left font-mono text-micro text-muted-foreground transition-colors hover:text-foreground"
               onClick={() => setArchivedOpen((v) => !v)}
               aria-expanded={archivedOpen}
             >
@@ -2553,7 +2555,7 @@ export const ThreadSidebar = ({
             data-testid="forks-of-thread-filter"
             aria-pressed={forkFilter.parentThreadId === selectedId}
             disabled={selectedId === null}
-            className="mr-1 rounded-full border border-primary/25 px-2 py-1 font-mono text-micro text-primary disabled:cursor-not-allowed disabled:opacity-40 hover:bg-primary/10"
+            className="mr-1 rounded-full px-2 py-0.5 font-mono text-micro text-muted-foreground transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 aria-pressed:font-medium aria-pressed:text-foreground"
             onClick={() => onForkFilterChange(
               forkFilter.parentThreadId === selectedId ? {} : { parentThreadId: selectedId ?? undefined },
             )}
@@ -2564,7 +2566,7 @@ export const ThreadSidebar = ({
             type="button"
             data-testid="forked-only-filter"
             aria-pressed={forkFilter.hasParent === true}
-            className="rounded-full border border-primary/25 px-2 py-1 font-mono text-micro text-primary hover:bg-primary/10"
+            className="rounded-full px-2 py-0.5 font-mono text-micro text-muted-foreground transition-colors hover:text-foreground aria-pressed:font-medium aria-pressed:text-foreground"
             onClick={() => onForkFilterChange(forkFilter.hasParent ? {} : { hasParent: true })}
           >
             Forked only
@@ -3151,7 +3153,7 @@ export const ChatPage = () => {
                 data-testid="mars-opening-message"
                 className="flex flex-col gap-1"
               >
-                <span className="font-mono text-label text-primary">mars</span>
+                <span className="font-mono text-title font-semibold text-highlight">mars</span>
                 {!selectedThreadId ? (
                   <ChatGreeting
                     {...greetingCounts}
