@@ -19,7 +19,7 @@
  * Empty state: "No drafts — proposals appear here when agents or the slicer file them."
  */
 
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { useProposals } from '@/entities/proposals/useProposals'
 import { proposalHash } from '@/shared/routing'
 import { relativeTime } from '@/shared/time'
@@ -61,6 +61,7 @@ interface ProposalRowProps {
 
 const ProposalRow = ({ draft, onDismiss }: ProposalRowProps) => {
   const [expanded, setExpanded] = useState(false)
+  const cardRef = useRef<HTMLDivElement>(null)
   const age = relativeTime(draft.createdAt)
   const sourceLabel = SOURCE_LABEL[draft.source] ?? draft.source
   const chipClass =
@@ -76,8 +77,20 @@ const ProposalRow = ({ draft, onDismiss }: ProposalRowProps) => {
     void invokeAction('dismiss', draft.id).then(onDismiss)
   }
 
+  const handleToggleExpand = () => {
+    const nextExpanded = !expanded
+    setExpanded(nextExpanded)
+    if (nextExpanded) {
+      // Give React a tick to update the DOM before scrolling, so the
+      // expanded card's full height is already in layout.
+      requestAnimationFrame(() => {
+        cardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+      })
+    }
+  }
+
   return (
-    <div className="mars-card relative border-l-2 border-l-success px-4 py-3">
+    <div ref={cardRef} className="mars-card relative border-l-2 border-l-success px-4 py-3">
       {/* Top row: source chip + age */}
       <div className="mb-2 flex items-center gap-2">
         <span
@@ -117,7 +130,7 @@ const ProposalRow = ({ draft, onDismiss }: ProposalRowProps) => {
           {draft.problem.trim().length > 0 && (
             <button
               type="button"
-              onClick={() => setExpanded((v) => !v)}
+              onClick={handleToggleExpand}
               className="mt-0.5 text-label text-highlight hover:text-foreground focus:outline-none"
               aria-expanded={expanded}
             >
@@ -196,6 +209,9 @@ const ProposalsSkeleton = () => (
 
 export const ProposalsPage = () => {
   const { proposals, total, isPending, error, refetch } = useProposals()
+  const [searchQuery, setSearchQuery] = useState('')
+  // Empty set = no source filter (all shown). Non-empty = only matching sources shown.
+  const [activeSources, setActiveSources] = useState<Set<string>>(new Set())
 
   if (error) {
     return (
@@ -210,6 +226,36 @@ export const ProposalsPage = () => {
 
   // Newest first
   const sorted = [...proposals].sort((a, b) => b.createdAt - a.createdAt)
+
+  // Unique sources from the full sorted list, in appearance order
+  const uniqueSources = Array.from(new Set(sorted.map((d) => d.source)))
+
+  // Client-side filtering: search query (title + problem) and source chips
+  const q = searchQuery.trim().toLowerCase()
+  const filtered = sorted.filter((draft) => {
+    if (activeSources.size > 0 && !activeSources.has(draft.source)) return false
+    if (q) {
+      const haystack = `${draft.title} ${draft.problem}`.toLowerCase()
+      if (!haystack.includes(q)) return false
+    }
+    return true
+  })
+
+  const toggleSource = (source: string) => {
+    setActiveSources((prev) => {
+      const next = new Set(prev)
+      if (next.has(source)) {
+        next.delete(source)
+      } else {
+        next.add(source)
+      }
+      return next
+    })
+  }
+
+  const showingCount = filtered.length
+  const totalCount = sorted.length
+  const isFiltered = q.length > 0 || activeSources.size > 0
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-background">
@@ -231,7 +277,62 @@ export const ProposalsPage = () => {
             {total}
           </span>
         )}
+        {/* Filtered count — shown when a filter is active */}
+        {!isPending && isFiltered && totalCount > 0 && (
+          <span className="ml-3 text-label text-muted-foreground">
+            Showing {showingCount} of {totalCount}
+          </span>
+        )}
       </div>
+
+      {/* Search + source chips */}
+      {!isPending && sorted.length > 0 && (
+        <div className="shrink-0 border-b border-border bg-background px-4 py-2 flex flex-col gap-2">
+          {/* Search input */}
+          <div className="relative min-w-0">
+            <span
+              className="pointer-events-none absolute inset-y-0 left-2 flex select-none items-center text-muted-foreground/60"
+              aria-hidden="true"
+            >
+              ⌕
+            </span>
+            <input
+              type="text"
+              aria-label="Search proposals"
+              placeholder="Search proposals..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full rounded-md border border-border bg-card py-0.5 pl-6 pr-2 font-mono text-label text-foreground placeholder:text-muted-foreground/60 focus:border-highlight/40 focus:outline-none"
+            />
+          </div>
+          {/* Source filter chips */}
+          {uniqueSources.length > 1 && (
+            <div className="flex flex-wrap gap-1.5" role="group" aria-label="Filter by source">
+              {uniqueSources.map((source) => {
+                const isActive = activeSources.has(source)
+                const label = SOURCE_LABEL[source] ?? source
+                const colorClass =
+                  SOURCE_CHIP_CLASS[source] ?? 'text-muted-foreground border-border'
+                return (
+                  <button
+                    key={source}
+                    type="button"
+                    onClick={() => toggleSource(source)}
+                    aria-pressed={isActive}
+                    className={[
+                      'rounded-full border px-2.5 py-0.5 text-micro font-medium leading-none transition-opacity focus:outline-none',
+                      colorClass,
+                      isActive ? 'opacity-100' : 'opacity-40 hover:opacity-70',
+                    ].join(' ')}
+                  >
+                    {label}
+                  </button>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* List */}
       <div className="flex-1 overflow-y-auto">
@@ -239,9 +340,16 @@ export const ProposalsPage = () => {
           <ProposalsSkeleton />
         ) : sorted.length === 0 ? (
           <EmptyState />
+        ) : filtered.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-16 text-center">
+            <p className="text-title font-medium text-foreground">No matches</p>
+            <p className="mt-1 font-mono text-label text-muted-foreground">
+              Try a different search or clear the source filter.
+            </p>
+          </div>
         ) : (
           <div className="flex flex-col gap-4 p-4">
-            {sorted.map((draft) => (
+            {filtered.map((draft) => (
               <ProposalRow key={draft.id} draft={draft} onDismiss={() => { void refetch() }} />
             ))}
           </div>
