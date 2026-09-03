@@ -216,13 +216,13 @@ export interface ScoringConfig {
    * When true, a sustained low score trend (rolling median below
    * `lowTrendThreshold` across `lowTrendWindow` scored instances of one
    * workflow) raises ONE draft proposal (source='reflection') proposing a
-   * revision of that pipeline. OFF by default — same explicit operator
-   * opt-in posture as ADR-0038's KPI-regression trigger. The resulting
+   * revision of that pipeline. ON by default — tasks that score below the
+   * trend threshold will surface a draft proposal automatically. The resulting
    * draft surfaces as an ordinary draft-proposal action-queue row (pure
    * projection, ADR-0048); the framework never rewrites a pipeline itself.
    */
   autoTrigger: boolean
-  /** Rolling-median floor below which the trigger fires. Default 0.5. */
+  /** Rolling-median floor below which the trigger fires. Default 0.75. */
   lowTrendThreshold: number
   /** Number of consecutive scored instances the median is computed over. Default 5. */
   lowTrendWindow: number
@@ -560,8 +560,8 @@ export const DEFAULT_SELF_EVOLVE: SelfEvolveConfig = {
 
 /** Exported for `src/core/config/registry.ts` — see {@link DEFAULTS}. */
 export const DEFAULT_SCORING: ScoringConfig = {
-  autoTrigger: false,
-  lowTrendThreshold: 0.5,
+  autoTrigger: true,
+  lowTrendThreshold: 0.75,
   lowTrendWindow: 5,
 }
 
