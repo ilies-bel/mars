@@ -1578,6 +1578,17 @@ const DDL: readonly string[] = [
   )`,
   `CREATE INDEX IF NOT EXISTS idx_kpi_snapshots_taken_at
      ON kpi_snapshots(taken_at)`,
+  // Operator-acknowledged KPI baselines. When a known regression is recorded
+  // here, the self-evolve drift trigger skips re-raising a proposal for the
+  // same KPI while its current value stays within thresholdPct of the
+  // acknowledged value. Created by `mars kpi acknowledge <key>`;
+  // removed by `mars kpi acknowledge --clear <key>`.
+  `CREATE TABLE IF NOT EXISTS kpi_acknowledged_baselines (
+    kpi_key         TEXT PRIMARY KEY,
+    value           DOUBLE PRECISION NOT NULL,
+    acknowledged_at TEXT NOT NULL,
+    reason          TEXT
+  )`,
   // Simple key/value counter table for KPI event counters (e.g. rescue_attempts_total).
   `CREATE TABLE IF NOT EXISTS kpi_counters (
     key   text PRIMARY KEY,

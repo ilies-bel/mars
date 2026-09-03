@@ -26,7 +26,7 @@ import { loadDaemonConfig } from '../daemon/config.js'
 import type { KpiSnapshot as PersistedSnapshot } from './kpi-snapshots.js'
 import { type DomainTaskStore as TaskStore, getDefaultTaskStore } from '../store/task-store-default.js'
 
-type SkipReason = 'disabled' | 'low-confidence' | 'duplicate' | 'below-threshold'
+type SkipReason = 'disabled' | 'low-confidence' | 'duplicate' | 'below-threshold' | 'acknowledged'
 
 export interface SelfEvolveTriggerResult {
   raised: string[]
@@ -215,7 +215,26 @@ export const runSelfEvolveTrigger = async (opts?: {
   const skipped: Array<{ kpi: string; reason: SkipReason }> =
     lowConfidenceKpis.map(kpi => ({ kpi, reason: 'low-confidence' }))
 
+  // Load acknowledged baselines once before iterating over findings so we can
+  // suppress re-raises for KPIs the operator has already acknowledged.
+  const { listKpiBaselines } = await import('./kpi-baseline.js')
+  const acknowledgedBaselines = await listKpiBaselines(store)
+  const ackMap = new Map(acknowledgedBaselines.map(b => [b.kpi_key, b]))
+
   for (const finding of findings) {
+    // Check acknowledged baseline before the duplicate check: if the current
+    // value is within thresholdPct of the acknowledged value, the finding is
+    // suppressed without raising a proposal or touching the proposals table.
+    const ack = ackMap.get(finding.kpi)
+    if (ack !== undefined && ack.value !== 0) {
+      const deltaPct =
+        Math.abs((finding.currentValue - ack.value) / ack.value) * 100
+      if (deltaPct < cfg.selfEvolve.driftThresholdPct) {
+        skipped.push({ kpi: finding.kpi, reason: 'acknowledged' })
+        continue
+      }
+    }
+
     const existing = await findOpenReflectionDraftForKpi(finding.kpi)
     if (existing) {
       skipped.push({ kpi: finding.kpi, reason: 'duplicate' })

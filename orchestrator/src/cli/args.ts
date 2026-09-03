@@ -207,6 +207,10 @@ export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   // mars eval --baseline: record the current scores as the baseline instead
   // of diffing against the last recorded one.
   '--baseline',
+  // mars kpi acknowledge --list: show all acknowledged baselines.
+  '--list',
+  // mars kpi acknowledge --clear: remove an acknowledged baseline.
+  '--clear',
 ])
 
 // Short aliases are normalised to their long form before flag lookup.

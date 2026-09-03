@@ -11,6 +11,7 @@
 
 import { hasFlag } from '../args'
 import type { Command } from '../command'
+import { kpiAcknowledgeCommands } from './kpi-acknowledge'
 
 const where: Command = {
   path: 'where',
@@ -238,9 +239,9 @@ const kpiAck: Command = {
 const kpiGroup: Command = {
   path: 'kpi',
   summary: 'kpi subcommands',
-  usage: 'usage: mars kpi <snapshot|show|drill|ack|compare>',
+  usage: 'usage: mars kpi <snapshot|show|drill|ack|acknowledge|compare>',
   run: (_args, deps) => {
-    deps.err('usage: mars kpi <snapshot|show|drill|ack|compare>')
+    deps.err('usage: mars kpi <snapshot|show|drill|ack|acknowledge|compare>')
     return { code: 1 }
   },
 }
@@ -665,6 +666,7 @@ export const miscCommands: readonly Command[] = [
   kpiShow,
   kpiDrill,
   kpiAck,
+  ...kpiAcknowledgeCommands,
   kpiGroup,
   worktreePrune,
   worktreeClean,
