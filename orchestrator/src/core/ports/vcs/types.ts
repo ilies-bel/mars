@@ -21,8 +21,13 @@
  * thinnest serializable shape that satisfies them. It deliberately narrows
  * the richer, non-serializable options the underlying `../../lib/git/*`
  * helpers accept (callbacks, `AbortSignal`, trace context) rather than
- * carrying them through, per ADR-0097's serializability rule. The dropped
- * trace context is a known, open consequence tracked in proposal `99caef46`.
+ * carrying them through, per ADR-0097's serializability rule.
+ * {@link TraceIdentity} is the serializable trace-context carrier: every
+ * spec type whose corresponding local-git method shells out through
+ * `exec`/`execProbe` or a `lib/git` helper accepting `traceCtx` carries an
+ * optional `trace?: TraceIdentity` field, so trace attribution survives the
+ * serialization boundary without pulling in the non-serializable
+ * `TraceEventStore`.
  *
  * Caller adoption: the daemon, the implement pipeline's setup and merge
  * steps, and the CLI all resolve git through `resolveVcs()`. A handful of
@@ -90,6 +95,7 @@ export interface RemoveWorktreeSpec {
   keepBranch?: boolean
   /** When provided, a tombstone file is written before the directory is removed. */
   tombstone?: WorktreeRemovalTombstone
+  trace?: TraceIdentity
 }
 
 /** Args for {@link Vcs.branchExists}. */
@@ -108,6 +114,7 @@ export interface CommitSpec {
    * guard in `../../lib/git/commit-main.ts`.
    */
   taskId?: string
+  trace?: TraceIdentity
 }
 
 /** Result of {@link Vcs.commit}. */
@@ -123,6 +130,7 @@ export interface MergeSpec {
   lockTimeoutMs: number
   /** Overrides the default watchdog budget (ms). */
   watchdogMs?: number
+  trace?: TraceIdentity
 }
 
 /** Result of {@link Vcs.merge}. */
@@ -146,6 +154,7 @@ export interface StatusSpec {
    * Omit for the default (collapsed) porcelain behaviour.
    */
   untrackedFiles?: 'all'
+  trace?: TraceIdentity
 }
 
 /** Result of {@link Vcs.status}. */
@@ -187,6 +196,7 @@ export interface VcsCaptureCheckpointSpec {
    * `.gitignore` already covers.
    */
   excludePaths?: string[]
+  trace?: TraceIdentity
 }
 
 /**
@@ -209,6 +219,7 @@ export interface VcsRestoreCheckpointSpec {
   cwd: string
   /** The checkpoint commit's sha (see {@link VcsCheckpoint.sha}). */
   sha: string
+  trace?: TraceIdentity
 }
 
 /** Result of {@link Vcs.restoreCheckpoint}. */
@@ -222,6 +233,7 @@ export interface VcsRestoreCheckpointResult {
 export interface VcsDiscardChangesSpec {
   /** Working tree to reset. */
   cwd: string
+  trace?: TraceIdentity
 }
 
 /** Args for {@link Vcs.revParse}. */
@@ -231,17 +243,20 @@ export interface VcsRevParseSpec {
   rev: string
   /** Optional hard timeout (ms) for the underlying git invocation. */
   timeoutMs?: number
+  trace?: TraceIdentity
 }
 
 /** Args for {@link Vcs.currentBranch}. */
 export interface VcsCurrentBranchSpec {
   cwd: string
+  trace?: TraceIdentity
 }
 
 /** Args for {@link Vcs.repoRoot}. */
 export interface VcsRepoRootSpec {
   /** Any directory inside the repository (or worktree) to resolve from. */
   cwd: string
+  trace?: TraceIdentity
 }
 
 /** Args for {@link Vcs.gitPath}. */
@@ -249,6 +264,7 @@ export interface VcsGitPathSpec {
   cwd: string
   /** The `git rev-parse --git-path <name>` argument, e.g. `"rebase-merge"`. */
   name: string
+  trace?: TraceIdentity
 }
 
 /** Args for {@link Vcs.revListCount}. */
@@ -257,6 +273,7 @@ export interface VcsRevListCountSpec {
   /** A `git rev-list --count` range expression, e.g. `"<base>..<tip>"`. */
   range: string
   timeoutMs?: number
+  trace?: TraceIdentity
 }
 
 /** Args for {@link Vcs.diffText}. */
@@ -265,6 +282,7 @@ export interface VcsDiffTextSpec {
   from: string
   to: string
   timeoutMs?: number
+  trace?: TraceIdentity
 }
 
 /** Args for {@link Vcs.pathsChangedInRange}. */
@@ -274,12 +292,14 @@ export interface VcsPathsChangedInRangeSpec {
   range: string
   /** Pathspecs passed after `--`. */
   paths: string[]
+  trace?: TraceIdentity
 }
 
 /** Args for {@link Vcs.workingTreeMatches}. */
 export interface VcsWorkingTreeMatchesSpec {
   cwd: string
   rev: string
+  trace?: TraceIdentity
 }
 
 /** Args for {@link Vcs.recentShas}. */
@@ -287,12 +307,14 @@ export interface VcsRecentShasSpec {
   cwd: string
   rev: string
   count: number
+  trace?: TraceIdentity
 }
 
 /** Args for {@link Vcs.deleteBranch}. */
 export interface VcsDeleteBranchSpec {
   cwd: string
   branch: string
+  trace?: TraceIdentity
 }
 
 /** Args for {@link Vcs.updateRef}. */
@@ -301,6 +323,7 @@ export interface VcsUpdateRefSpec {
   /** Fully-qualified ref to update, e.g. `"refs/mars/checkpoint/<key>"`. */
   ref: string
   sha: string
+  trace?: TraceIdentity
 }
 
 /** Args for {@link Vcs.hasCommitTrailer}. */
@@ -309,6 +332,7 @@ export interface VcsHasCommitTrailerSpec {
   sha: string
   trailerKey: string
   trailerValue: string
+  trace?: TraceIdentity
 }
 
 /** Args for {@link Vcs.revListRange}. */
@@ -316,6 +340,7 @@ export interface VcsRevListRangeSpec {
   cwd: string
   /** A `git rev-list` range expression, e.g. `"<base>..<tip>"`. */
   range: string
+  trace?: TraceIdentity
 }
 
 /** Args for {@link Vcs.attachToOriginWorktree}. */
@@ -422,6 +447,7 @@ export interface VcsCommitsInRangeSpec {
   range: string
   /** Report abbreviated shas (`%h`) instead of full ones (`%H`). */
   abbrev?: boolean
+  trace?: TraceIdentity
 }
 
 /** Args for {@link Vcs.searchCommits}. */
@@ -433,6 +459,7 @@ export interface VcsSearchCommitsSpec {
   grep: string
   /** Cap on the number of commits returned (`-n`). Unbounded when omitted. */
   limit?: number
+  trace?: TraceIdentity
 }
 
 /** Args for {@link Vcs.changedFiles}. */
@@ -440,6 +467,7 @@ export interface VcsChangedFilesSpec {
   cwd: string
   /** A `git diff` range expression, e.g. `"<base>...HEAD"`. */
   range: string
+  trace?: TraceIdentity
 }
 
 /** Args for {@link Vcs.fetch}. */
@@ -448,6 +476,7 @@ export interface VcsFetchSpec {
   remote: string
   /** Single refspec to fetch. Fetches the remote's default set when omitted. */
   branch?: string
+  trace?: TraceIdentity
 }
 
 /** Args for {@link Vcs.resetHard}. */
@@ -455,6 +484,7 @@ export interface VcsResetHardSpec {
   cwd: string
   /** Revision to reset onto, e.g. an integration branch name. */
   rev: string
+  trace?: TraceIdentity
 }
 
 /** Args for {@link Vcs.isAncestor}. */
@@ -462,6 +492,7 @@ export interface VcsIsAncestorSpec {
   cwd: string
   ancestor: string
   descendant: string
+  trace?: TraceIdentity
 }
 
 /** Args for {@link Vcs.autoCommitOperatorDirt}. */
@@ -494,6 +525,7 @@ export interface VcsAddWorktreeForBranchSpec {
   path: string
   /** Existing branch to check out into it. */
   branch: string
+  trace?: TraceIdentity
 }
 
 /**
