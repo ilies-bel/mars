@@ -135,7 +135,29 @@ describe('sweepOrphanWorktrees', () => {
     rmSync(repo, { recursive: true, force: true })
   })
 
-  it('removes a directory with no owning task row', async () => {
+  it('removes a mars-prefixed orphan dir (current id format)', async () => {
+    const { r } = await loadModules(repo)
+    const orphanId = 'mars-deadbeef'
+    const path = makeWorktreeDir(repo, orphanId)
+
+    const result = await r.sweepOrphanWorktrees(repo)
+
+    expect(result.removed).toContain(orphanId)
+    expect(existsSync(path)).toBe(false)
+  })
+
+  it('removes a fix-prefixed orphan dir (recovery task id format)', async () => {
+    const { r } = await loadModules(repo)
+    const orphanId = 'fix-deadbeef'
+    const path = makeWorktreeDir(repo, orphanId)
+
+    const result = await r.sweepOrphanWorktrees(repo)
+
+    expect(result.removed).toContain(orphanId)
+    expect(existsSync(path)).toBe(false)
+  })
+
+  it('removes a bare-hex orphan dir (legacy id format)', async () => {
     const { r } = await loadModules(repo)
     const orphanId = 'deadbeef'
     const path = makeWorktreeDir(repo, orphanId)
@@ -144,6 +166,28 @@ describe('sweepOrphanWorktrees', () => {
 
     expect(result.removed).toContain(orphanId)
     expect(existsSync(path)).toBe(false)
+  })
+
+  it('skips steward-storm-* dirs (unrecognised name format)', async () => {
+    const { r } = await loadModules(repo)
+    const name = 'steward-storm-mt2djr9k'
+    const path = makeWorktreeDir(repo, name)
+
+    const result = await r.sweepOrphanWorktrees(repo)
+
+    expect(result.removed).not.toContain(name)
+    expect(existsSync(path)).toBe(true)
+  })
+
+  it('skips fix-triage-verbs dirs (suffix is not 8 hex chars)', async () => {
+    const { r } = await loadModules(repo)
+    const name = 'fix-triage-verbs'
+    const path = makeWorktreeDir(repo, name)
+
+    const result = await r.sweepOrphanWorktrees(repo)
+
+    expect(result.removed).not.toContain(name)
+    expect(existsSync(path)).toBe(true)
   })
 
   it('keeps a directory whose name matches a live task id', async () => {
@@ -302,8 +346,8 @@ describe('getWorktreeFootprint', () => {
 
   it('returns count of worktree dirs', async () => {
     const { r } = await loadModules(repo)
-    makeWorktreeDir(repo, 'aabbccdd')
-    makeWorktreeDir(repo, 'eeff0011')
+    makeWorktreeDir(repo, 'mars-aabbccdd')
+    makeWorktreeDir(repo, 'mars-eeff0011')
 
     const fp = await r.getWorktreeFootprint(repo)
 
@@ -387,8 +431,8 @@ describe('writeFileSync in worktree dir creates measurable size', () => {
     const fp0 = await r.getWorktreeFootprint(repo)
     expect(fp0.count).toBe(0)
 
-    makeWorktreeDir(repo, 'aabbccdd')
-    writeFileSync(join(repo, '.mars', 'worktrees', 'aabbccdd', 'big.txt'), 'x'.repeat(1024))
+    makeWorktreeDir(repo, 'mars-aabbccdd')
+    writeFileSync(join(repo, '.mars', 'worktrees', 'mars-aabbccdd', 'big.txt'), 'x'.repeat(1024))
 
     const fp1 = await r.getWorktreeFootprint(repo)
     expect(fp1.count).toBe(1)

@@ -229,9 +229,24 @@ export async function sweepOrphanWorktrees(
 
 /**
  * Pattern for directory names that look like Mars task ids.
- * Matches `<hex8>` or `<hex8>-<suffix>` (with optional suffix).
+ *
+ * Accepted formats:
+ *   - `mars-<hex8>` — the current task-id format minted in `src/core/arc.ts`
+ *     (`const id = \`mars-${randomUUID().slice(0, 8)}\``)
+ *   - `fix-<hex8>` — the current recovery-task format minted in `src/core/arc/recovery.ts`
+ *     (`const fixTaskId = \`fix-${randomUUID().slice(0, 8)}\``)
+ *   - `<hex8>` or `<hex8>-<suffix>` — the legacy bare-hex format; old
+ *     directories predating the prefix convention may still be on disk.
+ *
+ * Explicitly NOT matched (correctly skipped as unrecognised):
+ *   `steward-storm-mt2djr9k` (suffix after dash is not exactly 8 hex chars),
+ *   `fix-triage-verbs` (suffix is not 8 hex characters).
+ *
+ * Source of truth for valid prefixes: `arc.ts` and `arc/recovery.ts`.
+ * If a new id prefix is introduced, update this regex and its tests in
+ * `__tests__/worktree-reclaim.test.ts`.
  */
-const TASK_ID_RE = /^[0-9a-f]{8}(-[a-z0-9-]+)?$/
+const TASK_ID_RE = /^(mars|fix)-[0-9a-f]{8}$|^[0-9a-f]{8}(-[a-z0-9-]+)?$/
 
 /**
  * Cap the number of retained `failed` worktrees to `cap` (default from
