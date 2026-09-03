@@ -131,4 +131,9 @@ describe('CHAT_SYSTEM_PROMPT content', () => {
 - scope-ambiguous
 - contradicts an ADR`)
   })
+
+  it('prohibits posture-transition announcements', () => {
+    expect(CHAT_SYSTEM_PROMPT).toContain('do not announce the transition')
+    expect(CHAT_SYSTEM_PROMPT).toContain("Never emit 'System:'")
+  })
 })
