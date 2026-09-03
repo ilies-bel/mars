@@ -127,6 +127,10 @@ export const FLAGS_WITH_VALUES: ReadonlySet<string> = new Set([
   '--surface-form',
   // mars action-queue resolve --reason <text>: human-readable note for the resolution.
   '--reason',
+  // mars verify-gate add / mars verify add --evidence <text>: DEC-11 traceability.
+  // Required for human/operator gates to record the observation that justified
+  // adding this gate.
+  '--evidence',
   // mars verify-gate add/set --timeout <minutes>: per-gate wall-clock timeout.
   '--timeout',
   // mars eval --fixture <name>: run a single named fixture instead of the

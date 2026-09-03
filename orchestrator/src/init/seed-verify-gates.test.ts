@@ -119,7 +119,7 @@ describe('proposeOnboardingVerifyGates', () => {
     const { proposeOnboardingVerifyGates } = await import('./seed-verify-gates.js')
     const { listActionQueueItems } = await import('../core/lib/action-queue.js')
 
-    await addVerifyGate({ scope: '.', name: 'test', cmd: 'npm', args: ['test'] })
+    await addVerifyGate({ scope: '.', name: 'test', cmd: 'npm', args: ['test'], evidence: 'test: unit test fixture' })
 
     const result = await proposeOnboardingVerifyGates([
       { scope: 'orchestrator', name: 'typecheck', cmd: 'npx', args: ['tsc', '--noEmit'], evidence: 'detected' },

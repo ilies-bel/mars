@@ -110,6 +110,7 @@ describe('reportUncoveredVerifyCoverage', () => {
       name: 'typecheck',
       cmd: 'npx',
       args: ['tsc', '--noEmit'],
+      evidence: 'test: unit test fixture',
     })
 
     open = await listActionQueueItems('open', { kind: 'verify-uncovered' })
@@ -135,7 +136,7 @@ describe('reportUncoveredVerifyCoverage', () => {
     expect(open[0]!.payload.scope).toBe('.')
 
     // Adding a root gate (scope '.') covers everything
-    await addVerifyGate({ name: 'lint', cmd: 'npx', args: ['eslint', '.'] })
+    await addVerifyGate({ name: 'lint', cmd: 'npx', args: ['eslint', '.'], evidence: 'test: unit test fixture' })
 
     const stillOpen = await listActionQueueItems('open', { kind: 'verify-uncovered' })
     expect(stillOpen).toHaveLength(0)

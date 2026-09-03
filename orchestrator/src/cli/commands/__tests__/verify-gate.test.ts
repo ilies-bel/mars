@@ -167,7 +167,7 @@ describe('mars verify-gate list — with gates', () => {
 
     // Add a gate directly so we have something to list
     await run(
-      ['verify-gate', 'add', '--scope', 'orchestrator', '--name', 'typecheck', '--cmd', 'npx', '--', 'tsc', '--noEmit'],
+      ['verify-gate', 'add', '--scope', 'orchestrator', '--name', 'typecheck', '--cmd', 'npx', '--evidence', 'test: unit test fixture', '--', 'tsc', '--noEmit'],
       { store, ctx, daemon },
     )
 
@@ -202,7 +202,7 @@ describe('mars verify-gate list — with gates', () => {
     const { store, ctx } = await loadDeps()
     const daemon = await makeFake()
     const added = await run(
-      ['verify-gate', 'add', '--name', 'typecheck', '--cmd', 'npx'],
+      ['verify-gate', 'add', '--name', 'typecheck', '--cmd', 'npx', '--evidence', 'test: unit test fixture'],
       { store, ctx, daemon },
     )
     const { quarantineVerifyGate } = await import('../../../core/verify-gates')
@@ -234,7 +234,7 @@ describe('mars verify-gate add — happy path', () => {
     const daemon = await makeFake()
 
     const r = await run(
-      ['verify-gate', 'add', '--scope', 'orchestrator', '--name', 'typecheck', '--cmd', 'npx', '--', 'tsc', '--noEmit'],
+      ['verify-gate', 'add', '--scope', 'orchestrator', '--name', 'typecheck', '--cmd', 'npx', '--evidence', 'test: unit test fixture', '--', 'tsc', '--noEmit'],
       { store, ctx, daemon },
     )
 
@@ -294,14 +294,14 @@ describe('mars verify-gate add — duplicate (scope,name)', () => {
 
     // First insert succeeds
     const r1 = await run(
-      ['verify-gate', 'add', '--scope', 'orchestrator', '--name', 'typecheck', '--cmd', 'npx'],
+      ['verify-gate', 'add', '--scope', 'orchestrator', '--name', 'typecheck', '--cmd', 'npx', '--evidence', 'test: unit test fixture'],
       { store, ctx, daemon },
     )
     expect(r1.code).toBe(0)
 
     // Second insert with the same (scope,name) must fail
     const r2 = await run(
-      ['verify-gate', 'add', '--scope', 'orchestrator', '--name', 'typecheck', '--cmd', 'tsc'],
+      ['verify-gate', 'add', '--scope', 'orchestrator', '--name', 'typecheck', '--cmd', 'tsc', '--evidence', 'test: unit test fixture'],
       { store, ctx, daemon },
     )
 
@@ -323,7 +323,7 @@ describe('mars verify-gate add — gate args after --', () => {
     const daemon = await makeFake()
 
     await run(
-      ['verify-gate', 'add', '--name', 'typecheck', '--cmd', 'npx', '--', 'tsc', '--noEmit'],
+      ['verify-gate', 'add', '--name', 'typecheck', '--cmd', 'npx', '--evidence', 'test: unit test fixture', '--', 'tsc', '--noEmit'],
       { store, ctx, daemon },
     )
 
@@ -346,7 +346,7 @@ describe('mars verify-gate add — --optional flag', () => {
     const daemon = await makeFake()
 
     await run(
-      ['verify-gate', 'add', '--name', 'lint', '--cmd', 'eslint', '--optional'],
+      ['verify-gate', 'add', '--name', 'lint', '--cmd', 'eslint', '--optional', '--evidence', 'test: unit test fixture'],
       { store, ctx, daemon },
     )
 
@@ -367,7 +367,7 @@ describe('mars verify-gate remove — by id', () => {
     const daemon = await makeFake()
 
     const addR = await run(
-      ['verify-gate', 'add', '--name', 'typecheck', '--cmd', 'npx'],
+      ['verify-gate', 'add', '--name', 'typecheck', '--cmd', 'npx', '--evidence', 'test: unit test fixture'],
       { store, ctx, daemon },
     )
     expect(addR.code).toBe(0)
@@ -386,7 +386,7 @@ describe('mars verify-gate remove — by id', () => {
     const daemon = await makeFake()
 
     const addR = await run(
-      ['verify-gate', 'add', '--name', 'typecheck', '--cmd', 'npx'],
+      ['verify-gate', 'add', '--name', 'typecheck', '--cmd', 'npx', '--evidence', 'test: unit test fixture'],
       { store, ctx, daemon },
     )
     const id = addR.out[0]!
@@ -407,7 +407,7 @@ describe('mars verify-gate remove — by scope/name', () => {
     const daemon = await makeFake()
 
     await run(
-      ['verify-gate', 'add', '--scope', 'orchestrator', '--name', 'typecheck', '--cmd', 'npx'],
+      ['verify-gate', 'add', '--scope', 'orchestrator', '--name', 'typecheck', '--cmd', 'npx', '--evidence', 'test: unit test fixture'],
       { store, ctx, daemon },
     )
 
@@ -498,7 +498,7 @@ describe('mars verify-gate add — whitespace-in-arg guard', () => {
     const daemon = await makeFake()
 
     const r = await run(
-      ['verify-gate', 'add', '--name', 'e2e', '--cmd', 'npm', '--', 'run', 'test:e2e'],
+      ['verify-gate', 'add', '--name', 'e2e', '--cmd', 'npm', '--evidence', 'test: unit test fixture', '--', 'run', 'test:e2e'],
       { store, ctx, daemon },
     )
 
@@ -517,7 +517,7 @@ describe('mars verify-gate add — --timeout flag', () => {
     const daemon = await makeFake()
 
     await run(
-      ['verify-gate', 'add', '--name', 'typecheck', '--cmd', 'npx', '--timeout', '45'],
+      ['verify-gate', 'add', '--name', 'typecheck', '--cmd', 'npx', '--timeout', '45', '--evidence', 'test: unit test fixture'],
       { store, ctx, daemon },
     )
 
@@ -544,7 +544,7 @@ describe('mars verify-gate add — --timeout flag', () => {
     const daemon = await makeFake()
 
     await run(
-      ['verify-gate', 'add', '--name', 'typecheck', '--cmd', 'npx'],
+      ['verify-gate', 'add', '--name', 'typecheck', '--cmd', 'npx', '--evidence', 'test: unit test fixture'],
       { store, ctx, daemon },
     )
 
@@ -567,7 +567,7 @@ describe('mars verify-gate list — timeout_min column', () => {
     const daemon = await makeFake()
 
     await run(
-      ['verify-gate', 'add', '--name', 'typecheck', '--cmd', 'npx'],
+      ['verify-gate', 'add', '--name', 'typecheck', '--cmd', 'npx', '--evidence', 'test: unit test fixture'],
       { store, ctx, daemon },
     )
 
@@ -587,7 +587,7 @@ describe('mars verify-gate set — update timeout by id', () => {
     const daemon = await makeFake()
 
     const addR = await run(
-      ['verify-gate', 'add', '--name', 'typecheck', '--cmd', 'npx'],
+      ['verify-gate', 'add', '--name', 'typecheck', '--cmd', 'npx', '--evidence', 'test: unit test fixture'],
       { store, ctx, daemon },
     )
     expect(addR.code).toBe(0)
@@ -608,7 +608,7 @@ describe('mars verify-gate set — update timeout by id', () => {
     const daemon = await makeFake()
 
     await run(
-      ['verify-gate', 'add', '--scope', 'orchestrator', '--name', 'typecheck', '--cmd', 'npx'],
+      ['verify-gate', 'add', '--scope', 'orchestrator', '--name', 'typecheck', '--cmd', 'npx', '--evidence', 'test: unit test fixture'],
       { store, ctx, daemon },
     )
 
@@ -650,7 +650,7 @@ describe('mars verify-gate set — update timeout by id', () => {
     const daemon = await makeFake()
 
     const addR = await run(
-      ['verify-gate', 'add', '--name', 'typecheck', '--cmd', 'npx'],
+      ['verify-gate', 'add', '--name', 'typecheck', '--cmd', 'npx', '--evidence', 'test: unit test fixture'],
       { store, ctx, daemon },
     )
     const id = addR.out[0]!
@@ -684,7 +684,7 @@ describe('mars verify-gate restore', () => {
     const daemon = await makeFake()
 
     const addR = await run(
-      ['verify-gate', 'add', '--name', 'ok', '--cmd', 'node', '--', '-e', 'process.exit(0)'],
+      ['verify-gate', 'add', '--name', 'ok', '--cmd', 'node', '--evidence', 'test: unit test fixture', '--', '-e', 'process.exit(0)'],
       { store, ctx, daemon },
     )
     const id = addR.out[0]!
@@ -710,7 +710,7 @@ describe('mars verify-gate restore', () => {
     const addR = await run(
       [
         'verify-gate', 'add', '--scope', 'orchestrator', '--name', 'ok',
-        '--cmd', 'node', '--', '-e', 'process.exit(0)',
+        '--cmd', 'node', '--evidence', 'test: unit test fixture', '--', '-e', 'process.exit(0)',
       ],
       { store, ctx, daemon },
     )
@@ -732,7 +732,7 @@ describe('mars verify-gate restore', () => {
     const daemon = await makeFake()
 
     const addR = await run(
-      ['verify-gate', 'add', '--name', 'broken', '--cmd', 'node', '--', '-e', 'process.exit(1)'],
+      ['verify-gate', 'add', '--name', 'broken', '--cmd', 'node', '--evidence', 'test: unit test fixture', '--', '-e', 'process.exit(1)'],
       { store, ctx, daemon },
     )
     const id = addR.out[0]!
@@ -751,7 +751,7 @@ describe('mars verify-gate restore', () => {
     const daemon = await makeFake()
 
     const addR = await run(
-      ['verify-gate', 'add', '--name', 'broken', '--cmd', 'node', '--', '-e', 'process.exit(1)'],
+      ['verify-gate', 'add', '--name', 'broken', '--cmd', 'node', '--evidence', 'test: unit test fixture', '--', '-e', 'process.exit(1)'],
       { store, ctx, daemon },
     )
     const id = addR.out[0]!
@@ -776,7 +776,7 @@ describe('mars verify-gate restore', () => {
     const addR = await run(
       [
         'verify-gate', 'add', '--scope', 'vanished', '--name', 'ok',
-        '--cmd', 'node', '--', '-e', 'process.exit(0)',
+        '--cmd', 'node', '--evidence', 'test: unit test fixture', '--', '-e', 'process.exit(0)',
       ],
       { store, ctx, daemon },
     )
@@ -798,7 +798,7 @@ describe('mars verify-gate restore', () => {
     const addR = await run(
       [
         'verify-gate', 'add', '--scope', 'vanished', '--name', 'ok',
-        '--cmd', 'node', '--', '-e', 'process.exit(0)',
+        '--cmd', 'node', '--evidence', 'test: unit test fixture', '--', '-e', 'process.exit(0)',
       ],
       { store, ctx, daemon },
     )
@@ -826,7 +826,7 @@ describe('mars verify-gate restore', () => {
     const daemon = await makeFake()
 
     const addR = await run(
-      ['verify-gate', 'add', '--name', 'ok', '--cmd', 'node', '--', '-e', 'process.exit(0)'],
+      ['verify-gate', 'add', '--name', 'ok', '--cmd', 'node', '--evidence', 'test: unit test fixture', '--', '-e', 'process.exit(0)'],
       { store, ctx, daemon },
     )
     const id = addR.out[0]!

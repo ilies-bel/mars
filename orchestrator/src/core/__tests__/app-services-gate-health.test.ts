@@ -47,9 +47,9 @@ describe('AppServices.viewSteward gate health', () => {
   it('groups active and quarantined gates by scope and exposes their latest failure evidence', async () => {
     const { addVerifyGate, listVerifyGates, quarantineVerifyGate } = await import('../verify-gates.js')
     const { getCompositionRootClient } = await import('../store/task-store-default.js')
-    await addVerifyGate({ scope: 'apps/web', name: 'test', cmd: 'npm', args: ['test'] })
-    const typecheck = await addVerifyGate({ scope: '.', name: 'typecheck', cmd: 'npx', args: ['tsc', '--noEmit'] })
-    await addVerifyGate({ scope: '.', name: 'lint', cmd: 'eslint', required: false, source: 'operator' })
+    await addVerifyGate({ scope: 'apps/web', name: 'test', cmd: 'npm', args: ['test'], evidence: 'test: unit test fixture' })
+    const typecheck = await addVerifyGate({ scope: '.', name: 'typecheck', cmd: 'npx', args: ['tsc', '--noEmit'], evidence: 'test: unit test fixture' })
+    await addVerifyGate({ scope: '.', name: 'lint', cmd: 'eslint', required: false, source: 'operator', evidence: 'test: unit test fixture' })
     await quarantineVerifyGate(
       getCompositionRootClient(),
       typecheck,

@@ -95,6 +95,7 @@ describe('proposeOnboardingVerifyGates', () => {
       cmd: 'npm',
       args: ['test'],
       source: 'operator',
+      evidence: 'test: unit test fixture',
     })
     const before = await listVerifyGates()
 

@@ -59,9 +59,9 @@ describe('proposeGatesFromLevers', () => {
   it('raises a verify-uncovered item for each lever whose gate is not yet registered', async () => {
     // Register typecheck, lint, and e2e — leave test unregistered.
     const { addVerifyGate } = await import('../verify-gates.js')
-    await addVerifyGate({ name: 'typecheck', cmd: 'npx', args: ['tsc', '--noEmit'] })
-    await addVerifyGate({ name: 'lint', cmd: 'npx', args: ['eslint', '.'] })
-    await addVerifyGate({ name: 'e2e', cmd: 'npx', args: ['playwright', 'test'] })
+    await addVerifyGate({ name: 'typecheck', cmd: 'npx', args: ['tsc', '--noEmit'], evidence: 'test: unit test fixture' })
+    await addVerifyGate({ name: 'lint', cmd: 'npx', args: ['eslint', '.'], evidence: 'test: unit test fixture' })
+    await addVerifyGate({ name: 'e2e', cmd: 'npx', args: ['playwright', 'test'], evidence: 'test: unit test fixture' })
 
     const { proposeGatesFromLevers } = await import('./propose-gates-from-levers.js')
     const result = await proposeGatesFromLevers()
@@ -84,10 +84,10 @@ describe('proposeGatesFromLevers', () => {
 
   it('skips all levers when all gates are already registered', async () => {
     const { addVerifyGate } = await import('../verify-gates.js')
-    await addVerifyGate({ name: 'typecheck', cmd: 'npx', args: ['tsc', '--noEmit'] })
-    await addVerifyGate({ name: 'test', cmd: 'npm', args: ['test'] })
-    await addVerifyGate({ name: 'lint', cmd: 'npx', args: ['eslint', '.'] })
-    await addVerifyGate({ name: 'e2e', cmd: 'npx', args: ['playwright', 'test'] })
+    await addVerifyGate({ name: 'typecheck', cmd: 'npx', args: ['tsc', '--noEmit'], evidence: 'test: unit test fixture' })
+    await addVerifyGate({ name: 'test', cmd: 'npm', args: ['test'], evidence: 'test: unit test fixture' })
+    await addVerifyGate({ name: 'lint', cmd: 'npx', args: ['eslint', '.'], evidence: 'test: unit test fixture' })
+    await addVerifyGate({ name: 'e2e', cmd: 'npx', args: ['playwright', 'test'], evidence: 'test: unit test fixture' })
 
     const { proposeGatesFromLevers } = await import('./propose-gates-from-levers.js')
     const result = await proposeGatesFromLevers()
@@ -105,9 +105,9 @@ describe('proposeGatesFromLevers', () => {
     // Register typecheck, lint, e2e — leave test unregistered so it becomes
     // the one unambiguous item we can track across two calls.
     const { addVerifyGate } = await import('../verify-gates.js')
-    await addVerifyGate({ name: 'typecheck', cmd: 'npx', args: ['tsc', '--noEmit'] })
-    await addVerifyGate({ name: 'lint', cmd: 'npx', args: ['eslint', '.'] })
-    await addVerifyGate({ name: 'e2e', cmd: 'npx', args: ['playwright', 'test'] })
+    await addVerifyGate({ name: 'typecheck', cmd: 'npx', args: ['tsc', '--noEmit'], evidence: 'test: unit test fixture' })
+    await addVerifyGate({ name: 'lint', cmd: 'npx', args: ['eslint', '.'], evidence: 'test: unit test fixture' })
+    await addVerifyGate({ name: 'e2e', cmd: 'npx', args: ['playwright', 'test'], evidence: 'test: unit test fixture' })
 
     const { proposeGatesFromLevers } = await import('./propose-gates-from-levers.js')
 
@@ -132,9 +132,9 @@ describe('proposeGatesFromLevers', () => {
     // tsconfig.json is already present from beforeEach — typecheck predicate passes.
     // Register everything except typecheck so we can inspect its proposal.
     const { addVerifyGate } = await import('../verify-gates.js')
-    await addVerifyGate({ name: 'test', cmd: 'npm', args: ['test'] })
-    await addVerifyGate({ name: 'lint', cmd: 'npx', args: ['eslint', '.'] })
-    await addVerifyGate({ name: 'e2e', cmd: 'npx', args: ['playwright', 'test'] })
+    await addVerifyGate({ name: 'test', cmd: 'npm', args: ['test'], evidence: 'test: unit test fixture' })
+    await addVerifyGate({ name: 'lint', cmd: 'npx', args: ['eslint', '.'], evidence: 'test: unit test fixture' })
+    await addVerifyGate({ name: 'e2e', cmd: 'npx', args: ['playwright', 'test'], evidence: 'test: unit test fixture' })
 
     const { proposeGatesFromLevers } = await import('./propose-gates-from-levers.js')
     await proposeGatesFromLevers()
@@ -198,10 +198,10 @@ describe('lever-gate-sweep body', () => {
   it('does not log or emit when proposed === 0 (all gates already registered)', async () => {
     // Register every gate the lever registry knows about.
     const { addVerifyGate } = await import('../verify-gates.js')
-    await addVerifyGate({ name: 'typecheck', cmd: 'npx', args: ['tsc', '--noEmit'] })
-    await addVerifyGate({ name: 'test', cmd: 'npm', args: ['test'] })
-    await addVerifyGate({ name: 'lint', cmd: 'npx', args: ['eslint', '.'] })
-    await addVerifyGate({ name: 'e2e', cmd: 'npx', args: ['playwright', 'test'] })
+    await addVerifyGate({ name: 'typecheck', cmd: 'npx', args: ['tsc', '--noEmit'], evidence: 'test: unit test fixture' })
+    await addVerifyGate({ name: 'test', cmd: 'npm', args: ['test'], evidence: 'test: unit test fixture' })
+    await addVerifyGate({ name: 'lint', cmd: 'npx', args: ['eslint', '.'], evidence: 'test: unit test fixture' })
+    await addVerifyGate({ name: 'e2e', cmd: 'npx', args: ['playwright', 'test'], evidence: 'test: unit test fixture' })
 
     const sweep = await getSweep()
     const log = vi.fn()
@@ -224,9 +224,9 @@ describe('lever-gate-sweep body', () => {
     // second call's alreadyProposedKeys set complete — i.e. the idempotence
     // guard can recognise it and skip it.)
     const { addVerifyGate } = await import('../verify-gates.js')
-    await addVerifyGate({ name: 'typecheck', cmd: 'npx', args: ['tsc', '--noEmit'] })
-    await addVerifyGate({ name: 'lint', cmd: 'npx', args: ['eslint', '.'] })
-    await addVerifyGate({ name: 'e2e', cmd: 'npx', args: ['playwright', 'test'] })
+    await addVerifyGate({ name: 'typecheck', cmd: 'npx', args: ['tsc', '--noEmit'], evidence: 'test: unit test fixture' })
+    await addVerifyGate({ name: 'lint', cmd: 'npx', args: ['eslint', '.'], evidence: 'test: unit test fixture' })
+    await addVerifyGate({ name: 'e2e', cmd: 'npx', args: ['playwright', 'test'], evidence: 'test: unit test fixture' })
 
     // First call: proposes test (only unregistered lever).
     const { proposeGatesFromLevers } = await import('./propose-gates-from-levers.js')

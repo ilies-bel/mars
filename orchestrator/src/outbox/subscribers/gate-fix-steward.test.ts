@@ -36,6 +36,7 @@ describe('gate-fix-steward outbox subscriber', () => {
     const subscriber = await import('./gate-fix-steward.js')
     const gateId = await addVerifyGate({
       scope: 'orchestrator', name: 'typecheck', cmd: 'npx', args: ['tsc', '--noEmit'],
+      evidence: 'test: unit test fixture',
     })
     await quarantineVerifyGate(client, gateId, 'verify:typecheck/exit-1', 'origin-1')
     await subscriber.ensureGateFixStewardSubscriber(client)

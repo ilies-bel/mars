@@ -20,14 +20,14 @@ describe('verify-gates evidence round-trip', () => {
     expect(gate!.evidence).toBe('observed 3 consecutive failures across unrelated tasks')
   })
 
-  it('returns null for evidence when no evidence is provided', async () => {
-    const id = await addVerifyGate({
-      name: 'test-without-evidence',
-      cmd: 'npx',
-      args: ['vitest', 'run'],
-    })
-    const gate = await getVerifyGate(id)
-    expect(gate).not.toBeNull()
-    expect(gate!.evidence).toBeNull()
+  it('throws when no evidence is provided for human-sourced gate (DEC-11)', async () => {
+    // Human-path gates must carry evidence: no silent null-evidence rows.
+    await expect(
+      addVerifyGate({
+        name: 'test-without-evidence',
+        cmd: 'npx',
+        args: ['vitest', 'run'],
+      }),
+    ).rejects.toThrow(/evidence is required/)
   })
 })

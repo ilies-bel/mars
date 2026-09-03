@@ -135,7 +135,7 @@ const verifyGateAdd: Command = {
   path: 'verify-gate add',
   summary: 'register a new verify gate',
   usage:
-    'usage: mars verify-gate add --name <n> --cmd <c> [--scope <s>] [--timeout <min>] [-- <args...>] [--tier task|integration] [--required|--optional] [--evidence <text>]',
+    'usage: mars verify-gate add --name <n> --cmd <c> --evidence <text> [--scope <s>] [--timeout <min>] [-- <args...>] [--tier task|integration] [--required|--optional]',
   run: async (args, deps) => {
     const name = args.flags['--name']
     const cmd = args.flags['--cmd']
@@ -187,7 +187,16 @@ const verifyGateAdd: Command = {
       timeoutMin = parsed
     }
 
+    // --evidence <text>: required (DEC-11). Record what observation justified
+    // adding this gate so it is traceable to the real-world signal.
     const evidence = args.flags['--evidence']
+    if (!evidence?.trim()) {
+      deps.err(
+        '--evidence is required: describe the observation that justifies this gate ' +
+          '(e.g. "3 tasks failed with the same signature across unrelated branches")',
+      )
+      return { code: 2 }
+    }
 
     try {
       const id = await addVerifyGate({
@@ -199,7 +208,7 @@ const verifyGateAdd: Command = {
         tier,
         source: 'operator',
         ...(timeoutMin !== undefined ? { timeoutMin } : {}),
-        ...(evidence !== undefined ? { evidence } : {}),
+        evidence,
       })
       deps.out(id)
       return { code: 0 }

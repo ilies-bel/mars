@@ -16,6 +16,11 @@ import type { VerifyScope, VerifyStepSpec } from './ports/verifier/types.js'
 
 // The specific DDL for this table — kept here so callers can ensure just this
 // table without pulling in the full canonical schema.
+//
+// IMPORTANT: keep in sync with the canonical DDL in pg-schema.ts and the
+// ALTER TABLE migrations in ensureVerifyGatesSchema below.  A fresh database
+// built from this constant and one built by the pg-schema.ts migration must
+// end up with identical columns.
 const VERIFY_GATES_DDL = `CREATE TABLE IF NOT EXISTS verify_gates (
   id         text PRIMARY KEY,
   scope      text NOT NULL DEFAULT '.',
@@ -33,6 +38,7 @@ const VERIFY_GATES_DDL = `CREATE TABLE IF NOT EXISTS verify_gates (
   last_failure_at bigint,
   last_failure_origin_id text,
   timeout_min REAL,
+  evidence   text,
   UNIQUE(scope, name)
 )`
 
@@ -217,10 +223,44 @@ const resolveCoveredVerifyAlerts = async (scope: string): Promise<void> => {
 }
 
 /**
+ * Assert that an evidence string is present for human- or operator-sourced
+ * gates. Called both by {@link addVerifyGate} (as a defence-in-depth guard)
+ * and by the CLI commands before they reach the core insertion path.
+ *
+ * Exported so the assertion is independently testable without going through
+ * a full DB insertion.
+ *
+ * DEC-11: every gate must be traceable to the observation that justified it.
+ * Only `'human'` and `'operator'` sources are enforced here; programmatic
+ * paths (`'observation'`, `'manifest'`, …) produce their own evidence at the
+ * detection layer.
+ */
+export const assertGateEvidenceProvided = (
+  source: string,
+  evidence: string | null | undefined,
+  gateName: string,
+): void => {
+  if ((source === 'human' || source === 'operator') && !evidence?.trim()) {
+    throw Object.assign(
+      new Error(
+        `verify gate '${gateName}': evidence is required for human/operator gates. ` +
+          `Record the observation that justifies this gate (e.g. "3 tasks failed with ` +
+          `the same signature across unrelated branches"). Pass --evidence <text> on the ` +
+          `CLI or include 'evidence' in the API body.`,
+      ),
+      { code: 'MISSING_GATE_EVIDENCE' as const },
+    )
+  }
+}
+
+/**
  * Insert a new verify gate. Returns the generated id.
  *
  * Throws if a gate with the same (scope, name) already exists (UNIQUE
  * constraint violation).
+ *
+ * Throws with code `'MISSING_GATE_EVIDENCE'` when `source` is `'human'` or
+ * `'operator'` and no evidence string is supplied (DEC-11).
  */
 export const addVerifyGate = async (input: VerifyGateInput): Promise<string> => {
   const c = resolveStateClient()
@@ -236,6 +276,10 @@ export const addVerifyGate = async (input: VerifyGateInput): Promise<string> => 
     timeoutMin = 20,
     evidence = null,
   } = input
+
+  // DEC-11: human/operator gates must carry evidence. See assertGateEvidenceProvided.
+  assertGateEvidenceProvided(source, evidence, name)
+
   const createdAt = Date.now()
   await c.execute(
     `INSERT INTO verify_gates (id, scope, name, cmd, args_json, required, tier, source, created_at, timeout_min, evidence)
