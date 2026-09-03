@@ -7,6 +7,7 @@ import { extractFailingTestFiles } from './lib/vitest-output-parser'
 import { execFile } from 'node:child_process'
 import { constants as fsConstants } from 'node:fs'
 import { access } from 'node:fs/promises'
+import { resolve } from 'node:path'
 import { promisify } from 'node:util'
 
 const execAsync = promisify(execFile)
@@ -1787,50 +1788,102 @@ export const handleTaskFailureWithFixTask = async (
     )
   }
 
-  // ── Inline baseline probe (PRD 3b00ccd0, slice 3) ─────────────────────────────
+  // ── Inline baseline probe (PRD 3b00ccd0, slices 3 & 4) ──────────────────────
   // When the caller has not pre-computed a probe result and the failure is a
-  // test-assertion-error, extract the failing test files from the raw output and
-  // run them against the integration branch (repo root) to check whether they
-  // also fail there.  A non-zero probe exit means the failure is a pre-existing
-  // baseline regression — not a regression authored by this task — so the gate
-  // below will skip the fix-task spawn and preserve the code-recovery slot.
+  // verify-gate failure with a parseable root cause, probe the integration branch
+  // to check whether the same failure already exists there.  A non-zero probe
+  // exit means the failure is a pre-existing baseline regression — not a
+  // regression authored by this task — so the gate below will skip the fix-task
+  // spawn and preserve the code-recovery slot.
   //
-  // An empty file list (unparseable output) is a no-op: the probe is skipped
-  // and normal fix-task spawning proceeds with no error or log noise.
-  // A probe spawn error or timeout is also caught silently — normal spawning
-  // continues.
+  // Two probe strategies, selected by signature family:
+  //
+  //  - verify:test/test-assertion-error (slice 3): extract the failing test files
+  //    from the raw output and run them with `npx vitest run <files>`.  An empty
+  //    file list (unparseable output) is a no-op — probe skipped, normal
+  //    fix-task spawning continues.
+  //
+  //  - verify:typecheck/* (slice 4): run `npx tsc --noEmit` in the repo root with
+  //    a 60-second timeout.  Guarded on the presence of a `tsconfig.json` at the
+  //    repo root to avoid false-positive "failsOnMain" results in projects where
+  //    tsc is not configured at the root level (e.g. monorepos with tsconfig.json
+  //    only in a subdirectory).  When no tsconfig.json is found at the root, the
+  //    probe is silently skipped and normal fix-task spawning proceeds.
+  //
+  // In both cases a probe spawn error or timeout is caught silently — normal
+  // fix-task spawning continues.
   //
   // The probe runs in the main checkout (getRepoRoot()) — not a new worktree —
-  // to keep wall-clock under 10 s for a single test file.
+  // to keep wall-clock bounded for a single-file probe.
   let effectiveBaselineProbeResult = input.baselineProbeResult ?? null
   if (
     effectiveBaselineProbeResult === null &&
     shouldRunBaselineProbe(failureSignature)
   ) {
-    const testFiles = extractFailingTestFiles(input.errorOutput)
-    if (testFiles.length > 0) {
+    if (failureSignature.startsWith('verify:typecheck/')) {
+      // ── Typecheck probe (PRD 3b00ccd0, slice 4) ────────────────────────────
+      // Run `npx tsc --noEmit` against the repo root.  Only run when a
+      // tsconfig.json is present at that root — without one, tsc always exits
+      // non-zero and the result would be a false positive rather than a real
+      // regression signal.
       try {
         const repoRoot = getRepoRoot()
-        const probeArgs = ['vitest', 'run', ...testFiles]
-        let probeExitCode = 0
-        let probeOutput = ''
-        try {
-          const r = await execAsync('npx', probeArgs, { cwd: repoRoot, timeout: 30_000 })
-          probeOutput = [r.stdout, r.stderr].filter(Boolean).join('\n')
-        } catch (probeErr: unknown) {
-          const e = probeErr as { code?: number | null; stdout?: string; stderr?: string }
-          probeExitCode = typeof e.code === 'number' ? e.code : 1
-          probeOutput = [e.stdout ?? '', e.stderr ?? ''].filter(Boolean).join('\n')
-        }
-        effectiveBaselineProbeResult = {
-          failsOnMain: probeExitCode !== 0,
-          probeCommand: `npx ${probeArgs.join(' ')}`,
-          exitCode: probeExitCode,
-          output: probeOutput.slice(0, 4000),
+        const hasTsconfig = await access(
+          resolve(repoRoot, 'tsconfig.json'),
+          fsConstants.R_OK,
+        ).then(() => true).catch(() => false)
+        if (hasTsconfig) {
+          const probeArgs = ['tsc', '--noEmit']
+          let probeExitCode = 0
+          let probeOutput = ''
+          try {
+            const r = await execAsync('npx', probeArgs, { cwd: repoRoot, timeout: 60_000 })
+            probeOutput = [r.stdout, r.stderr].filter(Boolean).join('\n')
+          } catch (probeErr: unknown) {
+            const e = probeErr as { code?: number | null; stdout?: string; stderr?: string }
+            probeExitCode = typeof e.code === 'number' ? e.code : 1
+            probeOutput = [e.stdout ?? '', e.stderr ?? ''].filter(Boolean).join('\n')
+          }
+          effectiveBaselineProbeResult = {
+            failsOnMain: probeExitCode !== 0,
+            probeCommand: `npx ${probeArgs.join(' ')}`,
+            exitCode: probeExitCode,
+            output: probeOutput.slice(0, 4000),
+          }
         }
       } catch {
-        // Probe failed to start (e.g. npx not on PATH, repoRoot unavailable):
+        // Probe setup failed (e.g. getRepoRoot unavailable):
         // proceed without a probe result, normal fix-task spawning continues.
+      }
+    } else {
+      // ── Test-assertion probe (PRD 3b00ccd0, slice 3) ───────────────────────
+      // Extract failing test files from the raw output and run them against the
+      // integration branch.  An empty file list (unparseable output) is a no-op.
+      const testFiles = extractFailingTestFiles(input.errorOutput)
+      if (testFiles.length > 0) {
+        try {
+          const repoRoot = getRepoRoot()
+          const probeArgs = ['vitest', 'run', ...testFiles]
+          let probeExitCode = 0
+          let probeOutput = ''
+          try {
+            const r = await execAsync('npx', probeArgs, { cwd: repoRoot, timeout: 30_000 })
+            probeOutput = [r.stdout, r.stderr].filter(Boolean).join('\n')
+          } catch (probeErr: unknown) {
+            const e = probeErr as { code?: number | null; stdout?: string; stderr?: string }
+            probeExitCode = typeof e.code === 'number' ? e.code : 1
+            probeOutput = [e.stdout ?? '', e.stderr ?? ''].filter(Boolean).join('\n')
+          }
+          effectiveBaselineProbeResult = {
+            failsOnMain: probeExitCode !== 0,
+            probeCommand: `npx ${probeArgs.join(' ')}`,
+            exitCode: probeExitCode,
+            output: probeOutput.slice(0, 4000),
+          }
+        } catch {
+          // Probe failed to start (e.g. npx not on PATH, repoRoot unavailable):
+          // proceed without a probe result, normal fix-task spawning continues.
+        }
       }
     }
   }

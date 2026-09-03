@@ -14,6 +14,7 @@ import {
   mkdirSync,
   mkdtempSync,
   rmSync,
+  writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
@@ -31,6 +32,7 @@ interface QueueModule {
 interface FixTasksModule {
   upsertFixTask: typeof import('../../queue-fix-tasks').upsertFixTask
   handleTaskFailureWithFixTask: typeof import('../../queue-fix-tasks').handleTaskFailureWithFixTask
+  shouldRunBaselineProbe: typeof import('../../queue-fix-tasks').shouldRunBaselineProbe
 }
 
 interface RecipesModule {
@@ -2027,7 +2029,10 @@ describe('non-code retry cap', () => {
     expect(parsed?.output).toBe(rawOutput)
   })
 
-  it('handleTaskFailureWithFixTask does NOT write recovery_payload for non-test-assertion signatures', async () => {
+  it('handleTaskFailureWithFixTask writes VerifyOutputPayload to recovery_payload for verify:typecheck/* signatures', async () => {
+    // shouldPersistVerifyOutputPayload returns true for ANY verify:* signature,
+    // not just test-assertion-error.  Typecheck failures benefit from the same
+    // precise reproduction context in recovery_payload.
     process.env.MARS_FIX_RETRY_BUDGET = '5'
     const { q, ft, rc } = await loadModules(repo)
     const sig = 'verify:typecheck/typecheck-cannot-find-name'
@@ -2039,13 +2044,169 @@ describe('non-code retry cap', () => {
       failingStep: 'verify:typecheck',
       errorOutput: 'TS2304: cannot find name foo',
       branch: 'task/z',
+      // Pre-supply a passing probe result so the inline typecheck probe is
+      // bypassed.  This test is about recovery_payload, not probe behaviour.
+      baselineProbeResult: {
+        failsOnMain: false,
+        probeCommand: 'npx tsc --noEmit',
+        exitCode: 0,
+        output: '',
+      },
     })
     expect(r.outcome).toBe('blocked')
     expect(r.failureSignature).toBe(sig)
 
-    // recovery_payload must remain null for non-test-assertion signatures.
+    // recovery_payload IS written for typecheck signatures (any verify:* gate).
     const reloaded = await q.getTask(t.id)
-    expect(reloaded?.recoveryPayload).toBeNull()
+    expect(reloaded?.recoveryPayload).not.toBeNull()
     cleanup()
   })
+
+  // ── shouldRunBaselineProbe predicates (PRD 3b00ccd0, slice 4) ──────────────
+  describe('shouldRunBaselineProbe', () => {
+    it('returns true for all verify:typecheck/* signatures', async () => {
+      const { ft } = await loadModules(repo)
+      expect(ft.shouldRunBaselineProbe('verify:typecheck/typecheck-property-not-exist')).toBe(true)
+      expect(ft.shouldRunBaselineProbe('verify:typecheck/typecheck-cannot-find-name')).toBe(true)
+      expect(ft.shouldRunBaselineProbe('verify:typecheck/typecheck-cannot-find-module')).toBe(true)
+      expect(ft.shouldRunBaselineProbe('verify:typecheck/typecheck-type-mismatch')).toBe(true)
+      expect(ft.shouldRunBaselineProbe('verify:typecheck/typecheck-arg-type-mismatch')).toBe(true)
+      expect(ft.shouldRunBaselineProbe('verify:typecheck/typecheck-excess-property')).toBe(true)
+      expect(ft.shouldRunBaselineProbe('verify:typecheck/typecheck-missing-export')).toBe(true)
+      expect(ft.shouldRunBaselineProbe('verify:typecheck/typecheck-error')).toBe(true)
+      expect(ft.shouldRunBaselineProbe('verify:typecheck/unclassified')).toBe(true)
+    })
+
+    it('returns true for verify:test/test-assertion-error', async () => {
+      const { ft } = await loadModules(repo)
+      expect(ft.shouldRunBaselineProbe('verify:test/test-assertion-error')).toBe(true)
+    })
+
+    it('returns false for other verify:test/* signatures', async () => {
+      const { ft } = await loadModules(repo)
+      expect(ft.shouldRunBaselineProbe('verify:test/unclassified')).toBe(false)
+      expect(ft.shouldRunBaselineProbe('verify:test/test-no-suite-found')).toBe(false)
+    })
+
+    it('returns false for non-verify signatures', async () => {
+      const { ft } = await loadModules(repo)
+      expect(ft.shouldRunBaselineProbe('code:coder-exit-nonzero/unclassified')).toBe(false)
+      expect(ft.shouldRunBaselineProbe('setup:install/unclassified')).toBe(false)
+      expect(ft.shouldRunBaselineProbe('merge:vcs-supervisor-aborted/unclassified')).toBe(false)
+    })
+  })
+
+  // ── Baseline probe gate for typecheck failures (PRD 3b00ccd0, slice 4) ──────
+  it('handleTaskFailureWithFixTask marks task baseline-failure and raises action-queue item when tsc probe fails on main', async () => {
+    process.env.MARS_FIX_RETRY_BUDGET = '5'
+    const { q, ft } = await loadModules(repo)
+    const t = await q.enqueueTask('fix type errors', undefined, { skipTriage: true })
+
+    const r = await ft.handleTaskFailureWithFixTask({
+      taskId: t.id,
+      failingStep: 'verify:typecheck',
+      errorOutput: 'TS2322: Type string is not assignable to type number.',
+      branch: 'task/typecheck-probe',
+      baselineProbeResult: {
+        failsOnMain: true,
+        probeCommand: 'npx tsc --noEmit',
+        exitCode: 1,
+        output: 'error TS2322: Type string is not assignable to type number.',
+      },
+    })
+
+    // Outcome must be baseline-failure — no fix-task spawned.
+    expect(r.outcome).toBe('baseline-failure')
+    expect(r.failureSignature).toBe('verify:typecheck/typecheck-type-mismatch')
+
+    // Code-recovery slot must NOT be incremented.
+    expect(r.recoverySpawnedCount).toBe(0)
+
+    // The source task must be in failed status with a baseline-failure reason.
+    const task = await q.getTask(t.id)
+    expect(task?.status).toBe('failed')
+    expect(task?.failureReason).toBe(
+      'baseline-failure:verify:typecheck/typecheck-type-mismatch',
+    )
+
+    // No fix task was spawned for this source task.
+    const { rows } = await q.resolveQueueClient().execute({
+      sql: `SELECT COUNT(*) AS n FROM tasks WHERE fix_for_task_id = ?`,
+      args: [t.id],
+    })
+    expect(Number((rows[0] as unknown as { n: number }).n)).toBe(0)
+  })
+
+  it('handleTaskFailureWithFixTask proceeds to normal recovery when tsc probe passes on main', async () => {
+    process.env.MARS_FIX_RETRY_BUDGET = '5'
+    const { q, ft, rc } = await loadModules(repo)
+    const sig = 'verify:typecheck/typecheck-type-mismatch'
+    const cleanup = registerTestRecipe(rc, sig)
+    const t = await q.enqueueTask('fix type errors', undefined, { skipTriage: true })
+
+    const r = await ft.handleTaskFailureWithFixTask({
+      taskId: t.id,
+      failingStep: 'verify:typecheck',
+      errorOutput: 'TS2322: Type string is not assignable to type number.',
+      branch: 'task/typecheck-probe-pass',
+      // Probe result says main passes — this is a real regression authored by
+      // the task, so normal fix-task spawning should proceed.
+      baselineProbeResult: {
+        failsOnMain: false,
+        probeCommand: 'npx tsc --noEmit',
+        exitCode: 0,
+        output: '',
+      },
+    })
+
+    // Normal fix-task spawning: outcome should be 'blocked' (not 'baseline-failure').
+    expect(r.outcome).toBe('blocked')
+    expect(r.failureSignature).toBe(sig)
+
+    cleanup()
+  })
+
+  // ── Cross-boundary typecheck probe (PRD 3b00ccd0, slice 4, real binary) ──────
+  //
+  // This test exercises the REAL tsc binary (via npx) to verify that the inline
+  // probe correctly detects a pre-existing baseline typecheck failure and marks
+  // the task as 'baseline-failure' without consuming the code-recovery slot.
+  //
+  // Manual step equivalent (if this test is skipped for environment reasons):
+  //   1. In a temp dir, create tsconfig.json and error.ts (type error).
+  //   2. Run: npx tsc --noEmit  — should exit 1.
+  //   3. Set MARS_REPO to that dir and call handleTaskFailureWithFixTask without
+  //      baselineProbeResult, expect outcome === 'baseline-failure'.
+  it('inline typecheck probe marks task as baseline-failure when tsc fails on main (real binary)', async () => {
+    process.env.MARS_FIX_RETRY_BUDGET = '5'
+    const { q, ft } = await loadModules(repo)
+
+    // Write a minimal tsconfig.json and a .ts file with a deliberate type
+    // error into the test repo root so npx tsc --noEmit exits non-zero.
+    writeFileSync(
+      resolve(repo, 'tsconfig.json'),
+      JSON.stringify({ compilerOptions: { strict: true, noEmit: true }, include: ['*.ts'] }),
+    )
+    writeFileSync(
+      resolve(repo, 'probe-error.ts'),
+      // TS2322: Type 'string' is not assignable to type 'number'.
+      'const n: number = "not-a-number"\n',
+    )
+
+    const t = await q.enqueueTask('fix baseline type error', undefined, { skipTriage: true })
+    const r = await ft.handleTaskFailureWithFixTask({
+      taskId: t.id,
+      failingStep: 'verify:typecheck',
+      // TS2322 — matches the typecheck-type-mismatch error class.
+      errorOutput: 'TS2322: Type string is not assignable to type number.',
+      branch: 'task/real-tsc-probe',
+      // No baselineProbeResult: the inline probe must run the real tsc binary.
+    })
+
+    // The probe ran npx tsc --noEmit in the repo root, found the type error,
+    // and classified the failure as a pre-existing baseline regression.
+    expect(r.outcome).toBe('baseline-failure')
+    expect(r.failureSignature).toBe('verify:typecheck/typecheck-type-mismatch')
+    expect(r.recoverySpawnedCount).toBe(0)
+  }, /* timeout= */ 15_000)
 })
