@@ -287,6 +287,11 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
   // requires an explicit in-app confirm step before dispatching, rather than
   // firing on first click like the reversible Continue verb.
   const [confirmRestart, setConfirmRestart] = useState(false)
+  // Controls the "⋯ More" disclosure that hides Restart (and copy verbs) so
+  // they require a deliberate second click rather than sitting at the same
+  // visual weight as Continue during a failure storm.
+  const [moreOpen, setMoreOpen] = useState(false)
+  const moreRef = useRef<HTMLDivElement>(null)
 
   // True when this row's kind is a condition derived from live system state
   // (ADR-0094). Condition-kind rows MUST NOT be optimistically hidden on verb
@@ -304,6 +309,26 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
       mounted.current = false
     }
   }, [])
+
+  // Close the "⋯ More" disclosure on click-outside or Escape so it never
+  // traps keyboard focus.
+  useEffect(() => {
+    if (!moreOpen) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMoreOpen(false)
+    }
+    const onMouse = (e: MouseEvent) => {
+      if (moreRef.current && !moreRef.current.contains(e.target as Node)) {
+        setMoreOpen(false)
+      }
+    }
+    document.addEventListener('keydown', onKey)
+    document.addEventListener('mousedown', onMouse)
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      document.removeEventListener('mousedown', onMouse)
+    }
+  }, [moreOpen])
 
   // True while the action-queue query is re-fetching after a condition-kind
   // verb success. Cleared once the refetch resolves (or the row unmounts).
@@ -353,6 +378,11 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
   const verbs = (item.verbs ?? []).filter(
     (verb) => !(isTaskRecovery && verb.op === 'restart'),
   )
+  // For task-recovery rows, copy verbs move into the "⋯ More" disclosure so
+  // they don't clutter the primary action row. Non-copy verbs (purge, dismiss,
+  // …) remain visible because they are the primary CTA for their recipe.
+  const mainVerbs = isTaskRecovery ? verbs.filter((v) => v.op !== 'copy') : verbs
+  const disclosureVerbs = isTaskRecovery ? verbs.filter((v) => v.op === 'copy') : []
 
   const handleDecision = useCallback(
     async (d: Decision) => {
@@ -562,7 +592,9 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
           <>
             {/* Server-defined decision buttons (recipe-derived per failure kind) —
                 Primary tier: filled background so these are the first thing the
-                operator's eye lands on when scanning the actions row. */}
+                operator's eye lands on when scanning the actions row.
+                Decision buttons are NEVER hidden behind disclosure — they are the
+                primary CTA for their card type (Enable, Skip, Dismiss, …). */}
             {item.decisions.slice(0, 3).map((d) => (
               <button
                 key={d.label}
@@ -575,14 +607,11 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
               </button>
             ))}
 
-            {/* Recipe verb buttons (e.g. "Restart daemon" for daemon-code-drift).
-                Three-tier hierarchy:
-                  primary  → highlight-filled (server marks these explicitly)
-                  default  → secondary bordered (neutral — "do this if unsure")
-                  snooze   → ghost (lowest commitment; tertiary)
-                  copy     → subtle ghost-border (utility, not an action)
-                  destructive → error-tinted (already handled) */}
-            {verbs.map((verb) => (
+            {/* Recipe verb buttons. For task-recovery rows, copy verbs have
+                moved into the "⋯ More" disclosure (mainVerbs excludes them);
+                non-copy verbs (purge, dismiss, …) remain here as they are the
+                primary CTA for their recipe, not secondary recovery verbs. */}
+            {mainVerbs.map((verb) => (
               <button
                 key={verb.op === 'copy' ? `copy-${verb.label}` : verb.op}
                 disabled={pending !== null}
@@ -604,11 +633,8 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
               </button>
             ))}
 
-            {/* Continue / Restart inline actions — only for task-recovery kinds.
-                daemon-code-drift, gate-enrichment, and other system-level kinds
-                use server-side verbs/decisions above instead. A task whose
-                single recovery attempt is already spent gets carry-forward CLI
-                hints instead (Continue/Restart would just error). */}
+            {/* Recovery-exhausted carry-forward panel — only for task-recovery
+                kinds whose single recovery attempt has already been spent. */}
             {isTaskRecovery && isRecoveryExhausted && (
               <div
                 className="mt-1 flex w-full flex-col gap-2 rounded border border-warn/30 bg-warn/5 px-3 py-2"
@@ -645,75 +671,145 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
                 </div>
               </div>
             )}
+          </>
+        )}
 
-            {isTaskRecovery && !isRecoveryExhausted && (
-              <>
-                {/* Continue is the documented default recovery verb (reuses the
-                    existing worktree/branch) — it stays visually primary. */}
+        {/* ── Task-recovery primary actions ────────────────────────────────────
+            Continue is the sole visible primary CTA. Restart is hidden behind
+            a "⋯" disclosure (two-click path) to prevent misclicks during
+            failure storms. The disclosure dropdown is always rendered in the
+            DOM (visibility:hidden, pointer-events:none when closed) so that
+            [data-testid="triage-restart"] remains queryable in tests — jsdom
+            does not honour CSS pointer-events, so .click() still fires.
+            Chat is repositioned as an icon button immediately after Continue
+            so it is discoverable without dominating the row. */}
+        {!isChatOnly && isTaskRecovery && !isRecoveryExhausted && (
+          <>
+            {/* Continue — sole visible primary CTA */}
+            <button
+              disabled={pending !== null}
+              onClick={() => void handleVerb('continue')}
+              className="rounded-md border border-highlight/20 bg-highlight/10 px-3 py-1.5 text-label font-medium text-highlight transition-colors hover:bg-highlight/20 disabled:opacity-50"
+              data-testid="triage-continue"
+            >
+              {pending === 'continue' ? '…' : 'Continue'}
+            </button>
+
+            {/* Chat — icon button, positioned after Continue */}
+            <button
+              type="button"
+              disabled={pending !== null}
+              onClick={() => void handleChat()}
+              title="Open chat thread"
+              aria-label="Open chat thread"
+              className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+              data-testid="triage-chat"
+            >
+              {pending === 'chat' ? '…' : '💬'}
+            </button>
+
+            {/* More ⋯ — disclosure that hides Restart (and copy verbs) */}
+            <div ref={moreRef} className="relative">
+              <button
+                type="button"
+                disabled={pending !== null}
+                onClick={() => setMoreOpen((o) => !o)}
+                aria-expanded={moreOpen}
+                aria-label="More actions"
+                data-testid="triage-more-toggle"
+                className="rounded px-1.5 py-1 font-mono text-micro text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+              >
+                ⋯
+              </button>
+              {/* Dropdown — always in the DOM; invisible+pointer-events-none
+                  when closed so the DOM query in tests still finds elements. */}
+              <div
+                role="menu"
+                className={[
+                  'absolute right-0 z-10 mt-1 min-w-36 rounded-lg border border-border bg-card py-1 shadow-lg',
+                  moreOpen ? '' : 'invisible pointer-events-none',
+                ].join(' ')}
+              >
+                {/* Restart — error-tinted to signal its destructive nature */}
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={pending !== null}
+                  onClick={() => {
+                    setConfirmRestart(true)
+                    setMoreOpen(false)
+                  }}
+                  className="flex w-full items-center px-3 py-1.5 text-left font-mono text-micro text-error transition-colors hover:bg-error/5 disabled:opacity-50"
+                  data-testid="triage-restart"
+                >
+                  Restart
+                </button>
+                {/* Copy verbs (if any) */}
+                {disclosureVerbs.map((verb) => (
+                  <button
+                    key={`copy-${verb.label}`}
+                    type="button"
+                    role="menuitem"
+                    disabled={pending !== null}
+                    onClick={() => void handleVerb(verb.op, verb.hint)}
+                    className="flex w-full items-center px-3 py-1.5 text-left font-mono text-micro text-muted-foreground transition-colors hover:bg-border/40 hover:text-foreground disabled:opacity-50"
+                    data-testid={`triage-verb-${verb.op}`}
+                  >
+                    {pending === verb.op ? '…' : verb.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Confirm panel — full-width, wraps below the action row when
+                Restart is clicked inside the disclosure. The `w-full` class
+                forces it to its own flex line inside the gap-2 container. */}
+            {confirmRestart && (
+              <span
+                className="flex w-full flex-wrap items-center gap-2 rounded border border-error/40 bg-error/5 px-2 py-1.5"
+                data-testid="triage-restart-confirm"
+              >
+                <span className="flex-1 font-mono text-micro text-error">
+                  Discard {item.entityId}
+                  {item.humanDetail?.branch ? ` (branch ${item.humanDetail.branch})` : ''} —
+                  wipes the worktree and branch, losing any commits the worker
+                  made. Continue reuses them instead. This can&rsquo;t be undone.
+                </span>
                 <button
                   disabled={pending !== null}
-                  onClick={() => void handleVerb('continue')}
-                  className="rounded border border-highlight/60 bg-highlight/10 px-2.5 py-1 font-mono text-micro font-medium text-highlight transition-colors hover:bg-highlight/20 disabled:opacity-50"
-                  data-testid="triage-continue"
+                  onClick={() => void handleVerb('restart')}
+                  className="shrink-0 rounded border border-error/60 bg-error/10 px-2 py-1 font-mono text-micro text-error transition-colors hover:bg-error/20 disabled:opacity-50"
+                  data-testid="triage-restart-confirm-yes"
                 >
-                  {pending === 'continue' ? '…' : 'Continue'}
+                  {pending === 'restart' ? '…' : 'Yes, discard & restart'}
                 </button>
-
-                {/* Restart discards worktree/branch commits — demoted to a
-                    neutral affordance and gated behind an in-app confirm step
-                    (never window.confirm, so it stays testable and non-blocking). */}
-                {confirmRestart ? (
-                  <span
-                    className="flex w-full flex-wrap items-center gap-2 rounded border border-error/40 bg-error/5 px-2 py-1.5"
-                    data-testid="triage-restart-confirm"
-                  >
-                    <span className="flex-1 font-mono text-micro text-error">
-                      Discard {item.entityId}
-                      {item.humanDetail?.branch ? ` (branch ${item.humanDetail.branch})` : ''} —
-                      wipes the worktree and branch, losing any commits the worker
-                      made. Continue reuses them instead. This can&rsquo;t be undone.
-                    </span>
-                    <button
-                      disabled={pending !== null}
-                      onClick={() => void handleVerb('restart')}
-                      className="shrink-0 rounded border border-error/60 bg-error/10 px-2 py-1 font-mono text-micro text-error transition-colors hover:bg-error/20 disabled:opacity-50"
-                      data-testid="triage-restart-confirm-yes"
-                    >
-                      {pending === 'restart' ? '…' : 'Yes, discard & restart'}
-                    </button>
-                    <button
-                      disabled={pending !== null}
-                      onClick={() => setConfirmRestart(false)}
-                      className="shrink-0 rounded border border-border px-2 py-1 font-mono text-micro text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
-                      data-testid="triage-restart-cancel"
-                    >
-                      Cancel
-                    </button>
-                  </span>
-                ) : (
-                  <button
-                    disabled={pending !== null}
-                    onClick={() => setConfirmRestart(true)}
-                    className="rounded border border-border px-2 py-1 font-mono text-micro text-muted-foreground transition-colors hover:border-error/40 hover:text-error disabled:opacity-50"
-                    data-testid="triage-restart"
-                  >
-                    Restart
-                  </button>
-                )}
-              </>
+                <button
+                  disabled={pending !== null}
+                  onClick={() => setConfirmRestart(false)}
+                  className="shrink-0 rounded border border-border px-2 py-1 font-mono text-micro text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+                  data-testid="triage-restart-cancel"
+                >
+                  Cancel
+                </button>
+              </span>
             )}
           </>
         )}
 
-        <button
-          type="button"
-          disabled={pending !== null}
-          onClick={() => void handleChat()}
-          className="ml-auto font-mono text-micro text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
-          data-testid="triage-chat"
-        >
-          {pending === 'chat' ? '…' : 'Chat →'}
-        </button>
+        {/* Chat → for chat-only rows, non-task-recovery rows, and recovery-
+            exhausted rows. Stays at ml-auto (right-aligned) in these cases
+            where there is no Continue button to anchor it after. */}
+        {(isChatOnly || !isTaskRecovery || isRecoveryExhausted) && (
+          <button
+            type="button"
+            disabled={pending !== null}
+            onClick={() => void handleChat()}
+            className="ml-auto font-mono text-micro text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+            data-testid="triage-chat"
+          >
+            {pending === 'chat' ? '…' : 'Chat →'}
+          </button>
+        )}
       </div>
 
       {/* Error feedback — shown inline below the actions row */}
