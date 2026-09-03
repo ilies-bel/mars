@@ -568,6 +568,37 @@ export const isFullSuiteVerifyCmd = (verifyCmd: string): boolean => {
   return false
 }
 
+/**
+ * Scan `text` for any `@<token>` word where `<token>` resolves to an existing
+ * file on the filesystem. Returns the first offending `@<token>` string, or
+ * `null` when none are found.
+ *
+ * **Title arguments** are short, human-readable labels; a bare `@<path>` token
+ * inside one is almost always a body-file reference that the caller mis-placed
+ * into the title argument instead of the body. Detecting it here lets the CLI
+ * reject the invocation with an actionable message before the mis-routed path
+ * is stored verbatim in the DB.
+ *
+ * Non-path `@` forms do NOT trigger the guard — `existsSync` returns false for
+ * tokens like `@media`, `@user`, or `user@example.com`, so they are accepted
+ * unchanged.
+ *
+ * The `exists` parameter is injectable so unit tests can run without touching
+ * the filesystem; callers that need the real check omit it (defaults to
+ * `existsSync`).
+ */
+export const findAtPathToken = (
+  text: string,
+  exists: (p: string) => boolean = existsSync,
+): string | null => {
+  const tokens = text.match(/@\S+/g)
+  if (!tokens) return null
+  for (const token of tokens) {
+    if (exists(token.slice(1))) return token
+  }
+  return null
+}
+
 /** `--blocked-by`: the repeatable blocker-id list (possibly empty). */
 export const parseBlockedBy = (
   args: Pick<ParsedArgs, 'multiFlags'>,

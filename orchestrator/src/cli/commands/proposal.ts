@@ -44,7 +44,7 @@ import { dirname, join } from 'node:path'
 import { resolveVcs } from '../../core/ports/vcs/registry'
 import type { Command, CommandDeps } from '../command'
 import { errorMessage, spawnNoticeErr } from './shared'
-import { hasFlag, parsePriority, resolvePromptSource } from '../args'
+import { findAtPathToken, hasFlag, parsePriority, resolvePromptSource } from '../args'
 
 /** Render a proposal detail body (shared by `proposal show` and `show`). */
 export const renderProposalDetail = async (
@@ -145,6 +145,18 @@ const proposalAdd: Command = {
     // Explicit title, stored verbatim (no slug truncation for display) instead
     // of deriving one from the goal's first line / leading `#` heading.
     const titleFlag = args.flags['--title']
+    if (titleFlag !== undefined) {
+      const atToken = findAtPathToken(titleFlag)
+      if (atToken !== null) {
+        deps.err(
+          `mars proposal add: the --title argument contains '${atToken}', which looks like a body-file reference.\n` +
+            `Pass the body as the first positional argument instead:\n` +
+            `  mars proposal add ${atToken} --title "<title>"\n` +
+            `(or use - to read the body from stdin)`,
+        )
+        return { code: 2 }
+      }
+    }
     try {
       const idea = (await deps.daemon.sendRequest({
         op: 'proposal.create',
@@ -230,6 +242,20 @@ const proposalSet: Command = {
       }
       value = rawValue
     } else {
+      // For the title field, reject any @<path> token that resolves to an
+      // existing file — that is a body-file reference mis-placed into a title.
+      if (field === 'title') {
+        const atToken = findAtPathToken(rawValue)
+        if (atToken !== null) {
+          deps.err(
+            `mars proposal set: the title value contains '${atToken}', which looks like a body-file reference.\n` +
+              `Use the problem/solution/notes field instead:\n` +
+              `  mars proposal set ${id} problem ${atToken}\n` +
+              `(or use - to read the body from stdin)`,
+          )
+          return { code: 2 }
+        }
+      }
       const result = resolvePromptSource(valueParts, args.flags)
       if (!result.ok) {
         deps.err(result.message)

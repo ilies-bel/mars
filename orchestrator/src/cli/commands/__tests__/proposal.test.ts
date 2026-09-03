@@ -22,7 +22,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 
@@ -277,5 +277,73 @@ describe('revertSlicingProposalToReady — stranded claim is recoverable', () =>
     expect(claimed).toBe(true)
     const afterClaim = await getProposal(id)
     expect(afterClaim?.status).toBe('slicing')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 5. @<path>-in-title guard: proposal add / proposal set title
+// ---------------------------------------------------------------------------
+
+describe('@<path>-in-title guard', () => {
+  let bodyFile: string
+
+  beforeEach(() => {
+    // Create a real file so existsSync() returns true for our @<path> token.
+    bodyFile = resolve(mkdtempSync(resolve(tmpdir(), 'mars-at-path-test-')), 'body.md')
+    writeFileSync(bodyFile, 'proposal body content\n')
+  })
+
+  afterEach(() => {
+    rmSync(resolve(bodyFile, '..'), { recursive: true, force: true })
+  })
+
+  it('proposal add --title containing a resolvable @<path> is rejected non-zero', async () => {
+    const { code, err } = await run(['proposal', 'add', 'body text', '--title', `My Title @${bodyFile}`])
+
+    expect(code).not.toBe(0)
+    const errText = err.join('\n')
+    expect(errText).toContain(`@${bodyFile}`)
+    // Must name the correct alternative so the operator knows what to do.
+    expect(errText).toContain('mars proposal add')
+  })
+
+  it('proposal add --title with a non-path @ (e.g. email, @media) is accepted', async () => {
+    // '@media' and 'user@example.com' do not resolve to existing files on disk
+    // so the guard must NOT reject them.
+    const { code } = await run(
+      ['proposal', 'add', 'body text', '--title', 'My @media DEC-8 proposal'],
+    )
+    // The CLI reaches the daemon call; our fake daemon returns {} for
+    // proposal.create which the real handler would reject, but the guard
+    // itself does not fire — so code must NOT be 2 (the guard's exit code).
+    expect(code).not.toBe(2)
+  })
+
+  it('proposal add --title without @ is accepted normally', async () => {
+    const { code } = await run(
+      ['proposal', 'add', 'body text', '--title', 'Plain title no at-sign'],
+    )
+    expect(code).not.toBe(2)
+  })
+
+  it('proposal set <id> title containing a resolvable @<path> is rejected non-zero', async () => {
+    const id = await seedPrdReady()
+
+    const { code, err } = await run(['proposal', 'set', id, 'title', `My Title @${bodyFile}`])
+
+    expect(code).not.toBe(0)
+    const errText = err.join('\n')
+    expect(errText).toContain(`@${bodyFile}`)
+    // Must point the operator at a body field.
+    expect(errText).toContain('mars proposal set')
+  })
+
+  it('proposal set <id> title with a non-path @ is accepted', async () => {
+    const id = await seedPrdReady()
+
+    const { code } = await run(['proposal', 'set', id, 'title', 'My @media proposal'])
+    // Guard does not fire; command reaches the daemon. Our fake returns {} which
+    // is treated as a successful update (code 0).
+    expect(code).not.toBe(2)
   })
 })

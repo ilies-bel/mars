@@ -5,7 +5,7 @@
 
 import { resolve as resolvePath } from 'node:path'
 import { readdir, readFile } from 'node:fs/promises'
-import { readMaybeFile } from '../args'
+import { findAtPathToken, readMaybeFile } from '../args'
 import type { Command } from '../command'
 import { spawnNoticeErr } from './shared'
 import { parseAdrStatus } from '../../core/lib/adr'
@@ -45,6 +45,15 @@ const adrAdd: Command = {
     if (!title || !bodyArg) {
       deps.err(
         'usage: mars adr add "<title>" "<body>" (body may be @path to read a file)',
+      )
+      return { code: 2 }
+    }
+    const atToken = findAtPathToken(title)
+    if (atToken !== null) {
+      deps.err(
+        `mars adr add: the title argument contains '${atToken}', which looks like a body-file reference.\n` +
+          `Pass the body as the second argument instead:\n` +
+          `  mars adr add "<title>" ${atToken}`,
       )
       return { code: 2 }
     }
