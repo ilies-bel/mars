@@ -14,8 +14,6 @@ import {
   type WorktreeConflictPolicy,
   type WorktreeResult as WorktreeRef,
 } from '../../core/ports/vcs/types'
-import { captureCheckpoint, discardWorkingTreeChanges } from '../../core/lib/git/checkpoint'
-import { classifyPorcelainLines } from '../../core/lib/git/classify-porcelain'
 import { resolveContext } from '../../core/context'
 import {
   installWorktreeDeps,
@@ -323,19 +321,19 @@ export const setupWorktree = async (
           return { dirty: false, statusOutput: '' }
         })
         if (dirtyCheck.dirty) {
-          const rawLines = dirtyCheck.statusOutput.split('\n').filter((l) => l.length > 0)
-          const { userOwned } = classifyPorcelainLines(rawLines)
+          const vcsStatus = await resolveVcs().status({ cwd: integRoot })
+          const { userOwned } = vcsStatus
+          const rawLines = vcsStatus.statusOutput.split('\n').filter((l) => l.length > 0)
 
           if (userOwned.length === 0) {
             // All dirty paths are under .mars/ — orchestrator-owned artifacts.
             // Auto-stash them via a per-task checkpoint ref (never git stash),
             // discard the working-tree changes, and let setup proceed. The
             // merge step restores the checkpoint after the fast-forward.
-            const preflightCheckpoint = await captureCheckpoint({
+            const preflightCheckpoint = await resolveVcs().captureCheckpoint({
               cwd: integRoot,
-              key: `${taskId}-preflight`,
+              ref: `refs/mars/checkpoint/${taskId}-preflight`,
               message: `pre-flight: auto-stash orchestrator artifacts for task ${taskId}`,
-              traceCtx: buildPhaseCtx(trace, taskId, 'setup'),
             }).catch((err: unknown) => {
               console.warn(
                 `[setup:dirty-guard] task ${taskId} .mars/ auto-stash errored (proceeding without stash): ${
@@ -345,9 +343,8 @@ export const setupWorktree = async (
               return null
             })
             if (preflightCheckpoint !== null) {
-              await discardWorkingTreeChanges({
+              await resolveVcs().discardWorkingTreeChanges({
                 cwd: integRoot,
-                traceCtx: buildPhaseCtx(trace, taskId, 'setup'),
               })
               console.log(
                 `[setup:dirty-guard] task ${taskId}: auto-stashed ${preflightCheckpoint.files.length} .mars/ ` +
