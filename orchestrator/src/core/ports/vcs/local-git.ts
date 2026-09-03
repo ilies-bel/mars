@@ -26,6 +26,7 @@ import { commitMain } from '../../lib/git/commit-main'
 import { resolveGitBin, exec, execProbe, branchExists } from '../../lib/git/internal'
 import { classifyPorcelainLines } from '../../lib/git/classify-porcelain'
 import { autoCommitOperatorDirt as gitAutoCommitOperatorDirt } from '../../lib/git/operator-auto-commit'
+import type { TraceEventStore, TraceEventInput } from '../../lib/trace-events-store'
 import type {
   AttachToOriginWorktreeSpec,
   BranchExistsSpec,
@@ -74,6 +75,76 @@ import type {
   WorktreeSpec,
   WorktreeSyncOutcome,
 } from './types'
+
+// ---------------------------------------------------------------------------
+// Ambient trace store registry
+// ---------------------------------------------------------------------------
+//
+// Why ambient rather than threading a store through every Vcs spec?
+//
+// The Vcs interface is wire-safe: every method takes a plain serializable
+// spec and returns a plain serializable result. Adding a `traceStore?` field
+// to each spec would bloat every call site, change the public contract, and
+// be inconsistent with how the port works as a remote adapter (ADR-0097).
+//
+// An ambient module-level slot keeps the interface clean. The host (server.ts
+// / daemon startup) arms it once via `setLocalGitTraceStore`; every method
+// in `localGitVcs` that emits trace events reads it through `safeEmit` below.
+// The pattern mirrors how the TraceEventStore is propagated to
+// `runWorkerWithSpan` in `../../lib/run-worker-with-span.ts`.
+
+let _ambientTraceStore: TraceEventStore | undefined
+
+/**
+ * Arm trace capture for all `localGitVcs` method calls from this point on.
+ *
+ * Pass `undefined` to disarm. Idempotent — safe to call multiple times.
+ *
+ * Returns a dispose function that restores the prior slot value, so callers
+ * that arm during a scoped operation (e.g. a test) can undo the change
+ * without disrupting a concurrently-armed store.
+ *
+ * @example
+ * // Arm at daemon startup:
+ * setLocalGitTraceStore(traceEventStore)
+ *
+ * // Arm for the duration of a test:
+ * const dispose = setLocalGitTraceStore(mockStore)
+ * try { await runTest() } finally { dispose() }
+ */
+export const setLocalGitTraceStore = (store: TraceEventStore | undefined): (() => void) => {
+  const previous = _ambientTraceStore
+  _ambientTraceStore = store
+  return () => {
+    _ambientTraceStore = previous
+  }
+}
+
+/**
+ * The currently-armed trace store, or `undefined` when none has been set.
+ * Prefer {@link safeEmit} over reading this directly to avoid duplicating the
+ * best-effort guard.
+ */
+export const getLocalGitTraceStore = (): TraceEventStore | undefined => _ambientTraceStore
+
+/**
+ * Best-effort trace event emission using the ambient store.
+ *
+ * A database hiccup must never abort or slow a VCS operation, so errors from
+ * `record` are swallowed. When no store has been armed the call is a no-op.
+ * Consumer slices use this as the single emit path so they never repeat the
+ * guard inline.
+ */
+export const safeEmit = async (event: TraceEventInput): Promise<void> => {
+  if (_ambientTraceStore === undefined) return
+  try {
+    await _ambientTraceStore.record(event)
+  } catch {
+    // trace capture is best-effort — a DB hiccup must never fail a VCS operation
+  }
+}
+
+// ---------------------------------------------------------------------------
 
 /**
  * Identity used for checkpoint commit objects (see {@link Vcs.captureCheckpoint}).
