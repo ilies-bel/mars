@@ -921,3 +921,234 @@ describe('startMergeWorker — onAfterFastForward integration gate wiring (regre
     expect(_mockVerifierRun).not.toHaveBeenCalled()
   })
 })
+
+// ---------------------------------------------------------------------------
+// Regression: onVerifyRebasedTree wiring (ADR-0100 step 2)
+//
+// Before this fix, `runMergeJob` called `mergeFn` without `onVerifyRebasedTree`,
+// so the rebased-tree verify was silently skipped on every merge — the
+// integration branch could be fast-forwarded to a tree that had never been
+// verified against the current `main`. The fix constructs `onVerifyRebasedTree`
+// locally inside `runMergeJob` (mirroring the `onAfterFastForward` fix from
+// mars-cd039a0b) and passes it through to `mergeFn`.
+//
+// `onVerifyRebasedTree` runs task-tier gates; integration-tier gates are already
+// handled by `onAfterFastForward` inside the merge lock. Supplying both gates
+// to the wrong hook would either duplicate work or hold the lock for the wrong
+// duration.
+//
+// These tests fail on the unfixed code (onVerifyRebasedTree was undefined in
+// the captured MergeArgs) and pass after the fix.
+// ---------------------------------------------------------------------------
+
+describe('startMergeWorker — onVerifyRebasedTree rebased-tree verify wiring (ADR-0100 step 2)', () => {
+  beforeEach(() => {
+    _mockIntegrationGates = []
+    _mockVerifierRun.mockReset()
+  })
+
+  it('passes onVerifyRebasedTree to mergeFn', async () => {
+    /**
+     * REGRESSION TEST: captures the MergeArgs passed to mergeFn and asserts
+     * that onVerifyRebasedTree is present. On unfixed code this assertion fails
+     * because the worker built the args object without the callback.
+     */
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let capturedCallback: ((info: { baseSha: string; taskSha: string; attempt: number }) => Promise<{ passed: boolean; output?: string }>) | undefined
+    const capturingMergeFn = async (args: { onVerifyRebasedTree?: typeof capturedCallback }) => {
+      capturedCallback = args.onVerifyRebasedTree
+      return {
+        merged: true,
+        conflictResolved: false,
+        aborted: false,
+        output: '',
+        supervisorConversation: [],
+        vegaSessionId: null,
+        retriesAttempted: 0,
+      }
+    }
+
+    const { store, calls, enqueueJob } = makeFakeStore()
+    const job = enqueueJob({ id: 'j-rebased-wiring', worktreePath: '/tmp' })
+    const { startMergeWorker } = await import('../merge-worker.js')
+    const ac = new AbortController()
+    const handle = startMergeWorker({
+      store,
+      log: () => {},
+      bus: new EventEmitter(),
+      signal: ac.signal,
+      pollIntervalMs: 10,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mergeFn: capturingMergeFn as any,
+    })
+
+    await waitFor(() => calls.includes(`markDone:${job.id}`))
+    ac.abort()
+    await handle.stop()
+
+    expect(
+      capturedCallback,
+      'onVerifyRebasedTree must be provided to mergeFn — this assertion fails on unfixed code',
+    ).toBeTypeOf('function')
+  })
+
+  it('onVerifyRebasedTree executes task-tier gates when invoked', async () => {
+    /**
+     * Proves the callback wired through to mergeFn is not a stub: when invoked
+     * with task-tier gates registered, it calls the verifier with those steps.
+     * This is the end-to-end proof that the rebased-tree verify actually runs —
+     * a unit test that supplies the callback directly would reproduce the exact
+     * blind spot this fix closes.
+     */
+    _mockIntegrationGates = [
+      {
+        scope: '.',
+        steps: [
+          {
+            name: 'orchestrator: typecheck',
+            cmd: 'npx',
+            args: ['tsc', '--noEmit'],
+            required: true,
+            tier: 'task',
+            dir: '.',
+            timeoutMin: 10,
+          },
+        ],
+      },
+    ]
+    _mockVerifierRun.mockResolvedValue({
+      passed: true,
+      steps: [{ name: 'orchestrator: typecheck', passed: true, output: 'ok' }],
+    })
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let capturedOnVerifyRebasedTree: ((info: { baseSha: string; taskSha: string; attempt: number }) => Promise<{ passed: boolean; output?: string }>) | undefined
+    const capturingMergeFn = async (args: { onVerifyRebasedTree?: typeof capturedOnVerifyRebasedTree }) => {
+      capturedOnVerifyRebasedTree = args.onVerifyRebasedTree
+      return {
+        merged: true,
+        conflictResolved: false,
+        aborted: false,
+        output: '',
+        supervisorConversation: [],
+        vegaSessionId: null,
+        retriesAttempted: 0,
+      }
+    }
+
+    const { store, calls, enqueueJob } = makeFakeStore()
+    const job = enqueueJob({ id: 'j-rebased-exec', worktreePath: '/tmp' })
+    const { startMergeWorker } = await import('../merge-worker.js')
+    const ac = new AbortController()
+    const handle = startMergeWorker({
+      store,
+      log: () => {},
+      bus: new EventEmitter(),
+      signal: ac.signal,
+      pollIntervalMs: 10,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mergeFn: capturingMergeFn as any,
+    })
+
+    await waitFor(() => calls.includes(`markDone:${job.id}`))
+    ac.abort()
+    await handle.stop()
+
+    expect(capturedOnVerifyRebasedTree).toBeTypeOf('function')
+
+    // Invoke the captured callback — the mocked verifier must be called with
+    // the task-tier gate, passed as tier:'task' so the verifier executes it.
+    const result = await capturedOnVerifyRebasedTree!({
+      baseSha: 'b'.repeat(40),
+      taskSha: 'a'.repeat(40),
+      attempt: 1,
+    })
+
+    expect(result.passed).toBe(true)
+    expect(_mockVerifierRun).toHaveBeenCalledOnce()
+    expect(_mockVerifierRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cwd: '/tmp',
+        steps: expect.arrayContaining([
+          expect.objectContaining({
+            name: 'orchestrator: typecheck',
+            tier: 'task', // always 'task' regardless of the registered tier
+          }),
+        ]),
+      }),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    )
+  })
+
+  it('skips integration-tier gates — those belong to onAfterFastForward', async () => {
+    /**
+     * Integration-tier gates are the responsibility of `onAfterFastForward`
+     * (inside the merge lock, after the fast-forward). `onVerifyRebasedTree`
+     * must NOT run them: doing so would hold no lock while running something
+     * that onAfterFastForward will run again under the lock, doubling the cost.
+     * When only integration-tier gates are registered, the callback must return
+     * passed=true without calling the verifier.
+     */
+    _mockIntegrationGates = [
+      {
+        scope: '.',
+        steps: [
+          {
+            name: 'packages/workflow: integration-suite',
+            cmd: 'npm',
+            args: ['test'],
+            required: true,
+            tier: 'integration',
+            dir: '.',
+          },
+        ],
+      },
+    ]
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let capturedOnVerifyRebasedTree: ((info: { baseSha: string; taskSha: string; attempt: number }) => Promise<{ passed: boolean; output?: string }>) | undefined
+    const capturingMergeFn = async (args: { onVerifyRebasedTree?: typeof capturedOnVerifyRebasedTree }) => {
+      capturedOnVerifyRebasedTree = args.onVerifyRebasedTree
+      return {
+        merged: true,
+        conflictResolved: false,
+        aborted: false,
+        output: '',
+        supervisorConversation: [],
+        vegaSessionId: null,
+        retriesAttempted: 0,
+      }
+    }
+
+    const { store, calls, enqueueJob } = makeFakeStore()
+    const job = enqueueJob({ id: 'j-rebased-skip-int', worktreePath: '/tmp' })
+    const { startMergeWorker } = await import('../merge-worker.js')
+    const ac = new AbortController()
+    const handle = startMergeWorker({
+      store,
+      log: () => {},
+      bus: new EventEmitter(),
+      signal: ac.signal,
+      pollIntervalMs: 10,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mergeFn: capturingMergeFn as any,
+    })
+
+    await waitFor(() => calls.includes(`markDone:${job.id}`))
+    ac.abort()
+    await handle.stop()
+
+    expect(capturedOnVerifyRebasedTree).toBeTypeOf('function')
+
+    // Invoke — integration-tier gates must NOT trigger the verifier; the
+    // callback short-circuits and returns passed=true with no verifier call.
+    const result = await capturedOnVerifyRebasedTree!({
+      baseSha: 'b'.repeat(40),
+      taskSha: 'a'.repeat(40),
+      attempt: 1,
+    })
+
+    expect(result.passed).toBe(true)
+    expect(_mockVerifierRun).not.toHaveBeenCalled()
+  })
+})

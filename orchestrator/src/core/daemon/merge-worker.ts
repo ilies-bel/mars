@@ -30,7 +30,7 @@
  */
 
 import type { EventEmitter } from 'node:events'
-import type { MergeArgs, MergeResult } from '../lib/git/merge.js'
+import type { MergeArgs, MergeResult, MergeGateOutcome } from '../lib/git/merge.js'
 import { mergeBranch, MergeAbortedError, DEFAULT_WATCHDOG_MS } from '../lib/git/merge.js'
 import type { MergeJob, MergeJobStore, EnqueueMergeJobInput } from '../store/merge-job-store.js'
 import type { AgentEvent } from '../lib/claude-stream.js'
@@ -368,6 +368,97 @@ async function runMergeJob(
     )
   }
 
+  // ADR-0100 step 2: verify the REBASED tree in the task's own worktree,
+  // BEFORE the merge lock is taken. `mergeBranch` calls this hook immediately
+  // after `git rebase <integration>` completes and before `acquireLock`, so the
+  // integration branch is untouched on failure. The merge lock is never held
+  // while the test suite runs.
+  //
+  // Mirrors the `onAfterFastForward` pattern but for task-tier gates (not
+  // integration-tier). Integration gates already run via `onAfterFastForward`
+  // inside the lock after the fast-forward; running them here would duplicate
+  // that work while holding no lock for something that cannot block the
+  // fast-forward.
+  //
+  // Returns { passed: boolean } — a false result causes `mergeBranch` to
+  // short-circuit, leaving `main` untouched, and the merge loop ends without
+  // ever acquiring the lock.
+  const DEFAULT_TASK_TIER_TIMEOUT_MIN = 15
+  const onVerifyRebasedTree = async (info: {
+    baseSha: string
+    taskSha: string
+    attempt: number
+  }): Promise<MergeGateOutcome> => {
+    const { loadVerifyGates } = await import('../../core/verify-gates.js')
+    const { resolveStateClient } = await import('../store/state-client.js')
+    const { resolveVerifier } = await import('../ports/verifier/registry.js')
+
+    const gateScopes = await loadVerifyGates(resolveStateClient())
+
+    // All non-integration steps. Integration-tier steps are handled by
+    // `onAfterFastForward` (inside the merge lock, after the fast-forward).
+    const taskSteps = gateScopes.flatMap((sc) =>
+      sc.steps
+        .filter((s) => s.tier !== 'integration')
+        .map((s) => ({ ...s, dir: sc.scope })),
+    )
+
+    if (taskSteps.length === 0) return { passed: true }
+
+    log(
+      `[merge-worker] task ${job.taskId}: running ${taskSteps.length} task-tier gate(s) ` +
+        `on rebased tree ${info.taskSha.slice(0, 9)} (attempt ${info.attempt}, ` +
+        `rebased onto ${info.baseSha.slice(0, 9)})`,
+    )
+
+    const outputParts: string[] = []
+
+    for (const step of taskSteps) {
+      const timeoutMs =
+        (step.timeoutMin ?? DEFAULT_TASK_TIER_TIMEOUT_MIN) * 60_000
+      const gateSignal = AbortSignal.timeout(timeoutMs)
+
+      const gateResult = await resolveVerifier().run(
+        {
+          cwd: job.worktreePath,
+          // Pass as tier:'task' so the verifier executes the step rather than
+          // deferring it (integration-tier steps are deferred by the verifier).
+          steps: [{ ...step, tier: 'task' as const }],
+        },
+        { signal: gateSignal },
+      )
+
+      for (const s of gateResult.steps) {
+        const durationBadge =
+          s.duration !== undefined ? ` ${s.duration}ms` : ''
+        outputParts.push(
+          `=== ${s.name} (${s.passed ? 'pass' : 'FAIL'}) [task]${durationBadge} ===\n${s.output}`,
+        )
+      }
+
+      if (!gateResult.passed) {
+        const failed = gateResult.steps.filter((s) => !s.passed)
+        const formattedOutput = outputParts.join('\n\n')
+        if (gateSignal.aborted) {
+          return {
+            passed: false,
+            output:
+              `merge:rebased-verify task ${job.taskId}: step ` +
+              `"${failed[0]?.name ?? 'unknown'}" timed out after ${timeoutMs}ms` +
+              `\n\n${formattedOutput}`,
+          }
+        }
+        return { passed: false, output: formattedOutput }
+      }
+    }
+
+    log(
+      `[merge-worker] task ${job.taskId}: all ${taskSteps.length} task-tier gate(s) ` +
+        `passed on rebased tree`,
+    )
+    return { passed: true }
+  }
+
   let result: MergeJobResult
   try {
     // Pre-flight: fail fast with a diagnosable message if the worktree is gone.
@@ -391,6 +482,12 @@ async function runMergeJob(
       lockTimeoutMs: 30_000,
       watchdogMs,
       signal,
+      // ADR-0100 step 2: verify the rebased tree in the task's own worktree,
+      // outside the merge lock, before the fast-forward. Constructed locally
+      // (above) so the callback crosses the queue boundary — job payloads are
+      // serialisable data; functions cannot be threaded through them. A false
+      // result ends the merge without ever acquiring the lock.
+      onVerifyRebasedTree,
       // Integration-tier gate: runs required integration gates after the
       // fast-forward, inside the merge lock, before it releases. Constructed
       // locally (above) so the callback crosses the queue boundary — job
