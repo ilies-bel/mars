@@ -691,7 +691,7 @@ export const startServer = async (
         // this proposal. Checked before the GET handler so the `/thread` suffix
         // matches before the bare `/:id` form. Following the same pattern as
         // POST /api/alerts/:id/thread: fetch the proposal, create a chat thread
-        // with the proposal title, return { threadId }.
+        // with the proposal title, seed it with the proposal context, return { threadId }.
         if (
           path.startsWith('/api/proposals/') &&
           path.endsWith('/thread') &&
@@ -710,17 +710,147 @@ export const startServer = async (
             if (proposalResult.status !== 200) {
               return jsonResponse(proposalResult.status, proposalResult.body)
             }
-            const proposal = proposalResult.body as { title?: string }
+            const proposal = proposalResult.body as {
+              title?: string
+              description?: string
+              body?: string
+              userStories?: Array<{ title?: string; description?: string }>
+            }
             const threadTitle = `Grill: ${String(proposal.title ?? proposalId)}`
             const threadResult = await proxyPost(ctx.stateDir, '/chat/threads', { title: threadTitle })
             if (threadResult.status !== 200) {
               return jsonResponse(threadResult.status, threadResult.body)
             }
             const thread = threadResult.body as { id?: string }
-            return jsonResponse(200, { threadId: String(thread.id ?? '') })
+            const threadId = String(thread.id ?? '')
+
+            // Seed the thread with proposal context so Grill starts with full background.
+            // Build a structured markdown block from whatever proposal fields are present.
+            const contextLines: string[] = [`# ${String(proposal.title ?? proposalId)}`]
+            const bodyText = proposal.body ?? proposal.description
+            if (bodyText) {
+              contextLines.push('', bodyText)
+            }
+            if (Array.isArray(proposal.userStories) && proposal.userStories.length > 0) {
+              contextLines.push('', '## User Stories')
+              for (const story of proposal.userStories) {
+                const label = String(story.title ?? '').trim()
+                const detail = String(story.description ?? '').trim()
+                contextLines.push(`- **${label}**${detail ? `: ${detail}` : ''}`)
+              }
+            }
+            if (contextLines.length > 1 && threadId) {
+              // Non-fatal: thread is already created. A seed-message failure is cosmetic.
+              await proxyPost(
+                ctx.stateDir,
+                `/chat/threads/${encodeURIComponent(threadId)}/message`,
+                { role: 'context', content: contextLines.join('\n') },
+              ).catch(() => { /* swallow — seed failure must not fail thread creation */ })
+            }
+
+            return jsonResponse(200, { threadId })
           } catch (err) {
             return jsonResponse(500, { error: (err as Error).message })
           }
+        }
+
+        // PUT /api/proposals/:id/fields — update one or more top-level fields on
+        // a proposal. Body: { field: string; value: unknown } (single field) or
+        // { fields: Record<string, unknown> } (batch). Checked before the generic
+        // GET /api/proposals/:id handler so the `/fields` suffix wins.
+        // Proxied to daemon PUT /proposals/:id/fields.
+        if (
+          path.startsWith('/api/proposals/') &&
+          path.endsWith('/fields') &&
+          req.method === 'PUT'
+        ) {
+          const rawId = path.slice('/api/proposals/'.length, -'/fields'.length)
+          const proposalId = decodeURIComponent(rawId)
+          if (!proposalId) {
+            return jsonResponse(400, { error: 'proposal id is required' })
+          }
+          let body: unknown = {}
+          try { body = await req.json() } catch { /* daemon validates shape */ }
+          const result = await proxyPost(
+            ctx.stateDir,
+            `/proposals/${encodeURIComponent(proposalId)}/fields`,
+            body,
+            'PUT',
+          )
+          return jsonResponse(result.status, result.body)
+        }
+
+        // PUT /api/proposals/:id/user-stories/:storyId — update a user story.
+        // Checked before the POST /user-stories handler (more-specific path wins).
+        // Body: { title?: string; description?: string }. Proxied to daemon PUT.
+        if (
+          path.startsWith('/api/proposals/') &&
+          path.includes('/user-stories/') &&
+          req.method === 'PUT'
+        ) {
+          const afterPrefix = path.slice('/api/proposals/'.length)
+          const splitIdx = afterPrefix.indexOf('/user-stories/')
+          const proposalId = decodeURIComponent(afterPrefix.slice(0, splitIdx))
+          const storyId = decodeURIComponent(
+            afterPrefix.slice(splitIdx + '/user-stories/'.length),
+          )
+          if (!proposalId || !storyId) {
+            return jsonResponse(400, { error: 'proposal id and story id are required' })
+          }
+          let body: unknown = {}
+          try { body = await req.json() } catch { /* daemon validates shape */ }
+          const result = await proxyPost(
+            ctx.stateDir,
+            `/proposals/${encodeURIComponent(proposalId)}/user-stories/${encodeURIComponent(storyId)}`,
+            body,
+            'PUT',
+          )
+          return jsonResponse(result.status, result.body)
+        }
+
+        // DELETE /api/proposals/:id/user-stories/:storyId — remove a user story.
+        if (
+          path.startsWith('/api/proposals/') &&
+          path.includes('/user-stories/') &&
+          req.method === 'DELETE'
+        ) {
+          const afterPrefix = path.slice('/api/proposals/'.length)
+          const splitIdx = afterPrefix.indexOf('/user-stories/')
+          const proposalId = decodeURIComponent(afterPrefix.slice(0, splitIdx))
+          const storyId = decodeURIComponent(
+            afterPrefix.slice(splitIdx + '/user-stories/'.length),
+          )
+          if (!proposalId || !storyId) {
+            return jsonResponse(400, { error: 'proposal id and story id are required' })
+          }
+          const result = await proxyDelete(
+            ctx.stateDir,
+            `/proposals/${encodeURIComponent(proposalId)}/user-stories/${encodeURIComponent(storyId)}`,
+          )
+          return jsonResponse(result.status, result.body)
+        }
+
+        // POST /api/proposals/:id/user-stories — add a new user story to a proposal.
+        // Body: { title: string; description?: string }. Proxied to daemon POST.
+        // Checked before the generic GET /api/proposals/:id so the suffix wins.
+        if (
+          path.startsWith('/api/proposals/') &&
+          path.endsWith('/user-stories') &&
+          req.method === 'POST'
+        ) {
+          const rawId = path.slice('/api/proposals/'.length, -'/user-stories'.length)
+          const proposalId = decodeURIComponent(rawId)
+          if (!proposalId) {
+            return jsonResponse(400, { error: 'proposal id is required' })
+          }
+          let body: unknown = {}
+          try { body = await req.json() } catch { /* daemon validates shape */ }
+          const result = await proxyPost(
+            ctx.stateDir,
+            `/proposals/${encodeURIComponent(proposalId)}/user-stories`,
+            body,
+          )
+          return jsonResponse(result.status, result.body)
         }
 
         // GET /api/proposals/:id — proxy the daemon's by-id proposal endpoint.
