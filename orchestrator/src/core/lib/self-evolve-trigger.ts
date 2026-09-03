@@ -21,7 +21,7 @@
 
 import { detectKpiDrift, type KpiSnapshot as DriftSnapshot, type KpiEntry } from './kpi-drift.js'
 import { failureSignatureFamilySql } from './failure-signature.js'
-import { findOpenReflectionDraftForKpi, createProposal } from '../proposals.js'
+import { findOpenReflectionDraftForKpi, createProposal, appendProposalNotes } from '../proposals.js'
 import { loadDaemonConfig } from '../daemon/config.js'
 import type { KpiSnapshot as PersistedSnapshot } from './kpi-snapshots.js'
 import { type DomainTaskStore as TaskStore, getDefaultTaskStore } from '../store/task-store-default.js'
@@ -31,6 +31,58 @@ type SkipReason = 'disabled' | 'low-confidence' | 'duplicate' | 'below-threshold
 export interface SelfEvolveTriggerResult {
   raised: string[]
   skipped: Array<{ kpi: string; reason: SkipReason }>
+}
+
+/**
+ * Typed structure carried in the `notes` field of a KPI-drift draft proposal.
+ *
+ * The phase-enriched consumer extends this with an optional `phaseBreakdown`
+ * field; the acknowledgment consumer reads `kpi` and `acknowledgedValue` to
+ * decide whether a baseline ack already covers this finding.
+ */
+export interface KpiDriftProposalNotes {
+  /** The primary regressing KPI key. */
+  kpi: string
+  /** Signed percentage change: (current − prior) / |prior| × 100. */
+  deltaPct: number
+  /** Prior measured value. */
+  priorValue: number
+  /** Current measured value. */
+  currentValue: number
+  /**
+   * Cross-KPI context: all KPIs present in both snapshots.
+   * Keys are KPI names; values are per-snapshot readings.
+   */
+  vector: Record<string, { prior: number; current: number }>
+  /**
+   * Optional phase-level breakdown populated by the enrichment consumer.
+   * Keys are phase names (e.g. 'code', 'verify', 'setup'); values are
+   * per-phase metric deltas for the primary regressing KPI.
+   */
+  phaseBreakdown?: Record<string, { prior: number; current: number }>
+}
+
+/**
+ * A record that the operator has acknowledged the current KPI snapshot as the
+ * new measurement baseline, suppressing future re-raises for the same finding.
+ */
+export interface KpiDriftBaselineAck {
+  /** The KPI key being acknowledged (e.g. 'cost_per_arc_p50'). */
+  kpi: string
+  /** ID of the proposal that was reviewed and acknowledged. */
+  proposalId: string
+  /** ISO-8601 timestamp when the acknowledgment was recorded. */
+  acknowledgedAt: string
+  /** The KPI value at time of acknowledgment (the 'current' reading). */
+  acknowledgedValue: number
+}
+
+/** Result returned by {@link acknowledgeKpiDriftBaseline}. */
+export interface AcknowledgeKpiDriftBaselineResult {
+  /** True when an open draft was found and acknowledged. */
+  acknowledged: boolean
+  /** The proposal id that was dismissed, or null when no open draft exists. */
+  proposalId: string | null
 }
 
 interface KpiConfig {
@@ -176,7 +228,14 @@ export const runSelfEvolveTrigger = async (opts?: {
       `KPI \`${finding.kpi}\` regressed by ${Math.abs(finding.deltaPct).toFixed(1)}% ` +
       `(prior: ${finding.priorValue}, current: ${finding.currentValue}).`
     const solution = `Investigate root causes and address the regression in \`${finding.kpi}\`.`
-    const notes = JSON.stringify(finding.vector, null, 2)
+    const notesPayload: KpiDriftProposalNotes = {
+      kpi: finding.kpi,
+      deltaPct: finding.deltaPct,
+      priorValue: finding.priorValue,
+      currentValue: finding.currentValue,
+      vector: finding.vector,
+    }
+    const notes = JSON.stringify(notesPayload, null, 2)
 
     const proposal = await createProposal(title, {
       source: 'reflection',
@@ -509,4 +568,41 @@ export const closeReflectRecommendedRow = async (): Promise<void> => {
     'status-changed',
     'self-evolve:reflect-closed',
   )
+}
+
+// ---------------------------------------------------------------------------
+// KPI drift baseline acknowledgment
+// ---------------------------------------------------------------------------
+
+/**
+ * Acknowledge the current KPI drift finding for `ack.kpi` as the accepted
+ * baseline.
+ *
+ * Finds the open reflection draft for the KPI, appends a human-readable
+ * acknowledgment note to its `notes` field, then marks the proposal
+ * 'dismissed' so the trigger does not re-raise a duplicate. Returns whether
+ * an open draft was found.
+ *
+ * The `_opts` parameter is reserved for test injection and is currently
+ * unused — acknowledgment routes through the proposals layer, not the task
+ * store, so no store override is needed here.
+ */
+export const acknowledgeKpiDriftBaseline = async (
+  ack: KpiDriftBaselineAck,
+  _opts?: { store?: TaskStore },
+): Promise<AcknowledgeKpiDriftBaselineResult> => {
+  const existing = await findOpenReflectionDraftForKpi(ack.kpi)
+  if (!existing) {
+    return { acknowledged: false, proposalId: null }
+  }
+
+  const ackNote =
+    `Baseline acknowledged at ${ack.acknowledgedAt}: ` +
+    `${ack.kpi} = ${ack.acknowledgedValue} accepted as new baseline.`
+  await appendProposalNotes(existing.id, ackNote)
+
+  const { setProposalField } = await import('../proposals.js')
+  await setProposalField(existing.id, 'status', 'dismissed')
+
+  return { acknowledged: true, proposalId: existing.id }
 }
