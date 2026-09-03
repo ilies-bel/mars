@@ -99,7 +99,7 @@ const ShellTopbar = ({ hash }: ShellTopbarProps) => {
     <header className="col-span-2 flex h-10 items-center gap-3 border-b border-border-dark bg-surface-dark px-4">
       {/* Wordmark */}
       <span
-        className="shrink-0 font-mono text-body font-bold tracking-wide"
+        className="shrink-0 font-mono text-body font-semibold tracking-wide"
         style={{ color: 'var(--color-amber)' }}
       >
         ◆ mars
@@ -120,7 +120,7 @@ const ShellTopbar = ({ hash }: ShellTopbarProps) => {
             {crumbs.map((crumb, i) => (
               <span key={i} className="flex shrink-0 items-center gap-1.5">
                 {i > 0 && (
-                  <span className="font-mono text-label text-muted-dark" aria-hidden="true">
+                  <span className="font-mono text-label text-muted-dark/40" aria-hidden="true">
                     ›
                   </span>
                 )}
@@ -193,11 +193,11 @@ interface ShellSidebarProps {
 export const ShellSidebar = ({ activeRoute, decisionBadge, badgeAriaLabel }: ShellSidebarProps) => (
   <nav
     aria-label="Main navigation"
-    className="flex flex-col overflow-y-auto border-r border-border-dark bg-bg-dark pt-2"
+    className="flex flex-col overflow-y-auto border-r border-border-dark bg-bg-dark pt-2 pb-4"
   >
     {SHELL_NAV_GROUPS.map((group) => (
       <div key={group.label} className="mb-1">
-        <p className="px-3 pb-1 pt-2 font-mono text-micro uppercase tracking-widest text-muted-dark">
+        <p className="px-3 pb-1.5 pt-2 font-mono text-micro uppercase tracking-widest text-muted-dark">
           {group.label}
         </p>
         {group.entries.map((entry) => {
@@ -218,21 +218,21 @@ export const ShellSidebar = ({ activeRoute, decisionBadge, badgeAriaLabel }: She
               href={entry.href}
               aria-current={isActive ? 'page' : undefined}
               className={[
-                'relative flex items-center gap-2 px-3 py-[5px] font-mono text-label transition-colors hover:bg-surface-dark hover:text-fg-dark',
+                'group relative flex items-center gap-2 px-3 py-[5px] font-mono text-label transition-all duration-150 ease-out hover:bg-surface-dark hover:text-fg-dark',
                 isActive
                   ? 'border-r-2 border-highlight bg-highlight/20'
                   : 'text-muted-dark',
               ].join(' ')}
               style={isActive ? { color: 'var(--color-amber)' } : undefined}
             >
-              <span className="w-3.5 text-center text-body opacity-70" aria-hidden="true">
+              <span className="w-3.5 text-center text-body opacity-70 transition-opacity duration-150 ease-out group-hover:opacity-100" aria-hidden="true">
                 {entry.icon}
               </span>
               {entry.label}
               {showBadge && (
                 <span
                   aria-label={badgeAriaLabel ?? `${decisionBadge > 99 ? '99+' : decisionBadge} decisions pending`}
-                  className="ml-auto rounded-full bg-primary/60 px-1 py-0.5 font-mono text-micro leading-none text-foreground"
+                  className="ml-auto min-w-[18px] animate-badge-pulse rounded-full px-1.5 py-0.5 text-center font-mono text-micro font-medium leading-none text-white"
                 >
                   {decisionBadge > 99 ? '99+' : decisionBadge}
                 </span>

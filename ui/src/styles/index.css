@@ -284,6 +284,26 @@ html, body, #root {
   .animate-mars-pulse { animation: none; }
 }
 
+/* ── Badge background pulse ───────────────────────────────────────────────────
+ * Pulses only the background-color of a badge, leaving its text at full
+ * opacity throughout (contrast preserved). Applied to sidebar and bell badges
+ * when count > 0 to draw glance attention without being distracting.
+ * ---------------------------------------------------------------------------*/
+@keyframes badge-bg-pulse {
+  0%, 100% { background: color-mix(in srgb, var(--color-flame) 80%, transparent); }
+  50%       { background: color-mix(in srgb, var(--color-flame) 50%, transparent); }
+}
+.animate-badge-pulse {
+  animation: badge-bg-pulse 1.6s ease-in-out infinite;
+  background: color-mix(in srgb, var(--color-flame) 80%, transparent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .animate-badge-pulse {
+    animation: none;
+    background: color-mix(in srgb, var(--color-flame) 80%, transparent);
+  }
+}
+
 /* ── Inline code chip (Streamdown) ──────────────────────────────────────────
  * Streamdown renders inline `code` as
  *   <code class="rounded bg-muted px-1.5 py-0.5 font-mono text-sm"

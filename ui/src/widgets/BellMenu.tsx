@@ -99,13 +99,13 @@ export const BellMenu = () => {
         onClick={() => setOpen((v) => !v)}
         aria-label="Bell"
         aria-expanded={open}
-        className="relative rounded px-2 py-1 text-primary hover:text-foreground"
+        className="relative rounded px-2 py-1 text-primary transition-transform duration-150 ease-out hover:scale-105 hover:text-foreground"
       >
         <BellIcon size={14} aria-hidden="true" />
         {count > 0 && (
           <span
             aria-label={`${badgeLabel} items need attention`}
-            className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-micro text-background"
+            className="absolute -right-1 -top-1 flex h-4 min-w-[18px] items-center justify-center rounded-full animate-badge-pulse px-1.5 text-micro font-medium text-white"
           >
             {badgeLabel}
           </span>
@@ -113,7 +113,7 @@ export const BellMenu = () => {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full z-50 mt-1 w-72 rounded border border-primary/30 bg-background p-2 text-label shadow-lg">
+        <div className="mars-card absolute right-0 top-full z-50 mt-1 w-72 rounded bg-background p-2 text-label">
           <section>
             <h2 className="px-1 pb-1 font-mono text-micro uppercase tracking-wide text-primary">
               Needs You
