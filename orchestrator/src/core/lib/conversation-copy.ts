@@ -209,7 +209,7 @@ const REGISTRY: { [Kind in AutonomousNoticeKind]: NoticeKindEntry<Kind> } = {
   'observation.manual-push': {
     act: 'offer',
     render: (p) =>
-      `Mars landed ${p.marsCommits} commits on ${sentenceValue(p.branch)}; ${p.commits} more arrived that have never been through verify — I cannot vouch for those.`,
+      `Mars landed ${p.marsCommits} commits on ${sentenceValue(p.branch)}; ${p.commits} more arrived that have never been through verify.`,
     lever: UNVERIFIED_COMMITS_LEVER,
     offers: (p) => [
       {

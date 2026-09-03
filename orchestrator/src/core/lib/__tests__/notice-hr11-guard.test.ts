@@ -31,6 +31,7 @@ const BANNED_PATTERNS: Array<{ term: string; regex: RegExp }> = [
   { term: 'second-person method attribution',
                                          regex: /\byou\b.{0,30}\b(skipped|chose|decided|landed|pushed|bypassed)\b/i },
   { term: 'accusation',                  regex: /\baccus/i },
+  { term: 'cannot vouch',               regex: /cannot vouch/i },
 ]
 
 // ── Representative payloads ───────────────────────────────────────────────────

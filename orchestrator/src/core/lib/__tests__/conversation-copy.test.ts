@@ -78,6 +78,8 @@ describe('renderConversationNotice', () => {
     expect(body).not.toContain('outside the pipeline')
     expect(body).not.toContain('habit')
     expect(body).not.toContain('push_habit_observation')
+    // HR-11/DEC-20: no consequence attributed to the operator's method
+    expect(body).not.toContain('vouch')
   })
 
   it('reflects the file count in the auto-commit notice body', () => {
