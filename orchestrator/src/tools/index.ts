@@ -64,6 +64,7 @@ export {
   resolveTaskId,
   spanStore,
   buildPhaseCtx,
+  buildTraceIdentity,
   cacheWorktree,
   cacheIndexCard,
   readCachedIndexCard,

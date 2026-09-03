@@ -48,6 +48,7 @@ const worktreeSpec: WorktreeSpec = {
   integrationBranch: 'main',
   baseSha: 'abc123def456',
   branchSuffix: 'retry',
+  trace: { taskId: 't', originId: 'o', phase: 'setup' },
 }
 
 const worktreeResult: WorktreeResult = {
