@@ -18,10 +18,8 @@
  * Never auto-rebases. Never discards unique work. The branch is left intact on
  * any failure so the operator can resolve manually.
  */
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
-import { dirname, resolve } from 'node:path'
-import { access, constants as fsConstants, mkdir } from 'node:fs/promises'
+import { resolve } from 'node:path'
+import { access, constants as fsConstants } from 'node:fs/promises'
 import { integrationBranchName } from './lib/blocker-resolution-primitives'
 import {
   getTask,
@@ -31,15 +29,13 @@ import {
   TERMINAL_TASK_STATUSES,
 } from './queue'
 import { getRepoRoot, getStateDir } from './context'
-import { acquireLock } from './lib/git/lock'
+import { acquireLock } from './lib/lock'
 import { resolveAllRowsForTask } from './lib/action-queue'
 import { getChangedFiles, selectVerifySteps } from './ports/verifier/verify-helpers'
 import { resolveVerifier } from './ports/verifier/registry'
 import { loadVerifyGates } from './verify-gates'
 import { resolveVcs } from './ports/vcs/registry'
 import { provisionWorktreeDeps } from './lib/worktree-deps'
-
-const execFileP = promisify(execFile)
 
 type LandTaskOutcome =
   | 'landed'
@@ -81,21 +77,18 @@ export const landTask = async (
   const branch = task.branch ?? `task/${taskId}`
   const integrationBranch = integrationBranchName()
   const repoRoot = getRepoRoot()
+  const vcs = resolveVcs()
 
   // ── 2. Count commits ahead ────────────────────────────────────────────────
-  let aheadCount: number
-  try {
-    const { stdout } = await execFileP(
-      'git',
-      ['rev-list', '--count', `${integrationBranch}..${branch}`],
-      { cwd: repoRoot },
-    )
-    aheadCount = Number(stdout.trim())
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
+  const aheadCount = await vcs.revListCount({
+    cwd: repoRoot,
+    range: `${integrationBranch}..${branch}`,
+  })
+
+  if (aheadCount === null) {
     return {
       outcome: 'not-ahead',
-      message: `could not determine ahead-count for ${branch}: ${msg}`,
+      message: `could not determine ahead-count for ${branch}`,
     }
   }
 
@@ -115,10 +108,7 @@ export const landTask = async (
     await access(worktreePath, fsConstants.F_OK)
   } catch {
     try {
-      await mkdir(dirname(worktreePath), { recursive: true })
-      await execFileP('git', ['worktree', 'add', '--force', worktreePath, branch], {
-        cwd: repoRoot,
-      })
+      await vcs.addWorktreeForBranch({ cwd: repoRoot, path: worktreePath, branch })
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       return {
@@ -162,25 +152,28 @@ export const landTask = async (
     resolve(getStateDir(), '.merge.lock'),
     lockTimeoutMs,
   )
-  let integrationSha: string
-  let branchSha: string
   try {
-    integrationSha = (
-      await execFileP('git', ['rev-parse', integrationBranch], { cwd: repoRoot })
-    ).stdout.trim()
-    branchSha = (
-      await execFileP('git', ['rev-parse', branch], { cwd: repoRoot })
-    ).stdout.trim()
+    const integrationSha = await vcs.revParse({ cwd: repoRoot, rev: integrationBranch })
+    const branchSha = await vcs.revParse({ cwd: repoRoot, rev: branch })
+
+    if (!integrationSha || !branchSha) {
+      return {
+        outcome: 'conflict',
+        message:
+          `could not resolve refs: ${integrationBranch}=${integrationSha ?? 'null'}, ` +
+          `${branch}=${branchSha ?? 'null'}`,
+        aheadCount,
+      }
+    }
 
     // Confirm fast-forward: integration must be an ancestor of branch tip.
-    // `git merge-base --is-ancestor` exits 0 when ancestor, 1 when not.
-    try {
-      await execFileP(
-        'git',
-        ['merge-base', '--is-ancestor', integrationSha, branchSha],
-        { cwd: repoRoot },
-      )
-    } catch {
+    const isFastForward = await vcs.isAncestor({
+      cwd: repoRoot,
+      ancestor: integrationSha,
+      descendant: branchSha,
+    })
+
+    if (!isFastForward) {
       // integration has advanced independently — refuse non-destructively.
       return {
         outcome: 'conflict',
@@ -192,12 +185,12 @@ export const landTask = async (
       }
     }
 
-    // Atomic CAS fast-forward — does not touch any working tree.
-    await execFileP(
-      'git',
-      ['update-ref', `refs/heads/${integrationBranch}`, branchSha, integrationSha],
-      { cwd: repoRoot },
-    )
+    // Fast-forward — does not touch any working tree.
+    await vcs.updateRef({
+      cwd: repoRoot,
+      ref: `refs/heads/${integrationBranch}`,
+      sha: branchSha,
+    })
   } finally {
     await release()
   }
@@ -225,7 +218,7 @@ export const landTask = async (
 
   // ── 8. Clean up worktree/branch (best-effort) ─────────────────────────────
   try {
-    await resolveVcs().removeWorktree({ path: worktreePath, branch, force: true, keepBranch: false })
+    await vcs.removeWorktree({ path: worktreePath, branch, force: true, keepBranch: false })
   } catch {
     // Non-fatal: the land already succeeded; leave the cleanup for 'mars worktree clean'.
   }
