@@ -18,3 +18,4 @@ export {
   loadVerifyScopes,
   selectVerifySteps,
 } from '../../lib/git/verify'
+export { VERIFY_TIMEOUT_MARKER } from '../../lib/git/verify-markers'

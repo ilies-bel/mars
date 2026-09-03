@@ -28,7 +28,7 @@
  * race, but equally a genuine process crash. If that case proves prevalent it
  * gets its own heuristic rather than a widening of this one.
  */
-import { VERIFY_TIMEOUT_MARKER } from '../../../core/lib/git/verify-markers'
+import { VERIFY_TIMEOUT_MARKER } from '../../../core/ports/verifier/verify-helpers'
 import type { VerifyHeuristic, VerifyStepOutcome, VerifyVerdict } from './types'
 
 /**

@@ -25,14 +25,13 @@ import {
   getChangedFiles,
   SPEC_VERIFY_CMD_STEP,
   VERIFY_TIMEOUT_MARKER,
-  type VerifyStepSpec,
-} from '../../core/lib/git/verify'
+} from '../../core/ports/verifier/verify-helpers'
 // The verify gates run through the Verifier Port, not the runner module
 // (ADR-0097). `resolveVerifier` returns the implementation selected by
 // `MARS_VERIFIER_KIND`; the default `local` binding wraps `verifyChanges`,
 // so behaviour here is unchanged.
 import { resolveVerifier } from '../../core/ports/verifier/registry'
-import type { VerifierRunArgs, VerifierRunContext } from '../../core/ports/verifier/types'
+import type { VerifierRunArgs, VerifierRunContext, VerifyStepSpec } from '../../core/ports/verifier/types'
 // The suite-level infra retry asks the heuristic registry, not a hard-coded
 // pattern list (TARGET §4.5). `infra-failure-patterns` is the built-in that
 // answers today; a repo can register its own ahead of it.
