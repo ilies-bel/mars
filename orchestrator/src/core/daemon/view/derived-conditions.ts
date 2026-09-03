@@ -313,7 +313,11 @@ async function deriveFailedConditions(
     )
   }
 
-  return rows
+  // DEC-8: a recovery task IS an automated move — suppress the failed-row
+  // entirely while Mars is still trying. The condition doesn't hold, so the
+  // row should not exist. If the recovery itself fails, recoveryInFlight
+  // becomes false again and the row re-surfaces for the operator.
+  return rows.filter((r) => !r.payload.recoveryInFlight)
 }
 
 const STALE_QUEUED_THRESHOLD_MS = (() => {
