@@ -449,7 +449,11 @@ describe('getArcRescueAttempts and incrementArcRescueAttempts', () => {
     })
 
     await store.execute('DROP TABLE arc_rescue_attempts')
-    const { ensureSchema } = await import('../../lib/pg-schema')
+    const { ensureSchema, SCHEMA_VERSION } = await import('../../lib/pg-schema')
+    // ensureSchema has a fast path that skips DDL when SCHEMA_VERSION is already
+    // recorded in schema_migrations. Remove the record so the full DDL path runs
+    // and the backfill INSERT re-creates arc_rescue_attempts with the correct count.
+    await store.execute('DELETE FROM schema_migrations WHERE version = ?', [SCHEMA_VERSION])
     await ensureSchema(queueModule.resolveQueueClient())
 
     await expect(store.getArcRescueAttempts(originId)).resolves.toBe(2)
