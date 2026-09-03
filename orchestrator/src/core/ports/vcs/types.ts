@@ -137,6 +137,16 @@ export interface MergeSpec {
   trace?: TraceIdentity
 }
 
+/**
+ * Machine-readable reason for a `merged: false` {@link MergeResult} that is
+ * neither an abort nor an integration-gate failure.
+ *
+ * Re-declared here (rather than imported from `lib/git/merge`) to keep this
+ * module self-contained and serializable per ADR-0097. Consumer slices
+ * migrating `merge.ts` callers import this from the port instead.
+ */
+export type MergeFailureReason = 'rebased-verify-failed'
+
 /** Result of {@link Vcs.merge}. */
 export interface MergeResult {
   merged: boolean
@@ -147,6 +157,50 @@ export interface MergeResult {
   retriesAttempted: number
   /** Claude session id from a vcs-supervisor (Vega) run, or `null` when none was invoked. */
   vegaSessionId: string | null
+  /**
+   * True when the caller-supplied integration-tier gate (onAfterFastForward)
+   * threw — the fast-forward has been reverted; `main` is at the pre-merge SHA.
+   */
+  integrationGateFailed?: boolean
+  /** Failure output from the integration-tier gates when `integrationGateFailed` is true. */
+  integrationGateOutput?: string
+  /**
+   * True when the vcs-supervisor (Vega) session was killed by the per-step
+   * wall-clock timeout. `aborted` is also true in this case and any in-progress
+   * rebase has been aborted.
+   */
+  vegaTimedOut?: boolean
+  /**
+   * Machine-readable reason for a `merged: false` outcome that is not an abort
+   * or integration-gate failure. See {@link MergeFailureReason}.
+   */
+  reason?: MergeFailureReason
+  /**
+   * Verify output from the rebased-tree check when it rejected the rebased tree.
+   * Set exactly when `reason === 'rebased-verify-failed'`.
+   */
+  rebasedVerifyOutput?: string
+  /**
+   * The SHA the integration checkout's working tree was synced to by this merge.
+   * Absent when the merge did not touch the tree (aborted, no-op, or the
+   * primary checkout was not on the integration branch).
+   */
+  lastSyncedSha?: string
+  /**
+   * SHA of the `wip(operator)` commit created to sweep genuine operator dirt
+   * off the integration checkout, or absent when no auto-commit happened.
+   */
+  operatorAutoCommitSha?: string
+  /**
+   * The integration-branch SHA just before the fast-forward (the old tip).
+   * Set only on a successful fast-forward merge.
+   */
+  mergePreSha?: string
+  /**
+   * The task-branch SHA that was fast-forwarded into `integrationBranch`
+   * (the new tip). Set in the same conditions as `mergePreSha`.
+   */
+  mergePostSha?: string
 }
 
 /** Args for {@link Vcs.status}. */
@@ -534,6 +588,208 @@ export interface VcsAddWorktreeForBranchSpec {
   trace?: TraceIdentity
 }
 
+// ---------------------------------------------------------------------------
+// Slice 1 — Merge error types
+// ---------------------------------------------------------------------------
+//
+// Re-declared here (rather than imported from `lib/git/merge`) so port consumers
+// can import from a single, serializable contract file. The consumer slice that
+// migrates `merge.ts` callers imports these from the port and updates `merge.ts`
+// to import them from here too, eliminating the dual declaration.
+
+/**
+ * Thrown when the merge step's hard wall-clock ceiling fires before
+ * `mergeBranch` returns. The merge primitive converts this to a
+ * `WorkflowTerminalError` with failure-signature prefix `merge:hard-timeout`.
+ */
+export class MergeHardTimeoutError extends Error {
+  readonly phase: string
+
+  constructor(phase: string) {
+    super(`merge hard timeout in ${phase}`)
+    this.name = 'MergeHardTimeoutError'
+    this.phase = phase
+  }
+}
+
+/**
+ * Thrown by `mergeBranch` when the merge is cancelled — either by the
+ * internal watchdog timer (`reason: 'watchdog'`) or by the caller's
+ * `AbortSignal` (`reason: 'external'`).
+ */
+export class MergeAbortedError extends Error {
+  readonly reason: 'watchdog' | 'external'
+  readonly elapsedMs: number
+  readonly lastStep: string
+
+  constructor(reason: 'watchdog' | 'external', elapsedMs: number, lastStep: string) {
+    super(
+      `mergeBranch aborted (${reason}) after ${elapsedMs}ms during step '${lastStep}'`,
+    )
+    this.name = 'MergeAbortedError'
+    this.reason = reason
+    this.elapsedMs = elapsedMs
+    this.lastStep = lastStep
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Slice 2 — Branch-query helpers (worktree-clean + worktree-prune migration)
+// ---------------------------------------------------------------------------
+
+/** Args for {@link Vcs.isBranchMergedIntoMain}. */
+export interface VcsIsBranchMergedSpec {
+  /** Branch ref to test, e.g. `task/<id>`. */
+  branch: string
+  /** Repo root (or any directory inside the repo). */
+  cwd: string
+}
+
+/** Args for {@link Vcs.isZeroCommitBranch}. */
+export interface VcsIsZeroCommitBranchSpec {
+  /** Branch ref whose commit-count relative to `main` is tested. */
+  branch: string
+  /** Repo root (or any directory inside the repo). */
+  cwd: string
+}
+
+// ---------------------------------------------------------------------------
+// Slice 3 — Merge target pre-check (merge.ts tools migration)
+// ---------------------------------------------------------------------------
+
+/**
+ * Serializable counterpart of `MergeTargetStatus` from `lib/git/merge.ts`.
+ * The `error` variant carries `message: string` rather than an `Error` instance
+ * so the result can cross a process boundary (ADR-0097).
+ */
+export type VcsMergeTargetStatus =
+  | { kind: 'clean' }
+  /** The task branch has diverged from / fallen behind integration. Recoverable — `merge` rebases first. */
+  | { kind: 'needs-rebase'; targetPath: string; statusOutput: string }
+  /** Tracked, uncommitted change on the integration checkout. Blocking. */
+  | { kind: 'dirty'; targetPath: string; statusOutput: string }
+  /** A ref did not resolve or git failed unexpectedly. */
+  | { kind: 'error'; message: string }
+
+/** Args for {@link Vcs.checkMergeTargetStatus}. */
+export interface VcsCheckMergeTargetSpec {
+  integrationBranch: string
+  taskBranch: string
+}
+
+// ---------------------------------------------------------------------------
+// Slice 4 — Checkpoint constants + autoCommitWorktree (coder-exit migration)
+// ---------------------------------------------------------------------------
+
+/**
+ * Namespace prefix for all orchestrator checkpoint refs.
+ * Re-exported here from `lib/git/checkpoint.ts` so port consumers import from
+ * a single location; the consumer slice updates `checkpoint.ts` to import from
+ * here.
+ */
+export const CHECKPOINT_REF_PREFIX = 'refs/mars/checkpoint' as const
+
+/**
+ * Subject prefix of every orchestrator-authored salvage checkpoint commit.
+ * Re-exported here from `lib/salvage-checkpoint-subjects.ts` so port consumers
+ * import from a single location.
+ */
+export const SALVAGE_CHECKPOINT_SUBJECT_PREFIX = 'wip(checkpoint):' as const
+
+/** Trailer key on salvage checkpoint commits. */
+export const SALVAGE_CHECKPOINT_TRAILER_KEY = 'Mars-Checkpoint' as const
+
+/** Trailer value on salvage checkpoint commits. */
+export const SALVAGE_CHECKPOINT_TRAILER_VALUE = 'salvage' as const
+
+/** Args for {@link Vcs.autoCommitWorktree}. */
+export interface VcsAutoCommitWorktreeSpec {
+  /** Task whose dirty worktree is being committed — named in the commit. */
+  taskId: string
+  /**
+   * Where the dirty content came from. Drives the commit message.
+   * - `'coder-left-dirty'`: coder exited without staging all work.
+   * - `'committer-salvage'`: main-committer recovery is capturing the integration snapshot.
+   */
+  provenance: 'coder-left-dirty' | 'committer-salvage'
+  /** Integration branch, named in the commit message for provenance. */
+  integrationBranch: string
+  /** Absolute path to the worktree directory. */
+  worktreePath: string
+  /** Dirty file paths to attempt to commit (unsafe paths are filtered out internally). */
+  dirtyFiles: string[]
+}
+
+/**
+ * Result of {@link Vcs.autoCommitWorktree}.
+ *
+ * Mirrors `AutoCommitResult` from `lib/git/commit-main.ts`; re-declared here
+ * to keep the port contract self-contained.
+ */
+export type VcsAutoCommitWorktreeResult =
+  | { committed: true; sha: string }
+  | {
+      committed: false
+      refusal:
+        | 'unsafe-path'
+        | 'git'
+        | 'main-branch'
+        | 'wrong-branch'
+        | 'nothing-to-commit'
+      reason: string
+    }
+
+// ---------------------------------------------------------------------------
+// Slice 5 — Attribution helpers (main-dirty-dispatch migration)
+// ---------------------------------------------------------------------------
+
+/**
+ * Classification of dirt on the integration checkout's working tree.
+ *
+ * Re-declared here (rather than imported from `lib/git/stale-tree-attribution`)
+ * to keep the port contract self-contained per ADR-0097. The consumer slice
+ * migrating `stale-tree-attribution.ts` callers imports this from the port.
+ */
+export type IntegrationDirtAttribution =
+  | { kind: 'clean' }
+  | { kind: 'stale-tree-debris'; range: string }
+  | { kind: 'operator-dirt'; statusOutput: string }
+
+/** Args for {@link Vcs.attributeIntegrationDirt}. */
+export interface VcsAttributeIntegrationDirtSpec {
+  /** Repo root where the integration branch is checked out (NOT a worktree). */
+  repoRoot: string
+  /**
+   * The SHA the checkout's working tree was last resynced to, or `null` when
+   * unknown. `null` always yields `operator-dirt` — see `stale-tree-attribution.ts`.
+   */
+  lastSyncedSha: string | null
+  /** The current tip of the integration branch (`refs/heads/<branch>`). */
+  headSha: string
+}
+
+/** Args for {@link Vcs.readLastSyncedSha}. */
+export interface VcsReadLastSyncedShaSpec {
+  /** Repo root where `.mars/last-synced-sha` lives. */
+  cwd: string
+}
+
+// ---------------------------------------------------------------------------
+// Slice 6 — applyPatch (steward-workflow-patch migration)
+// ---------------------------------------------------------------------------
+
+/** Args for {@link Vcs.applyPatch}. */
+export interface VcsApplyPatchSpec {
+  /** Working directory passed to `git apply`. */
+  cwd: string
+  /**
+   * Unified diff content to apply. The implementation writes this to a
+   * temporary file and invokes `git apply --check` (dry-run) then
+   * `git apply` (commit), cleaning up the temp file in all cases.
+   */
+  patch: string
+}
+
 /**
  * The VCS Port contract. Every method is async and every arg/result is
  * serializable — see the module doc comment above.
@@ -633,4 +889,62 @@ export interface Vcs {
    * to checkpoint-and-park handling instead of treating non-success as fatal.
    */
   autoCommitOperatorDirt(spec: VcsAutoCommitOperatorDirtSpec): Promise<VcsAutoCommitOperatorDirtResult>
+
+  // --- Slice 2: branch-query helpers ---
+
+  /**
+   * True when `spec.branch` is a fast-forward ancestor of `main` AND
+   * `main` has no commits ahead of it (i.e. the branch tip was already
+   * merged). Returns `false` on any git failure.
+   */
+  isBranchMergedIntoMain(spec: VcsIsBranchMergedSpec): Promise<boolean>
+
+  /**
+   * True when `spec.branch` has no commits ahead of `main` (tip equals
+   * the merge-base). Returns `false` on any git failure.
+   */
+  isZeroCommitBranch(spec: VcsIsZeroCommitBranchSpec): Promise<boolean>
+
+  // --- Slice 3: merge pre-check ---
+
+  /**
+   * Classify the merge target ahead of a `merge()` call — whether the
+   * integration checkout is clean, needs a rebase, is dirty, or errored.
+   * Callers inspect the `kind` to decide whether to park the task or proceed.
+   */
+  checkMergeTargetStatus(spec: VcsCheckMergeTargetSpec): Promise<VcsMergeTargetStatus>
+
+  // --- Slice 4: worktree auto-commit ---
+
+  /**
+   * Deterministically commit the dirty content of a task worktree, filtering
+   * out unsafe paths (secrets, dependency dirs, build output). Returns
+   * `{committed: false, …}` rather than throwing on refusal — callers decide
+   * what to do next. Never commits to the integration branch.
+   */
+  autoCommitWorktree(spec: VcsAutoCommitWorktreeSpec): Promise<VcsAutoCommitWorktreeResult>
+
+  // --- Slice 5: integration-dirt attribution ---
+
+  /**
+   * Classify dirt on the integration checkout as stale-tree debris (safe to
+   * reset) or genuine operator dirt (must be auto-committed or parked).
+   */
+  attributeIntegrationDirt(
+    spec: VcsAttributeIntegrationDirtSpec,
+  ): Promise<IntegrationDirtAttribution>
+
+  /**
+   * Read the last-synced SHA from `.mars/last-synced-sha` in `spec.cwd`.
+   * Returns `null` when the file does not exist or cannot be read.
+   */
+  readLastSyncedSha(spec: VcsReadLastSyncedShaSpec): Promise<string | null>
+
+  // --- Slice 6: patch application ---
+
+  /**
+   * Apply `spec.patch` (unified diff content) in `spec.cwd` via `git apply`.
+   * Runs `git apply --check` first; throws when either step fails.
+   */
+  applyPatch(spec: VcsApplyPatchSpec): Promise<void>
 }

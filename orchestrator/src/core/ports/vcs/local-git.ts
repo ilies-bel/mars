@@ -7,7 +7,7 @@
  * signatures those helpers already expose, so nothing about today's
  * operational behaviour changes.
  */
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -21,9 +21,19 @@ import {
   listUncommittedPaths,
   describeUncommittedWork,
 } from '../../lib/git/worktree'
-import { mergeBranch } from '../../lib/git/merge'
-import { commitMain } from '../../lib/git/commit-main'
+import {
+  mergeBranch,
+  isBranchMergedIntoMain as gitIsBranchMergedIntoMain,
+  isZeroCommitBranch as gitIsZeroCommitBranch,
+  checkMergeTargetStatus as gitCheckMergeTargetStatus,
+} from '../../lib/git/merge'
+import {
+  commitMain,
+  autoCommitWorktreeIfDeterministic,
+} from '../../lib/git/commit-main'
 import { resolveGitBin, exec, execProbe, branchExists } from '../../lib/git/internal'
+import { attributeIntegrationDirt as gitAttributeIntegrationDirt } from '../../lib/git/stale-tree-attribution'
+import { readLastSyncedSha as gitReadLastSyncedSha } from '../../lib/git/last-synced-sha'
 import { classifyPorcelainLines } from '../../lib/git/classify-porcelain'
 import { autoCommitOperatorDirt as gitAutoCommitOperatorDirt } from '../../lib/git/operator-auto-commit'
 import type { TraceEventStore, TraceEventInput } from '../../lib/trace-events-store'
@@ -33,8 +43,18 @@ import type {
   TraceIdentity,
   AttachToOriginWorktreeSpec,
   BranchExistsSpec,
+  IntegrationDirtAttribution,
+  VcsApplyPatchSpec,
+  VcsAttributeIntegrationDirtSpec,
   VcsAutoCommitOperatorDirtSpec,
   VcsAutoCommitOperatorDirtResult,
+  VcsAutoCommitWorktreeSpec,
+  VcsAutoCommitWorktreeResult,
+  VcsCheckMergeTargetSpec,
+  VcsMergeTargetStatus,
+  VcsIsBranchMergedSpec,
+  VcsIsZeroCommitBranchSpec,
+  VcsReadLastSyncedShaSpec,
   CommitResult,
   CommitSpec,
   CommitterWorktreeSpec,
@@ -237,6 +257,15 @@ export const localGitVcs: Vcs = {
       output: result.output,
       retriesAttempted: result.retriesAttempted,
       vegaSessionId: result.vegaSessionId,
+      integrationGateFailed: result.integrationGateFailed,
+      integrationGateOutput: result.integrationGateOutput,
+      vegaTimedOut: result.vegaTimedOut,
+      reason: result.reason,
+      rebasedVerifyOutput: result.rebasedVerifyOutput,
+      lastSyncedSha: result.lastSyncedSha,
+      operatorAutoCommitSha: result.operatorAutoCommitSha,
+      mergePreSha: result.mergePreSha,
+      mergePostSha: result.mergePostSha,
     }
   },
 
@@ -570,6 +599,73 @@ export const localGitVcs: Vcs = {
       headSha: spec.headSha,
       traceCtx: reconstructTraceCtx(spec.trace),
     })
+  },
+
+  // --- Slice 2: branch-query helpers ---
+
+  async isBranchMergedIntoMain(spec: VcsIsBranchMergedSpec): Promise<boolean> {
+    return gitIsBranchMergedIntoMain(spec.branch, spec.cwd)
+  },
+
+  async isZeroCommitBranch(spec: VcsIsZeroCommitBranchSpec): Promise<boolean> {
+    return gitIsZeroCommitBranch(spec.branch, spec.cwd)
+  },
+
+  // --- Slice 3: merge pre-check ---
+
+  async checkMergeTargetStatus(spec: VcsCheckMergeTargetSpec): Promise<VcsMergeTargetStatus> {
+    const result = await gitCheckMergeTargetStatus({
+      integrationBranch: spec.integrationBranch,
+      taskBranch: spec.taskBranch,
+    })
+    if (result.kind === 'error') {
+      return { kind: 'error', message: result.error.message }
+    }
+    return result
+  },
+
+  // --- Slice 4: worktree auto-commit ---
+
+  async autoCommitWorktree(spec: VcsAutoCommitWorktreeSpec): Promise<VcsAutoCommitWorktreeResult> {
+    return autoCommitWorktreeIfDeterministic({
+      taskId: spec.taskId,
+      provenance: spec.provenance,
+      integrationBranch: spec.integrationBranch,
+      worktreePath: spec.worktreePath,
+      dirtyFiles: spec.dirtyFiles,
+    })
+  },
+
+  // --- Slice 5: integration-dirt attribution ---
+
+  async attributeIntegrationDirt(
+    spec: VcsAttributeIntegrationDirtSpec,
+  ): Promise<IntegrationDirtAttribution> {
+    return gitAttributeIntegrationDirt({
+      repoRoot: spec.repoRoot,
+      lastSyncedSha: spec.lastSyncedSha,
+      headSha: spec.headSha,
+    })
+  },
+
+  async readLastSyncedSha(spec: VcsReadLastSyncedShaSpec): Promise<string | null> {
+    return gitReadLastSyncedSha(spec.cwd)
+  },
+
+  // --- Slice 6: patch application ---
+
+  async applyPatch(spec: VcsApplyPatchSpec): Promise<void> {
+    const { cwd, patch } = spec
+    const git = resolveGitBin()
+    const tmpDir = await mkdtemp(join(tmpdir(), 'mars-patch-'))
+    const patchFile = join(tmpDir, 'patch.diff')
+    try {
+      await writeFile(patchFile, patch, 'utf-8')
+      await exec(git, ['apply', '--check', patchFile], { cwd })
+      await exec(git, ['apply', patchFile], { cwd })
+    } finally {
+      await rm(tmpDir, { recursive: true, force: true }).catch(() => {})
+    }
   },
 }
 
