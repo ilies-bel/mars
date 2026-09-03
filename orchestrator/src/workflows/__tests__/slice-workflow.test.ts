@@ -7,6 +7,8 @@ import {
   describeSliceFailure,
   buildSlicerPrompt,
   slicerOutputSchema,
+  slicerRefusalSchema,
+  SlicerRefusalError,
   sliceFilesForPersistence,
   injectAutoLinkerBlockers,
   injectContractOwnerSlices,
@@ -4340,5 +4342,241 @@ describe('annotateUnresolvedReferences', () => {
     expect(slice.prescriptiveAction).toBe(originalAction)
     expect(slice.readFirst).toEqual(originalReadFirst)
     expect(onAnnotated).not.toHaveBeenCalled()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Regression: Slicer refusal yields a readable outcome, not a parse error
+// ---------------------------------------------------------------------------
+// PRD 290bd1ae had an empty body. The Slicer agent correctly refused but the
+// workflow crashed with `Unexpected token 'T', "This PRD c"... is not valid JSON`
+// because the only contract was "emit JSON slices". A correct refusal was
+// indistinguishable from malformed output and discarded. These tests pin that a
+// refusal — whether structured JSON or backward-compat prose — produces a
+// readable terminal outcome naming the reason.
+
+describe('slicerRefusalSchema', () => {
+  it('accepts {refused: true, reason: string}', () => {
+    const result = slicerRefusalSchema.safeParse({
+      refused: true,
+      reason: 'PRD body is empty: both Problem and Solution are unspecified.',
+    })
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.reason).toContain('empty')
+    }
+  })
+
+  it('rejects refused=false', () => {
+    expect(slicerRefusalSchema.safeParse({ refused: false, reason: 'x' }).success).toBe(false)
+  })
+
+  it('rejects missing reason', () => {
+    expect(slicerRefusalSchema.safeParse({ refused: true }).success).toBe(false)
+  })
+
+  it('rejects empty reason', () => {
+    expect(slicerRefusalSchema.safeParse({ refused: true, reason: '' }).success).toBe(false)
+  })
+})
+
+describe('SlicerRefusalError', () => {
+  it('carries the refusal reason and has a readable message', () => {
+    const err = new SlicerRefusalError('PRD body is empty.')
+    expect(err.refusalReason).toBe('PRD body is empty.')
+    expect(err.message).toContain('PRD body is empty.')
+    expect(err.name).toBe('SlicerRefusalError')
+    expect(err).toBeInstanceOf(Error)
+    expect(err).toBeInstanceOf(SlicerRefusalError)
+  })
+})
+
+describe('slicer prompt: refusal section', () => {
+  const sampleProposal = {
+    id: 'idea-1',
+    title: 'Some PRD',
+    problem: '',
+    solution: '',
+    outOfScope: '',
+    notes: '',
+    userStories: [],
+  }
+
+  it('documents the refusal output shape: {refused: true, reason: string}', () => {
+    const brief = buildSlicerPrompt(sampleProposal)
+    expect(brief).toContain('"refused": true')
+    expect(brief).toContain('"reason"')
+  })
+
+  it('limits refusal to structurally empty PRDs — not hard-to-slice ones', () => {
+    const brief = buildSlicerPrompt(sampleProposal)
+    // The refusal section must be clearly restricted to empty input, not difficulty
+    expect(brief).toMatch(/structurally empty|ONLY.*empty|genuinely.*empty/i)
+    // Must explicitly say hard PRDs still need slices
+    expect(brief).toMatch(/hard.*PRD.*still|hard-but-real/i)
+  })
+})
+
+describe('Slicer refusal: readable terminal outcome (regression 290bd1ae)', () => {
+  let repo: string
+
+  const setupRepo = (): string => {
+    const r = mkdtempSync(resolve(tmpdir(), 'mars-slice-refusal-'))
+    execFileSync('git', ['init', '-q'], { cwd: r })
+    mkdirSync(resolve(r, '.mars'), { recursive: true })
+    return r
+  }
+
+  const envelope = (jsonResult: unknown): string =>
+    JSON.stringify({ result: JSON.stringify(jsonResult), is_error: false })
+
+  // Simulate a Claude provider returning plain prose (no JSON object)
+  const proseEnvelope = (text: string): string =>
+    JSON.stringify({ result: text, is_error: false })
+
+  beforeEach(() => {
+    repo = setupRepo()
+    process.env.MARS_REPO = repo
+    process.env.MARS_WORKER_PROVIDER = 'claude'
+  })
+
+  afterEach(async () => {
+    const { closeAllDbs } = await import('../../core/lib/db')
+    await closeAllDbs()
+    vi.resetModules()
+    vi.doUnmock('../../core/lib/git/claude')
+    delete process.env.MARS_REPO
+    delete process.env.MARS_WORKER_PROVIDER
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  // Seeds a prd-ready proposal. The slicer (stubbed) will decide to refuse it.
+  // We use minimal valid content so promoteProposal accepts it — the refusal
+  // comes from the slicer agent, not the promotion gate.
+  const seedPrdReadyProposal = async (): Promise<string> => {
+    const proposals = await import('../../core/proposals')
+    await proposals.initProposals()
+    const proposal = await proposals.createProposal('Empty PRD (slicer refuses)', {
+      problem: 'TBD',
+      solution: 'TBD',
+    })
+    await proposals.addProposalUserStory(proposal.id, 'placeholder story')
+    const promoted = await proposals.promoteProposal(proposal.id)
+    expect(promoted.status).toBe('prd-ready')
+    return proposal.id
+  }
+
+  it('structured refusal {refused:true} throws SlicerRefusalError, not a JSON parse error', async () => {
+    // This is the preferred path: the slicer emits a structured refusal JSON
+    vi.doMock('../../core/lib/git/claude', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git/claude')>(
+        '../../core/lib/git/claude',
+      )
+      return {
+        ...actual,
+        runClaudeCode: vi.fn(async () => ({
+          exitCode: 0,
+          stdout: envelope({
+            refused: true,
+            reason: 'PRD body is empty: Problem and Solution are both "(not specified)".',
+          }),
+          stderr: '',
+          sessionId: 'stub-session',
+          conversation: [],
+        })),
+      }
+    })
+    vi.resetModules()
+    const proposalId = await seedPrdReadyProposal()
+
+    const slice = await import('../slice-workflow')
+
+    // Must throw — but the error message must name the reason, not a parser token
+    await expect(slice.runSlice(proposalId)).rejects.toThrow(
+      /Slicer refused to produce slices/,
+    )
+    // Specifically must NOT be a JSON parse error
+    await expect(slice.runSlice(proposalId)).rejects.not.toThrow(
+      /Unexpected token|not valid JSON/,
+    )
+    // Proposal reverted to prd-ready
+    const proposals = await import('../../core/proposals')
+    expect((await proposals.getProposal(proposalId))?.status).toBe('prd-ready')
+  })
+
+  it('prose refusal (no JSON) throws SlicerRefusalError, not "Unexpected token T"', async () => {
+    // Backward-compat path: the agent returns plain prose instead of structured JSON.
+    // This is exactly the 290bd1ae bug shape — the agent's correct prose refusal
+    // was crashing with "Unexpected token 'T', "This PRD c"... is not valid JSON".
+    const proseRefusal =
+      'This PRD cannot be decomposed — its body is empty. Every section ' +
+      '(Problem, Solution, User stories, Out of scope, Notes) is literally ' +
+      '`(not specified)`, and the title itself is truncated mid-sentence. ' +
+      'There is no stated problem, no solution design, no acceptance criteria, ' +
+      'and no scope boundary to slice against.'
+
+    vi.doMock('../../core/lib/git/claude', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git/claude')>(
+        '../../core/lib/git/claude',
+      )
+      return {
+        ...actual,
+        runClaudeCode: vi.fn(async () => ({
+          exitCode: 0,
+          stdout: proseEnvelope(proseRefusal),
+          stderr: '',
+          sessionId: 'stub-session',
+          conversation: [],
+        })),
+      }
+    })
+    vi.resetModules()
+    const proposalId = await seedPrdReadyProposal()
+
+    const slice = await import('../slice-workflow')
+
+    // The error must be readable — it must contain the prose, NOT the parser token
+    const err = await slice.runSlice(proposalId).catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(Error)
+    expect((err as Error).message).not.toMatch(/Unexpected token|not valid JSON/)
+    expect((err as Error).message).toContain('Slicer refused to produce slices')
+  })
+
+  it('structured refusal raises an actionable action-queue item naming the reason', async () => {
+    const refusalReason =
+      'PRD body is empty: both Problem and Solution are "(not specified)" with no user stories.'
+
+    vi.doMock('../../core/lib/git/claude', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git/claude')>(
+        '../../core/lib/git/claude',
+      )
+      return {
+        ...actual,
+        runClaudeCode: vi.fn(async () => ({
+          exitCode: 0,
+          stdout: envelope({ refused: true, reason: refusalReason }),
+          stderr: '',
+          sessionId: 'stub-session',
+          conversation: [],
+        })),
+      }
+    })
+    vi.resetModules()
+    const proposalId = await seedPrdReadyProposal()
+
+    const slice = await import('../slice-workflow')
+    await slice.runSlice(proposalId).catch(() => {})
+
+    const actionQueue = await import('../../core/lib/action-queue')
+    const failures = await actionQueue.listActionQueueItems('open', { kind: 'slice-failed' })
+    const item = failures.find((f) => f.payload['proposalId'] === proposalId)
+    expect(item).toBeDefined()
+    // Title must name the situation (no content), not a generic "Slicer failed"
+    expect(item?.title).toContain('no content to slice')
+    // Body must surface the refusal reason, not the parser error
+    expect(item?.body).not.toMatch(/Unexpected token|not valid JSON/)
+    expect(item?.body).toContain(refusalReason)
+    // Body must tell the operator what to do
+    expect(item?.body).toMatch(/Add a Problem and Solution|dismiss/)
   })
 })

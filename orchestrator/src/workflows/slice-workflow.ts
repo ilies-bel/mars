@@ -17,7 +17,7 @@ import { Arc } from '../core/arc'
 import { addBlockerEdges } from '../core/arc/blockers'
 import { type DomainTaskStore, getDefaultTaskStore } from '../core/store/task-store-default'
 import { Workers } from '../core/workers'
-import { parseWorkerJsonResult } from '../core/lib/worker-json'
+import { parseWorkerJsonResult, readWorkerOutputText } from '../core/lib/worker-json'
 import { getRepoRoot } from '../core/context'
 import { listActionQueueItems, raiseActionQueueItem } from '../core/lib/action-queue'
 import { type TraceEventStore } from '../core/lib/trace-events-store'
@@ -156,6 +156,38 @@ export const slicerOutputSchema = z.object({
     )
     .min(1),
 })
+
+/**
+ * Structured refusal the Slicer emits when the PRD's content is genuinely
+ * too empty to decompose (both Problem and Solution are unspecified). The
+ * slicer is ONLY permitted to emit a refusal for this structural-input case;
+ * difficulty alone is not a valid reason — a hard-but-sliceable PRD must
+ * still produce slices.
+ *
+ * The refusal is a first-class terminal outcome: the workflow raises an
+ * actionable operator message instead of propagating a raw JSON parse error.
+ */
+export const slicerRefusalSchema = z.object({
+  refused: z.literal(true),
+  reason: z.string().min(1),
+})
+export type SlicerRefusal = z.infer<typeof slicerRefusalSchema>
+
+/**
+ * Thrown by `parseSlicerOutput` when the Slicer returns a first-class
+ * refusal — either a structured `{refused: true, reason}` object or plain
+ * prose text with no JSON object (backward-compat for agents that have not
+ * yet been updated to emit the structured form).
+ *
+ * Callers that catch this should surface `refusalReason` in operator-facing
+ * messages rather than the raw parse-error string.
+ */
+export class SlicerRefusalError extends Error {
+  constructor(public readonly refusalReason: string) {
+    super(`Slicer refused to produce slices: ${refusalReason}`)
+    this.name = 'SlicerRefusalError'
+  }
+}
 
 /**
  * Concatenate a slice's `modifies` + `creates` into the single flat
@@ -332,6 +364,20 @@ For each deferred deliverable, produce:
 If the "Out of scope" section is empty, absent, or contains only true
 non-goals, emit \`deferredDeliverables: []\`.
 
+Refusal (structurally empty PRD only)
+--------------------------------------
+If and ONLY if BOTH the Problem section AND the Solution section below are
+literally "(not specified)" or completely empty, and there are no meaningful
+User stories either, you MAY refuse to produce slices. Use this path ONLY
+for a structurally empty PRD — not because the work is hard, ambiguous, or
+unfamiliar. A hard-but-real PRD must still produce slices.
+
+When refusing, return ONLY this exact JSON (no surrounding prose, no fences):
+{"refused": true, "reason": "<one sentence stating what content is missing>"}
+
+For any PRD with substantive content in Problem, Solution, or User stories,
+do NOT refuse — decompose it into slices.
+
 Return ONLY a single JSON object matching exactly this shape, with no
 surrounding prose, no code fences, and no commentary:
 
@@ -370,8 +416,47 @@ the following feedback from the operator:
 ${resliceFeedback}
 ` : ''}`
 
-const parseSlicerOutput = (stdout: string): z.infer<typeof slicerOutputSchema> =>
-  slicerOutputSchema.parse(parseWorkerJsonResult(Workers.Slicer.config.provider, stdout))
+/**
+ * Parse the Slicer's stdout into a validated slice set.
+ *
+ * Two refusal shapes are recognised and converted to `SlicerRefusalError`
+ * so the outer catch can raise an actionable operator message:
+ *
+ *   1. Structured refusal (preferred): `{"refused": true, "reason": "..."}`
+ *      — the slicer emits this when the PRD has no content to decompose.
+ *
+ *   2. Prose-only output (backward compat): if `parseWorkerJsonResult` fails
+ *      with a JSON parse error AND the raw model text contains no `{` (i.e.
+ *      it is pure prose), surface the prose as the refusal reason rather than
+ *      propagating the cryptic parser stack trace.
+ *
+ * Any other parse failure (malformed JSON object, schema mismatch) re-throws
+ * the original error unchanged.
+ */
+const parseSlicerOutput = (stdout: string): z.infer<typeof slicerOutputSchema> => {
+  let raw: unknown
+  try {
+    raw = parseWorkerJsonResult(Workers.Slicer.config.provider, stdout)
+  } catch (parseErr) {
+    // Prose refusal — backward compat path: if the model output contains no
+    // JSON object (no `{`) it is likely a plain-text refusal. Surface the
+    // prose as the refusal reason rather than the cryptic parse error.
+    const modelText = readWorkerOutputText(Workers.Slicer.config.provider, stdout) ?? ''
+    const trimmed = modelText.trim()
+    if (trimmed.length > 0 && !trimmed.includes('{')) {
+      throw new SlicerRefusalError(trimmed.slice(0, 500))
+    }
+    throw parseErr
+  }
+
+  // Structured refusal — preferred path: `{refused: true, reason: string}`
+  const refusal = slicerRefusalSchema.safeParse(raw)
+  if (refusal.success) {
+    throw new SlicerRefusalError(refusal.data.reason)
+  }
+
+  return slicerOutputSchema.parse(raw)
+}
 
 // ---------------------------------------------------------------------------
 // Action quality guard — regex anti-pattern detector
@@ -1831,13 +1916,22 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput, SliceServic
           args: [failure, Date.now(), Date.now(), proposal.id],
         })
         .catch(() => {})
+      // A SlicerRefusalError means the slicer recognised that the PRD's body
+      // is empty or unsliceable. Surface an actionable operator message that
+      // names the situation and what to do — NOT the raw parse-error string.
+      // Any other error keeps the generic "Slicer failed" message and body.
+      const isRefusal = error instanceof SlicerRefusalError
       await raiseActionQueueItem({
         kind: 'slice-failed',
         category: 'orchestrator',
         priority: 'high',
-        title: `Slicer failed for PRD ${proposal.id}`,
-        body: `PRD ${proposal.id} (${proposal.title}) could not be sliced: ${failure}. Inspect the PRD and run \`mars proposal slice ${proposal.id}\` to retry explicitly.`,
-        payload: { proposalId: proposal.id, error: failure },
+        title: isRefusal
+          ? `PRD ${proposal.id} has no content to slice`
+          : `Slicer failed for PRD ${proposal.id}`,
+        body: isRefusal
+          ? `PRD ${proposal.id} (${proposal.title}) could not be sliced because its body appears to be empty or contains no decomposable content.\n\nSlicer's reason: ${(error as SlicerRefusalError).refusalReason}\n\nAdd a Problem and Solution to the PRD and run \`mars proposal slice ${proposal.id}\` to retry, or dismiss the proposal if it is no longer needed.`
+          : `PRD ${proposal.id} (${proposal.title}) could not be sliced: ${failure}. Inspect the PRD and run \`mars proposal slice ${proposal.id}\` to retry explicitly.`,
+        payload: { proposalId: proposal.id, error: isRefusal ? (error as SlicerRefusalError).refusalReason : failure },
         context: {},
         raisedBy: 'slicer',
         signature: proposal.id,
