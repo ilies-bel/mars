@@ -279,6 +279,11 @@ const EventRow = memo(({ event, now, fieldsExpanded, onToggleFields }: EventRowP
       : null
   const hasFields = logLineFields !== null && Object.keys(logLineFields).length > 0
 
+  // Recency-weighted visual hierarchy: fresh events have full weight; older
+  // events progressively recede so the most recent errors dominate at a glance.
+  const ageHours = (now - event.timestamp) / 3_600_000
+  const ageOpacity = ageHours >= 24 ? 'opacity-60' : ageHours >= 1 ? 'opacity-80' : ''
+
   const body = (
     <>
       <div className="grid items-baseline gap-x-2" style={{ gridTemplateColumns: '4.5rem 2.5rem 4rem 6rem auto' }}>
@@ -342,7 +347,7 @@ const EventRow = memo(({ event, now, fieldsExpanded, onToggleFields }: EventRowP
   if (href === undefined) {
     return (
       <div
-        className={`block rounded border ${severityRowClass(event.severity)} px-3 py-1.5 font-mono text-body text-foreground`}
+        className={`block rounded border ${severityRowClass(event.severity)}${ageOpacity ? ` ${ageOpacity}` : ''} px-3 py-1.5 font-mono text-body text-foreground`}
         data-testid={`event-row-${event.id}`}
       >
         {body}
@@ -361,7 +366,7 @@ const EventRow = memo(({ event, now, fieldsExpanded, onToggleFields }: EventRowP
         e.preventDefault()
         window.location.hash = href
       }}
-      className={`block cursor-pointer rounded border ${severityRowClass(event.severity)} px-3 py-1.5 font-mono text-body text-foreground hover:bg-primary/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary`}
+      className={`block cursor-pointer rounded border ${severityRowClass(event.severity)}${ageOpacity ? ` ${ageOpacity}` : ''} px-3 py-1.5 font-mono text-body text-foreground hover:bg-primary/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary`}
       data-testid={`event-row-${event.id}`}
     >
       {body}
@@ -574,6 +579,13 @@ const worstSeverityOf = (events: TraceEvent[]): TraceEvent['severity'] =>
     : events.some((e) => e.severity === 'warn')
       ? 'warn'
       : 'info'
+
+/** Extract the dominant severity of a grouped row for cross-row comparisons. */
+const rowSeverity = (row: EventListRow): TraceEvent['severity'] => {
+  if (row.type === 'single') return row.event.severity
+  if (row.type === 'incident') return worstSeverityOf(row.events)
+  return row.events[0].severity
+}
 
 interface IncidentGroupProps {
   events: TraceEvent[]
@@ -1150,6 +1162,11 @@ export const EventsPage = () => {
       ? `fetched ${formatRelativeAge(now - initial.dataUpdatedAt)}`
       : null
 
+  // After 5 minutes without a refresh the chip turns text-warn so the operator
+  // sees at a glance that the data may be stale.
+  const fetchedAtIsStale =
+    initial.dataUpdatedAt > 0 && now - initial.dataUpdatedAt > 5 * 60_000
+
   // --- filter mutators ---
   const toggleIn = <T extends string>(
     key: 'severities' | 'kinds' | 'phases',
@@ -1182,9 +1199,19 @@ export const EventsPage = () => {
     <main className="flex h-full min-h-0 flex-1 flex-col gap-3 overflow-hidden bg-background p-4">
       {/* Header — fixed above the scrollable list */}
       <PageHeader
-        title={`Events — ${events.length} event${events.length === 1 ? '' : 's'}`}
+        title="Events"
         right={
           <div className="flex items-center gap-1">
+            {/* Event count — subdued pill badge (replaces the old em-dash count in the title) */}
+            <span
+              data-testid="events-count"
+              className="rounded-full bg-muted-foreground/10 px-2 py-0.5 font-mono text-micro text-muted-foreground"
+            >
+              {events.length}
+            </span>
+
+            <div className="h-4 w-px shrink-0 bg-primary/20" aria-hidden="true" />
+
             {(['flat', 'timeline'] as const).map((mode) => (
               <button
                 key={mode}
@@ -1213,7 +1240,7 @@ export const EventsPage = () => {
             {fetchedAt !== null ? (
               <span
                 data-testid="events-fetched-at"
-                className="font-mono text-micro text-muted-foreground"
+                className={`font-mono text-micro ${fetchedAtIsStale ? 'text-warn' : 'text-muted-foreground'}`}
               >
                 {fetchedAt}
               </span>
@@ -1389,6 +1416,12 @@ export const EventsPage = () => {
           >
             {virtualizer.getVirtualItems().map((vItem) => {
               const row = groupedRows[vItem.index]
+              const prevRow = vItem.index > 0 ? groupedRows[vItem.index - 1] : null
+              // Insert a faint divider when the dominant severity changes between
+              // adjacent rows (e.g. ERROR cluster → WARN cluster). This breaks
+              // the solid wall of same-coloured rows into scannable severity bands.
+              const hasSeverityTransition =
+                prevRow !== null && rowSeverity(prevRow) !== rowSeverity(row)
               return (
                 <div
                   key={vItem.key}
@@ -1403,6 +1436,9 @@ export const EventsPage = () => {
                     paddingBottom: '4px',
                   }}
                 >
+                  {hasSeverityTransition ? (
+                    <div className="mb-1 h-px bg-border/40" aria-hidden="true" />
+                  ) : null}
                   {row.type === 'tool-group' ? (
                     <ToolCallGroup
                       events={row.events}
