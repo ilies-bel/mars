@@ -42,13 +42,14 @@ const SOURCE_LABEL: Record<string, string> = {
 }
 
 const SOURCE_CHIP_CLASS: Record<string, string> = {
-  human: 'text-primary border-primary/40',
-  reflection: 'text-success border-success/40',
-  'arc-verifier': 'text-warn border-warn/40',
-  planner: 'text-warn border-warn/40',
-  'skill-forge': 'text-trace-mars border-trace-mars/40',
-  'failure-reflector': 'text-error border-error/40',
-  slicer: 'text-warn border-warn/40',
+  human: 'bg-primary/10 text-primary border-primary/20',
+  reflection: 'bg-status-verifying/10 text-status-verifying border-status-verifying/20',
+  'arc-verifier': 'bg-warn/10 text-warn border-warn/20',
+  planner: 'bg-warn/10 text-warn border-warn/20',
+  'skill-forge': 'bg-trace-mars/10 text-trace-mars border-trace-mars/20',
+  'failure-reflector': 'bg-error/10 text-error border-error/20',
+  slicer: 'bg-highlight/10 text-highlight border-highlight/20',
+  growth: 'bg-success/10 text-success border-success/20',
 }
 
 // ── ProposalRow ───────────────────────────────────────────────────────────────
@@ -78,16 +79,16 @@ const ProposalRow = ({ draft, onDismiss }: ProposalRowProps) => {
   return (
     <div className="mars-card relative border-l-2 border-l-success px-4 py-3">
       {/* Top row: source chip + age */}
-      <div className="mb-1.5 flex items-center gap-2">
+      <div className="mb-2 flex items-center gap-2">
         <span
           className={[
-            'rounded border px-1.5 py-0.5 font-mono text-micro leading-none',
+            'rounded-full border px-2.5 py-0.5 text-micro font-medium leading-none',
             chipClass,
           ].join(' ')}
         >
-          💡 {sourceLabel}
+          {sourceLabel}
         </span>
-        <span className="ml-auto font-mono text-micro text-muted-foreground">
+        <span className="ml-auto text-label text-muted-foreground/60">
           {age}
         </span>
       </div>
@@ -97,7 +98,7 @@ const ProposalRow = ({ draft, onDismiss }: ProposalRowProps) => {
           independent of whether the backfill has run. */}
       <a
         href={proposalHash(draft.id, 'proposals')}
-        className="mb-1 block line-clamp-2 text-body font-medium leading-snug text-foreground hover:underline"
+        className="mb-1 block line-clamp-2 font-mono text-title font-semibold leading-snug text-foreground hover:underline"
       >
         {draft.title}
       </a>
@@ -107,7 +108,7 @@ const ProposalRow = ({ draft, onDismiss }: ProposalRowProps) => {
         <div className="mb-2">
           <p
             className={[
-              'font-mono text-micro text-muted-foreground',
+              'text-body text-muted-foreground leading-relaxed',
               expanded ? 'whitespace-pre-wrap' : 'line-clamp-3',
             ].join(' ')}
           >
@@ -117,7 +118,7 @@ const ProposalRow = ({ draft, onDismiss }: ProposalRowProps) => {
             <button
               type="button"
               onClick={() => setExpanded((v) => !v)}
-              className="mt-0.5 font-mono text-micro text-muted-foreground/60 hover:text-muted-foreground focus:outline-none"
+              className="mt-0.5 text-label text-highlight hover:text-foreground focus:outline-none"
               aria-expanded={expanded}
             >
               {expanded ? 'less ↑' : 'more ↓'}
@@ -131,13 +132,13 @@ const ProposalRow = ({ draft, onDismiss }: ProposalRowProps) => {
         <button
           type="button"
           onClick={handleDismiss}
-          className="rounded border border-primary/30 px-1.5 py-0.5 font-mono text-micro text-primary/70 hover:bg-primary/10 hover:text-primary"
+          className="text-label text-muted-foreground hover:text-foreground focus:outline-none"
         >
           Dismiss
         </button>
         <a
           href={proposalHash(draft.id, 'proposals')}
-          className="font-mono text-micro text-primary transition-colors hover:text-foreground"
+          className="rounded-md border border-highlight/20 bg-highlight/10 px-3 py-1 text-label font-medium text-highlight transition-colors hover:bg-highlight/20"
         >
           Review →
         </a>
@@ -145,7 +146,7 @@ const ProposalRow = ({ draft, onDismiss }: ProposalRowProps) => {
           text={grillCmd}
           label={grillCmd}
           aria-label={`Copy /mars:grill ${draft.id}`}
-          className="rounded border border-primary/30 px-1.5 py-0.5 font-mono text-micro text-primary/70 hover:bg-primary/10 hover:text-primary"
+          className="font-mono text-micro text-muted-foreground/60 hover:text-muted-foreground focus:outline-none"
         />
       </div>
     </div>
@@ -200,7 +201,7 @@ export const ProposalsPage = () => {
     return (
       <div className="flex h-full flex-col overflow-hidden bg-background">
         <div className="flex shrink-0 items-center border-b border-border px-5 py-3">
-          <h1 className="font-mono text-body font-semibold text-foreground">Draft proposals</h1>
+          <h1 className="font-mono text-title font-semibold text-foreground">Draft proposals</h1>
         </div>
         <ErrorState error={error} of="proposals" onRetry={() => refetch()} />
       </div>
@@ -214,7 +215,7 @@ export const ProposalsPage = () => {
     <div className="flex h-full flex-col overflow-hidden bg-background">
       {/* Header strip */}
       <div className="flex shrink-0 items-center border-b border-border px-5 py-3">
-        <h1 className="font-mono text-body font-semibold text-foreground">
+        <h1 className="font-mono text-title font-semibold text-foreground">
           Draft proposals
         </h1>
         {/* Count = `total` (all matching drafts, before pagination), NOT
@@ -225,7 +226,7 @@ export const ProposalsPage = () => {
         {!isPending && total > 0 && (
           <span
             aria-label={`${total} draft proposals awaiting review`}
-            className="ml-2 rounded-full bg-success/20 px-2 py-0.5 font-mono text-micro leading-none text-success"
+            className="ml-2 rounded-full bg-primary/15 px-2 py-0.5 font-mono text-micro font-medium leading-none text-primary"
           >
             {total}
           </span>
@@ -239,7 +240,7 @@ export const ProposalsPage = () => {
         ) : sorted.length === 0 ? (
           <EmptyState />
         ) : (
-          <div className="flex flex-col gap-2 p-4">
+          <div className="flex flex-col gap-4 p-4">
             {sorted.map((draft) => (
               <ProposalRow key={draft.id} draft={draft} onDismiss={() => { void refetch() }} />
             ))}

@@ -82,9 +82,10 @@ describe('ProposalsPage — title clamping', () => {
 
   it('keeps the title as the strongest element in the card', () => {
     const html = render([draft()])
-    // Title stays at body size / medium weight; the preview below is text-micro
-    // and muted. The clamp bounds the title without changing the hierarchy.
-    expect(html).toContain('text-body font-medium')
+    // Title is at title size / semibold (the primary scanning target); the
+    // preview below is text-body muted — clearly secondary. The clamp bounds
+    // the title without changing the hierarchy.
+    expect(html).toContain('text-title font-semibold')
   })
 })
 
