@@ -51,6 +51,7 @@ import { previewValidationCommands } from './preview-validation'
 import { leverCommands } from './lever'
 import { healthCommands } from './health'
 import { kpiCommands } from './kpi-compare'
+import { kpiBreakdownCommands } from './kpi-breakdown'
 import { enterCommands } from './enter'
 import { evalCommands } from './eval'
 
@@ -99,6 +100,7 @@ export const allCommands: readonly Command[] = [
   ...leverCommands,
   ...healthCommands,
   ...kpiCommands,
+  ...kpiBreakdownCommands,
   ...enterCommands,
   ...evalCommands,
 ]
