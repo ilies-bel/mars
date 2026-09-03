@@ -153,10 +153,9 @@ describe('buildActionQueueView — failure-kind title/body derivation', () => {
     })
 
     expect(rows).toHaveLength(1)
-    // The title is just the warm reason — DEC-18 removed machine slugs from
-    // card faces. The [task …] suffix is dropped — arcGoal carries the goal.
+    // §9 beat 3: headline names task id, failing phase, and warm reason.
     expect(rows[0]!.title).toBe(
-      'The coding environment could not be set up',
+      'Task task-1 failed at setup:install: The coding environment could not be set up',
     )
   })
 
@@ -170,8 +169,9 @@ describe('buildActionQueueView — failure-kind title/body derivation', () => {
       filter: 'open',
     })
 
+    // §9 beat 3: body names the decision, not the verbose reason.
     expect(rows[0]!.body).toBe(
-      'The setup step could not install dependencies because the lockfile no longer matches the manifest.',
+      'Continue on the existing worktree, restart from scratch, or drop',
     )
   })
 
@@ -191,7 +191,10 @@ describe('buildActionQueueView — failure-kind title/body derivation', () => {
       'The task was repeatedly re-dispatched but did not finish',
     )
     expect(rows[0]!.title).not.toContain('no recipe')
-    expect(rows[0]!.body).toContain('paused or restarted')
+    // §9 beat 3: body is the decision, not the verbose reason.
+    expect(rows[0]!.body).toBe(
+      'Continue on the existing worktree, restart from scratch, or drop',
+    )
     expect(rows[0]!.actions.map((action) => action.op)).toEqual([
       'diagnose-failure',
       'restart',
@@ -211,8 +214,14 @@ describe('buildActionQueueView — failure-kind title/body derivation', () => {
       filter: 'open',
     })
 
-    expect(rows[0]!.title).toBe('A verification check did not pass')
-    expect(rows[0]!.body).toContain('Failure signature: verify:test/unclassified.')
+    // §9 beat 3: headline includes task id and phase; internals leave the face.
+    expect(rows[0]!.title).toBe(
+      'Task task-1 failed at verify:test: A verification check did not pass',
+    )
+    // Body is the decision, not the signature or verbose reason.
+    expect(rows[0]!.body).toBe(
+      'Continue on the existing worktree, restart from scratch, or drop',
+    )
   })
 
   it('unregistered signature: merge failures keep their key in detail too', async () => {
@@ -227,8 +236,11 @@ describe('buildActionQueueView — failure-kind title/body derivation', () => {
 
     expect(rows[0]!.title).toContain('The changes could not be merged')
     expect(rows[0]!.title).not.toContain('merge:unknown/unclassified')
-    expect(rows[0]!.body).toContain('Failure signature: merge:unknown/unclassified.')
-    // [task …] suffix dropped — arcGoal carries the goal; title keeps the warm reason only.
+    // §9 beat 3: body is the decision; signature is no longer on the card face.
+    expect(rows[0]!.body).toBe(
+      'Continue on the existing worktree, restart from scratch, or drop',
+    )
+    // No raw machine id on the card face.
     expect(rows[0]!.title).not.toContain('[task')
   })
 
@@ -276,8 +288,9 @@ describe('buildActionQueueView — failure-kind title/body derivation', () => {
       filter: 'open',
     })
 
+    // §9 beat 3: "Task [id] failed: [reason]" when no phase is known.
     expect(rows[0]!.title).toBe(
-      'Mars could not determine why this task failed: ENOSPC: no space left on device, write',
+      'Task task-1 failed: Mars could not determine why this task failed: ENOSPC: no space left on device, write',
     )
   })
 
@@ -291,7 +304,8 @@ describe('buildActionQueueView — failure-kind title/body derivation', () => {
       filter: 'open',
     })
 
-    expect(rows[0]!.title).toBe('Mars could not determine why this task failed')
+    // §9 beat 3: "Task [id] failed: [reason]" when no phase or error head.
+    expect(rows[0]!.title).toBe('Task task-1 failed: Mars could not determine why this task failed')
   })
 
   it('keeps a purpose-built persisted title on a failed row with no signature', async () => {

@@ -17,6 +17,7 @@ import {
   failedTaskTitle,
   isGenericFailureLabel,
 } from '../../lib/failure-kinds'
+import { shortId } from '../../lib/short-id'
 import { derivedRowActions } from '../../lib/derived-row-actions'
 import {
   lookupRecipe,
@@ -820,19 +821,34 @@ const failedRowCopy = (
     }
   }
 
-  const kind = signature !== null ? lookupFailureKind(signature) : null
-  const fallbackKind =
-    kind === null
-      ? unknownFailureKind(failingStepFromSignature(signature), capturedError)
-      : null
-  return {
-    title: failedTaskTitle({ signature, capturedError }),
-    body:
+  // §9 beat 3: headline names what happened, body names the decision.
+  // The task id and failing phase anchor the card so the operator can act
+  // without opening the transcript. Technical internals (signature, verbose
+  // reason, captured error) are available via the task graph; they no longer
+  // occupy the primary card face.
+  const taskPart = task?.id ? `Task ${shortId(task.id)} ` : 'Task '
+  const DECISION_BODY =
+    'Continue on the existing worktree, restart from scratch, or drop'
+
+  if (signature !== null) {
+    const kind = lookupFailureKind(signature)
+    const phase = failingStepFromSignature(signature)
+    const warmTitle =
       kind !== null
-        ? kind.verboseReason
-        : signature !== null
-          ? `Failure signature: ${signature}.\n${fallbackKind!.verboseReason}`
-          : fallbackKind!.verboseReason,
+        ? kind.warmTitle
+        : unknownFailureKind(phase, capturedError).warmTitle
+    return {
+      title: `${taskPart}failed at ${phase}: ${warmTitle}`,
+      body: DECISION_BODY,
+    }
+  }
+
+  // Null signature, generic persisted title: use failedTaskTitle for the
+  // summary (handles error-head extraction and recovery-prefix stripping).
+  const summary = failedTaskTitle({ signature: null, capturedError })
+  return {
+    title: `${taskPart}failed: ${summary}`,
+    body: DECISION_BODY,
   }
 }
 
