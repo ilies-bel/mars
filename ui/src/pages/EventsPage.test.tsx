@@ -662,6 +662,13 @@ describe('EventRow log_line rendering', () => {
 // WARN/ERROR rows must be visually distinct from INFO rows via both a
 // colour-derived border/background tint AND a non-colour cue (font weight).
 // INFO rows must stay calm — no error/warn tinting.
+//
+// Class names are driven by severityRowClass() in shared/actionQueueDetail.ts:
+//   error → border-error/40  bg-error/5
+//   warn  → border-warn/40   bg-warn/5
+//   info  → border-primary/30 bg-primary/5
+//
+// If those classes change, update the toContain() assertions below too.
 // ---------------------------------------------------------------------------
 
 describe('EventRow severity styling', () => {
