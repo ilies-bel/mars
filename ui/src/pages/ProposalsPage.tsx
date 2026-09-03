@@ -121,7 +121,7 @@ const ProposalRow = ({ draft, onDismiss }: ProposalRowProps) => {
         <div className="mb-2">
           <p
             className={[
-              'text-body text-muted-foreground leading-relaxed',
+              'max-w-prose text-body text-muted-foreground leading-relaxed',
               expanded ? 'whitespace-pre-wrap' : 'line-clamp-3',
             ].join(' ')}
           >
