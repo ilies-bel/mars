@@ -5,6 +5,47 @@ import { CopyButton } from '@/components/CopyButton'
 import { CollapsibleSection } from '@/components/CollapsibleSection'
 import { formatAbsoluteDate } from '@/shared/time'
 
+/**
+ * Generic discriminated-union type for an async action button's lifecycle.
+ * `TDone` carries any extra fields present in the `done` variant (e.g. `taskId`).
+ *
+ * Exported so the extracted `ProposalActionRow` component (consumer slice 1) can
+ * reuse it for each of its per-action state machines without redeclaring the
+ * union inline.
+ */
+export type ActionButtonState<TDone extends Record<string, unknown> = Record<never, never>> =
+  | { kind: 'idle' }
+  | { kind: 'pending' }
+  | ({ kind: 'done' } & TDone)
+  | { kind: 'error'; message: string }
+
+/**
+ * Props for the extracted `ProposalActionRow` component (consumer slice 1).
+ *
+ * The component is self-contained: it owns all per-action state machines and
+ * calls the action API helpers internally. The parent only needs to supply the
+ * minimal context that cannot be derived inside the component.
+ *
+ * Exported here so both the owner file (this drawer) and the new standalone
+ * `ProposalActionRow` component share one canonical definition.
+ */
+export interface ProposalActionRowProps {
+  /** ID of the proposal to act on. */
+  proposalId: string
+  /** Current proposal lifecycle status; controls which actions are visible. */
+  status: string
+  /** Whether a mockup file has already been generated for this proposal. */
+  mockupExists: boolean
+  /** Absolute URL of the mockup HTML file (for the "View mockup" link). */
+  mockupUrl: string
+  /**
+   * Called after a navigation-triggering action (e.g. Grill, which redirects
+   * to a chat thread). Lets the drawer skip its own close animation, since the
+   * hash change will unmount it anyway.
+   */
+  onNavigate?: () => void
+}
+
 interface ProposalDetailDrawerProps {
   /** Full proposal record sourced from GET /api/proposals/:id. */
   proposal: ProposalDetail
@@ -22,6 +63,16 @@ interface ProposalDetailDrawerProps {
    * `renderToStaticMarkup`).
    */
   initialMockupExists?: boolean
+  /**
+   * When provided, the user stories section renders inline management controls
+   * (add / edit / remove). Omit to show the section in read-only mode.
+   *
+   * Used by consumer slice 3 ("Add user story management UI in
+   * ProposalDetailDrawer") which wires these to PATCH /api/proposals/:id/user-stories.
+   */
+  onAddUserStory?: (story: string) => Promise<void>
+  onRemoveUserStory?: (index: number) => Promise<void>
+  onEditUserStory?: (index: number, newText: string) => Promise<void>
 }
 
 /**
@@ -58,19 +109,40 @@ const STATUS_CLI_VERBS: Record<string, string[]> = {
  *
  * Called four times (problem / solution / outOfScope / notes), satisfying the
  * multi-caller requirement and keeping clamp logic in one place.
+ *
+ * Exported so consumer slice 2 ("Add inline field editing for proposal body
+ * sections") can extend or compose it without redefining the clamp / collapse
+ * behaviour.
+ *
+ * When `onSave` is supplied the section enables an inline edit mode: the user
+ * can switch the read-only `<p>` to a `<textarea>`, edit in place, and confirm
+ * or cancel. Consumer slice 2 implements this toggle UI; this owner slice only
+ * declares the prop so both the existing call sites in this file and the
+ * consumer's new sites share the same component signature from day one.
  */
-const BodySection = ({
+export const BodySection = ({
   label,
   text,
   testId,
   maxLines = 8,
+  onSave,
 }: {
   label: string
   text: string
   testId: string
   maxLines?: number
   children?: ReactNode
+  /**
+   * When provided, the section supports inline editing. Consumer slice 2 adds
+   * the edit-toggle button and `<textarea>` UI; the prop is wired to a PATCH
+   * /api/proposals/:id call that persists the updated field value.
+   */
+  onSave?: (newText: string) => Promise<void>
 }) => {
+  // `onSave` is declared here to establish the contract; consumer slice 2
+  // wires the edit UI. We silence the lint warning for the unused parameter
+  // until that slice lands.
+  void onSave
   const [expanded, setExpanded] = useState(false)
   const lineCount = text.split('\n').length
   const isLong = lineCount > maxLines
@@ -145,6 +217,41 @@ async function startThreadFromProposal(proposalId: string): Promise<{ threadId: 
 }
 
 /**
+ * PATCH /api/proposals/:id/user-stories — add, edit, or remove a single
+ * user story entry.
+ *
+ * Exported so consumer slice 3 ("Add user story management UI in
+ * ProposalDetailDrawer") can call this from its inline add/edit/remove
+ * controls without duplicating the fetch boilerplate or the error-extraction
+ * pattern used by `postAction`.
+ *
+ * The server endpoint receives `{ op, story?, index? }` and persists the
+ * change via the `proposal_user_stories` table.
+ */
+export async function patchProposalUserStory(
+  proposalId: string,
+  op: 'add' | 'edit' | 'remove',
+  payload: { story?: string; index?: number },
+): Promise<void> {
+  const r = await fetch(
+    `${BASE}/api/proposals/${encodeURIComponent(proposalId)}/user-stories`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ op, ...payload }),
+    },
+  )
+  if (!r.ok) {
+    let message = `PATCH /api/proposals/${proposalId}/user-stories → ${r.status}`
+    try {
+      const body = await r.json() as { error?: string }
+      if (typeof body.error === 'string' && body.error.length > 0) message = body.error
+    } catch { /* ignore JSON parse errors */ }
+    throw new Error(message)
+  }
+}
+
+/**
  * Proposal detail drawer — renders at `#/proposal/<id>`.
  *
  * Shows the full proposal body (title, problem, solution, user stories,
@@ -156,6 +263,12 @@ export const ProposalDetailDrawer = ({
   onClose,
   tasks = [],
   initialMockupExists = false,
+  // Story-management callbacks (consumer slice 3). Destructured here so
+  // TypeScript confirms they satisfy ProposalDetailDrawerProps; wiring to
+  // the user stories section UI is consumer slice 3's responsibility.
+  onAddUserStory: _onAddUserStory,
+  onRemoveUserStory: _onRemoveUserStory,
+  onEditUserStory: _onEditUserStory,
 }: ProposalDetailDrawerProps) => {
   const childTasks = proposal.status === 'sliced'
     ? tasks.filter((t) => t.parentProposalId === proposal.id)
