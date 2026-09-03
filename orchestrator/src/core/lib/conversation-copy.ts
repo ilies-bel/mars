@@ -2,16 +2,23 @@
  * The Notice registry — the single place a notice kind is turned into
  * something the operator can read and act on.
  *
- * Each kind declares three facets:
+ * Each kind declares four facets:
  *
- * - `render`  — one first-person sentence saying what changed and why.
- * - `lever`   — the Autonomy level lever that produced the behaviour, if any.
- *               Its presence is what lets the announcement carry its own
- *               off-switch instead of sending the operator hunting settings.
- * - `offers`  — the Offer set: the chips shown under the body, which is also
- *               the vocabulary free text is matched against.
+ * - `render`      — one first-person sentence saying what changed and why.
+ * - `actionable`  — whether this notice requires operator attention (true) or
+ *                   is purely informational (false). Actionable notices gate
+ *                   chat placement; non-actionable ones are eligible to be
+ *                   coalesced into a single collapsed health notice.
+ * - `lever`       — the Autonomy level lever that produced the behaviour, if any.
+ *                   Its presence is what lets the announcement carry its own
+ *                   off-switch instead of sending the operator hunting settings.
+ * - `offers`      — the Offer set: the chips shown under the body, which is also
+ *                   the vocabulary free text is matched against.
+ * - `collapseKey` — when present on a non-actionable notice, notices sharing
+ *                   this key may be coalesced into one collapsed health notice
+ *                   per condition, suppressing the individual items.
  *
- * Keeping the three together is the point. A kind that renders copy but
+ * Keeping the facets together is the point. A kind that renders copy but
  * forgets its lever produces exactly the failure this feature exists to fix:
  * Mars announcing something the operator cannot stop.
  */
@@ -29,6 +36,8 @@ export const AutonomousNoticeKindSchema = z.enum([
   'trend.token-spend',
   'gate.main-broken',
   'merge.operator-auto-commit',
+  'steward.prompt-optimizer-ack',
+  'steward.workflow-patch',
 ])
 
 export type AutonomousNoticeKind = z.infer<typeof AutonomousNoticeKindSchema>
@@ -42,6 +51,8 @@ export const IDLE_PROPOSAL_OFFER_LEVER = 'idle_proposal_offer' as const
 export const CODEGRAPH_SUGGESTION_LEVER = 'codegraph_suggestion' as const
 export const UNVERIFIED_COMMITS_LEVER = 'unverified_commits' as const
 export const ARCHITECTURE_REPORT_LEVER = 'architecture_report' as const
+export const STEWARD_PROMPT_OPTIMIZER_LEVER = 'steward_prompt_optimizer' as const
+export const STEWARD_WORKFLOW_PATCH_LEVER = 'steward_workflow_patch' as const
 
 export interface AutonomousNoticePayloads {
   'recipe.auto-applied': { recipeId: string; failureKind: string; targetTaskId: string }
@@ -77,6 +88,29 @@ export interface AutonomousNoticePayloads {
     commitSha: string
     files: readonly string[]
   }
+  /**
+   * The steward prompt optimizer applied an update to a worker's prompt.
+   * `workerId` is the worker whose prompt changed; `reason` is a brief phrase
+   * explaining the finding; `entryId` is the steward-ledger row the operator
+   * can revert against.
+   */
+  'steward.prompt-optimizer-ack': {
+    workerId: string
+    reason: string
+    entryId: string
+  }
+  /**
+   * The steward has drafted a patch to a workflow file and is asking the
+   * operator to accept or reject it before anything is applied.
+   * `proposalId` is the proposals-table row; `workflowPath` is the target
+   * file (within `.mars/workflows/`); `summary` is a one-phrase description
+   * of the change.
+   */
+  'steward.workflow-patch': {
+    proposalId: string
+    workflowPath: string
+    summary: string
+  }
 }
 
 export type AutonomousConversationNoticeInput = {
@@ -101,10 +135,25 @@ export type NoticeSpeechAct = 'announcement' | 'offer'
 /** The facets of a notice kind. */
 export interface NoticeKindEntry<Kind extends AutonomousNoticeKind> {
   act: NoticeSpeechAct
+  /**
+   * Whether this notice requires operator attention.
+   *
+   * `true`  — actionable: an operator decision, blocker, or reusable context;
+   *            chat placement is granted for this notice.
+   * `false` — non-actionable: purely informational; eligible to be coalesced
+   *            into a single collapsed health notice per `collapseKey`.
+   */
+  actionable: boolean
   render: (payload: AutonomousNoticePayloads[Kind]) => string
   /** The Autonomy level lever this behaviour answers to, when it has one. */
   lever?: string
   offers: (payload: AutonomousNoticePayloads[Kind]) => PreloadedResponse[]
+  /**
+   * When present on a non-actionable notice, notices sharing this key are
+   * eligible to be coalesced into one collapsed health notice per condition.
+   * Ignored when `actionable` is `true`.
+   */
+  collapseKey?: string
 }
 
 /** "Noted" — the operator read it; nothing changes. */
@@ -140,12 +189,15 @@ const ackOnly = (): PreloadedResponse[] => [ack()]
 const REGISTRY: { [Kind in AutonomousNoticeKind]: NoticeKindEntry<Kind> } = {
   'recipe.auto-applied': {
     act: 'announcement',
+    actionable: false,
+    collapseKey: 'recipe-auto-applied',
     render: (p) =>
       `I applied recipe ${sentenceValue(p.recipeId)} to task ${sentenceValue(p.targetTaskId)} because it matched ${sentenceValue(p.failureKind)}.`,
     offers: () => ackOnly(),
   },
   'failure.batch': {
     act: 'announcement',
+    actionable: true,
     render: (p) => {
       const tasks = p.taskCount === 1 ? '1 blocked task' : `${p.taskCount} blocked tasks`
       return `I am flagging ${tasks} because they share the same failure: ${sentenceValue(p.cause)}.`
@@ -161,6 +213,7 @@ const REGISTRY: { [Kind in AutonomousNoticeKind]: NoticeKindEntry<Kind> } = {
   },
   'session.idle-proposal': {
     act: 'offer',
+    actionable: true,
     render: (p) =>
       `Nothing on my side — want to grill "${sentenceValue(p.title)}"?`,
     lever: IDLE_PROPOSAL_OFFER_LEVER,
@@ -185,6 +238,8 @@ const REGISTRY: { [Kind in AutonomousNoticeKind]: NoticeKindEntry<Kind> } = {
   },
   'suggestion.codegraph': {
     act: 'offer',
+    actionable: false,
+    collapseKey: 'codegraph-suggestion',
     render: (p) =>
       `You have no graph traversal installed, so each of the ${p.tasksRun} tasks I ran over the last ${p.windowDays} days found its own way around by reading files — codegraph would answer the same questions for a fraction of the tokens.`,
     lever: CODEGRAPH_SUGGESTION_LEVER,
@@ -208,6 +263,7 @@ const REGISTRY: { [Kind in AutonomousNoticeKind]: NoticeKindEntry<Kind> } = {
   },
   'observation.manual-push': {
     act: 'offer',
+    actionable: true,
     render: (p) =>
       `Mars landed ${p.marsCommits} commits on ${sentenceValue(p.branch)}; ${p.commits} more arrived that have never been through verify.`,
     lever: UNVERIFIED_COMMITS_LEVER,
@@ -222,6 +278,8 @@ const REGISTRY: { [Kind in AutonomousNoticeKind]: NoticeKindEntry<Kind> } = {
   },
   'trend.token-spend': {
     act: 'announcement',
+    actionable: false,
+    collapseKey: 'token-spend-trend',
     render: (p) =>
       `I am flagging token spend because it rose ${p.changePct}% over the last ${p.windowDays} days against your own baseline.`,
     lever: ARCHITECTURE_REPORT_LEVER,
@@ -237,6 +295,7 @@ const REGISTRY: { [Kind in AutonomousNoticeKind]: NoticeKindEntry<Kind> } = {
   },
   'gate.main-broken': {
     act: 'announcement',
+    actionable: true,
     render: (p) => {
       const blocked = p.blockedTasks === 1 ? '1 incoming task' : `${p.blockedTasks} incoming tasks`
       return `I paused dispatch because ${sentenceValue(p.failingCheck)} is failing on the integration branch and blocking ${blocked}.`
@@ -252,6 +311,7 @@ const REGISTRY: { [Kind in AutonomousNoticeKind]: NoticeKindEntry<Kind> } = {
   },
   'merge.operator-auto-commit': {
     act: 'announcement',
+    actionable: true,
     render: (p) => {
       const files = p.files.length === 1 ? '1 uncommitted file' : `${p.files.length} uncommitted files`
       return (
@@ -290,6 +350,54 @@ const REGISTRY: { [Kind in AutonomousNoticeKind]: NoticeKindEntry<Kind> } = {
       ack(),
     ],
   },
+  'steward.prompt-optimizer-ack': {
+    act: 'announcement',
+    actionable: true,
+    lever: STEWARD_PROMPT_OPTIMIZER_LEVER,
+    render: (p) =>
+      `I updated the ${sentenceValue(p.workerId)} worker prompt because ${sentenceValue(p.reason)}.`,
+    offers: (p) => [
+      {
+        id: 'revert',
+        label: 'Undo this change',
+        target: {
+          type: 'verb',
+          op: 'revert-prompt-optimization',
+          entityId: p.entryId,
+        },
+      },
+      ack(),
+      silence(STEWARD_PROMPT_OPTIMIZER_LEVER, 'Stop optimizing prompts', 'stop'),
+    ],
+  },
+  'steward.workflow-patch': {
+    act: 'offer',
+    actionable: true,
+    lever: STEWARD_WORKFLOW_PATCH_LEVER,
+    render: (p) =>
+      `A proposed workflow change is ready — ${sentenceValue(p.summary)}.`,
+    offers: (p) => [
+      {
+        id: 'apply',
+        label: 'Apply it',
+        target: {
+          type: 'verb',
+          op: 'apply-workflow-patch',
+          entityId: p.proposalId,
+        },
+      },
+      {
+        id: 'reject',
+        label: 'Reject it',
+        target: {
+          type: 'verb',
+          op: 'reject-workflow-patch',
+          entityId: p.proposalId,
+        },
+      },
+      silence(STEWARD_WORKFLOW_PATCH_LEVER, 'Stop suggesting workflow changes', 'stop'),
+    ],
+  },
 }
 
 /**
@@ -315,3 +423,20 @@ export const leverForConversationNotice = (kind: AutonomousNoticeKind): string |
 export const speechActForConversationNotice = (kind: AutonomousNoticeKind): NoticeSpeechAct =>
   REGISTRY[kind].act
 
+/**
+ * Whether a notice kind requires operator attention.
+ *
+ * Actionable notices gate chat placement. Non-actionable notices are eligible
+ * to be coalesced into a single collapsed health notice per `collapseKey`.
+ */
+export const isActionableConversationNotice = (kind: AutonomousNoticeKind): boolean =>
+  REGISTRY[kind].actionable
+
+/**
+ * The collapse key for a non-actionable notice kind, when coalescing is
+ * applicable. Non-actionable notices sharing the same key are folded into one
+ * collapsed health notice per condition. Returns `undefined` for actionable
+ * notices and for non-actionable notices that are always shown individually.
+ */
+export const collapseKeyForConversationNotice = (kind: AutonomousNoticeKind): string | undefined =>
+  REGISTRY[kind].actionable ? undefined : REGISTRY[kind].collapseKey

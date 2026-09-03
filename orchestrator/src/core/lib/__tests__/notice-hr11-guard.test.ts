@@ -62,6 +62,16 @@ const REPRESENTATIVE_PAYLOADS: { [K in AutonomousNoticeKind]: AutonomousNoticePa
     commitSha: '0123456789abcdef0123456789abcdef01234567',
     files: ['operator.txt', 'notes.md'],
   },
+  'steward.prompt-optimizer-ack': {
+    workerId: 'Coder',
+    reason: 'the depth ratio showed excess boilerplate',
+    entryId: 'entry-abc123',
+  },
+  'steward.workflow-patch': {
+    proposalId: 'prop-xyz789',
+    workflowPath: '.mars/workflows/implement.md',
+    summary: 'speed up the triage handoff step',
+  },
 }
 
 // ── Helper ────────────────────────────────────────────────────────────────────

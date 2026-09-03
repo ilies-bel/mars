@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   AutonomousNoticeKindSchema,
+  collapseKeyForConversationNotice,
+  isActionableConversationNotice,
   leverForConversationNotice,
   offersForConversationNotice,
   renderConversationNotice,
@@ -35,6 +37,16 @@ const payloads: { [K in AutonomousNoticeKind]: AutonomousNoticePayloads[K] } = {
     branch: 'main',
     commitSha: '0123456789abcdef0123456789abcdef01234567',
     files: ['operator.txt', 'notes.md'],
+  },
+  'steward.prompt-optimizer-ack': {
+    workerId: 'Coder',
+    reason: 'the depth ratio showed excess boilerplate',
+    entryId: 'entry-abc123',
+  },
+  'steward.workflow-patch': {
+    proposalId: 'prop-xyz789',
+    workflowPath: '.mars/workflows/implement.md',
+    summary: 'speed up the triage handoff step',
   },
 }
 
@@ -148,6 +160,40 @@ describe('offersForConversationNotice', () => {
     expect(revert!.target.op).toBe('revert-auto-commit')
     const decoded = JSON.parse(revert!.target.entityId as string)
     expect(decoded).toEqual({ commitSha: p.commitSha, files: p.files })
+  })
+})
+
+describe('isActionableConversationNotice', () => {
+  it('returns true for notices that require operator attention', () => {
+    expect(isActionableConversationNotice('failure.batch')).toBe(true)
+    expect(isActionableConversationNotice('gate.main-broken')).toBe(true)
+    expect(isActionableConversationNotice('merge.operator-auto-commit')).toBe(true)
+    expect(isActionableConversationNotice('observation.manual-push')).toBe(true)
+    expect(isActionableConversationNotice('session.idle-proposal')).toBe(true)
+    expect(isActionableConversationNotice('steward.prompt-optimizer-ack')).toBe(true)
+    expect(isActionableConversationNotice('steward.workflow-patch')).toBe(true)
+  })
+
+  it('returns false for informational notices that may be coalesced', () => {
+    expect(isActionableConversationNotice('recipe.auto-applied')).toBe(false)
+    expect(isActionableConversationNotice('suggestion.codegraph')).toBe(false)
+    expect(isActionableConversationNotice('trend.token-spend')).toBe(false)
+  })
+})
+
+describe('collapseKeyForConversationNotice', () => {
+  it('returns a key for non-actionable notices eligible for coalescing', () => {
+    expect(collapseKeyForConversationNotice('recipe.auto-applied')).toBe('recipe-auto-applied')
+    expect(collapseKeyForConversationNotice('suggestion.codegraph')).toBe('codegraph-suggestion')
+    expect(collapseKeyForConversationNotice('trend.token-spend')).toBe('token-spend-trend')
+  })
+
+  it('returns undefined for actionable notices (coalescing is not applicable)', () => {
+    for (const kind of AutonomousNoticeKindSchema.options) {
+      if (isActionableConversationNotice(kind)) {
+        expect(collapseKeyForConversationNotice(kind), kind).toBeUndefined()
+      }
+    }
   })
 })
 
