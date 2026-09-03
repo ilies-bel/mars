@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { ProposalDetailDrawer } from './ProposalDetailDrawer'
+import {
+  ProposalDetailDrawer,
+  BodySection,
+  patchProposalUserStory,
+} from './ProposalDetailDrawer'
+import type {
+  ActionButtonState,
+  ProposalActionRowProps,
+} from './ProposalDetailDrawer'
 import type { ProposalDetail, ProgressTask } from '@/shared/schemas'
 
 const draftProposal = (overrides: Partial<ProposalDetail> = {}): ProposalDetail => ({
@@ -574,5 +582,165 @@ describe('ProposalDetailDrawer – body sections', () => {
     expect(html).toContain('Fill the panel with PRD content.')
     expect(html).toContain('User sees the problem')
     expect(html).toContain('User sees the solution')
+  })
+})
+
+// ── Inline field editing contract (consumer slice 2) ────────────────────────
+//
+// BodySection accepts an `onSave` callback that consumer slice 2 ("Add inline
+// field editing for proposal body sections") wires to PATCH /api/proposals/:id.
+// These tests verify the pre-consumer baseline: onSave is accepted without
+// altering the read-only render, and the component's clamping behaviour works.
+
+describe('ProposalDetailDrawer – inline field editing contract', () => {
+  it('BodySection renders text content when onSave is provided', () => {
+    const html = renderToStaticMarkup(
+      <BodySection
+        label="Problem"
+        text="Something is wrong."
+        testId="proposal-detail-problem"
+        onSave={async () => {}}
+      />,
+    )
+    expect(html).toContain('Something is wrong.')
+    expect(html).toContain('data-testid="proposal-detail-problem"')
+  })
+
+  it('BodySection renders identically with and without onSave', () => {
+    const props = { label: 'Solution', text: 'Fix it.', testId: 'proposal-detail-solution' }
+    const withSave = renderToStaticMarkup(
+      <BodySection {...props} onSave={async () => {}} />,
+    )
+    const withoutSave = renderToStaticMarkup(
+      <BodySection {...props} />,
+    )
+    expect(withSave).toBe(withoutSave)
+  })
+
+  it('BodySection clamps long text and shows "Read more" toggle', () => {
+    const longText = Array.from({ length: 20 }, (_, i) => `Line ${i + 1}`).join('\n')
+    const html = renderToStaticMarkup(
+      <BodySection label="Notes" text={longText} testId="proposal-detail-notes" maxLines={8} />,
+    )
+    expect(html).toContain('Read more')
+  })
+
+  it('BodySection does not show "Read more" for short text', () => {
+    const html = renderToStaticMarkup(
+      <BodySection label="Notes" text="Short." testId="proposal-detail-notes" />,
+    )
+    expect(html).not.toContain('Read more')
+  })
+})
+
+// ── User story management contract (consumer slice 3) ───────────────────────
+//
+// The drawer accepts onAddUserStory / onRemoveUserStory / onEditUserStory
+// callbacks and exports patchProposalUserStory for consumer slice 3 ("Add user
+// story management UI in ProposalDetailDrawer"). These tests verify the
+// pre-consumer baseline: callbacks are accepted without altering the read-only
+// story list, and the exported helper is callable.
+
+describe('ProposalDetailDrawer – user story management contract', () => {
+  it('renders stories unchanged when management callbacks are provided', () => {
+    const withCallbacks = renderToStaticMarkup(
+      <ProposalDetailDrawer
+        proposal={draftProposal({ userStories: ['As a user I want X', 'As a user I want Y'] })}
+        onClose={() => {}}
+        onAddUserStory={async () => {}}
+        onRemoveUserStory={async () => {}}
+        onEditUserStory={async () => {}}
+      />,
+    )
+    const withoutCallbacks = renderToStaticMarkup(
+      <ProposalDetailDrawer
+        proposal={draftProposal({ userStories: ['As a user I want X', 'As a user I want Y'] })}
+        onClose={() => {}}
+      />,
+    )
+    expect(withCallbacks).toBe(withoutCallbacks)
+  })
+
+  it('story count badge shows plural for multiple stories', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer
+        proposal={draftProposal({ userStories: ['S1', 'S2', 'S3'] })}
+        onClose={() => {}}
+        onAddUserStory={async () => {}}
+        onRemoveUserStory={async () => {}}
+        onEditUserStory={async () => {}}
+      />,
+    )
+    expect(html).toContain('3 stories')
+    expect(html).toContain('data-testid="proposal-detail-story-count"')
+  })
+
+  it('story count badge shows singular for one story', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer
+        proposal={draftProposal({ userStories: ['Only story'] })}
+        onClose={() => {}}
+        onAddUserStory={async () => {}}
+        onRemoveUserStory={async () => {}}
+        onEditUserStory={async () => {}}
+      />,
+    )
+    expect(html).toContain('1 story')
+  })
+
+  it('patchProposalUserStory is a callable async function', () => {
+    expect(typeof patchProposalUserStory).toBe('function')
+  })
+})
+
+// ── Exported contract types (consumer slices 2 & 3) ─────────────────────────
+//
+// ActionButtonState and ProposalActionRowProps are exported for consumer slice 2
+// (inline field editing, which reuses the action button lifecycle union) and
+// consumer slice 1 (extracted ProposalActionRow component). These compile-time
+// contract tests verify the type shapes are sound and prevent accidental
+// breakage when the types are refactored.
+
+describe('ProposalDetailDrawer – exported contract types', () => {
+  it('ActionButtonState covers the idle → pending → done/error lifecycle', () => {
+    const idle: ActionButtonState = { kind: 'idle' }
+    const pending: ActionButtonState = { kind: 'pending' }
+    const done: ActionButtonState = { kind: 'done' }
+    const error: ActionButtonState = { kind: 'error', message: 'network failure' }
+    expect(idle.kind).toBe('idle')
+    expect(pending.kind).toBe('pending')
+    expect(done.kind).toBe('done')
+    expect(error.kind).toBe('error')
+  })
+
+  it('ActionButtonState done variant accepts extra fields via the generic', () => {
+    const done: ActionButtonState<{ taskId: string }> = { kind: 'done', taskId: 'task-1' }
+    expect(done.kind).toBe('done')
+    // The extra field is accessible at runtime.
+    expect((done as { taskId: string }).taskId).toBe('task-1')
+  })
+
+  it('ProposalActionRowProps defines the expected shape', () => {
+    const props: ProposalActionRowProps = {
+      proposalId: 'p1',
+      status: 'draft',
+      mockupExists: false,
+      mockupUrl: '/mockups/p1.html',
+    }
+    expect(props.proposalId).toBe('p1')
+    expect(props.status).toBe('draft')
+    expect(props.mockupExists).toBe(false)
+    expect(props.mockupUrl).toBe('/mockups/p1.html')
+  })
+
+  it('ProposalActionRowProps accepts the optional onNavigate callback', () => {
+    const props: ProposalActionRowProps = {
+      proposalId: 'p2',
+      status: 'prd-ready',
+      mockupExists: true,
+      mockupUrl: '/mockups/p2.html',
+      onNavigate: () => {},
+    }
+    expect(typeof props.onNavigate).toBe('function')
   })
 })
