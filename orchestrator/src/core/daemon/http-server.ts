@@ -521,6 +521,32 @@ export interface HttpServerDeps {
    */
   implementLiveProposal?: (id: string) => Promise<{ taskId: string }>
   /**
+   * Edit a proposal field in-place. `field` must be a valid ProposalField
+   * ('title', 'problem', 'solution', 'out-of-scope', 'notes', 'status').
+   * Backs `POST /actions/proposal.set-field/:id`.
+   * Optional for backwards compatibility with existing test stubs.
+   */
+  setProposalField?: (id: string, field: string, value: string) => Promise<void>
+  /**
+   * Append a user story to a proposal and return `{ id }` where `id` is the
+   * 0-based position index of the newly added story in the ordered list.
+   * Backs `POST /actions/proposal.add-story/:id`.
+   * Optional for backwards compatibility with existing test stubs.
+   */
+  addProposalUserStory?: (id: string, story: string) => Promise<{ id: string }>
+  /**
+   * Remove the user story at the given 0-based position index from a proposal.
+   * Backs `POST /actions/proposal.remove-story/:id`.
+   * Optional for backwards compatibility with existing test stubs.
+   */
+  removeProposalUserStory?: (id: string, index: number) => Promise<void>
+  /**
+   * Permanently delete a proposal and its user stories.
+   * Backs `POST /actions/proposal.delete/:id`.
+   * Optional for backwards compatibility with existing test stubs.
+   */
+  deleteProposal?: (id: string) => Promise<void>
+  /**
    * Validate a task parked at the preview gate (status 'awaiting-validation'):
    * kill its dev server, mark it validated, and re-queue so the merge
    * continuation runs. Throws when the task is not awaiting validation.

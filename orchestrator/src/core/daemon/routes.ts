@@ -3470,6 +3470,149 @@ export const registerRoutes = (
       return
     }
 
+    // proposal.set-field — edit a single proposal field in-place.
+    // Body: { field: string, value: string }
+    // Returns: { ok: true } or 400/404/422/501 on error.
+    if (op === 'proposal.set-field') {
+      if (!deps.setProposalField) {
+        sendJson(res, 501, { ok: false, error: 'proposal.set-field not implemented' })
+        return
+      }
+      const VALID_PROPOSAL_FIELDS = ['title', 'problem', 'solution', 'out-of-scope', 'notes', 'status']
+      let rawBody = ''
+      req.on('data', (chunk: Buffer) => { rawBody += chunk.toString() })
+      req.on('end', () => {
+        let parsed: unknown
+        try {
+          parsed = JSON.parse(rawBody)
+        } catch {
+          sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
+          return
+        }
+        const body = parsed as { field?: unknown; value?: unknown }
+        if (typeof body.field !== 'string' || body.field.length === 0) {
+          sendJson(res, 400, { ok: false, error: 'body must include { field: string, value: string }' })
+          return
+        }
+        if (!VALID_PROPOSAL_FIELDS.includes(body.field)) {
+          sendJson(res, 422, {
+            ok: false,
+            error: `invalid field '${body.field}'; expected one of ${VALID_PROPOSAL_FIELDS.join(', ')}`,
+          })
+          return
+        }
+        if (typeof body.value !== 'string') {
+          sendJson(res, 400, { ok: false, error: 'body must include { field: string, value: string }' })
+          return
+        }
+        deps.setProposalField!(id, body.field, body.value)
+          .then(() => sendJson(res, 200, { ok: true }))
+          .catch((err: unknown) => {
+            const msg = err instanceof Error ? err.message : String(err)
+            if (msg.includes('not found')) {
+              sendJson(res, 404, { ok: false, error: msg })
+            } else if (msg.includes('invalid proposal status') || msg.includes('cannot be moved')) {
+              sendJson(res, 422, { ok: false, error: msg })
+            } else {
+              sendError(res, err)
+            }
+          })
+      })
+      req.on('error', (err: unknown) => sendError(res, err))
+      return
+    }
+
+    // proposal.add-story — append a user story to a proposal.
+    // Body: { story: string }
+    // Returns: { ok: true, id: string } where id is the new story's position index.
+    if (op === 'proposal.add-story') {
+      if (!deps.addProposalUserStory) {
+        sendJson(res, 501, { ok: false, error: 'proposal.add-story not implemented' })
+        return
+      }
+      let rawBody = ''
+      req.on('data', (chunk: Buffer) => { rawBody += chunk.toString() })
+      req.on('end', () => {
+        let parsed: unknown
+        try {
+          parsed = JSON.parse(rawBody)
+        } catch {
+          sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
+          return
+        }
+        const body = parsed as { story?: unknown }
+        if (typeof body.story !== 'string' || body.story.length === 0) {
+          sendJson(res, 400, { ok: false, error: 'body must include { story: non-empty string }' })
+          return
+        }
+        deps.addProposalUserStory!(id, body.story)
+          .then(({ id: storyId }) => sendJson(res, 200, { ok: true, id: storyId }))
+          .catch((err: unknown) => {
+            const msg = err instanceof Error ? err.message : String(err)
+            if (msg.includes('not found')) sendJson(res, 404, { ok: false, error: msg })
+            else sendError(res, err)
+          })
+      })
+      req.on('error', (err: unknown) => sendError(res, err))
+      return
+    }
+
+    // proposal.remove-story — remove a user story at the given position index.
+    // Body: { index: number }
+    // Returns: { ok: true }
+    if (op === 'proposal.remove-story') {
+      if (!deps.removeProposalUserStory) {
+        sendJson(res, 501, { ok: false, error: 'proposal.remove-story not implemented' })
+        return
+      }
+      let rawBody = ''
+      req.on('data', (chunk: Buffer) => { rawBody += chunk.toString() })
+      req.on('end', () => {
+        let parsed: unknown
+        try {
+          parsed = JSON.parse(rawBody)
+        } catch {
+          sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
+          return
+        }
+        const body = parsed as { index?: unknown }
+        if (typeof body.index !== 'number' || !Number.isInteger(body.index) || body.index < 0) {
+          sendJson(res, 400, { ok: false, error: 'body must include { index: non-negative integer }' })
+          return
+        }
+        deps.removeProposalUserStory!(id, body.index)
+          .then(() => sendJson(res, 200, { ok: true }))
+          .catch((err: unknown) => {
+            const msg = err instanceof Error ? err.message : String(err)
+            if (msg.includes('not found') || msg.includes('no user story at index')) {
+              sendJson(res, 404, { ok: false, error: msg })
+            } else {
+              sendError(res, err)
+            }
+          })
+      })
+      req.on('error', (err: unknown) => sendError(res, err))
+      return
+    }
+
+    // proposal.delete — permanently delete a proposal and its user stories.
+    // No body required.
+    // Returns: { ok: true }
+    if (op === 'proposal.delete') {
+      if (!deps.deleteProposal) {
+        sendJson(res, 501, { ok: false, error: 'proposal.delete not implemented' })
+        return
+      }
+      deps.deleteProposal(id)
+        .then(() => sendJson(res, 200, { ok: true }))
+        .catch((err: unknown) => {
+          const msg = err instanceof Error ? err.message : String(err)
+          if (msg.includes('not found')) sendJson(res, 404, { ok: false, error: msg })
+          else sendError(res, err)
+        })
+      return
+    }
+
     const handler = entityHandlers[op as EntityOp]
     if (!handler) {
       sendJson(res, 404, { ok: false, error: `Unknown action op: ${op}` })

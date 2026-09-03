@@ -115,7 +115,7 @@ import {
   getCompositionRootClient,
   runCompositionRootMigrations,
 } from '../store/task-store-default'
-import { promoteProposal } from '../proposals'
+import { promoteProposal, type ProposalField } from '../proposals'
 import { CANCELLED_FAILURE_REASON } from '../lib/blocker-resolution-primitives'
 import type { RecoverAllBlockedTasksResult } from '../blocker-resolution'
 import { Arc, type ProgressEntry } from '../arc'
@@ -5408,6 +5408,23 @@ export const startDaemon = async (
     dismissProposal: async (id) => {
       const { dismissProposal } = await import('../proposals')
       await dismissProposal(id)
+    },
+    setProposalField: async (id, field, value) => {
+      const { setProposalField } = await import('../proposals')
+      await setProposalField(id, field as ProposalField, value)
+    },
+    addProposalUserStory: async (id, story) => {
+      const { addProposalUserStory } = await import('../proposals')
+      const updated = await addProposalUserStory(id, story)
+      return { id: String(updated.userStories.length - 1) }
+    },
+    removeProposalUserStory: async (id, index) => {
+      const { removeProposalUserStory } = await import('../proposals')
+      await removeProposalUserStory(id, index)
+    },
+    deleteProposal: async (id) => {
+      const { deleteProposal } = await import('../proposals')
+      await deleteProposal(id)
     },
     dismissDaemonDied: async () => {
       // Deleting the crash marker file removes the condition that drives the

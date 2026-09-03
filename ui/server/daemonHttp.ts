@@ -312,13 +312,16 @@ const PROCESS_LEVEL_ACTION_OPS = new Set(['restart-daemon', 'continue-all-daemon
 /**
  * Forward a recovery action to the daemon. `op` is the verb from the registry;
  * `entityId` is the task/worktree id (omitted for process-level ops like
- * `restart-daemon`). Returns the daemon's status + parsed body so the route can
- * relay it verbatim. A missing daemon yields a synthetic 503.
+ * `restart-daemon`). When `body` is provided it is JSON-stringified and sent as
+ * the request body (used by proposal mutation ops that need extra parameters
+ * beyond the entity id). Returns the daemon's status + parsed body so the route
+ * can relay it verbatim. A missing daemon yields a synthetic 503.
  */
 export const proxyAction = async (
   stateDir: string,
   op: string,
   entityId?: string,
+  body?: Record<string, unknown>,
 ): Promise<DaemonActionResult> =>
   withDaemon(stateDir, async (port, signal) => {
     // Process-level ops carry no entity scope — strip entityId unconditionally
@@ -328,7 +331,12 @@ export const proxyAction = async (
       effectiveEntityId === undefined
         ? `/actions/${op}`
         : `/actions/${op}/${encodeURIComponent(effectiveEntityId)}`
-    const res = await fetch(`http://127.0.0.1:${port}${path}`, { method: 'POST', signal })
-    const body = await res.json().catch(() => ({}))
-    return { status: res.status, body }
+    const fetchOptions: RequestInit & { signal: AbortSignal } = { method: 'POST', signal }
+    if (body !== undefined) {
+      fetchOptions.headers = { 'Content-Type': 'application/json' }
+      fetchOptions.body = JSON.stringify(body)
+    }
+    const res = await fetch(`http://127.0.0.1:${port}${path}`, fetchOptions)
+    const responseBody = await res.json().catch(() => ({}))
+    return { status: res.status, body: responseBody }
   })

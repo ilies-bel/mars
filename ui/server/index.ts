@@ -137,7 +137,7 @@ export interface ServerDeps {
    * {@link realProxyAction} which forwards to the running daemon. Tests inject
    * a stub to control daemon responses without starting a real daemon.
    */
-  proxyAction?: (stateDir: string, op: string, entityId?: string) => Promise<DaemonActionResult>
+  proxyAction?: (stateDir: string, op: string, entityId?: string, body?: Record<string, unknown>) => Promise<DaemonActionResult>
   /** SSE heartbeat interval in ms. Defaults to 15 000. Override in tests to avoid slow polls. */
   sseHeartbeatMs?: number
   /**
@@ -578,18 +578,19 @@ export const startServer = async (
         // transition. `restart-daemon` is process-level and carries no entity id.
         if (path === '/api/actions' && req.method === 'POST') {
           try {
-            const body = (await req.json()) as {
-              op?: unknown
-              entityId?: unknown
-            }
-            const { op, entityId } = body
+            const rawBody = (await req.json()) as Record<string, unknown>
+            const { op, entityId, ...rest } = rawBody
             if (typeof op !== 'string' || op.length === 0) {
               return jsonResponse(400, { error: 'op is required and must be a string' })
             }
             if (entityId !== undefined && typeof entityId !== 'string') {
               return jsonResponse(400, { error: 'entityId must be a string when present' })
             }
-            const result = await proxyAction(ctx.stateDir, op, entityId)
+            // Forward any extra body keys (e.g. field/value for proposal.set-field,
+            // story for proposal.add-story, index for proposal.remove-story) to the
+            // daemon so mutation ops can receive their parameters end-to-end.
+            const extraBody = Object.keys(rest).length > 0 ? rest : undefined
+            const result = await proxyAction(ctx.stateDir, op, entityId, extraBody)
             return jsonResponse(result.status, result.body)
           } catch (err) {
             return jsonResponse(500, { error: (err as Error).message })

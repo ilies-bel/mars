@@ -534,13 +534,14 @@ export const fetchCostPerMergedTask = async (
 export const invokeAction = async (
   op: string,
   entityId?: string,
+  extra?: Record<string, unknown>,
 ): Promise<void> => {
   let r: Response
   try {
     r = await fetch(`${BASE}/api/actions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ op, entityId }),
+      body: JSON.stringify({ op, entityId, ...extra }),
     })
   } catch (err) {
     if (err instanceof TypeError) {
