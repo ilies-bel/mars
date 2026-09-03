@@ -959,12 +959,13 @@ describe('ThinkingIndicator', () => {
     expect(html).toContain('aria-live="polite"')
   })
 
-  it('shows three animated bouncing dots, not a single static pulse', () => {
+  it('shows three calm opacity-pulse dots, not a bounce or static pulse', () => {
     const html = renderToStaticMarkup(createElement(ThinkingIndicator))
-    // Three staggered bounce dots with staggered animation delays
-    const bounceCount = (html.match(/animate-bounce/g) ?? []).length
-    expect(bounceCount).toBe(3)
-    // Must not fall back to the old single-pulse approach
+    // Three staggered dots using the calm thinking-dot animation
+    const dotCount = (html.match(/animate-thinking-dot/g) ?? []).length
+    expect(dotCount).toBe(3)
+    // Must not use the old springy bounce or the single-pulse fallback
+    expect(html).not.toContain('animate-bounce')
     expect(html).not.toContain('animate-pulse')
   })
 })

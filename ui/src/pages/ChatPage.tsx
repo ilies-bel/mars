@@ -1025,11 +1025,11 @@ const ThreadItem = ({ thread, isSelected, onSelect, onRename, indented = false, 
  */
 export const ThinkingIndicator = () => (
   <div role="status" aria-live="polite" className="flex items-center gap-2 px-4 py-2">
-    {/* Three staggered bouncing dots — livelier than a single static pulse */}
+    {/* Three staggered dots with a calm opacity fade — no bounce */}
     <span className="flex items-center gap-[3px]" aria-hidden="true">
-      <span className="h-1.5 w-1.5 flex-none animate-bounce rounded-full bg-primary/50 [animation-delay:0ms]" />
-      <span className="h-1.5 w-1.5 flex-none animate-bounce rounded-full bg-primary/50 [animation-delay:150ms]" />
-      <span className="h-1.5 w-1.5 flex-none animate-bounce rounded-full bg-primary/50 [animation-delay:300ms]" />
+      <span className="h-1.5 w-1.5 flex-none animate-thinking-dot rounded-full bg-primary/50 [animation-delay:0ms]" />
+      <span className="h-1.5 w-1.5 flex-none animate-thinking-dot rounded-full bg-primary/50 [animation-delay:150ms]" />
+      <span className="h-1.5 w-1.5 flex-none animate-thinking-dot rounded-full bg-primary/50 [animation-delay:300ms]" />
     </span>
     <span className="font-mono text-label text-primary/50">Thinking…</span>
   </div>

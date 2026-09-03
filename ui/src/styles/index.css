@@ -284,6 +284,24 @@ html, body, #root {
   .animate-mars-pulse { animation: none; }
 }
 
+/* ── ThinkingIndicator dot pulse ──────────────────────────────────────────────
+ * Calm opacity breath for the three staggered dots in the thinking indicator.
+ * Animation only runs when the user has not requested reduced motion; under
+ * reduced motion the dots remain static at full element opacity.
+ * ---------------------------------------------------------------------------*/
+@keyframes thinking-dot {
+  0%, 100% { opacity: 0.3; }
+  50%       { opacity: 1; }
+}
+.animate-thinking-dot {
+  will-change: opacity;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .animate-thinking-dot {
+    animation: thinking-dot 1.4s ease-in-out infinite;
+  }
+}
+
 /* ── Badge background pulse ───────────────────────────────────────────────────
  * Pulses only the background-color of a badge, leaving its text at full
  * opacity throughout (contrast preserved). Applied to sidebar and bell badges
