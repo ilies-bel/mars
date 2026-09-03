@@ -21,6 +21,8 @@ import type { DispatchPauseState } from '../pause-state'
 import type { DbClient } from '../../lib/db'
 import { RECOVERY_EXHAUSTED_PREFIX, classifyError } from '../../lib/failure-signature'
 import { findBaselineCaughtTaskIds } from '../../lib/baseline-attribution'
+import { readBudgetConfig } from '../../lib/spend-meter'
+import type { BudgetArcPayload } from '../../lib/payload-contracts/spend'
 
 // ── Stable ID helper ─────────────────────────────────────────────────────────
 
@@ -803,6 +805,80 @@ async function deriveStaleWorktreeConditions(
   return rows
 }
 
+/**
+ * Derive `budget-arc` rows for live arcs whose weighted token spend meets or
+ * exceeds the configured per-arc ceiling (`budget.arcTokens`).
+ *
+ * Derived on every read — no stored row. The condition disappears the moment
+ * the arc settles (all tasks terminal) or the ceiling is raised above current
+ * spend.  Only arcs with at least one non-terminal task are considered live;
+ * settled arcs are excluded by the `live_arcs` CTE so their row disappears on
+ * the next read without operator action.
+ *
+ * The weighted-token formula mirrors `computeBudgetStatus` in spend-meter.ts:
+ *   inputTokens + outputTokens + cacheCreateTokens + cacheReadTokens × 0.1
+ */
+async function deriveBudgetArcConditions(
+  client: DbClient,
+  nowMs: number,
+): Promise<PersistedActionQueueRow[]> {
+  const config = readBudgetConfig()
+  if (config === null || config.arcTokens === null) return []
+  const ceilingTokens = config.arcTokens
+
+  const result = await client.execute(`
+    WITH live_arcs AS (
+      SELECT arc_id FROM (
+        SELECT COALESCE(origin_id, id) AS arc_id,
+               MAX(CASE WHEN status NOT IN ('done', 'failed', 'dropped') THEN 1 ELSE 0 END) AS is_live
+        FROM tasks
+        GROUP BY COALESCE(origin_id, id)
+      ) arcs WHERE is_live = 1
+    )
+    SELECT la.arc_id,
+           COALESCE(SUM(
+             CAST(te.payload::jsonb #>> '{usageSignals,inputTokens}' AS double precision) +
+             CAST(te.payload::jsonb #>> '{usageSignals,outputTokens}' AS double precision) +
+             CAST(te.payload::jsonb #>> '{usageSignals,cacheCreateTokens}' AS double precision) +
+             CAST(te.payload::jsonb #>> '{usageSignals,cacheReadTokens}' AS double precision) * 0.1
+           ), 0) AS weighted_tokens
+    FROM live_arcs la
+    JOIN tasks t ON COALESCE(t.origin_id, t.id) = la.arc_id
+    JOIN trace_events te ON te.task_id = t.id
+      AND te.kind = 'step_ended'
+      AND te.payload::jsonb ->> 'usageSignals' IS NOT NULL
+    GROUP BY la.arc_id
+    ORDER BY weighted_tokens DESC
+    LIMIT 10
+  `)
+
+  return result.rows
+    .map((r) => {
+      const row = r as { arc_id: string; weighted_tokens: number }
+      return { arcId: row.arc_id, spendTokens: Number(row.weighted_tokens) }
+    })
+    .filter(({ spendTokens }) => spendTokens >= ceilingTokens)
+    .map(({ arcId, spendTokens }): PersistedActionQueueRow => {
+      const payload: BudgetArcPayload = {
+        arcId,
+        spentTokens: spendTokens,
+        ceilingTokens,
+      }
+      return {
+        id: deriveId('budget-arc', arcId),
+        kind: 'budget-arc',
+        priority: 'high',
+        title: `Arc ${arcId} exceeded token ceiling (${Math.round(spendTokens).toLocaleString()} / ${ceilingTokens.toLocaleString()})`,
+        body: '',
+        payload: payload as unknown as Record<string, unknown>,
+        context: { taskId: arcId },
+        raisedAt: nowMs,
+        lastSeenAt: nowMs,
+        signature: `budget-arc:${arcId}`,
+      }
+    })
+}
+
 // ── Factory ───────────────────────────────────────────────────────────────────
 
 /**
@@ -852,6 +928,7 @@ export const createConditionItemsSource = (deps: ConditionsDeps): ConditionItems
       wants('stale-worktree') && deps.repoRoot
         ? deriveStaleWorktreeConditions(client, deps.repoRoot, nowMs)
         : [],
+      wants('budget-arc') ? deriveBudgetArcConditions(client, nowMs) : [],
     ])
 
     const all = results.flat()
