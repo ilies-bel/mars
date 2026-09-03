@@ -10,6 +10,59 @@ export interface KpiWindow {
 }
 
 /**
+ * Phase label for per-phase cost breakdown in arc cost queries.
+ *
+ * - `'planner'` / `'slicer'` — origin-level trace events (Path 3 in the
+ *   arc_te CTE: `te.origin_id = arc_id`, no member task row).  These are
+ *   the Planner/Slicer steps that run before a child task is created.
+ * - `'setup'` / `'code'` / `'verify'` — named implement-pipeline phases.
+ * - `'unknown'` — any step_ended event whose phase cannot be identified.
+ */
+export type PhaseLabel = 'setup' | 'code' | 'verify' | 'planner' | 'slicer' | 'unknown'
+
+/**
+ * Cache-weighted token cost attributed to a single workflow phase within an arc.
+ */
+export interface PhaseTokenBreakdown {
+  phase: PhaseLabel
+  tokens: number
+}
+
+/**
+ * Options controlling how arc cost is computed or listed.
+ *
+ * Used by both `computeCostPerArcDistribution` and `listCostPerArcArcs`
+ * so the two stay in sync.
+ */
+export interface ArcCostOptions {
+  /**
+   * When `true`, exclude Planner and Slicer phase costs from per-arc totals.
+   *
+   * Planner/Slicer costs come from origin-level trace events: rows where
+   * `task_id IS NULL` and `origin_id = arc_id` (Path 3 of the arc_te CTE).
+   * These pre-date any child task and can inflate the arc cost significantly
+   * on longer planning/slicing workflows.
+   *
+   * Default: `false` (all phases included).
+   */
+  excludePlannerSlicer?: boolean
+}
+
+/**
+ * Options for `listCostPerArcArcs`, extending `ArcCostOptions` with a
+ * flag to request per-phase token breakdown on each returned row.
+ */
+export interface ListCostPerArcOptions extends ArcCostOptions {
+  /**
+   * When `true`, each returned `KpiArcRow` will include a `phaseBreakdown`
+   * array with per-phase cache-weighted token costs.
+   *
+   * Default: `false` (only the aggregate `costTokens` is populated).
+   */
+  includePhaseBreakdown?: boolean
+}
+
+/**
  * A single arc row returned by the list* helpers below.
  *
  * - `arcId` — the arc root: COALESCE(origin_id, id) for the origin task.
@@ -19,10 +72,8 @@ export interface KpiWindow {
  * - `status` — terminal status of the arc (or origin task for recovery rows).
  * - `passed` — whether this arc PASSED the KPI's classification criterion.
  * - `costTokens` — cache-weighted token cost (only set for cost_per_arc arcs).
- * - `phaseBreakdown` — cache-weighted token cost broken down by step name.
- *   Keys are step names (e.g., `'code'`, `'generate-slices'`, `'setup'`).
- *   Only set for cost_per_arc arcs when per-phase data is available.
- *   `undefined` when the arc has no captured usage signals.
+ * - `phaseBreakdown` — per-phase cost breakdown; only present when
+ *   `ListCostPerArcOptions.includePhaseBreakdown` was `true`.
  */
 export interface KpiArcRow {
   arcId: string
@@ -31,23 +82,7 @@ export interface KpiArcRow {
   status: string
   passed: boolean
   costTokens?: number
-  phaseBreakdown?: Record<string, number>
-}
-
-/**
- * Options that control cost aggregation in `computeCostPerArcDistribution`
- * and `listCostPerArcArcs`.
- */
-export interface CostPerArcOptions {
-  /**
-   * When `true`, Path 3 origin-level signals — Planner/Slicer steps that run
-   * before any child task is created (`task_id IS NULL`, `origin_id = arc_id`)
-   * — are excluded from the arc cost computation. Use this to isolate the cost
-   * of worker execution from planning/slicing overhead.
-   *
-   * Default: `false` (all paths included).
-   */
-  excludePlannerSlicer?: boolean
+  phaseBreakdown?: PhaseTokenBreakdown[]
 }
 
 export interface FailureRateResult {
@@ -183,7 +218,7 @@ function interpolatePercentile(sorted: readonly number[], p: number): number {
 export async function computeCostPerArcDistribution(
   surface: TaskStore,
   window: KpiWindow,
-  options?: CostPerArcOptions,
+  options?: ArcCostOptions,
 ): Promise<CostPerArcResult> {
   // One row per done Arc with the sum of all cache-weighted tokens across every
   // task in that Arc. done_arcs selects arcs where any task in the window
@@ -614,7 +649,7 @@ export async function listRecoveryArcs(
 export async function listCostPerArcArcs(
   surface: TaskStore,
   window: KpiWindow,
-  options?: CostPerArcOptions,
+  options?: ListCostPerArcOptions,
 ): Promise<KpiArcRow[]> {
   // arc_te: one row per (arc_id, te_id) with pre-computed event_cost and
   // step_name extracted from the JSON payload.  UNION (not UNION ALL) removes
@@ -726,11 +761,15 @@ export async function listCostPerArcArcs(
     if (r.weighted_tokens !== null && r.weighted_tokens !== undefined) {
       arcRow.costTokens = r.weighted_tokens
     }
-    if (r.phase_breakdown_json !== null && r.phase_breakdown_json !== undefined) {
-      arcRow.phaseBreakdown =
+    if (options?.includePhaseBreakdown && r.phase_breakdown_json !== null && r.phase_breakdown_json !== undefined) {
+      const breakdown: Record<string, number> =
         typeof r.phase_breakdown_json === 'string'
           ? (JSON.parse(r.phase_breakdown_json) as Record<string, number>)
           : r.phase_breakdown_json
+      arcRow.phaseBreakdown = Object.entries(breakdown).map(([phase, tokens]) => ({
+        phase: phase as PhaseLabel,
+        tokens,
+      }))
     }
     return arcRow
   })
