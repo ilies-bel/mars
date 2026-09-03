@@ -218,6 +218,45 @@ const stepFamilyLabel = (failingStep: string): string => {
  * kills are per-task, never gate-wide, so a fleet-wide identical verdict there
  * is not the "starved gate" signature the monitor guards against.
  */
+
+/**
+ * Returns `true` when a failure with this signature should have its raw verify
+ * output persisted to `tasks.recovery_payload` before a fix task is spawned.
+ *
+ * Policy: **any verify gate failure** (`verify:` prefix).  The
+ * `VerifyOutputPayload` shape is agnostic to gate kind — it just stores the
+ * full signature and raw output — so every verify gate failure benefits from
+ * having precise reproduction context on the source task.
+ *
+ * Consumed by:
+ *   - "Persist verify output payload for all verify gate failures" — calls this
+ *     predicate to decide whether to write `tasks.recovery_payload`.
+ */
+export const shouldPersistVerifyOutputPayload = (failureSignature: string): boolean =>
+  failureSignature.startsWith('verify:')
+
+/**
+ * Returns `true` when a failure with this signature should trigger a baseline
+ * probe against the integration branch before spawning a fix task.
+ *
+ * Policy: test-assertion failures **and** typecheck failures.  Both classes
+ * have parseable file paths the probe runner can target, and both are classes
+ * where a pre-existing baseline regression is a plausible root cause.
+ *
+ *   - `verify:test/test-assertion-error` — vitest test failure; failing files
+ *     are extracted by {@link extractFailingTestFiles}.
+ *   - `verify:typecheck/` — tsc type error; failing files are extracted by a
+ *     sibling helper in the consumer slice ("Extend baseline probe to typecheck
+ *     verify failures").
+ *
+ * Consumed by:
+ *   - "Extend baseline probe to typecheck verify failures" — calls this
+ *     predicate to determine whether to run the integration-branch probe.
+ */
+export const shouldRunBaselineProbe = (failureSignature: string): boolean =>
+  failureSignature.startsWith('verify:test/test-assertion-error') ||
+  failureSignature.startsWith('verify:typecheck/')
+
 const DEFAULT_MAX_NON_CODE_RETRIES = 3
 
 /**
@@ -1696,7 +1735,7 @@ export const handleTaskFailureWithFixTask = async (
   // `recovery_payload` untouched; `parseMainCommiterPayload` returns null
   // for `VerifyOutputPayload` rows, so existing main-commiter consumers are
   // unaffected.
-  if (failureSignature.startsWith('verify:test/test-assertion-error')) {
+  if (shouldPersistVerifyOutputPayload(failureSignature)) {
     await updateTask(
       input.taskId,
       {
@@ -1728,7 +1767,7 @@ export const handleTaskFailureWithFixTask = async (
   let effectiveBaselineProbeResult = input.baselineProbeResult ?? null
   if (
     effectiveBaselineProbeResult === null &&
-    failureSignature.startsWith('verify:test/test-assertion-error')
+    shouldRunBaselineProbe(failureSignature)
   ) {
     const testFiles = extractFailingTestFiles(input.errorOutput)
     if (testFiles.length > 0) {
