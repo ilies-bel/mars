@@ -135,6 +135,7 @@ import { DAEMON_KILLED_SIGNATURE } from '../lib/retry-budget'
 import { createDefaultManualPark } from '../lib/park-for-human'
 import { computeFailureSignature } from '../lib/failure-signature'
 import { openTraceEventStore, sweepOrphanRunningSpans, type TraceEventStore, type TraceEventPhase } from '../lib/trace-events-store'
+import { setAmbientTraceStore } from '../ports/vcs/ambient-trace-store'
 import { setBusLogSink } from '../../bus/log'
 import { daemonPaths, isProcessAlive, readDaemonPid, tryConnectSocket, waitForProcessExit } from './paths'
 import {
@@ -671,6 +672,9 @@ export const startDaemon = async (
   // Wire the trace store into the log() closure so every daemon line from
   // this point forward is also recorded as a log_line trace event (tee).
   _traceStore = traceStore
+  // Arm the Vcs port's ambient store so local-git.ts can reconstruct a full
+  // TraceCtx from the serializable TraceIdentity carried on each Vcs spec.
+  setAmbientTraceStore(traceStore)
 
   // Tee bus-level log output into the trace-event store so bus log lines are
   // visible alongside workflow and daemon events. Fire-and-forget: a
@@ -6593,6 +6597,10 @@ export const startDaemon = async (
       new Promise<void>((resolve) => server.close(() => resolve())),
       httpHandle.close(),
     ])
+    // Disarm the Vcs port's ambient store before closing the backing database
+    // so no in-flight local-git call can attempt to emit a trace event through
+    // a handle that is about to be torn down.
+    setAmbientTraceStore(null)
     // Close the trace-event store handle so its pool reference is released.
     // process.exit below would also do this, but be explicit so the handle
     // never lingers if exit is delayed.

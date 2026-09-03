@@ -27,7 +27,10 @@ import { resolveGitBin, exec, execProbe, branchExists } from '../../lib/git/inte
 import { classifyPorcelainLines } from '../../lib/git/classify-porcelain'
 import { autoCommitOperatorDirt as gitAutoCommitOperatorDirt } from '../../lib/git/operator-auto-commit'
 import type { TraceEventStore, TraceEventInput } from '../../lib/trace-events-store'
+import type { TraceCtx } from '../../lib/run-tool'
+import { getAmbientTraceStore } from './ambient-trace-store'
 import type {
+  TraceIdentity,
   AttachToOriginWorktreeSpec,
   BranchExistsSpec,
   VcsAutoCommitOperatorDirtSpec,
@@ -147,6 +150,34 @@ export const safeEmit = async (event: TraceEventInput): Promise<void> => {
 // ---------------------------------------------------------------------------
 
 /**
+ * Reconstruct a full {@link TraceCtx} from a serializable {@link TraceIdentity}.
+ *
+ * Returns `undefined` when either the identity is absent or the ambient store
+ * has not been armed — both are expected in non-daemon callers (CLI, tests)
+ * and must leave behaviour unchanged (pass `undefined` downstream).
+ *
+ * The pattern keeps the Vcs port wire-safe (ADR-0097): the non-serializable
+ * `TraceEventStore` reference never enters a spec; instead, it is fetched
+ * from the process-scoped registry and combined with the serializable identity
+ * fragments ({@link TraceIdentity.taskId}, {@link TraceIdentity.originId},
+ * {@link TraceIdentity.phase}) to form a transient context object used only
+ * for the duration of a single method call.
+ */
+const reconstructTraceCtx = (trace?: TraceIdentity | null): TraceCtx | undefined => {
+  if (!trace) return undefined
+  const store = getAmbientTraceStore()
+  if (!store) return undefined
+  return {
+    taskId: trace.taskId,
+    originId: trace.originId,
+    phase: trace.phase,
+    store,
+  }
+}
+
+// ---------------------------------------------------------------------------
+
+/**
  * Identity used for checkpoint commit objects (see {@link Vcs.captureCheckpoint}).
  * Pinned via env so a repo (or CI container) without `user.name` /
  * `user.email` configured cannot make `git commit-tree` fail and lose the
@@ -168,6 +199,7 @@ export const localGitVcs: Vcs = {
       integrationBranch: spec.integrationBranch,
       baseSha: spec.baseSha,
       branchSuffix: spec.branchSuffix,
+      traceCtx: reconstructTraceCtx(spec.trace),
     })
   },
 
@@ -176,7 +208,7 @@ export const localGitVcs: Vcs = {
       { path: spec.path, branch: spec.branch },
       spec.force ?? true,
       spec.keepBranch ?? false,
-      undefined,
+      reconstructTraceCtx(spec.trace),
       spec.tombstone,
     )
   },
@@ -186,7 +218,7 @@ export const localGitVcs: Vcs = {
   },
 
   async commit(spec: CommitSpec): Promise<CommitResult> {
-    return commitMain({ cwd: spec.cwd, message: spec.message, taskId: spec.taskId })
+    return commitMain({ cwd: spec.cwd, message: spec.message, taskId: spec.taskId, traceCtx: reconstructTraceCtx(spec.trace) })
   },
 
   async merge(spec: MergeSpec): Promise<MergeResult> {
@@ -196,6 +228,7 @@ export const localGitVcs: Vcs = {
       integrationBranch: spec.integrationBranch,
       lockTimeoutMs: spec.lockTimeoutMs,
       watchdogMs: spec.watchdogMs,
+      traceCtx: reconstructTraceCtx(spec.trace),
     })
     return {
       merged: result.merged,
@@ -219,9 +252,10 @@ export const localGitVcs: Vcs = {
   async captureCheckpoint(spec: VcsCaptureCheckpointSpec): Promise<VcsCheckpoint | null> {
     const { cwd, ref, message, excludePaths } = spec
     const git = resolveGitBin()
+    const tc = reconstructTraceCtx(spec.trace)
 
-    const head = (await exec(git, ['rev-parse', 'HEAD'], { cwd })).stdout.trim()
-    const headTree = (await exec(git, ['rev-parse', 'HEAD^{tree}'], { cwd })).stdout.trim()
+    const head = (await exec(git, ['rev-parse', 'HEAD'], { cwd }, tc)).stdout.trim()
+    const headTree = (await exec(git, ['rev-parse', 'HEAD^{tree}'], { cwd }, tc)).stdout.trim()
 
     const indexDir = await mkdtemp(join(tmpdir(), 'mars-checkpoint-'))
     const indexFile = join(indexDir, 'index')
@@ -229,8 +263,8 @@ export const localGitVcs: Vcs = {
     try {
       // Seed the temporary index from HEAD, then stage everything the working
       // tree carries. `git add -A` honours .gitignore, so ignored files stay out.
-      await exec(git, ['read-tree', 'HEAD'], { cwd, env })
-      await exec(git, ['add', '-A'], { cwd, env })
+      await exec(git, ['read-tree', 'HEAD'], { cwd, env }, tc)
+      await exec(git, ['add', '-A'], { cwd, env }, tc)
 
       // Belt to .gitignore's braces: remove any caller-requested exclusions
       // from the temporary index AFTER git add -A, so they are never committed
@@ -241,24 +275,24 @@ export const localGitVcs: Vcs = {
         await exec(git, ['rm', '--cached', '--ignore-unmatch', '-r', '--', ...excludePaths], {
           cwd,
           env,
-        })
+        }, tc)
       }
 
-      const tree = (await exec(git, ['write-tree'], { cwd, env })).stdout.trim()
+      const tree = (await exec(git, ['write-tree'], { cwd, env }, tc)).stdout.trim()
       if (tree === headTree) return null
 
       const sha = (
         await exec(git, ['commit-tree', tree, '-p', head, '-m', message], {
           cwd,
           env: CHECKPOINT_IDENTITY,
-        })
+        }, tc)
       ).stdout.trim()
 
       // Anchor the object under the per-task ref BEFORE reporting success: an
       // unreferenced commit-tree object is GC-eligible.
-      await exec(git, ['update-ref', ref, sha], { cwd })
+      await exec(git, ['update-ref', ref, sha], { cwd }, tc)
 
-      const files = (await exec(git, ['diff', '--name-only', head, sha], { cwd })).stdout
+      const files = (await exec(git, ['diff', '--name-only', head, sha], { cwd }, tc)).stdout
         .split('\n')
         .map((l) => l.trim())
         .filter((l) => l.length > 0)
@@ -272,16 +306,17 @@ export const localGitVcs: Vcs = {
   async restoreCheckpoint(spec: VcsRestoreCheckpointSpec): Promise<VcsRestoreCheckpointResult> {
     const { cwd, sha } = spec
     const git = resolveGitBin()
+    const tc = reconstructTraceCtx(spec.trace)
 
-    const pick = await execProbe(git, ['cherry-pick', '-n', sha], { cwd })
+    const pick = await execProbe(git, ['cherry-pick', '-n', sha], { cwd }, tc)
     // Clear the sequencer/AUTO_MERGE state left by `-n`; keeps index + worktree.
-    await execProbe(git, ['cherry-pick', '--quit'], { cwd }).catch(() => {})
+    await execProbe(git, ['cherry-pick', '--quit'], { cwd }, tc).catch(() => {})
 
     if (pick.exitCode !== 0) {
       return { ok: false, detail: `git cherry-pick exited ${pick.exitCode}: ${pick.stderr.trim().slice(0, 300)}` }
     }
 
-    const status = await exec(git, ['status', '--porcelain', '--untracked-files=all'], { cwd })
+    const status = await exec(git, ['status', '--porcelain', '--untracked-files=all'], { cwd }, tc)
     const lines = status.stdout.split('\n').filter((l) => l.trim().length > 0)
     if (lines.length === 0) {
       return { ok: false, detail: 'the target tree is still clean after the apply' }
@@ -434,6 +469,7 @@ export const localGitVcs: Vcs = {
       originTaskId: spec.originTaskId,
       originBranch: spec.originBranch,
       originWorktreePath: spec.originWorktreePath,
+      traceCtx: reconstructTraceCtx(spec.trace),
     })
   },
 
@@ -441,6 +477,7 @@ export const localGitVcs: Vcs = {
     return provisionCommitterWorktree({
       recoveryTaskId: spec.recoveryTaskId,
       integrationBranch: spec.integrationBranch,
+      traceCtx: reconstructTraceCtx(spec.trace),
     })
   },
 
@@ -450,11 +487,12 @@ export const localGitVcs: Vcs = {
       ref: spec.ref,
       integrationBranch: spec.integrationBranch,
       onConflict: spec.onConflict,
+      traceCtx: reconstructTraceCtx(spec.trace),
     })
   },
 
   async restoreWorktreeIfMissing(spec: RestoreWorktreeSpec): Promise<RestoreWorktreeOutcome> {
-    return restoreWorktreeIfMissing({ taskId: spec.taskId, ref: spec.ref })
+    return restoreWorktreeIfMissing({ taskId: spec.taskId, ref: spec.ref, traceCtx: reconstructTraceCtx(spec.trace) })
   },
 
   async listUncommittedPaths(worktreePath: string | null | undefined): Promise<string[] | null> {
@@ -530,6 +568,7 @@ export const localGitVcs: Vcs = {
       taskId: spec.taskId,
       baseSha: spec.baseSha,
       headSha: spec.headSha,
+      traceCtx: reconstructTraceCtx(spec.trace),
     })
   },
 }

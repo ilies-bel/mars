@@ -1,3 +1,18 @@
+import type { TraceEventPhase } from '../../lib/trace-events-store'
+
+/**
+ * Serializable identity fragment that Vcs specs carry so the local-git
+ * implementation can reconstruct a full `TraceCtx` from the process-scoped
+ * ambient store. Only the plain, JSON-serializable pieces live here — the
+ * `TraceEventStore` reference is supplied separately by the ambient registry
+ * (`./ambient-trace-store`), keeping specs wire-safe (ADR-0097).
+ */
+export interface TraceIdentity {
+  taskId?: string | null
+  originId?: string | null
+  phase?: TraceEventPhase | null
+}
+
 /**
  * VCS Port — version-control operations (worktree, branch, commit, merge,
  * status) for a task, abstracted behind a swappable implementation
@@ -39,21 +54,6 @@
  * separately from the port itself.
  */
 
-/**
- * Serializable trace identity threaded through VCS port calls so the
- * underlying implementation can attribute git subprocess events (worktree
- * provisioning, syncs, restores) back to their originating task and phase.
- *
- * This is the serializable counterpart of `TraceCtx` (which carries the
- * non-serializable `TraceEventStore`). Every field here can cross a process
- * boundary, per ADR-0097's serializability rule for port contracts.
- */
-export interface TraceIdentity {
-  taskId: string
-  originId: string
-  phase: string
-}
-
 /** Args for {@link Vcs.createWorktree}. */
 export interface WorktreeSpec {
   taskId: string
@@ -62,7 +62,8 @@ export interface WorktreeSpec {
   baseSha?: string
   /** Suffix appended to the branch/directory name, e.g. `task/<id>-<suffix>`. */
   branchSuffix?: string
-  /** Optional trace identity for subprocess attribution. */
+  /** Optional trace identity. When provided alongside the ambient store, a full
+   *  TraceCtx is reconstructed and forwarded to the underlying lib helper. */
   trace?: TraceIdentity
 }
 
@@ -95,6 +96,7 @@ export interface RemoveWorktreeSpec {
   keepBranch?: boolean
   /** When provided, a tombstone file is written before the directory is removed. */
   tombstone?: WorktreeRemovalTombstone
+  /** Optional trace identity forwarded to the underlying lib helper. */
   trace?: TraceIdentity
 }
 
@@ -114,6 +116,7 @@ export interface CommitSpec {
    * guard in `../../lib/git/commit-main.ts`.
    */
   taskId?: string
+  /** Optional trace identity forwarded to the underlying lib helper. */
   trace?: TraceIdentity
 }
 
@@ -130,6 +133,7 @@ export interface MergeSpec {
   lockTimeoutMs: number
   /** Overrides the default watchdog budget (ms). */
   watchdogMs?: number
+  /** Optional trace identity forwarded to the underlying lib helper. */
   trace?: TraceIdentity
 }
 
@@ -196,6 +200,7 @@ export interface VcsCaptureCheckpointSpec {
    * `.gitignore` already covers.
    */
   excludePaths?: string[]
+  /** Optional trace identity forwarded to the underlying git invocations. */
   trace?: TraceIdentity
 }
 
@@ -219,6 +224,7 @@ export interface VcsRestoreCheckpointSpec {
   cwd: string
   /** The checkpoint commit's sha (see {@link VcsCheckpoint.sha}). */
   sha: string
+  /** Optional trace identity forwarded to the underlying git invocations. */
   trace?: TraceIdentity
 }
 
@@ -351,7 +357,7 @@ export interface AttachToOriginWorktreeSpec {
   originBranch: string
   /** The origin task's worktree path, as recorded on its row. */
   originWorktreePath: string
-  /** Optional trace identity for subprocess attribution. */
+  /** Optional trace identity forwarded to the underlying lib helper. */
   trace?: TraceIdentity
 }
 
@@ -360,7 +366,7 @@ export interface CommitterWorktreeSpec {
   /** Recovery task id used for path + branch naming. */
   recoveryTaskId: string
   integrationBranch: string
-  /** Optional trace identity for subprocess attribution. */
+  /** Optional trace identity forwarded to the underlying lib helper. */
   trace?: TraceIdentity
 }
 
@@ -379,7 +385,7 @@ export interface SyncWorktreeSpec {
   integrationBranch: string
   /** Conflict policy. Defaults to `'escalate'` — the caller opts into recreate/reconcile. */
   onConflict?: WorktreeConflictPolicy
-  /** Optional trace identity for subprocess attribution. */
+  /** Optional trace identity forwarded to the underlying lib helper. */
   trace?: TraceIdentity
 }
 
@@ -418,7 +424,7 @@ export type WorktreeSyncOutcome =
 export interface RestoreWorktreeSpec {
   taskId: string
   ref: WorktreeResult
-  /** Optional trace identity for subprocess attribution. */
+  /** Optional trace identity forwarded to the underlying lib helper. */
   trace?: TraceIdentity
 }
 
@@ -508,7 +514,7 @@ export interface VcsAutoCommitOperatorDirtSpec {
   baseSha: string
   /** The just-merged tip `refs/heads/<integrationBranch>` now points at. */
   headSha: string
-  /** Optional trace identity for subprocess attribution. */
+  /** Optional trace identity forwarded to the underlying lib helper. */
   trace?: TraceIdentity
 }
 
