@@ -24,7 +24,6 @@ import { useProposals } from '@/entities/proposals/useProposals'
 import { proposalHash } from '@/shared/routing'
 import { relativeTime } from '@/shared/time'
 import { invokeAction } from '@/shared/api'
-import { CopyButton } from '@/components/CopyButton'
 import { ErrorState } from '@/components/ErrorState'
 import { SkeletonBlock } from '@/components/Skeleton'
 import type { DraftFeature } from '@/shared/schemas'
@@ -52,6 +51,39 @@ const SOURCE_CHIP_CLASS: Record<string, string> = {
   growth: 'bg-success/10 text-success border-success/20',
 }
 
+// ── Inline API helpers ────────────────────────────────────────────────────────
+// These will move to @/shared/api once Slice 1 lands; for now they are
+// inlined here to avoid depending on an unmerged change.
+
+const BASE_URL = typeof import.meta !== 'undefined' && import.meta.env
+  ? (import.meta.env.VITE_API_BASE ?? '')
+  : ''
+
+async function postAction(op: string, entityId: string): Promise<{ taskIds?: string[] }> {
+  const r = await fetch(`${BASE_URL}/api/actions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ op, entityId }),
+  })
+  if (!r.ok) {
+    let message = `POST /api/actions → ${r.status}`
+    try {
+      const body = await r.json() as { error?: string }
+      if (typeof body.error === 'string' && body.error.length > 0) message = body.error
+    } catch { /* ignore JSON parse errors */ }
+    throw new Error(message)
+  }
+  return r.json() as Promise<{ taskIds?: string[] }>
+}
+
+async function startThreadFromProposal(proposalId: string): Promise<{ threadId: string }> {
+  const r = await fetch(`${BASE_URL}/api/proposals/${encodeURIComponent(proposalId)}/thread`, {
+    method: 'POST',
+  })
+  if (!r.ok) throw new Error(`POST /api/proposals/${proposalId}/thread → ${r.status}`)
+  return r.json() as Promise<{ threadId: string }>
+}
+
 // ── ProposalRow ───────────────────────────────────────────────────────────────
 
 interface ProposalRowProps {
@@ -71,7 +103,20 @@ const ProposalRow = ({ draft, onDismiss }: ProposalRowProps) => {
   // newlines keeps the preview readable instead of jamming lines together.
   // When expanded, show the original text with whitespace preserved.
   const preview = draft.problem.replace(/\s*\n\s*/g, ' ').trim()
-  const grillCmd = `/mars:grill ${draft.id}`
+
+  const [grillState, setGrillState] = useState<
+    | { kind: 'idle' }
+    | { kind: 'pending' }
+    | { kind: 'done' }
+    | { kind: 'error'; message: string }
+  >({ kind: 'idle' })
+
+  const [promoteState, setPromoteState] = useState<
+    | { kind: 'idle' }
+    | { kind: 'pending' }
+    | { kind: 'done'; taskId?: string }
+    | { kind: 'error'; message: string }
+  >({ kind: 'idle' })
 
   const handleDismiss = () => {
     void invokeAction('dismiss', draft.id).then(onDismiss)
@@ -85,6 +130,35 @@ const ProposalRow = ({ draft, onDismiss }: ProposalRowProps) => {
       // expanded card's full height is already in layout.
       requestAnimationFrame(() => {
         cardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+      })
+    }
+  }
+
+  const handleGrill = async () => {
+    if (grillState.kind === 'pending') return
+    setGrillState({ kind: 'pending' })
+    try {
+      const { threadId } = await startThreadFromProposal(draft.id)
+      window.location.hash = `#/chat?thread=${encodeURIComponent(threadId)}`
+      setGrillState({ kind: 'done' })
+    } catch (err) {
+      setGrillState({
+        kind: 'error',
+        message: err instanceof Error ? err.message : 'Failed to start grill session',
+      })
+    }
+  }
+
+  const handlePromote = async () => {
+    if (promoteState.kind === 'pending') return
+    setPromoteState({ kind: 'pending' })
+    try {
+      const result = await postAction('promote', draft.id)
+      setPromoteState({ kind: 'done', taskId: result.taskIds?.[0] })
+    } catch (err) {
+      setPromoteState({
+        kind: 'error',
+        message: err instanceof Error ? err.message : 'Failed to promote proposal',
       })
     }
   }
@@ -140,8 +214,8 @@ const ProposalRow = ({ draft, onDismiss }: ProposalRowProps) => {
         </div>
       )}
 
-      {/* Footer: dismiss + open drawer link + grill command copy */}
-      <div className="flex items-center gap-3">
+      {/* Footer: Dismiss · Review → · Grill · Promote */}
+      <div className="flex flex-wrap items-center gap-3">
         <button
           type="button"
           onClick={handleDismiss}
@@ -155,12 +229,39 @@ const ProposalRow = ({ draft, onDismiss }: ProposalRowProps) => {
         >
           Review →
         </a>
-        <CopyButton
-          text={grillCmd}
-          label={grillCmd}
-          aria-label={`Copy /mars:grill ${draft.id}`}
-          className="font-mono text-micro text-muted-foreground/60 hover:text-muted-foreground focus:outline-none"
-        />
+        <button
+          type="button"
+          onClick={() => { void handleGrill() }}
+          disabled={grillState.kind === 'pending'}
+          aria-label={`Grill proposal ${draft.id}`}
+          className="text-label text-muted-foreground hover:text-foreground focus:outline-none disabled:opacity-50"
+        >
+          {grillState.kind === 'pending' ? 'Opening…' : 'Grill'}
+        </button>
+        {promoteState.kind === 'done' && promoteState.taskId ? (
+          <a
+            href={`#/task/${promoteState.taskId}`}
+            className="text-label text-success hover:underline"
+          >
+            ✓ Task {promoteState.taskId}
+          </a>
+        ) : (
+          <button
+            type="button"
+            onClick={() => { void handlePromote() }}
+            disabled={promoteState.kind === 'pending'}
+            aria-label={`Promote proposal ${draft.id}`}
+            className="text-label text-muted-foreground hover:text-foreground focus:outline-none disabled:opacity-50"
+          >
+            {promoteState.kind === 'pending' ? 'Promoting…' : 'Promote'}
+          </button>
+        )}
+        {grillState.kind === 'error' && (
+          <span className="text-label text-error">{grillState.message}</span>
+        )}
+        {promoteState.kind === 'error' && (
+          <span className="text-label text-error">{promoteState.message}</span>
+        )}
       </div>
     </div>
   )

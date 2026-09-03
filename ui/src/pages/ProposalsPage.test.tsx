@@ -114,34 +114,50 @@ describe('ProposalsPage — body preview', () => {
   })
 })
 
-describe('ProposalsPage — grill command copy', () => {
-  // Regression: the row used to render `/mars:grill <id>` as a dead,
-  // non-clickable chip that could also truncate a long id — leaving no
-  // accurate copy of it on screen. The copy affordance must carry the full,
-  // untruncated id, both in its visible label and its aria-label, and must
-  // not rely on CSS truncation classes that would hide part of it.
-  it('exposes the full, untruncated proposal id in the grill command copy button', () => {
-    const longId = '894fbcdf-src-core-tests-src-cli-commands-tests-timeout-handling'
-    const html = render([draft({ id: longId })])
+describe('ProposalsPage — row action buttons', () => {
+  // Slice 3: replace the /mars:grill <id> CopyButton with inline Grill and
+  // Promote buttons so the operator can act without leaving the UI.
 
-    expect(html).toContain(`/mars:grill ${longId}`)
-    expect(html).toContain(`aria-label="Copy /mars:grill ${longId}"`)
+  it('renders a Grill button instead of the grill command CopyButton', () => {
+    const html = render([draft()])
+    expect(html).toContain('Grill')
+    // The copy-paste CLI command must not appear anywhere in the rendered output
+    expect(html).not.toContain('/mars:grill')
   })
 
-  it('does not truncate the grill command chip with CSS clamping', () => {
+  it('renders a Promote button in the row footer', () => {
+    const html = render([draft()])
+    expect(html).toContain('Promote')
+  })
+
+  it('renders footer actions in order: Dismiss, Review, Grill, Promote', () => {
+    const html = render([draft()])
+    const dismissAt = html.indexOf('Dismiss')
+    const reviewAt = html.indexOf('Review')
+    const grillAt = html.indexOf('>Grill<')
+    const promoteAt = html.indexOf('>Promote<')
+    expect(dismissAt).toBeGreaterThan(-1)
+    expect(reviewAt).toBeGreaterThan(dismissAt)
+    expect(grillAt).toBeGreaterThan(reviewAt)
+    expect(promoteAt).toBeGreaterThan(grillAt)
+  })
+
+  it('Grill button carries an aria-label identifying the proposal', () => {
+    const id = '894fbcdf-src-core-tests-timeout-handling'
+    const html = render([draft({ id })])
+    expect(html).toContain(`aria-label="Grill proposal ${id}"`)
+  })
+
+  it('Promote button carries an aria-label identifying the proposal', () => {
+    const id = '894fbcdf-src-core-tests-timeout-handling'
+    const html = render([draft({ id })])
+    expect(html).toContain(`aria-label="Promote proposal ${id}"`)
+  })
+
+  it('does not render the old CopyButton for any proposal', () => {
     const longId = '894fbcdf-src-core-tests-src-cli-commands-tests-timeout-handling'
     const html = render([draft({ id: longId })])
-
-    // Isolate the copy button element itself (starts at the nearest
-    // `<button` before the grill text, ends at its own `>`) — its class
-    // attribute must not clamp or truncate the id, since the button is the
-    // only copy of it on screen.
-    const grillIdx = html.indexOf(`/mars:grill ${longId}`)
-    expect(grillIdx).toBeGreaterThan(-1)
-    const buttonStart = html.lastIndexOf('<button', grillIdx)
-    const buttonOpenTagEnd = html.indexOf('>', buttonStart)
-    const buttonOpenTag = html.slice(buttonStart, buttonOpenTagEnd)
-    expect(buttonOpenTag).not.toContain('truncate')
-    expect(buttonOpenTag).not.toContain('line-clamp')
+    // The old copy button surface is gone — no aria-label referencing grill copy
+    expect(html).not.toContain('Copy /mars:grill')
   })
 })
