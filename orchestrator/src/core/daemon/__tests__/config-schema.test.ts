@@ -19,7 +19,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { __resetContextCacheForTests } from '../../context'
-import { daemonConfigPath, daemonConfigSchema, readDaemonConfigFile } from '../config'
+import {
+  type CustomClassifierPattern,
+  daemonConfigPath,
+  daemonConfigSchema,
+  patchDaemonConfigFile,
+  readCustomClassifiers,
+  readDaemonConfigFile,
+} from '../config'
 
 describe('daemonConfigSchema', () => {
   it('accepts a fully-populated daemon.json shape covering caps, levers, selfEvolve, scoring and paused', () => {
@@ -111,5 +118,76 @@ describe('readDaemonConfigFile', () => {
     writeDaemonJson({ budget: { windowTokens: 1000 } })
     const result = readDaemonConfigFile()
     expect(result.budget).toEqual({ windowTokens: 1000 })
+  })
+})
+
+describe('customClassifiers', () => {
+  let tmpDir: string
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'mars-cfg-cc-'))
+    mkdirSync(join(tmpDir, '.mars'), { recursive: true })
+    process.env['MARS_REPO'] = tmpDir
+    __resetContextCacheForTests()
+  })
+
+  afterEach(() => {
+    delete process.env['MARS_REPO']
+    __resetContextCacheForTests()
+    rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  it('daemonConfigSchema accepts a well-formed customClassifiers array', () => {
+    const result = daemonConfigSchema.safeParse({
+      customClassifiers: [
+        { name: 'type-error', match: 'TS\\d+', guidance: 'fix the type' },
+        { name: 'timeout', matchFull: 'timed out after \\d+ms' },
+        { name: 'both-fields', match: '^Error', matchFull: 'full output pattern' },
+      ],
+    })
+    expect(result.success).toBe(true)
+  })
+
+  it('daemonConfigSchema accepts when customClassifiers is absent (backward compat)', () => {
+    expect(daemonConfigSchema.safeParse({}).success).toBe(true)
+    expect(daemonConfigSchema.safeParse({ caps: { implement: 4 } }).success).toBe(true)
+  })
+
+  it('daemonConfigSchema rejects a customClassifiers entry missing the required name field', () => {
+    const result = daemonConfigSchema.safeParse({
+      customClassifiers: [{ match: 'some error pattern' }],
+    })
+    expect(result.success).toBe(false)
+  })
+
+  it('daemonConfigSchema rejects a customClassifiers entry with neither match nor matchFull', () => {
+    const result = daemonConfigSchema.safeParse({
+      customClassifiers: [{ name: 'no-matcher', guidance: 'cannot match anything' }],
+    })
+    expect(result.success).toBe(false)
+  })
+
+  it('readCustomClassifiers returns [] when customClassifiers is absent', () => {
+    // No daemon.json in the temp dir — should fall back silently to []
+    expect(readCustomClassifiers()).toEqual([])
+  })
+
+  it('readCustomClassifiers returns parsed entries when valid customClassifiers are present', () => {
+    writeFileSync(
+      daemonConfigPath(),
+      JSON.stringify({
+        customClassifiers: [{ name: 'type-error', match: 'TS\\d+' }],
+      }),
+    )
+    expect(readCustomClassifiers()).toEqual([{ name: 'type-error', match: 'TS\\d+' }])
+  })
+
+  it('patchDaemonConfigFile round-trips customClassifiers via readCustomClassifiers', () => {
+    const patterns: CustomClassifierPattern[] = [
+      { name: 'type-error', match: 'TS\\d+', guidance: 'fix the type annotation' },
+      { name: 'timeout', matchFull: 'timed out after \\d+ms' },
+    ]
+    patchDaemonConfigFile({ customClassifiers: patterns as unknown as Record<string, unknown>[] })
+    expect(readCustomClassifiers()).toEqual(patterns)
   })
 })

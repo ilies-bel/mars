@@ -270,6 +270,38 @@ export interface CodeStepConfig {
 }
 
 /**
+ * A single operator-defined verify-failure classifier. The `name` field is
+ * the error-class slug used in failure records; at least one of `match`
+ * (tested against the first line of output) or `matchFull` (tested against
+ * the full output) must be present. `guidance` carries operator-written
+ * recovery advice surfaced alongside the matched failure.
+ */
+export interface CustomClassifierPattern {
+  name: string
+  match?: string
+  matchFull?: string
+  guidance?: string
+}
+
+/**
+ * Zod schema for a single `customClassifiers` entry. Requires `name` (a
+ * non-empty slug) and at least one of `match` or `matchFull`. Invalid regex
+ * syntax in those fields is caught at config-read time by `daemonConfigSchema`
+ * — the same point at which a malformed `caps.implement` is caught — rather
+ * than propagating silently to the classification path.
+ */
+export const customClassifierPatternSchema = z
+  .object({
+    name: z.string().min(1),
+    match: z.string().optional(),
+    matchFull: z.string().optional(),
+    guidance: z.string().optional(),
+  })
+  .refine((d) => d.match !== undefined || d.matchFull !== undefined, {
+    message: 'at least one of match or matchFull is required',
+  })
+
+/**
  * Zod schema for the raw `.mars/daemon.json` file on disk (before env/default
  * resolution). Every field is optional/partial because daemon.json is a
  * merge-patched, hand-editable file — a field that is entirely absent must
@@ -388,6 +420,13 @@ export const daemonConfigSchema = z
       })
       .partial()
       .optional(),
+    /**
+     * Operator-defined verify-failure classifier patterns. When present, the
+     * verify runner matches each entry's `match` / `matchFull` regex against
+     * the command output and attaches the `name` slug (and optional
+     * `guidance`) to the failure record. Absent by default (backward compat).
+     */
+    customClassifiers: z.array(customClassifierPatternSchema).optional(),
   })
   .partial()
   .passthrough()
@@ -826,6 +865,18 @@ export const patchDaemonConfigFile = (
     closeSync(dirFd)
   }
   return next
+}
+
+/**
+ * Read operator-defined custom classifier patterns from daemon.json.
+ * Returns an empty array when the `customClassifiers` key is absent, the
+ * file is missing, or the file is invalid — never throws.
+ */
+export const readCustomClassifiers = (): CustomClassifierPattern[] => {
+  const raw = readDaemonConfigFileLenient()
+  const classifiers = raw.customClassifiers
+  if (!Array.isArray(classifiers)) return []
+  return classifiers as CustomClassifierPattern[]
 }
 
 /**
