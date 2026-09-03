@@ -147,20 +147,20 @@ describe('TopStripe – visual hierarchy (numbers pop from labels)', () => {
     expect(section).toContain('text-status-running')
   })
 
-  it('DONE TODAY count uses success color', () => {
+  it('DONE TODAY count uses status-done color when count is non-zero', () => {
     const html = renderToStaticMarkup(
       <TopStripe inProgress={0} doneToday={5} failed={0} connected={true} dispatch={RUNNING} daemonDown={false} />,
     )
     const section = between(html, 'stat-done', 'stat-failed')
-    expect(section).toContain('text-success')
+    expect(section).toContain('text-status-done')
   })
 
-  it('FAILED count uses error color to draw attention', () => {
+  it('FAILED count uses status-failed color to draw attention when count is non-zero', () => {
     const html = renderToStaticMarkup(
       <TopStripe inProgress={0} doneToday={0} failed={2} connected={true} dispatch={RUNNING} daemonDown={false} />,
     )
     const section = from(html, 'stat-failed')
-    expect(section).toContain('text-error')
+    expect(section).toContain('text-status-failed')
   })
 
   it('IN PROGRESS label is muted so the number stands out', () => {

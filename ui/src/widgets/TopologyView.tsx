@@ -539,18 +539,34 @@ const TopologyViewInner = ({
     return (
       <main className="flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-background">
         {selectedProposalId != null ? (
-          <div className="flex flex-col items-center gap-3">
-            <p className="font-mono text-body text-primary">No active tasks for this proposal</p>
+          <div className="flex flex-col items-center gap-3 text-center">
+            <span
+              className="select-none font-mono text-5xl leading-none text-muted-foreground/20"
+              aria-hidden="true"
+            >
+              ◈
+            </span>
+            <p className="text-title font-medium text-foreground">No active tasks for this proposal</p>
+            <p className="text-body text-muted-foreground">Remove the proposal filter to see all tasks</p>
             <button
               data-testid="clear-proposal-filter"
               onClick={() => onSelectProposal?.(null)}
-              className="rounded border border-border px-3 py-1.5 font-mono text-label text-muted-foreground transition-colors hover:border-foreground/40 hover:text-foreground"
+              className="mt-1 rounded border border-border px-3 py-1.5 font-mono text-label text-muted-foreground transition-colors hover:border-foreground/40 hover:text-foreground"
             >
               Clear filter
             </button>
           </div>
         ) : (
-          <p className="font-mono text-body text-primary">No active tasks</p>
+          <div className="flex flex-col items-center gap-3 text-center">
+            <span
+              className="select-none font-mono text-5xl leading-none text-muted-foreground/20"
+              aria-hidden="true"
+            >
+              ◈
+            </span>
+            <p className="text-title font-medium text-foreground">No active tasks</p>
+            <p className="text-body text-muted-foreground">Tasks will appear here when queued</p>
+          </div>
         )}
       </main>
     )

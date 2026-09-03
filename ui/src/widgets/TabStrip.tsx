@@ -7,8 +7,10 @@ interface TabStripProps {
 
 const tabClass = (active: boolean): string =>
   [
-    'rounded px-2 py-1 font-mono text-label uppercase tracking-wide transition-colors',
-    active ? 'bg-primary/30 text-foreground' : 'text-primary hover:text-foreground',
+    '-mb-px px-3 pb-2 pt-1.5 font-mono text-label uppercase tracking-wide transition-colors border-b-2',
+    active
+      ? 'border-highlight text-foreground font-medium'
+      : 'border-transparent text-muted-foreground hover:text-foreground',
   ].join(' ')
 
 /**
@@ -21,7 +23,7 @@ export const TabStrip = ({ active, onSelect }: TabStripProps) => (
   <div
     role="tablist"
     aria-label="Progress views"
-    className="flex items-center gap-2 border-b border-primary/30 bg-background px-4 py-1.5"
+    className="flex items-end border-b border-border bg-background px-4"
   >
     {TABS.map((tab) => {
       const isActive = tab === active

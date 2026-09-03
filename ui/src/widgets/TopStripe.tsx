@@ -83,18 +83,18 @@ export const TopStripe = ({
         onClick={() => {
           window.location.hash = releaseNotesHash()
         }}
-        className="rounded border border-primary/40 px-2 py-0.5 font-mono text-body text-primary hover:bg-primary/10"
+        className="rounded-full bg-surface px-2.5 py-0.5 text-micro text-muted-foreground transition-colors hover:text-foreground"
       >
         Release Notes
       </button>
     </div>
     <div className="flex items-center gap-4">
-      <div className="flex items-center gap-3 font-mono tracking-wide">
-        <div data-testid="stat-in-progress" className="flex items-center gap-1">
-          <span className="tabular-nums text-title font-bold text-status-running">{inProgress}</span>
-          <span className="text-micro text-muted-foreground">IN PROGRESS</span>
+      <div className="flex items-baseline gap-4 font-mono">
+        <div data-testid="stat-in-progress" className="flex items-baseline gap-1">
+          <span className="tabular-nums text-title font-semibold text-status-running">{inProgress}</span>
+          <span className="text-micro text-muted-foreground tracking-wide">IN PROGRESS</span>
         </div>
-        <span className="text-muted-foreground">·</span>
+        <span className="text-muted-foreground/50">·</span>
         <button
           type="button"
           data-testid="stat-done"
@@ -102,15 +102,15 @@ export const TopStripe = ({
           onClick={() => {
             window.location.hash = releaseNotesHash()
           }}
-          className="flex cursor-pointer items-center gap-1 hover:opacity-80"
+          className="flex cursor-pointer items-baseline gap-1 hover:opacity-80"
         >
-          <span className="tabular-nums text-title font-bold text-success">{doneToday}</span>
-          <span className="text-micro text-muted-foreground">DONE TODAY</span>
+          <span className={`tabular-nums text-title font-semibold ${doneToday > 0 ? 'text-status-done' : 'text-muted-foreground'}`}>{doneToday}</span>
+          <span className="text-micro text-muted-foreground tracking-wide">DONE TODAY</span>
         </button>
-        <span className="text-muted-foreground">·</span>
-        <div data-testid="stat-failed" className="flex items-center gap-1">
-          <span className="tabular-nums text-title font-bold text-error">{failed}</span>
-          <span className="text-micro text-muted-foreground">FAILED</span>
+        <span className="text-muted-foreground/50">·</span>
+        <div data-testid="stat-failed" className="flex items-baseline gap-1">
+          <span className={`tabular-nums text-title font-semibold ${failed > 0 ? 'text-status-failed' : 'text-muted-foreground'}`}>{failed}</span>
+          <span className="text-micro text-muted-foreground tracking-wide">FAILED</span>
         </div>
       </div>
       <HealthDot connected={connected} dispatch={dispatch} daemonDown={daemonDown} />

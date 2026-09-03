@@ -105,15 +105,23 @@ export const ProgressPage = () => {
         />
         <TabStrip active={activeTab} onSelect={setActiveTab} />
         {/* Text search — always visible */}
-        <div className="flex items-center gap-2 border-b border-primary/20 bg-background px-4 py-1.5">
-          <input
-            type="text"
-            data-testid="search-tasks"
-            placeholder="Search id, prompt, branch…"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="min-w-0 flex-1 rounded border border-border bg-card px-2 py-0.5 font-mono text-label text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-border"
-          />
+        <div className="flex items-center border-b border-border bg-background px-4 py-1.5">
+          <div className="relative min-w-0 flex-1">
+            <span
+              className="pointer-events-none absolute inset-y-0 left-2 flex select-none items-center text-muted-foreground/60"
+              aria-hidden="true"
+            >
+              ⌕
+            </span>
+            <input
+              type="text"
+              data-testid="search-tasks"
+              placeholder="Search id, prompt, branch…"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full rounded-md border border-border bg-card py-0.5 pl-6 pr-2 font-mono text-label text-foreground placeholder:text-muted-foreground/60 focus:border-highlight/40 focus:outline-none"
+            />
+          </div>
         </div>
         {error && tasks === null ? (
           <main className="flex min-h-0 flex-1 overflow-hidden bg-background">
