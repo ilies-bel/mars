@@ -484,6 +484,20 @@ export interface HttpServerDeps {
    */
   handleEnrichRetire?: (id: string) => Promise<void>
   /**
+   * Permanently dismiss the reflect-recommended notice ("stop asking me that").
+   *
+   * Resolves the open `reflect-recommended` action-queue row and writes a
+   * durable `notice_dismissals` record so the reflect-recommended detector does
+   * not re-raise the row on the next sweep. The dismissal is per-key
+   * (not per-class) — only `reflect-recommended` is suppressed.
+   *
+   * The id argument is the action-queue item row id.
+   *
+   * Optional — when absent the endpoint returns 501 Not Implemented.
+   * Backs the `POST /actions/stop-asking-reflect/:id` entity-op route.
+   */
+  stopAskingReflect?: (id: string) => Promise<void>
+  /**
    * Promote a fully-shaped draft proposal: flip its status from `draft` →
    * `prd-ready`, run the slicer to create tasks, and return the resulting
    * task IDs. Throws when the proposal is not in `draft` status or the

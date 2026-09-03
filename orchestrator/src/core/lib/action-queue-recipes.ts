@@ -727,7 +727,10 @@ const RECIPE_DEFINITIONS = {
       entityId: ctx.entityId,
       evidence: ctx.payload['evidence'],
     }),
-    verbs: [{ op: 'run-reflect', label: 'Run reflection', style: 'primary' }],
+    verbs: [
+      { op: 'run-reflect', label: 'Run reflection', style: 'primary' },
+      { op: 'stop-asking-reflect', label: 'Stop asking me that', style: 'default' },
+    ],
   },
 
   // ── API and rate limits ────────────────────────────────────────────────────

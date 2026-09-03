@@ -225,6 +225,7 @@ type EntityOp =
   | 'gate-restore'
   | 'add-gate'
   | 'enrich-retire'
+  | 'stop-asking-reflect'
 
 const TRACE_EVENT_SEVERITIES: readonly TraceEventSeverity[] = [
   'info',
@@ -349,6 +350,8 @@ const handleEventsRequest = async (
  *   DELETE /verify-gates/:id           → remove a verify gate
  *   POST /verify-gates/:id/restore     → restore a quarantined gate (config write)
  *   POST /actions/dismiss-verify-uncovered/:id → dismiss open verify-uncovered AQ row
+ *   POST /view/scorer-dismiss          → permanently dismiss a suggested scorer ({ scorer })
+ *   POST /actions/stop-asking-reflect/:id → permanently dismiss reflect-recommended notice
  *   POST /gates                        → add a gate via app-service layer ({ ok, gate })
  *   DELETE /gates/:id                  → remove a gate via app-service layer
  *
@@ -415,6 +418,12 @@ export const registerRoutes = (
         throw Object.assign(new Error('enrich-retire not implemented'), { code: 'NOT_IMPLEMENTED' as const })
       }
       await deps.handleEnrichRetire(id)
+    },
+    'stop-asking-reflect': async (id) => {
+      if (!deps.stopAskingReflect) {
+        throw Object.assign(new Error('stop-asking-reflect not implemented'), { code: 'NOT_IMPLEMENTED' as const })
+      }
+      await deps.stopAskingReflect(id)
     },
   }
 
@@ -1296,6 +1305,35 @@ export const registerRoutes = (
         }
         deps.appServices
           .acceptScorerById(parsed.data.id)
+          .then((result) => sendJson(res, 200, result))
+          .catch((err: unknown) => sendError(res, err))
+      })
+      req.on('error', (err: unknown) => sendError(res, err))
+      return
+    }
+
+    // POST /view/scorer-dismiss — permanently dismiss a suggested scorer by id.
+    // Body: { id: string }. Routes through dismissScorerById() which sets the
+    // scorer's status to 'dismissed', preventing the same fingerprint from being
+    // re-suggested ("stop asking me that" for scorer-suggested items).
+    if (req.method === 'POST' && req.url === '/view/scorer-dismiss') {
+      let rawBody = ''
+      req.on('data', (chunk: Buffer) => { rawBody += chunk.toString() })
+      req.on('end', () => {
+        let body: unknown
+        try {
+          body = JSON.parse(rawBody)
+        } catch {
+          sendJson(res, 400, { error: 'invalid JSON body' })
+          return
+        }
+        const parsed = z.object({ id: z.string().min(1) }).safeParse(body)
+        if (!parsed.success) {
+          sendJson(res, 400, { error: 'id is required' })
+          return
+        }
+        deps.appServices
+          .dismissScorerById(parsed.data.id)
           .then((result) => sendJson(res, 200, result))
           .catch((err: unknown) => sendError(res, err))
       })

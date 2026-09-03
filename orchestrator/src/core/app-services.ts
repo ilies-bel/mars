@@ -61,6 +61,7 @@ import {
 import {
   listScorers,
   acceptScorer,
+  dismissScorer,
   type Scorer,
 } from './scorers'
 import {
@@ -318,6 +319,12 @@ export interface AppServices {
   viewScorerWorkflows: () => Promise<{ workflows: string[] }>
   viewScorerSuggestions: () => Promise<{ scorers: Scorer[] }>
   acceptScorerById: (id: string) => Promise<{ scorer: Scorer }>
+  /**
+   * Permanently dismiss a suggested scorer. Once dismissed, the same scorer
+   * fingerprint returns 'already-triaged' from suggestScorer and is not
+   * re-raised as a scorer-suggested action-queue row.
+   */
+  dismissScorerById: (id: string) => Promise<{ scorer: Scorer }>
   // ── framework update (poller cache reader) ──────────────────────────────────
   viewFrameworkUpdate: () => Promise<FrameworkUpdateState>
   // ── workflow configs and promotion ledger (PRD 5b73d277) ──────────────────
@@ -1799,6 +1806,11 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     return { scorer }
   }
 
+  const dismissScorerById: AppServices['dismissScorerById'] = async (id) => {
+    const scorer = await dismissScorer(id)
+    return { scorer }
+  }
+
   const viewWorkflowConfigs: AppServices['viewWorkflowConfigs'] = async (workflow) => {
     const client = resolveStateClient()
     const configs = await listWorkflowConfigs(client, workflow)
@@ -2123,6 +2135,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     viewScorerWorkflows,
     viewScorerSuggestions,
     acceptScorerById,
+    dismissScorerById,
     viewWorkflowConfigs,
     viewPromotionLedger,
     viewLoopLedger,

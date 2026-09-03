@@ -88,6 +88,7 @@ export const stubAppServices = (
   viewScorerWorkflows: async () => ({ workflows: [] }),
   viewScorerSuggestions: async () => ({ scorers: [] }),
   acceptScorerById: async () => { throw new Error('not implemented in stub') },
+  dismissScorerById: async () => { throw new Error('not implemented in stub') },
   viewWorkflowConfigs: async () => ({ configs: [] }),
   viewPromotionLedger: async () => ({ entries: [] }),
   viewLoopLedger: async () => ({ entries: [] }),

@@ -223,8 +223,11 @@ interface ReflectWorthinessEvidence {
  * - `'cooldown'`: an operator resolved a reflect-recommended row within the
  *   configured cooldown window (selfEvolve.reflectCooldownDays). Re-raising
  *   immediately would undo the explicit operator dismissal.
+ * - `'dismissed'`: the operator permanently dismissed this notice via the
+ *   "stop asking me that" verb; a record in `notice_dismissals` suppresses
+ *   all future raises until manually cleared.
  */
-type ReflectDetectorSkipReason = 'no-evidence' | 'cooldown'
+type ReflectDetectorSkipReason = 'no-evidence' | 'cooldown' | 'dismissed'
 
 export interface ReflectRecommendedResult {
   /** True when the row was raised (or the existing open row was bumped). */
@@ -418,6 +421,15 @@ export const runReflectRecommendedDetector = async (opts?: {
       'self-evolve:reflect-detector',
     )
     return { raised: false, rowId: null, evidence: null, skipReason: 'no-evidence' }
+  }
+
+  // Permanent dismissal: if the operator chose "stop asking me that", a record
+  // in notice_dismissals suppresses all future raises for this notice key.
+  // This check runs BEFORE the cooldown so a permanent dismissal short-circuits
+  // without querying the action_queue_items history at all.
+  const { isNoticeDismissed } = await import('./action-queue.js')
+  if (await isNoticeDismissed(REFLECT_RECOMMENDED_SIG)) {
+    return { raised: false, rowId: null, evidence: null, skipReason: 'dismissed' }
   }
 
   // Cooldown: when the operator resolved a reflect-recommended row within the
