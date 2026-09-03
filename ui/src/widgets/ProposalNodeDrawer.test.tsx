@@ -256,6 +256,53 @@ describe('ProposalNodeDrawer – rich proposal detail', () => {
   })
 })
 
+// ── AC5: ProposalActionRow integration ───────────────────────────────────────
+
+describe('ProposalNodeDrawer – ProposalActionRow', () => {
+  it('renders the action row when proposal is provided and status is draft', () => {
+    const html = renderToStaticMarkup(
+      <ProposalNodeDrawer
+        proposalId="p1"
+        proposals={[proposal('p1')]}
+        tasks={[]}
+        proposal={draftFeature({ status: 'draft' })}
+        onClose={() => {}}
+      />,
+    )
+    expect(html).toContain('data-testid="proposal-action-row"')
+    expect(html).toContain('data-testid="btn-promote"')
+    expect(html).toContain('data-testid="btn-grill"')
+    expect(html).toContain('data-testid="btn-dismiss"')
+  })
+
+  it('does not render the action row for non-draft statuses', () => {
+    for (const status of ['prd-ready', 'sliced', 'dismissed'] as const) {
+      const html = renderToStaticMarkup(
+        <ProposalNodeDrawer
+          proposalId="p1"
+          proposals={[proposal('p1')]}
+          tasks={[]}
+          proposal={draftFeature({ status })}
+          onClose={() => {}}
+        />,
+      )
+      expect(html).not.toContain('data-testid="proposal-action-row"')
+    }
+  })
+
+  it('does not render the action row when proposal prop is absent', () => {
+    const html = renderToStaticMarkup(
+      <ProposalNodeDrawer
+        proposalId="p1"
+        proposals={[proposal('p1')]}
+        tasks={[]}
+        onClose={() => {}}
+      />,
+    )
+    expect(html).not.toContain('data-testid="proposal-action-row"')
+  })
+})
+
 // ── AC3: Local subgraph ───────────────────────────────────────────────────────
 
 describe('ProposalNodeDrawer – local subgraph', () => {

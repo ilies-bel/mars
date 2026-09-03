@@ -13,6 +13,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { DraftFeature, ProgressProposalNode, ProgressTask } from '@/shared/schemas'
 import { dagClusterStyle, DAG_EDGE_PROVENANCE } from '@/shared/dagColors'
 import { CopyButton } from '@/components/CopyButton'
+import { ProposalActionRow } from '@/components/ProposalActionRow'
 
 // ── Mini-subgraph SVG constants ───────────────────────────────────────────────
 // Match TaskDetailDrawer's mini-canvas sizing so both panels feel consistent.
@@ -260,6 +261,11 @@ export const ProposalNodeDrawer = ({
             Close
           </button>
         </header>
+
+        {/* Action row — shown only for draft proposals */}
+        {proposal && proposal.status === 'draft' && (
+          <ProposalActionRow proposalId={proposal.id} status={proposal.status} />
+        )}
 
         {/* Scrollable body — rich sections + subgraph */}
         <div className="flex flex-1 flex-col overflow-y-auto">
