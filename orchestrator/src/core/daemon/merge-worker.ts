@@ -268,6 +268,106 @@ async function runMergeJob(
   // merge legitimately needs the supervisor's 30.
   const watchdogMs = Number(process.env.MARS_MERGE_WATCHDOG_MS ?? DEFAULT_WATCHDOG_MS)
 
+  // Default per-gate timeout for integration-tier gates when a gate does not
+  // declare its own timeoutMin. Mirrors the default in server.ts:runGate.
+  const DEFAULT_INTEGRATION_TIMEOUT_MIN = 15
+
+  // Construct the integration-gate hook that runs required integration-tier
+  // gates after the fast-forward, inside the merge lock, before it releases.
+  // This replaces the dead `integrationGateRunner` in tools/merge/merge.ts,
+  // which was declared but never wired to mergeFn (mars-cd039a0b).
+  //
+  // Decision: non-required integration gates are SKIPPED at this boundary.
+  // Running an informational gate inside the merge lock would hold the lock
+  // for something that cannot block the merge — counter-productive.
+  //
+  // Per-gate timeout: each gate runs with its own AbortSignal.timeout derived
+  // from step.timeoutMin (fallback DEFAULT_INTEGRATION_TIMEOUT_MIN). This
+  // replaces the old single global 120 s budget (INTEGRATION_GATE_TIMEOUT_MS)
+  // that covered all gates combined and ignored per-gate declared budgets.
+  // Mirrors the sibling fix in server.ts:runGate (4d093d011).
+  const onAfterFastForward = async (info: {
+    finalTaskSha: string
+    finalIntegrationSha: string
+  }): Promise<void> => {
+    const { loadVerifyGates } = await import('../../core/verify-gates.js')
+    const { resolveStateClient } = await import('../store/state-client.js')
+    const { resolveVerifier } = await import('../ports/verifier/registry.js')
+
+    const gateScopes = await loadVerifyGates(resolveStateClient())
+
+    // Only required, active integration-tier steps. `loadVerifyGates` already
+    // applies the `state='active'` filter in its SQL query; `required` is an
+    // explicit secondary filter here so informational-only gates do not hold
+    // the merge lock.
+    const integrationSteps = gateScopes.flatMap((sc) =>
+      sc.steps
+        .filter((s) => s.tier === 'integration' && s.required)
+        .map((s) => ({ ...s, dir: sc.scope })),
+    )
+
+    if (integrationSteps.length === 0) return
+
+    log(
+      `[merge-worker] task ${job.taskId}: running ${integrationSteps.length} required ` +
+        `integration-tier gate(s) under merge lock ` +
+        `(pre-merge: ${info.finalIntegrationSha.slice(0, 9)}, ` +
+        `post-merge: ${info.finalTaskSha.slice(0, 9)})`,
+    )
+
+    const outputParts: string[] = []
+
+    // Run gates sequentially, fail-fast: we are inside the merge lock and
+    // should release it as quickly as possible on a failed gate.
+    for (const step of integrationSteps) {
+      const timeoutMs =
+        (step.timeoutMin ?? DEFAULT_INTEGRATION_TIMEOUT_MIN) * 60_000
+      const gateSignal = AbortSignal.timeout(timeoutMs)
+
+      const gateResult = await resolveVerifier().run(
+        {
+          cwd: job.worktreePath,
+          // Remap tier to 'task' so the verifier actually executes the step
+          // (verifyChanges defers integration-tier steps to this boundary).
+          steps: [{ ...step, tier: 'task' as const }],
+          // No branch/integrationBranch: skip the has-diff gate for this run.
+        },
+        { signal: gateSignal },
+      )
+
+      for (const s of gateResult.steps) {
+        const durationBadge =
+          s.duration !== undefined ? ` ${s.duration}ms` : ''
+        outputParts.push(
+          `=== ${s.name} (${s.passed ? 'pass' : 'FAIL'}) [integration]${durationBadge} ===\n${s.output}`,
+        )
+      }
+
+      if (!gateResult.passed) {
+        const failed = gateResult.steps.filter((s) => !s.passed)
+        const formattedOutput = outputParts.join('\n\n')
+        if (gateSignal.aborted) {
+          throw new Error(
+            `merge:integration-gate task ${job.taskId}: step "${failed[0]?.name ?? 'unknown'}" ` +
+              `timed out after ${timeoutMs}ms\n\n${formattedOutput}`,
+          )
+        }
+        const summary = failed
+          .map((s) => `${s.name}:\n${s.output.slice(0, 500)}`)
+          .join('\n\n')
+        throw new Error(
+          `merge:integration-gate task ${job.taskId} failed (${failed.length} gate(s)):\n` +
+            `${summary}\n\n${formattedOutput}`,
+        )
+      }
+    }
+
+    log(
+      `[merge-worker] task ${job.taskId}: all ${integrationSteps.length} required ` +
+        `integration-tier gate(s) passed`,
+    )
+  }
+
   let result: MergeJobResult
   try {
     // Pre-flight: fail fast with a diagnosable message if the worktree is gone.
@@ -291,6 +391,12 @@ async function runMergeJob(
       lockTimeoutMs: 30_000,
       watchdogMs,
       signal,
+      // Integration-tier gate: runs required integration gates after the
+      // fast-forward, inside the merge lock, before it releases. Constructed
+      // locally (above) so the callback crosses the queue boundary — job
+      // payloads are serialisable data; functions cannot be threaded through
+      // them. A throw reverts the fast-forward via mergeBranch semantics.
+      onAfterFastForward,
       // Forward vcs-supervisor streaming events to the caller-supplied
       // callback (wired in server.ts to the activity tracker + trace store).
       // A swallowed-error wrapper here so a reporting failure can never

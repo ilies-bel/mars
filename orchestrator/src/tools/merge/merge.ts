@@ -9,7 +9,6 @@
 import { runTool } from '../../core/lib/run-tool'
 import { resolveVcs } from '../../core/ports/vcs/registry'
 import { type WorktreeResult as WorktreeRef } from '../../core/ports/vcs/types'
-import { resolveVerifier } from '../../core/ports/verifier/registry'
 import {
   checkMergeTargetStatus,
   isZeroCommitBranch,
@@ -39,7 +38,6 @@ import { findLiveWorktreeDependents } from '../../core/lib/worktree-dependents'
 import { summarizeUsage } from '../../core/lib/claude-usage'
 import { recordSignals } from '../../core/lib/reflect-signals'
 import { runNonLlmStepWithSpan } from '../../core/lib/run-worker-with-span'
-import { failureExcerpt } from '../../workflows/primitives/shared'
 import { WorkflowTerminalError } from '../../core/lib/workflow-terminal-error'
 import {
   type MarsCtx,
@@ -74,15 +72,6 @@ export interface MergeOutput {
   message: string
 }
 
-/**
- * Per-run budget for the integration gate. Must be well under the 300s merge
- * watchdog (DEFAULT_WATCHDOG_MS in git/merge.ts) so a hung gate command fails
- * fast and releases the merge lock in ~2 min instead of occupying it for the
- * full watchdog budget. Override via MARS_INTEGRATION_GATE_TIMEOUT_MS.
- */
-const INTEGRATION_GATE_TIMEOUT_MS = Number(
-  process.env.MARS_INTEGRATION_GATE_TIMEOUT_MS ?? 120_000,
-)
 
 /**
  * Fast-forward (+ Vega conflict reconciliation) of the task branch into the
@@ -206,124 +195,19 @@ export const merge = async (
 
   let vegaSpanInfo: { workerName: string; sessionId: string | null } | null = null
   // Captured inside fn() so getCommandOutput can forward it to the trace even
-  // when fn() throws (integration gate failure case).
+  // when fn() throws (integration gate failure case). Set from
+  // m.integrationGateOutput when mergeBranch reports a gate failure — the
+  // integration-gate runner now lives in the merge worker, which constructs
+  // onAfterFastForward locally and passes it through mergeFn (mars-cd039a0b).
   let capturedIntegrationGateOutput: string | undefined
-  // Fast-forward SHAs captured by onAfterFastForward and persisted into the
-  // merge step_ended payload. The Scorer runtime (PRD 6cf85bc9) reconstructs
-  // the merged diff from these after the worktree is removed:
-  // `git diff <mergePreSha> <mergePostSha>` — both SHAs are permanent objects,
-  // so the diff stays reproducible even after the integration branch advances.
+  // Fast-forward SHAs captured from the MergeResult (mergePreSha/mergePostSha)
+  // and persisted into the merge step_ended payload. The Scorer runtime
+  // (PRD 6cf85bc9) reconstructs the merged diff from these after the worktree
+  // is removed: `git diff <mergePreSha> <mergePostSha>` — both SHAs are
+  // permanent objects, so the diff stays reproducible even after the
+  // integration branch advances.
   let capturedMergeShas: { mergePreSha: string; mergePostSha: string } | null =
     null
-
-  // Integration-gate runner: `mergeBranch`'s `onAfterFastForward`, called after
-  // the fast-forward and working-tree resync, BEFORE the merge lock releases.
-  // Serialisation is therefore inherited — at most one full suite at a time.
-  // Repos whose recipe defines no integration-tier steps are a true no-op.
-  //
-  // This is NOT the ADR-0100 full verify. That one is `onVerifyRebasedTree`:
-  // it runs in the task's own worktree on the rebased tree, before the lock is
-  // taken at all, so a failure leaves the integration branch untouched. This
-  // runner stays inside the lock on purpose — integration-tier steps test the
-  // merged composition of `main` itself, which only exists post-fast-forward.
-  //
-  // DECISION (mars-03181828): `npm run arch` (the env-reads ratchet) should run
-  // here so the task that breaks the ratchet is the one reported, not a later
-  // unrelated task. The correct shape is to register `npm run arch` as an
-  // **integration-tier gate** in the project's verify-gates config, NOT to
-  // hard-code it in this function — that keeps the framework generic, bounds the
-  // gate via INTEGRATION_GATE_TIMEOUT_MS, and requires no change here.
-  // A follow-up task should add that integration-tier gate entry.
-  const integrationGateRunner = async (info: {
-    finalTaskSha: string
-    finalIntegrationSha: string
-  }): Promise<void> => {
-    const { loadVerifyGates } = await import('../../core/verify-gates')
-    const gateScopes = await loadVerifyGates(store)
-
-    // Collect ALL integration-tier steps from ALL scopes: integration tests
-    // verify the full merged tree, not just the files this task touched.
-    const integrationSteps = gateScopes.flatMap((sc) =>
-      sc.steps
-        .filter((s) => s.tier === 'integration')
-        .map((s) => ({ ...s, dir: sc.scope })),
-    )
-
-    if (integrationSteps.length === 0) {
-      // No integration gates defined — zero added latency.
-      return
-    }
-
-    console.log(
-      `[merge:integration-gate] task ${taskId}: running ${integrationSteps.length} integration-tier gate(s) under merge lock (pre-merge: ${info.finalIntegrationSha.slice(0, 9)}, post-merge: ${info.finalTaskSha.slice(0, 9)})`,
-    )
-
-    // Bound the gate with its own timeout so a hung integration command (e.g. a
-    // test suite with no global testTimeout) fails fast and releases the merge
-    // lock in ~2 min instead of occupying it for the full 300s merge watchdog.
-    // AbortSignal.timeout() is available on Node >= 17.3; this project requires
-    // >= 22.13.0, so it is always safe to call here.
-    const gateSignal = AbortSignal.timeout(INTEGRATION_GATE_TIMEOUT_MS)
-
-    // Run gates via the Verifier port, remapping tier to 'task' so the
-    // implementation actually executes them (the underlying runner defers
-    // integration-tier steps to this boundary).
-    const gateResult = await resolveVerifier().run(
-      {
-        cwd: worktreePath,
-        steps: integrationSteps.map((s) => ({ ...s, tier: 'task' as const })),
-        // No branch/integrationBranch — skip the has-diff gate for this run.
-      },
-      {
-        traceCtx: buildPhaseCtx(trace, taskId, 'merge'),
-        signal: gateSignal,
-      },
-    )
-
-    // Build the formatted output and structured gate-outcomes block, recorded
-    // with tier:'integration' so the run-timeline view can distinguish them
-    // from task-tier gate outcomes.
-    const gateOutcomes = gateResult.steps.map((s) => ({
-      name: s.name,
-      tier: 'integration' as const,
-      passed: s.passed,
-      ...(s.duration !== undefined ? { duration: s.duration } : {}),
-    }))
-    const gateStepsText = gateResult.steps
-      .map((s) => {
-        const durationBadge = s.duration !== undefined ? ` ${s.duration}ms` : ''
-        return `=== ${s.name} (${s.passed ? 'pass' : 'fail'}) [integration]${durationBadge} ===\n${s.output}`
-      })
-      .join('\n\n')
-    const gateOutputFormatted =
-      gateStepsText +
-      '\n\n=== integration gate outcomes ===\n' +
-      JSON.stringify(gateOutcomes, null, 2)
-
-    // Capture for the trace regardless of outcome.
-    capturedIntegrationGateOutput = gateOutputFormatted
-
-    if (!gateResult.passed) {
-      const failed = gateResult.steps.filter((s) => !s.passed)
-      // If the gate timed out, name the timed-out step so the failure is
-      // actionable ("step X timed out after 120000ms") rather than the opaque
-      // "mergeBranch aborted (watchdog) during step 'integration-gate'".
-      if (gateSignal.aborted) {
-        const timedOutStep = failed[0]
-        throw new Error(
-          `merge:integration-gate task ${taskId}: integration gate step "${timedOutStep?.name ?? 'unknown'}" timed out after ${INTEGRATION_GATE_TIMEOUT_MS}ms\n\n${gateOutputFormatted}`,
-        )
-      }
-      const summary = failed.map((s) => `${s.name}:\n${failureExcerpt(s.output)}`).join('\n\n')
-      throw new Error(
-        `merge:integration-gate task ${taskId} failed (${failed.length} gate(s)):\n${summary}\n\n${gateOutputFormatted}`,
-      )
-    }
-
-    console.log(
-      `[merge:integration-gate] task ${taskId}: all ${integrationSteps.length} integration-tier gate(s) passed`,
-    )
-  }
 
   return await runNonLlmStepWithSpan({
     stepName: 'merge',
@@ -952,6 +836,8 @@ export const merge = async (
         // recovery path so the agent gets a fix-task seeded with the gate output.
         if (m.integrationGateFailed) {
           const gateOutput = m.integrationGateOutput ?? 'integration gates failed'
+          // Capture for the span trace (getCommandOutput below reads this).
+          capturedIntegrationGateOutput = gateOutput
           const errorMsg = gateOutput.slice(0, 2000)
           const gateSignature = computeFailureSignature('merge:integration-gate', errorMsg)
           await updateTask(

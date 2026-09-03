@@ -17,8 +17,48 @@
  */
 
 import { EventEmitter } from 'node:events'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { MergeJob, MergeJobStore } from '../../store/merge-job-store.js'
+
+// ── Mocks for integration-gate wiring tests ───────────────────────────────────
+//
+// These mocks intercept the three modules that `onAfterFastForward` imports
+// dynamically inside runMergeJob. The mocks are inert for existing tests
+// because fakeMergeFn never invokes onAfterFastForward. They only activate
+// in the regression describe block below.
+//
+// Module-level variables are captured by reference in the factory closures;
+// because vi.mock factories are called lazily (at first module import inside
+// a test, after all module-level declarations have run), mutating these
+// variables before a test takes effect correctly.
+
+// Default: empty — no integration gates registered. Set to non-empty in tests
+// that need them.
+let _mockIntegrationGates: Array<{
+  scope: string
+  steps: Array<{
+    name: string
+    cmd: string
+    args: readonly string[]
+    required: boolean
+    tier: string
+    dir?: string
+    timeoutMin?: number
+  }>
+}> = []
+
+// Re-used mock function; configured per test via mockResolvedValue.
+const _mockVerifierRun = vi.fn()
+
+vi.mock('../../verify-gates.js', () => ({
+  loadVerifyGates: () => Promise.resolve(_mockIntegrationGates),
+}))
+vi.mock('../../store/state-client.js', () => ({
+  resolveStateClient: () => ({}),
+}))
+vi.mock('../../ports/verifier/registry.js', () => ({
+  resolveVerifier: () => ({ run: _mockVerifierRun, kind: 'test-mock' }),
+}))
 
 // ── Fast no-op merge function (avoids real git in unit tests) ─────────────────
 
@@ -662,5 +702,222 @@ describe('startMergeWorker — worktree-vanished pre-flight', () => {
     // maps to merge:crashed/worktree-vanished (not /unclassified).
     const failedJob = jobs.get(job.id)
     expect(failedJob?.error).toMatch(/working directory no longer exists/)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Regression: onAfterFastForward integration gate wiring (mars-cd039a0b)
+//
+// Before this fix the merge worker called mergeFn WITHOUT onAfterFastForward,
+// so integration-tier gates were silently skipped on every merge. The fix
+// constructs onAfterFastForward locally inside runMergeJob and passes it
+// through to mergeFn, where mergeBranch invokes it after the fast-forward.
+//
+// These tests fail on the unfixed code (onAfterFastForward was undefined in
+// the captured MergeArgs) and pass after the fix.
+// ---------------------------------------------------------------------------
+
+describe('startMergeWorker — onAfterFastForward integration gate wiring (regression mars-cd039a0b)', () => {
+  beforeEach(() => {
+    // Reset mock state so each test starts clean.
+    _mockIntegrationGates = []
+    _mockVerifierRun.mockReset()
+  })
+
+  it('passes onAfterFastForward to mergeFn', async () => {
+    /**
+     * REGRESSION TEST: captures the MergeArgs passed to mergeFn and asserts
+     * that onAfterFastForward is present. On unfixed code this assertion fails
+     * because the worker built the args object without the callback.
+     */
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let capturedCallback: ((info: { finalTaskSha: string; finalIntegrationSha: string }) => Promise<void>) | undefined
+    const capturingMergeFn = async (args: { onAfterFastForward?: typeof capturedCallback }) => {
+      capturedCallback = args.onAfterFastForward
+      return {
+        merged: true,
+        conflictResolved: false,
+        aborted: false,
+        output: '',
+        supervisorConversation: [],
+        vegaSessionId: null,
+        retriesAttempted: 0,
+      }
+    }
+
+    const { store, calls, enqueueJob } = makeFakeStore()
+    const job = enqueueJob({ id: 'j-gate-wiring', worktreePath: '/tmp' })
+    const { startMergeWorker } = await import('../merge-worker.js')
+    const ac = new AbortController()
+    const handle = startMergeWorker({
+      store,
+      log: () => {},
+      bus: new EventEmitter(),
+      signal: ac.signal,
+      pollIntervalMs: 10,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mergeFn: capturingMergeFn as any,
+    })
+
+    await waitFor(() => calls.includes(`markDone:${job.id}`))
+    ac.abort()
+    await handle.stop()
+
+    expect(
+      capturedCallback,
+      'onAfterFastForward must be provided to mergeFn — this assertion fails on unfixed code',
+    ).toBeTypeOf('function')
+  })
+
+  it('onAfterFastForward executes required integration-tier gates when invoked', async () => {
+    /**
+     * Proves that the callback wired through to mergeFn is not a stub:
+     * when invoked with required integration-tier gates registered, it calls
+     * the verifier with those steps. This is the end-to-end gate execution
+     * proof — a unit test that supplies the callback directly would reproduce
+     * the exact blind spot this fix closes.
+     */
+    _mockIntegrationGates = [
+      {
+        scope: '.',
+        steps: [
+          {
+            name: 'packages/workflow: test',
+            cmd: 'npm',
+            args: ['test'],
+            required: true,
+            tier: 'integration',
+            dir: '.',
+            timeoutMin: 20,
+          },
+        ],
+      },
+    ]
+    _mockVerifierRun.mockResolvedValue({
+      passed: true,
+      steps: [{ name: 'packages/workflow: test', passed: true, output: 'all good' }],
+    })
+
+    let capturedOnAfterFastForward: ((info: { finalTaskSha: string; finalIntegrationSha: string }) => Promise<void>) | undefined
+    const capturingMergeFn = async (args: { onAfterFastForward?: typeof capturedOnAfterFastForward }) => {
+      capturedOnAfterFastForward = args.onAfterFastForward
+      return {
+        merged: true,
+        conflictResolved: false,
+        aborted: false,
+        output: '',
+        supervisorConversation: [],
+        vegaSessionId: null,
+        retriesAttempted: 0,
+      }
+    }
+
+    const { store, calls, enqueueJob } = makeFakeStore()
+    const job = enqueueJob({ id: 'j-gate-exec', worktreePath: '/tmp' })
+    const { startMergeWorker } = await import('../merge-worker.js')
+    const ac = new AbortController()
+    const handle = startMergeWorker({
+      store,
+      log: () => {},
+      bus: new EventEmitter(),
+      signal: ac.signal,
+      pollIntervalMs: 10,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mergeFn: capturingMergeFn as any,
+    })
+
+    await waitFor(() => calls.includes(`markDone:${job.id}`))
+    ac.abort()
+    await handle.stop()
+
+    // The callback must be present.
+    expect(capturedOnAfterFastForward).toBeTypeOf('function')
+
+    // Invoke the captured callback — the mocked verifier must be called with
+    // the integration gate, remapped to tier:'task' so it actually executes.
+    await capturedOnAfterFastForward!({
+      finalTaskSha: 'a'.repeat(40),
+      finalIntegrationSha: 'b'.repeat(40),
+    })
+
+    expect(_mockVerifierRun).toHaveBeenCalledOnce()
+    expect(_mockVerifierRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cwd: '/tmp',
+        steps: expect.arrayContaining([
+          expect.objectContaining({
+            name: 'packages/workflow: test',
+            tier: 'task', // remapped from 'integration' so the verifier runs it
+          }),
+        ]),
+      }),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    )
+  })
+
+  it('skips non-required integration-tier gates', async () => {
+    /**
+     * Non-required integration gates are skipped at the integration boundary:
+     * running them inside the merge lock for informational purposes holds the
+     * lock for something that cannot block the merge. Only required=true gates
+     * run.
+     */
+    _mockIntegrationGates = [
+      {
+        scope: '.',
+        steps: [
+          {
+            name: 'optional-gate',
+            cmd: 'echo',
+            args: ['hi'],
+            required: false, // non-required: must be skipped
+            tier: 'integration',
+            dir: '.',
+          },
+        ],
+      },
+    ]
+
+    let capturedOnAfterFastForward: ((info: { finalTaskSha: string; finalIntegrationSha: string }) => Promise<void>) | undefined
+    const capturingMergeFn = async (args: { onAfterFastForward?: typeof capturedOnAfterFastForward }) => {
+      capturedOnAfterFastForward = args.onAfterFastForward
+      return {
+        merged: true,
+        conflictResolved: false,
+        aborted: false,
+        output: '',
+        supervisorConversation: [],
+        vegaSessionId: null,
+        retriesAttempted: 0,
+      }
+    }
+
+    const { store, calls, enqueueJob } = makeFakeStore()
+    const job = enqueueJob({ id: 'j-gate-skip', worktreePath: '/tmp' })
+    const { startMergeWorker } = await import('../merge-worker.js')
+    const ac = new AbortController()
+    const handle = startMergeWorker({
+      store,
+      log: () => {},
+      bus: new EventEmitter(),
+      signal: ac.signal,
+      pollIntervalMs: 10,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mergeFn: capturingMergeFn as any,
+    })
+
+    await waitFor(() => calls.includes(`markDone:${job.id}`))
+    ac.abort()
+    await handle.stop()
+
+    expect(capturedOnAfterFastForward).toBeTypeOf('function')
+
+    // Invoke — non-required gates must NOT trigger the verifier.
+    await capturedOnAfterFastForward!({
+      finalTaskSha: 'a'.repeat(40),
+      finalIntegrationSha: 'b'.repeat(40),
+    })
+
+    expect(_mockVerifierRun).not.toHaveBeenCalled()
   })
 })
