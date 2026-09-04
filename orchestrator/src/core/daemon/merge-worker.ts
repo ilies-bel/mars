@@ -118,8 +118,16 @@ const DEFAULT_INTEGRATION_GATE_BUDGET_MIN = 15
 
 // ── Promise-based park / resume (mirrors awaitManualDone pattern) ─────────────
 
-/** Live promise resolvers for in-flight merge jobs, keyed by taskId. */
-const pendingMergeJobs = new Map<string, (r: MergeJobResult) => void>()
+/**
+ * Live promise resolvers for in-flight merge jobs, keyed by taskId.
+ *
+ * A Set per taskId rather than a single resolver so that concurrent callers
+ * (e.g. a daemon restart where the workflow engine re-enters the merge step
+ * while a previous attempt's resolver would have been overwritten) each
+ * register their own slot and all receive the outcome when
+ * `resolveMergeJob` is called.
+ */
+const pendingMergeJobs = new Map<string, Set<(r: MergeJobResult) => void>>()
 
 /**
  * "Claimed" callbacks registered by `enqueueMergeJobAndAwait` callers that
@@ -132,30 +140,52 @@ const pendingClaimCallbacks = new Map<string, () => void>()
 
 /**
  * Register a pending merge job and return a promise that resolves only when
- * `resolveMergeJob` is called for the same `taskId`.
+ * `resolveMergeJob` is called for the same `taskId`, plus a `remove()`
+ * function that removes only THIS caller's resolver from the set (used by the
+ * outer watchdog so a single caller's timeout does not orphan sibling awaiters
+ * for the same task).
  *
  * Set up BEFORE enqueuing the DB row so the resolver is in place before the
  * worker can process the job.
  */
-function awaitMergeJobDone(taskId: string): Promise<MergeJobResult> {
-  return new Promise<MergeJobResult>((resolve) => {
-    pendingMergeJobs.set(taskId, resolve)
+function awaitMergeJobDone(
+  taskId: string,
+): { promise: Promise<MergeJobResult>; remove: () => void } {
+  let myResolve!: (r: MergeJobResult) => void
+  const promise = new Promise<MergeJobResult>((resolve) => {
+    myResolve = resolve
+    let resolvers = pendingMergeJobs.get(taskId)
+    if (!resolvers) {
+      resolvers = new Set()
+      pendingMergeJobs.set(taskId, resolvers)
+    }
+    resolvers.add(resolve)
   })
+  return {
+    promise,
+    remove(): void {
+      const resolvers = pendingMergeJobs.get(taskId)
+      if (!resolvers) return
+      resolvers.delete(myResolve)
+      if (resolvers.size === 0) pendingMergeJobs.delete(taskId)
+    },
+  }
 }
 
 /**
- * Resolve a pending merge job registered by `awaitMergeJobDone`.
- *
- * Returns `true` if a pending promise was found and resolved, `false` if the
- * key was not in the map (duplicate call or worker ran before enqueue was
- * awaited — should not happen in normal operation).
+ * Resolve all pending merge jobs registered by `awaitMergeJobDone` for the
+ * given `taskId`. Returns `true` if at least one pending promise was found and
+ * resolved, `false` if the key was not in the map (duplicate call or worker ran
+ * before enqueue was awaited — should not happen in normal operation).
  */
 export function resolveMergeJob(taskId: string, result: MergeJobResult): boolean {
-  const resolve = pendingMergeJobs.get(taskId)
-  if (!resolve) return false
+  const resolvers = pendingMergeJobs.get(taskId)
+  if (!resolvers || resolvers.size === 0) return false
   pendingMergeJobs.delete(taskId)
   pendingClaimCallbacks.delete(taskId) // defensive cleanup: job finished without being claimed
-  resolve(result)
+  for (const resolve of resolvers) {
+    resolve(result)
+  }
   return true
 }
 
@@ -215,7 +245,7 @@ export async function enqueueMergeJobAndAwait(args: {
   onWatchdogTimeout?: (taskId: string) => Promise<void>
 }): Promise<MergeJobResult> {
   // Register BEFORE enqueue so we can never miss the termination event.
-  const resultPromise = awaitMergeJobDone(args.taskId)
+  const { promise: resultPromise, remove: removeMyResolver } = awaitMergeJobDone(args.taskId)
 
   // Register the claim callback before enqueuing so the worker can never
   // claim and call it before we store it.
@@ -223,12 +253,45 @@ export async function enqueueMergeJobAndAwait(args: {
     pendingClaimCallbacks.set(args.taskId, args.onClaimed)
   }
 
-  await args.store.enqueue({
-    taskId: args.taskId,
-    branch: args.branch,
-    worktreePath: args.worktreePath,
-    integrationBranch: args.integrationBranch,
-  } satisfies EnqueueMergeJobInput)
+  // Idempotent enqueue: if an active (queued/claimed/running) job already
+  // exists for this task — e.g. after a daemon restart where the startup
+  // reconciler kept the queued row and the workflow engine is resuming on
+  // attempt 2 — adopt that row instead of inserting a duplicate.
+  // The partial unique index (merge_jobs_active_task_uidx) would reject the
+  // INSERT anyway; this check avoids the error path entirely.
+  const existingJob = await args.store.getActiveMergeJob(args.taskId)
+  if (!existingJob) {
+    try {
+      await args.store.enqueue({
+        taskId: args.taskId,
+        branch: args.branch,
+        worktreePath: args.worktreePath,
+        integrationBranch: args.integrationBranch,
+      } satisfies EnqueueMergeJobInput)
+    } catch (err: unknown) {
+      // A concurrent second call may have won the INSERT race and the
+      // partial unique index fired (Postgres 23505, SQLite "UNIQUE constraint
+      // failed"). Adopt the row that was just inserted rather than propagating
+      // the constraint error — our resolver stays registered in
+      // pendingMergeJobs and resolveMergeJob will deliver the outcome to both
+      // callers when the worker finishes.
+      const msg = err instanceof Error ? err.message : String(err)
+      const isConstraintViolation =
+        msg.includes('23505') || msg.toLowerCase().includes('unique constraint')
+      if (!isConstraintViolation) {
+        // Not a constraint error — remove our resolver before re-throwing so
+        // resolveMergeJob does not call a promise that nothing awaits.
+        removeMyResolver()
+        throw err
+      }
+      // Constraint violation: fall through to bus.emit — the worker needs to
+      // be woken to claim the row the winning caller just inserted.
+    }
+  }
+
+  // Wake the worker whether we inserted a new row or adopted an existing one.
+  // In the adopt case the original bus event may have been lost across the
+  // daemon restart, so re-emitting here ensures the worker unparks.
   args.bus.emit('merge-job.enqueued')
 
   // Belt-and-suspenders outer watchdog: if the merge worker never resolves
@@ -258,9 +321,10 @@ export async function enqueueMergeJobAndAwait(args: {
   let outerTimer!: ReturnType<typeof setTimeout>
   const outerTimeoutPromise = new Promise<MergeJobResult>((resolve) => {
     outerTimer = setTimeout(() => {
-      // Remove the pending resolver before resolving so that if resolveMergeJob
-      // is called after the timeout it is a harmless no-op (key already absent).
-      pendingMergeJobs.delete(args.taskId)
+      // Remove only THIS caller's resolver slot — a sibling awaiter for the
+      // same task (e.g. another workflow run racing on the same taskId) must
+      // not lose its pending promise just because this caller's watchdog fired.
+      removeMyResolver()
       pendingClaimCallbacks.delete(args.taskId) // defensive cleanup
       // Belt-and-suspenders: directly fail the task in the DB so it leaves
       // status='merging' even if the calling workflow has already exited (e.g.

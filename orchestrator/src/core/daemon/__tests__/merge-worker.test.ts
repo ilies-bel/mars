@@ -1154,6 +1154,211 @@ describe('startMergeWorker — onVerifyRebasedTree rebased-tree verify wiring (A
 })
 
 // ---------------------------------------------------------------------------
+// Idempotent enqueue (mars-98e7cba3)
+//
+// `enqueueMergeJobAndAwait` must be idempotent per task so that:
+//   1. A daemon restart (startup reconciler keeps the queued row; workflow
+//      engine resumes on attempt 2) never fails with a unique-constraint
+//      violation — the second call detects the existing active job and adopts
+//      it without issuing a duplicate INSERT.
+//   2. Two concurrent callers for the same taskId both await the same outcome:
+//      the one that wins the INSERT race inserts one row; the one that loses
+//      hits the constraint, adopts the existing row, and still receives the
+//      result when resolveMergeJob fires.
+// ---------------------------------------------------------------------------
+
+describe('enqueueMergeJobAndAwait — idempotent enqueue (restart & concurrent)', () => {
+  it('adopts existing active job on restart instead of inserting', async () => {
+    /**
+     * Restart shape: the DB already has a queued job for the task (kept by the
+     * startup reconciler). The workflow engine re-enters the merge step as
+     * attempt 2. enqueueMergeJobAndAwait must detect the existing job via
+     * getActiveMergeJob, skip the INSERT, and still resolve when the worker
+     * calls resolveMergeJob.
+     */
+    const { EventEmitter: EE } = await import('node:events')
+    const { enqueueMergeJobAndAwait, resolveMergeJob } = await import('../merge-worker.js')
+
+    const taskId = 'task-restart-adopt'
+    const existingJob: import('../../store/merge-job-store.js').MergeJob = {
+      id: 'existing-queued-job',
+      taskId,
+      status: 'queued',
+      attempts: 1,
+      claimedAt: null,
+      startedAt: null,
+      finishedAt: null,
+      error: null,
+      errorCode: null,
+      integrationBranch: 'main',
+      worktreePath: '/tmp',
+      branch: 'task/restart-adopt',
+      mergedSha: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }
+
+    let enqueueCallCount = 0
+    const store = {
+      async getActiveMergeJob(tid: string) {
+        return tid === taskId ? existingJob : null
+      },
+      async enqueue() {
+        enqueueCallCount++
+        throw new Error('enqueue must not be called when an active job already exists')
+      },
+      async claimNext() { return null },
+      async markRunning() { return null },
+      async markDone() { return null },
+      async markFailed() { return null },
+      async markCanceled() { return null },
+      async getByTaskId() { return null },
+      async listActive() { return [] },
+      async listByStatus() { return [] },
+    }
+
+    const resultPromise = enqueueMergeJobAndAwait({
+      store,
+      bus: new EE(),
+      taskId,
+      branch: 'task/restart-adopt',
+      worktreePath: '/tmp',
+      integrationBranch: 'main',
+    })
+
+    // Give the function time to reach the bus.emit before we resolve.
+    await new Promise<void>((r) => setTimeout(r, 10))
+
+    // Simulate the worker completing the adopted job.
+    resolveMergeJob(taskId, {
+      status: 'done',
+      result: {
+        merged: true,
+        conflictResolved: false,
+        aborted: false,
+        output: '',
+        supervisorConversation: [],
+        vegaSessionId: null,
+        retriesAttempted: 0,
+      },
+    })
+
+    const result = await resultPromise
+
+    // The existing job was adopted — enqueue must never have been called.
+    expect(enqueueCallCount).toBe(0)
+    // The caller still receives the outcome normally.
+    expect(result.status).toBe('done')
+  }, 5_000)
+
+  it('two concurrent callers both receive the same outcome (one row inserted)', async () => {
+    /**
+     * Concurrent double-enqueue: two workflow runs race for the same taskId.
+     * Both call getActiveMergeJob before either has committed — both see null
+     * (TOCTOU). The first wins the INSERT race; the second hits the unique
+     * constraint. Our code catches the constraint, keeps both resolvers
+     * registered, and resolveMergeJob delivers the result to both.
+     */
+    const { EventEmitter: EE } = await import('node:events')
+    const { enqueueMergeJobAndAwait, resolveMergeJob } = await import('../merge-worker.js')
+
+    const taskId = 'task-concurrent-enqueue'
+    let insertCount = 0
+
+    const makeJob = (): import('../../store/merge-job-store.js').MergeJob => ({
+      id: 'concurrent-job',
+      taskId,
+      status: 'queued',
+      attempts: 0,
+      claimedAt: null,
+      startedAt: null,
+      finishedAt: null,
+      error: null,
+      errorCode: null,
+      integrationBranch: 'main',
+      worktreePath: '/tmp',
+      branch: 'task/concurrent',
+      mergedSha: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    })
+
+    const store = {
+      // Both callers check before either inserts (TOCTOU): always return null
+      // from getActiveMergeJob so both proceed to enqueue.
+      async getActiveMergeJob() { return null },
+      async enqueue() {
+        insertCount++
+        if (insertCount > 1) {
+          // Simulate the partial unique index rejecting the second INSERT.
+          throw new Error(
+            'duplicate key value violates unique constraint "merge_jobs_active_task_uidx"',
+          )
+        }
+        return makeJob()
+      },
+      async claimNext() { return null },
+      async markRunning() { return null },
+      async markDone() { return null },
+      async markFailed() { return null },
+      async markCanceled() { return null },
+      async getByTaskId() { return null },
+      async listActive() { return [] },
+      async listByStatus() { return [] },
+    }
+
+    const bus = new EE()
+    const doneResult: import('../merge-worker.js').MergeJobResult = {
+      status: 'done',
+      result: {
+        merged: true,
+        conflictResolved: false,
+        aborted: false,
+        output: '',
+        supervisorConversation: [],
+        vegaSessionId: null,
+        retriesAttempted: 0,
+      },
+    }
+
+    // Start both calls concurrently. They race to check getActiveMergeJob
+    // and then to insert; one wins, one catches the constraint error.
+    const promise1 = enqueueMergeJobAndAwait({
+      store,
+      bus,
+      taskId,
+      branch: 'task/concurrent',
+      worktreePath: '/tmp',
+      integrationBranch: 'main',
+    })
+    const promise2 = enqueueMergeJobAndAwait({
+      store,
+      bus,
+      taskId,
+      branch: 'task/concurrent',
+      worktreePath: '/tmp',
+      integrationBranch: 'main',
+    })
+
+    // Let both reach the bus.emit stage.
+    await new Promise<void>((r) => setTimeout(r, 20))
+
+    // Resolve once — both registered resolvers must receive the result.
+    const resolved = resolveMergeJob(taskId, doneResult)
+    expect(resolved).toBe(true)
+
+    const [r1, r2] = await Promise.all([promise1, promise2])
+
+    // Both callers got the same outcome.
+    expect(r1.status).toBe('done')
+    expect(r2.status).toBe('done')
+
+    // Exactly one INSERT was issued (the constraint caught the second).
+    expect(insertCount).toBe(2) // both tried; only one succeeded
+  }, 5_000)
+})
+
+// ---------------------------------------------------------------------------
 // DEC-3: auto-commit Notice carries a revert action
 //
 // VISION.md DEC-3: "Every autonomous change is revertible by construction and
