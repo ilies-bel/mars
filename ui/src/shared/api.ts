@@ -566,7 +566,12 @@ export async function startThreadFromProposal(
     { method: 'POST' },
   )
   if (!r.ok) {
-    throw new Error(`POST /api/proposals/${proposalId}/thread → ${r.status}`)
+    let message = `POST /api/proposals/${proposalId}/thread → ${r.status}`
+    try {
+      const body = await r.json() as { error?: string }
+      if (typeof body.error === 'string' && body.error.length > 0) message = body.error
+    } catch { /* ignore JSON parse errors */ }
+    throw new Error(message)
   }
   return r.json() as Promise<{ threadId: string }>
 }
