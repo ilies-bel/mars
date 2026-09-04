@@ -39,7 +39,18 @@ function renderPage(data: ArcQaData | null) {
 describe('ArcQaPage — 404 / empty', () => {
   it('shows the no-record message when data is null (404 case)', () => {
     const html = renderPage(null)
-    expect(html).toContain('No QA walk recorded for this Arc.')
+    expect(html).toContain('No QA report exists for this arc.')
+  })
+
+  it('shows a heading and the arc id in the empty state', () => {
+    const html = renderPage(null)
+    expect(html).toContain('Arc QA')
+    expect(html).toContain(ORIGIN_ID)
+  })
+
+  it('shows a link back to progress in the empty state', () => {
+    const html = renderPage(null)
+    expect(html).toContain('#/progress')
   })
 })
 

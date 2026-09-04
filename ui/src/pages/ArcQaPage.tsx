@@ -82,7 +82,15 @@ export const ArcQaPage = ({ originId }: ArcQaPageProps) => {
   if (data === null) {
     return (
       <main className="flex h-full flex-1 flex-col bg-background p-4">
-        <p className="text-label text-muted-foreground">No QA walk recorded for this Arc.</p>
+        <h1 className="font-semibold text-foreground">Arc QA</h1>
+        <p className="mb-4 font-mono text-micro text-muted-foreground">{originId}</p>
+        <p className="text-label text-muted-foreground">No QA report exists for this arc.</p>
+        <a
+          href="#/progress"
+          className="mt-4 self-start rounded border border-primary/40 px-2 py-1 font-mono text-body text-primary hover:bg-primary/10"
+        >
+          ← Back to Progress
+        </a>
       </main>
     )
   }

@@ -12,6 +12,7 @@ import {
   parseProposalNodeRoute,
   parseProposalOrigin,
   parsePrimitiveRoute,
+  parseRawPrimitiveSegment,
   parseReleaseNotesRoute,
   parseStudioRoute,
   primitiveHash,
@@ -612,9 +613,17 @@ describe('primitiveHash', () => {
 })
 
 describe('primitive route integration', () => {
-  it('isKnownRoute accepts known names and rejects unknown ones', () => {
+  it('isKnownRoute accepts known names', () => {
     expect(isKnownRoute('#/primitive/verify')).toBe(true)
-    expect(isKnownRoute('#/primitive/typo')).toBe(false)
+  })
+
+  it('isKnownRoute accepts unknown names so they render a not-found overlay (no redirect)', () => {
+    // Prior behaviour was false (redirect to #/progress). The new behaviour renders
+    // a not-found overlay instead, so any non-empty #/primitive/<name> is "known".
+    expect(isKnownRoute('#/primitive/typo')).toBe(true)
+  })
+
+  it('isKnownRoute still rejects a bare #/primitive/ (empty segment)', () => {
     expect(isKnownRoute('#/primitive/')).toBe(false)
   })
 
@@ -785,5 +794,63 @@ describe('taskHash round-trip with special characters', () => {
     const id = 'task?foo'
     const hash = taskHash(id)
     expect(parseTaskRoute(hash)).toBe(id)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// parseRawPrimitiveSegment — extracts segment without name validation
+// ---------------------------------------------------------------------------
+
+describe('parseRawPrimitiveSegment', () => {
+  it('returns the segment for a valid primitive name', () => {
+    expect(parseRawPrimitiveSegment('#/primitive/runAgent')).toBe('runAgent')
+  })
+
+  it('returns the segment for an unknown name', () => {
+    expect(parseRawPrimitiveSegment('#/primitive/task')).toBe('task')
+    expect(parseRawPrimitiveSegment('#/primitive/bogus')).toBe('bogus')
+  })
+
+  it('returns null for a bare #/primitive/ (empty segment)', () => {
+    expect(parseRawPrimitiveSegment('#/primitive/')).toBeNull()
+  })
+
+  it('returns null for hashes that are not primitive URLs', () => {
+    expect(parseRawPrimitiveSegment('#/progress')).toBeNull()
+    expect(parseRawPrimitiveSegment('#/task/abc')).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// isKnownRoute — unknown primitive name is now a known address
+// ---------------------------------------------------------------------------
+
+describe('isKnownRoute — unknown primitive names', () => {
+  it('returns true for a valid primitive name', () => {
+    expect(isKnownRoute('#/primitive/runAgent')).toBe(true)
+  })
+
+  it('returns true for an unknown primitive name (not-found overlay, no redirect)', () => {
+    expect(isKnownRoute('#/primitive/task')).toBe(true)
+    expect(isKnownRoute('#/primitive/bogus')).toBe(true)
+  })
+
+  it('returns false for a bare #/primitive/ (empty segment)', () => {
+    expect(isKnownRoute('#/primitive/')).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// resolvePageRoute — unknown primitive hash keeps Progress as the backing page
+// ---------------------------------------------------------------------------
+
+describe('resolvePageRoute — unknown primitive name', () => {
+  it('returns progress for an unknown primitive name', () => {
+    expect(resolvePageRoute('#/primitive/task')).toBe('progress')
+    expect(resolvePageRoute('#/primitive/bogus')).toBe('progress')
+  })
+
+  it('returns progress for a valid primitive name (unchanged)', () => {
+    expect(resolvePageRoute('#/primitive/runAgent')).toBe('progress')
   })
 })

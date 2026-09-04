@@ -84,8 +84,9 @@ export const isKnownRoute = (hash: string): boolean => {
   if (hash.startsWith('#/task/')) return true
   if (hash.startsWith('#/proposal/')) return true
   if (hash.startsWith('#/proposal-node/')) return true
-  // Primitive requires one of the six known names — `#/primitive/typo` redirects.
-  if (parsePrimitiveRoute(hash) !== null) return true
+  // Any non-empty `#/primitive/<name>` is a known address — unknown names render
+  // a not-found overlay instead of silently redirecting to #/progress.
+  if (parseRawPrimitiveSegment(hash) !== null) return true
   if (hash === '#/release-notes') return true
   if (hash === '#/shortcuts') return true
   return false
@@ -394,6 +395,25 @@ export const parsePrimitiveRoute = (hash: string): PrimitiveName | null => {
 }
 
 /**
+ * Extracts the raw primitive name segment from a `#/primitive/<name>` hash
+ * WITHOUT validating it against the known `PRIMITIVE_NAMES` set.
+ *
+ * Used to distinguish "valid primitive overlay" from "unknown primitive name"
+ * in App so the router can render a not-found state instead of redirecting —
+ * any `#/primitive/<non-empty>` is a known route address.
+ *
+ * Returns the decoded segment, or `null` when the hash is not a primitive URL
+ * at all (empty segment, malformed encoding, or wrong prefix).
+ */
+export const parseRawPrimitiveSegment = (hash: string): string | null => {
+  const m = /^#\/primitive\/([^/?#]+)/.exec(hash)
+  if (!m) return null
+  const name = safeDecode(m[1])
+  if (name === null) return null
+  return name.length > 0 ? name : null
+}
+
+/**
  * Builds a `#/primitive/<name>` hash for opening the primitive facet drawer.
  * Mirrors `kpiHash`/`proposalHash` for the overlay routing shape.
  */
@@ -558,7 +578,8 @@ export const resolvePageRoute = (hash: string): RouteName => {
     return parseOverlayOrigin(hash) ?? 'progress'
   }
   const primitiveName = parsePrimitiveRoute(hash)
-  if (primitiveName !== null) {
+  // Any `#/primitive/<name>` (valid or not) keeps Progress behind the overlay.
+  if (primitiveName !== null || parseRawPrimitiveSegment(hash) !== null) {
     return parseOverlayOrigin(hash) ?? 'progress'
   }
   if (parseReleaseNotesRoute(hash)) {
