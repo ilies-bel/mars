@@ -95,4 +95,25 @@ describe('Main-session memory window', () => {
 
     expect(await selectMemoryCut(client, memory, 100)).toBeNull()
   })
+
+  it('evicts lower-scored Subject first under capacity pressure', async () => {
+    // Insert high-scored first (gets seq=1) and low-scored second (gets seq=2).
+    // The old algorithm would evict by oldest seq, picking the high-scored one.
+    // The new score-aware algorithm must pick the low-scored one instead.
+    await insertSubthread(client, 'high-scored', 10, 'x'.repeat(40))
+    await insertSubthread(client, 'low-scored', 20, 'y'.repeat(40))
+    await client.execute({
+      sql: `UPDATE chat_threads SET relevance_score = ? WHERE id = ?`,
+      args: [0.9, 'high-scored'],
+    })
+    await client.execute({
+      sql: `UPDATE chat_threads SET relevance_score = ? WHERE id = ?`,
+      args: [0.1, 'low-scored'],
+    })
+
+    // Total tokens: 2 × ceil(40/4) = 20 > contextWindowTokens(16) → capacity pressure.
+    // low-scored has score 0.1, so it sorts first; its lastSeq is 2.
+    const cut = await selectMemoryCut(client, memory, 100)
+    expect(cut).toEqual({ startsAfterSeq: 2, reason: 'capacity' })
+  })
 })

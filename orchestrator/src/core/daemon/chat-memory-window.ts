@@ -79,17 +79,20 @@ export const selectMemoryCut = async (
     : null
 
   const closed = await db.execute({
-    sql: `SELECT MIN(m.seq) AS first_seq, MAX(m.seq) AS last_seq
+    sql: `SELECT MIN(m.seq) AS first_seq, MAX(m.seq) AS last_seq, t.relevance_score
             FROM chat_threads t
             JOIN chat_messages m ON m.thread_id = t.id
            WHERE t.closed_at IS NOT NULL
-           GROUP BY t.id
+           GROUP BY t.id, t.relevance_score
           HAVING MAX(m.seq) > ?
-           ORDER BY MIN(m.seq) ASC, t.id ASC`,
+           ORDER BY t.relevance_score ASC NULLS FIRST, MIN(m.seq) ASC, t.id ASC`,
     args: [window.startsAfterSeq],
   })
   const candidates = closed.rows
-    .map((row) => ({ lastSeq: Number(row.last_seq) }))
+    .map((row) => ({
+      lastSeq: Number(row.last_seq),
+      relevanceScore: row.relevance_score as number | null,
+    }))
     .filter((candidate) => firstActiveSeq === null || candidate.lastSeq < firstActiveSeq)
 
   if (prefixTokens > memory.contextWindowTokens) {
