@@ -6,10 +6,11 @@
  *   - "Needs You" badge appears only when decisionBadge > 0
  *   - no badge on any other nav entry
  *   - proposals/progress mutual-exclusion logic
+ *   - Advanced group is collapsed by default; expands via advancedExpanded prop
  *
  * Shell is tested via renderToStaticMarkup with mocked hooks to verify:
- *   - three group headers are rendered
- *   - all nine nav entry labels are rendered
+ *   - four group headers are rendered in order
+ *   - nav entry labels are rendered
  *   - wordmark and live-dot are present
  *   - live-dot reflects daemon connection state (green+Live vs grey+Reconnecting)
  */
@@ -66,49 +67,74 @@ const { Shell, ShellSidebar, SHELL_NAV_GROUPS } = await import('./Shell')
 // ── SHELL_NAV_GROUPS ──────────────────────────────────────────────────────────
 
 describe('SHELL_NAV_GROUPS', () => {
-  it('defines exactly three groups', () => {
-    expect(SHELL_NAV_GROUPS).toHaveLength(3)
+  it('defines exactly four groups', () => {
+    expect(SHELL_NAV_GROUPS).toHaveLength(4)
   })
 
-  it('names the groups Workspace, Developer, Intel in order', () => {
-    expect(SHELL_NAV_GROUPS[0].label).toBe('Workspace')
-    expect(SHELL_NAV_GROUPS[1].label).toBe('Developer')
-    expect(SHELL_NAV_GROUPS[2].label).toBe('Intel')
+  it('names the groups Decide, Watch, Tune, Advanced in order', () => {
+    expect(SHELL_NAV_GROUPS[0].label).toBe('Decide')
+    expect(SHELL_NAV_GROUPS[1].label).toBe('Watch')
+    expect(SHELL_NAV_GROUPS[2].label).toBe('Tune')
+    expect(SHELL_NAV_GROUPS[3].label).toBe('Advanced')
   })
 
-  it('has nine total nav entries across all groups', () => {
+  it('has eight total nav entries across all groups', () => {
     const total = SHELL_NAV_GROUPS.reduce((sum, g) => sum + g.entries.length, 0)
-    expect(total).toBe(9)
+    expect(total).toBe(8)
   })
 
-  it('Workspace group contains Needs You, Chat, Progress, Control Room', () => {
-    const workspace = SHELL_NAV_GROUPS[0]
-    const labels = workspace.entries.map((e) => e.label)
+  it('Decide group contains Needs You and Proposals', () => {
+    const decide = SHELL_NAV_GROUPS[0]
+    const labels = decide.entries.map((e) => e.label)
     expect(labels).toContain('Needs You')
-    expect(labels).toContain('Chat')
-    expect(labels).toContain('Progress')
-    expect(labels).toContain('Control Room')
+    expect(labels).toContain('Proposals')
   })
 
-  it('Needs You is the first entry in the Workspace group', () => {
+  it('Needs You is the first entry in the Decide group', () => {
     expect(SHELL_NAV_GROUPS[0].entries[0].label).toBe('Needs You')
     expect(SHELL_NAV_GROUPS[0].entries[0].href).toBe('#/triage')
   })
 
-  it('Developer group contains Events, Reflections, Steward (Studio removed — accessed via task detail)', () => {
-    const dev = SHELL_NAV_GROUPS[1]
-    const labels = dev.entries.map((e) => e.label)
-    expect(labels).not.toContain('Studio')
-    expect(labels).toContain('Events')
-    expect(labels).toContain('Reflections')
-    expect(labels).toContain('Steward')
+  it('Watch group contains Progress and Chat', () => {
+    const watch = SHELL_NAV_GROUPS[1]
+    const labels = watch.entries.map((e) => e.label)
+    expect(labels).toContain('Progress')
+    expect(labels).toContain('Chat')
   })
 
-  it('Intel group contains KPI and Proposals', () => {
-    const intel = SHELL_NAV_GROUPS[2]
-    const labels = intel.entries.map((e) => e.label)
+  it('Tune group contains Control Room and KPI', () => {
+    const tune = SHELL_NAV_GROUPS[2]
+    const labels = tune.entries.map((e) => e.label)
+    expect(labels).toContain('Control Room')
     expect(labels).toContain('KPI')
-    expect(labels).toContain('Proposals')
+  })
+
+  it('Advanced group contains Events and Reflections', () => {
+    const advanced = SHELL_NAV_GROUPS[3]
+    const labels = advanced.entries.map((e) => e.label)
+    expect(labels).toContain('Events')
+    expect(labels).toContain('Reflections')
+  })
+
+  it('Advanced group is marked collapsible', () => {
+    expect(SHELL_NAV_GROUPS[3].collapsible).toBe(true)
+  })
+
+  it('Steward is absent from all nav groups', () => {
+    const allLabels = SHELL_NAV_GROUPS.flatMap((g) => g.entries.map((e) => e.label))
+    expect(allLabels).not.toContain('Steward')
+  })
+
+  it('Decide group has a description', () => {
+    expect(SHELL_NAV_GROUPS[0].description).toBeTruthy()
+  })
+
+  it('Watch group has a description', () => {
+    expect(SHELL_NAV_GROUPS[1].description).toBeTruthy()
+  })
+
+  it('Tune group has a description', () => {
+    expect(SHELL_NAV_GROUPS[2].description).toBeTruthy()
   })
 
   it('all nav entry icons are unique — no duplicate glyphs', () => {
@@ -125,6 +151,45 @@ describe('SHELL_NAV_GROUPS', () => {
   it('Proposals entry href is #/proposals', () => {
     const entry = SHELL_NAV_GROUPS.flatMap((g) => g.entries).find((e) => e.label === 'Proposals')
     expect(entry?.href).toBe('#/proposals')
+  })
+})
+
+// ── ShellSidebar — Advanced group collapse ────────────────────────────────────
+
+describe('ShellSidebar — Advanced group collapse', () => {
+  it('Advanced group entries are hidden when advancedExpanded is false (default)', () => {
+    const html = renderToStaticMarkup(<ShellSidebar activeRoute="chat" decisionBadge={0} />)
+    // Events and Reflections links should not appear in the collapsed state
+    expect(html).not.toContain('href="#/events"')
+    expect(html).not.toContain('href="#/reflections"')
+  })
+
+  it('Advanced group entries are visible when advancedExpanded is true', () => {
+    const html = renderToStaticMarkup(
+      <ShellSidebar activeRoute="chat" decisionBadge={0} advancedExpanded={true} />,
+    )
+    expect(html).toContain('href="#/events"')
+    expect(html).toContain('href="#/reflections"')
+  })
+
+  it('Advanced group renders a toggle button with aria-expanded=false by default', () => {
+    const html = renderToStaticMarkup(<ShellSidebar activeRoute="chat" decisionBadge={0} />)
+    expect(html).toContain('aria-expanded="false"')
+  })
+
+  it('Advanced toggle button shows aria-expanded=true when expanded', () => {
+    const html = renderToStaticMarkup(
+      <ShellSidebar activeRoute="chat" decisionBadge={0} advancedExpanded={true} />,
+    )
+    expect(html).toContain('aria-expanded="true"')
+  })
+
+  it('non-collapsible groups are always visible', () => {
+    const html = renderToStaticMarkup(<ShellSidebar activeRoute="chat" decisionBadge={0} />)
+    // Decide, Watch, Tune entries always visible
+    expect(html).toContain('href="#/triage"')
+    expect(html).toContain('href="#/progress"')
+    expect(html).toContain('href="#/control"')
   })
 })
 
@@ -148,7 +213,10 @@ describe('ShellSidebar — active state', () => {
   })
 
   it('applies right-edge accent via border-r-2 and border-highlight', () => {
-    const html = renderToStaticMarkup(<ShellSidebar activeRoute="events" decisionBadge={0} />)
+    // Events is in Advanced — must expand it first
+    const html = renderToStaticMarkup(
+      <ShellSidebar activeRoute="events" decisionBadge={0} advancedExpanded={true} />,
+    )
     expect(html).toContain('border-r-2')
     expect(html).toContain('border-highlight')
   })
@@ -223,7 +291,7 @@ describe('ShellSidebar — Proposals route highlighting', () => {
 // ── ShellSidebar — Action Queue badge ────────────────────────────────────────
 
 describe('ShellSidebar — Action Queue badge', () => {
-  it('shows a numeric badge on Action Queue when decisionBadge > 0', () => {
+  it('shows a numeric badge on Needs You when decisionBadge > 0', () => {
     const html = renderToStaticMarkup(<ShellSidebar activeRoute="progress" decisionBadge={3} />)
     expect(html).toContain('>3<')
   })
@@ -239,7 +307,7 @@ describe('ShellSidebar — Action Queue badge', () => {
     expect(html).not.toContain('decisions pending')
   })
 
-  it('renders the badge only once (on Action Queue, not on other entries)', () => {
+  it('renders the badge only once (on Needs You, not on other entries)', () => {
     const html = renderToStaticMarkup(<ShellSidebar activeRoute="triage" decisionBadge={5} />)
     const badgeMatches = html.match(/decisions pending/g)
     expect(badgeMatches).toHaveLength(1)
@@ -257,19 +325,33 @@ describe('ShellSidebar — Action Queue badge', () => {
     )
     expect(html).toContain(`aria-label="${label}"`)
   })
+
+  it('badge does NOT appear on Proposals, Progress, Chat, Control Room, or KPI', () => {
+    const html = renderToStaticMarkup(<ShellSidebar activeRoute="triage" decisionBadge={5} />)
+    // The badge aria-label contains "decisions pending" — should appear exactly once
+    const badgeMatches = html.match(/decisions pending/g)
+    expect(badgeMatches).toHaveLength(1)
+  })
 })
 
 // ── Shell — topbar breadcrumb ─────────────────────────────────────────────────
 
 describe('Shell — topbar breadcrumb', () => {
-  it('renders a Breadcrumb nav for #/chat (top-level nav route)', () => {
+  it('renders a Breadcrumb nav for #/chat (Watch group route)', () => {
     const html = renderToStaticMarkup(<Shell hash="#/chat">page</Shell>)
     expect(html).toContain('aria-label="Breadcrumb"')
   })
 
-  it('renders a Breadcrumb nav for #/events (Developer group route)', () => {
+  it('renders a Breadcrumb nav for #/events (Advanced group route) when expanded via hash', () => {
     const html = renderToStaticMarkup(<Shell hash="#/events">page</Shell>)
     expect(html).toContain('aria-label="Breadcrumb"')
+  })
+
+  it('breadcrumb for #/triage reads Decide › Needs You', () => {
+    const html = renderToStaticMarkup(<Shell hash="#/triage">page</Shell>)
+    expect(html).toContain('aria-label="Breadcrumb"')
+    expect(html).toContain('Decide')
+    expect(html).toContain('Needs You')
   })
 
   it('active (terminal) breadcrumb segment uses the brightest on-dark token', () => {
@@ -290,17 +372,22 @@ describe('Shell — topbar breadcrumb', () => {
 // ── Shell — structure ─────────────────────────────────────────────────────────
 
 describe('Shell', () => {
-  it('renders all three group headers', () => {
+  it('renders all four group headers', () => {
     const html = renderToStaticMarkup(<Shell hash="#/chat">page</Shell>)
-    expect(html).toContain('Workspace')
-    expect(html).toContain('Developer')
-    expect(html).toContain('Intel')
+    expect(html).toContain('Decide')
+    expect(html).toContain('Watch')
+    expect(html).toContain('Tune')
+    expect(html).toContain('Advanced')
   })
 
-  it('renders all nav entry labels (nine entries)', () => {
+  it('renders non-Advanced nav entry labels', () => {
     const html = renderToStaticMarkup(<Shell hash="#/chat">page</Shell>)
-    const allLabels = SHELL_NAV_GROUPS.flatMap((g) => g.entries.map((e) => e.label))
-    for (const label of allLabels) {
+    // Advanced is collapsed by default so Events/Reflections won't appear as links
+    // but the non-Advanced entries should all be present
+    const visibleLabels = SHELL_NAV_GROUPS
+      .filter((g) => !g.collapsible)
+      .flatMap((g) => g.entries.map((e) => e.label))
+    for (const label of visibleLabels) {
       expect(html).toContain(label)
     }
   })
@@ -316,8 +403,8 @@ describe('Shell', () => {
   })
 
   it('highlights the route derived from the hash', () => {
-    const html = renderToStaticMarkup(<Shell hash="#/events">page</Shell>)
-    // Events entry should be active
+    const html = renderToStaticMarkup(<Shell hash="#/progress">page</Shell>)
+    // Progress entry should be active
     expect(html).toContain('aria-current="page"')
     // The bg-highlight/20 class should appear on the active entry
     expect(html).toContain('bg-highlight/20')

@@ -9,7 +9,7 @@
  * report ("Control Room's own NOW block, directly below the PAUSED lever,
  * also showed a green Live"), so it gets its own assertion.
  */
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -61,6 +61,27 @@ vi.mock('@/entities/operator/useDispatchState', () => ({
     state.reason === 'storm' ? 'signature storm' : 'paused',
 }))
 
+// useStewardView — used by StewardHistorySection. Returns undefined data by
+// default (no data yet), so the section renders just the ledger panel with no ratchet.
+vi.mock('./useStewardView', () => ({
+  useStewardView: () => ({ data: undefined, isLoading: false, error: null }),
+}))
+
+// StewardLedgerPanel — live component makes a fetch; stub it for unit tests.
+vi.mock('@/widgets/StewardLedgerPanel', () => ({
+  StewardLedgerPanel: () => <div data-testid="steward-ledger-panel-stub">Steward ledger</div>,
+}))
+
+// CapRatchet from StewardPage — stub so this test stays focused on ControlRoom
+// behaviour, not StewardPage internals.
+vi.mock('./StewardPage', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./StewardPage')>()
+  return {
+    ...actual,
+    CapRatchet: () => <div data-testid="cap-ratchet-stub">Cap ratchet</div>,
+  }
+})
+
 const renderControlRoom = () => {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Infinity } },
@@ -69,6 +90,37 @@ const renderControlRoom = () => {
     createElement(QueryClientProvider, { client }, createElement(ControlRoomPage)),
   )
 }
+
+describe('ControlRoomPage — Steward history section', () => {
+  beforeEach(() => {
+    mockUseDispatchState.mockReturnValue({
+      paused: false,
+      reason: null,
+      since: null,
+      detail: null,
+    })
+  })
+
+  it('renders the Steward history section', () => {
+    const html = renderControlRoom()
+    expect(html).toContain('data-testid="steward-history-section"')
+  })
+
+  it('renders the Steward ledger panel', () => {
+    const html = renderControlRoom()
+    expect(html).toContain('data-testid="steward-ledger-panel-stub"')
+  })
+
+  it('includes a link to the full Steward view', () => {
+    const html = renderControlRoom()
+    expect(html).toContain('href="#/steward"')
+  })
+
+  it('renders the "Steward history" section label', () => {
+    const html = renderControlRoom()
+    expect(html).toContain('Steward history')
+  })
+})
 
 describe('ControlRoomPage – NOW block dispatch indicator', () => {
   it('does not render the "Live" label when dispatch is paused', () => {

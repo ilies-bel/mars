@@ -74,14 +74,14 @@ const formatLastActivity = (timestamp: string | null): string =>
 // Runtime tuning lane
 // ---------------------------------------------------------------------------
 
-interface CapEntry {
+export interface CapEntry {
   from: number
   to: number
   timestamp: string
   text: string
 }
 
-const CapRatchet = ({
+export const CapRatchet = ({
   entries,
   baseline,
   ceiling,

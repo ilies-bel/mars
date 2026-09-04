@@ -41,6 +41,9 @@ import {
   DialogFooter,
   DialogClose,
 } from '@/components/ui/dialog'
+import { StewardLedgerPanel } from '@/widgets/StewardLedgerPanel'
+import { useStewardView } from './useStewardView'
+import { CapRatchet } from './StewardPage'
 
 // ---------------------------------------------------------------------------
 // Advisory kinds shown in the digest (not in the main alert queue)
@@ -552,6 +555,65 @@ const RulesSection = () => {
 }
 
 // ---------------------------------------------------------------------------
+// Section 5 — Steward history
+// ---------------------------------------------------------------------------
+
+/**
+ * Embeds the Steward's intervention ledger and the concurrency-cap ratchet
+ * sparkline from StewardPage. The #/steward route remains navigable for the
+ * full view; this section surfaces the essential history directly inside
+ * Control Room so operators don't have to leave the lever panel.
+ */
+const StewardHistorySection = () => {
+  const { data } = useStewardView()
+
+  const ratchetEntries = data
+    ? data.runtimeTuning.acks
+        .filter((a) => a.pair !== null)
+        .map((a) => ({
+          from: a.pair!.from,
+          to: a.pair!.to,
+          timestamp: a.timestamp,
+          text: a.text,
+        }))
+        .slice()
+        .reverse() // oldest-first for the ratchet
+    : []
+
+  return (
+    <section data-testid="steward-history-section">
+      <div className="mb-3">
+        <div className="flex items-center justify-between">
+          <SectionLabel>Steward history</SectionLabel>
+          <a
+            href="#/steward"
+            className="font-mono text-label text-muted-foreground hover:text-foreground transition-colors"
+          >
+            → Full view
+          </a>
+        </div>
+      </div>
+
+      {data && (
+        <div className="mars-card mb-4 rounded bg-surface px-4 py-3">
+          <div className="mb-1 font-mono text-micro uppercase tracking-widest text-muted-foreground">
+            Concurrency cap ratchet
+          </div>
+          <CapRatchet
+            entries={ratchetEntries}
+            baseline={data.runtimeTuning.baselineCap}
+            ceiling={data.runtimeTuning.ceiling}
+            liveCap={data.runtimeTuning.liveCap}
+          />
+        </div>
+      )}
+
+      <StewardLedgerPanel />
+    </section>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Page root
 // ---------------------------------------------------------------------------
 
@@ -562,5 +624,6 @@ export const ControlRoomPage = () => (
     <NowSection />
     <AdvisorySection />
     <RulesSection />
+    <StewardHistorySection />
   </main>
 )
