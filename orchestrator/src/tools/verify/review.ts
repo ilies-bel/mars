@@ -752,7 +752,12 @@ export const review = async (
       // step so it runs verbatim with its true exit code.  bash -o pipefail
       // propagates the leftmost non-zero exit from any pipeline in the command.
       // Main-committer recoveries skip all gate steps (including this one).
-      const specVerifyCmdRaw = !isMainCommitter ? (spec?.verifyCmd?.trim() ?? '') : ''
+      // Re-read verifyCmd from the task row at verify time so that an
+      // operator's `mars task set-verify` applied after dispatch takes effect
+      // here rather than using the stale dispatch-time snapshot in `spec`.
+      const specVerifyCmdRaw = !isMainCommitter
+        ? ((await store.getTask(taskId))?.spec?.verifyCmd?.trim() ?? '')
+        : ''
       // Safety: rewrite any absolute repo-root path in verifyCmd to the task
       // worktree path so the acceptance command always runs against the task
       // branch, not main's tree. This guards against absolute-path specs that

@@ -8,7 +8,7 @@
  */
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
-import { basename, resolve } from 'node:path'
+import { basename, join, resolve } from 'node:path'
 import { resolveAuthor, formatAuthor, detectOriginSession, type Author } from '../../core/author'
 import { detectNoCommitMarker } from '../../core/lib/no-commit-marker'
 import { causeForSignature } from '../../core/lib/failure-signature'
@@ -301,16 +301,51 @@ const taskAdd: Command = {
         deps.err(noOpErr)
         return { code: 2 }
       }
-      // Warn (but do not reject) when --verify names a literal vitest test
-      // file that does not exist on disk. Tasks that are about to create the
-      // file are not blocked; the verify step will fail fast if the file is
-      // still missing after the coder runs.
-      const vitestPathWarn = detectNonexistentVitestPath(
-        specResult.value.verifyCmd,
-        deps.ctx.repoRoot,
-      )
-      if (vitestPathWarn !== null) {
-        deps.err(vitestPathWarn)
+      // Hard-error when --verify names a literal vitest test file that does
+      // not exist AND is not declared in --files (meaning the task will not
+      // create it). A missing file not in --files can never pass at verify
+      // time — reject early so no coder run is wasted on a structurally
+      // doomed spec.
+      //
+      // When the path IS in --files, the task is about to create it; emit a
+      // warning and proceed so the coder can write the file first.
+      if (deps.ctx.repoRoot) {
+        const filesAbsSet = new Set(
+          (specResult.value.files ?? []).map((f) => join(deps.ctx.repoRoot, f)),
+        )
+        let verCwd = '.'
+        outer: for (const raw of specResult.value.verifyCmd.split(/&&|\|\||;/)) {
+          const tokens = raw.trim().split(/\s+/).filter(Boolean)
+          if (tokens.length === 0) continue
+          if (tokens[0] === 'cd' && tokens[1]) {
+            verCwd = tokens[1]
+            continue
+          }
+          const vitestIdx = tokens.indexOf('vitest')
+          if (vitestIdx === -1 || tokens[vitestIdx + 1] !== 'run') continue
+          for (const p of tokens.slice(vitestIdx + 2).filter((t) => !t.startsWith('-'))) {
+            if (p.includes('*') || p.includes('?') || p.includes('{')) continue
+            const resolvedDir =
+              verCwd === '.' ? deps.ctx.repoRoot : join(deps.ctx.repoRoot, verCwd)
+            const absPath = join(resolvedDir, p)
+            if (!existsSync(absPath)) {
+              const cwdDesc = verCwd === '.' ? 'the repo root' : `${verCwd}/`
+              if (filesAbsSet.has(absPath)) {
+                deps.err(
+                  `[mars] --verify names test file '${p}' in ${cwdDesc} which does not exist yet. ` +
+                    `It is listed in --files so the task will create it — proceeding.`,
+                )
+              } else {
+                deps.err(
+                  `[mars] --verify names test file '${p}' in ${cwdDesc} which does not exist. ` +
+                    `Add it to --files if this task will create it, or correct the path.`,
+                )
+                return { code: 2 }
+              }
+              break outer
+            }
+          }
+        }
       }
     }
     const intentFlag = args.flags['--intent']?.trim()

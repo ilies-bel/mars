@@ -850,7 +850,7 @@ describe('task add no-commit guard: structural evidence bypass', () => {
         'task', 'add',
         '--prompt-file', promptFile,
         '--files', 'orchestrator/src/core/queue.ts',
-        '--verify', 'npx tsc --noEmit && npx vitest run src/core/queue.test.ts',
+        '--verify', 'npx tsc --noEmit',
       ],
       { store, ctx, daemon: fake },
     )
@@ -878,7 +878,7 @@ describe('task add no-commit guard: structural evidence bypass', () => {
         'task', 'add',
         '--prompt-file', promptFile,
         '--files', 'src/core/queue.ts',
-        '--verify', 'npx vitest run src/core/queue.test.ts',
+        '--verify', 'npx tsc --noEmit',
       ],
       { store, ctx, daemon: fake },
     )
@@ -1114,14 +1114,17 @@ describe('task add --verify no-op guard', () => {
     expect(r.err.join('\n')).toContain('grep')
   })
 
-  it('accepts a legitimate scoped vitest command', async () => {
+  it('accepts a legitimate scoped vitest command when the test file will be created (--files)', async () => {
     const fake = makeFakeDaemon(() => ({ id: 'mars-task-noop1', status: 'queued' }))
     const { store, ctx } = await loadStoreAndCtx()
+    // Prompt must come before --files to avoid the greedy multi-flag parser
+    // consuming it as a second --files value.
     const r = await runCommandInProcess(
       [
         'task', 'add',
-        '--verify', 'cd orchestrator && npx vitest run src/foo.test.ts',
         'Fix something in src/foo.ts.',
+        '--verify', 'cd orchestrator && npx vitest run src/foo.test.ts',
+        '--files', 'orchestrator/src/foo.test.ts',
       ],
       { store, ctx, daemon: fake },
     )
@@ -1210,7 +1213,7 @@ describe('task add research-prompt guard', () => {
     const fake = makeFakeDaemon(() => ({ id: 'mars-task-v', status: 'queued' }))
     const { store, ctx } = await loadStoreAndCtx()
     const r = await runCommandInProcess(
-      ['task', 'add', '--verify', 'cd orchestrator && npx vitest run src/core/queue.test.ts', 'investigate and fix the queue deadlock'],
+      ['task', 'add', '--verify', 'cd orchestrator && npx tsc --noEmit', 'investigate and fix the queue deadlock'],
       { store, ctx, daemon: fake },
     )
     expect(r.code).toBe(0)
@@ -1306,5 +1309,75 @@ describe('@<path>-in-intent guard', () => {
       { store, ctx, daemon: fake },
     )
     expect(r.code).not.toBe(2)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// task add --verify: missing vitest file hard-error vs --files warning
+//
+// When --verify names a literal vitest test file that does not exist on disk:
+//   - NOT in --files → hard error (code 2), daemon is never called
+//   - IS in --files  → warning on stderr, enqueues (code 0)
+//
+// This prevents a coder run being wasted on a spec that can never pass
+// (the file will never exist unless the task creates it).
+// ---------------------------------------------------------------------------
+
+describe('task add --verify: missing vitest file guard', () => {
+  it('hard-errors when the named test file does not exist and is not in --files', async () => {
+    const fake = makeFakeDaemon()
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      [
+        'task', 'add',
+        'Fix the bug in queue.ts.',
+        '--verify', 'cd orchestrator && npx vitest run src/core/__tests__/missing.test.ts',
+      ],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(2)
+    expect(fake.calls).toHaveLength(0)
+    expect(r.err.join('\n')).toContain('missing.test.ts')
+    expect(r.err.join('\n')).toContain('does not exist')
+  })
+
+  it('warns but enqueues when the named test file is in --files (task will create it)', async () => {
+    const fake = makeFakeDaemon(() => ({ id: 'mars-task-fv1', status: 'queued' }))
+    const { store, ctx } = await loadStoreAndCtx()
+    // Prompt before --files avoids the greedy multi-flag parser consuming it.
+    const r = await runCommandInProcess(
+      [
+        'task', 'add',
+        'Add a new test for the queue logic.',
+        '--verify', 'cd orchestrator && npx vitest run src/core/__tests__/queue-new.test.ts',
+        '--files', 'orchestrator/src/core/__tests__/queue-new.test.ts',
+      ],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(0)
+    expect(fake.calls).toHaveLength(1)
+    // A warning is emitted to stderr explaining the file will be created.
+    expect(r.err.join('\n')).toContain('queue-new.test.ts')
+    expect(r.err.join('\n')).toContain('--files')
+  })
+
+  it('does not warn when the named test file already exists on disk', async () => {
+    const fake = makeFakeDaemon(() => ({ id: 'mars-task-fv2', status: 'queued' }))
+    const { store, ctx } = await loadStoreAndCtx()
+    // Create the test file in the temp repo so existsSync returns true.
+    mkdirSync(join(repo, 'orchestrator', 'src', 'core'), { recursive: true })
+    writeFileSync(join(repo, 'orchestrator', 'src', 'core', 'existing.test.ts'), '')
+    const r = await runCommandInProcess(
+      [
+        'task', 'add',
+        'Fix the queue logic.',
+        '--verify', 'cd orchestrator && npx vitest run src/core/existing.test.ts',
+      ],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(0)
+    expect(fake.calls).toHaveLength(1)
+    // No warning emitted — the file already exists.
+    expect(r.err.join('\n')).not.toContain('does not exist')
   })
 })
