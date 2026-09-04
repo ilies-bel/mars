@@ -3,8 +3,9 @@
  * list of verify gates for the Control Room's Gates section.
  *
  * `listVerifyGates` is mocked at the module level so the route can be
- * exercised without a live database. `vi.resetModules()` re-imports the
- * http-server fresh on each test while the mock declaration persists.
+ * exercised without a live database. The mock function is a closure variable
+ * that persists across `vi.resetModules()` calls — the mock factory captures
+ * it, so re-imported modules still reference the same vi.fn.
  */
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
@@ -18,12 +19,15 @@ import { loadRecipeCatalog } from '../../lib/recipes'
 import { nullTraceStore } from '../../lib/run-tool'
 import type { VerifyGate } from '../../verify-gates'
 
-// Mock listVerifyGates so tests run without a live database.
+// Closure-captured mock so tests can control the return value directly
+// without needing `require` or re-importing the mocked module.
+const mockListVerifyGates = vi.fn<() => Promise<VerifyGate[]>>().mockResolvedValue([])
+
 vi.mock('../../verify-gates', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../verify-gates')>()
   return {
     ...actual,
-    listVerifyGates: vi.fn<[], Promise<VerifyGate[]>>().mockResolvedValue([]),
+    listVerifyGates: mockListVerifyGates,
   }
 })
 
@@ -92,12 +96,7 @@ describe('GET /view/verify-gates', () => {
 
   beforeEach(() => {
     repo = setupRepo()
-    // Reset mock to a known-empty state before each test.
-    const mod = vi.mocked(
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      (require('../../verify-gates') as typeof import('../../verify-gates')).listVerifyGates,
-    )
-    mod.mockResolvedValue([])
+    mockListVerifyGates.mockResolvedValue([])
   })
 
   afterEach(() => {
@@ -162,10 +161,7 @@ describe('GET /view/verify-gates', () => {
       evidence: 'detected by mars verify-gate detect',
     }
 
-    // Override the mock for this specific test.
-    vi.mocked(
-      (require('../../verify-gates') as typeof import('../../verify-gates')).listVerifyGates,
-    ).mockResolvedValue([mockGate, quarantinedGate])
+    mockListVerifyGates.mockResolvedValue([mockGate, quarantinedGate])
 
     const { httpServer } = await loadModules(repo)
     const { port, close } = await httpServer.startHttpServer(makeDeps())
@@ -195,9 +191,7 @@ describe('GET /view/verify-gates', () => {
   })
 
   it('returns 500 when listVerifyGates throws', async () => {
-    vi.mocked(
-      (require('../../verify-gates') as typeof import('../../verify-gates')).listVerifyGates,
-    ).mockRejectedValue(new Error('database unreachable'))
+    mockListVerifyGates.mockRejectedValue(new Error('database unreachable'))
 
     const { httpServer } = await loadModules(repo)
     const { port, close } = await httpServer.startHttpServer(makeDeps())
