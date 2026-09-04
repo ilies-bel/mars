@@ -2751,3 +2751,76 @@ describe('RecoveryCommands', () => {
     expect(html.indexOf('mars remerge')).toBeLessThan(html.indexOf('mars restart'))
   })
 })
+
+// ---------------------------------------------------------------------------
+// Changes section — three distinct states:
+//   1. Unsupported (404/405 from stale daemon) → restart hint
+//   2. Empty (branch-gone or no files) → "This task changed no files."
+//   3. Has files → renders the file list
+// ---------------------------------------------------------------------------
+
+describe('TaskDetailBody – Changes section states', () => {
+  const baseTask = fullTask({ id: 'task-changes-test', status: 'done' })
+
+  const renderBodyWithChanges = (changesData?: import('@/shared/schemas').TaskChangesResponse | null, changesUnsupported?: boolean): string => {
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    })
+    qc.setQueryData(['origins', null, 'task-changes-test'], SINGLE_NODE_ORIGINS('task-changes-test'))
+    return renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <TaskDetailBody task={baseTask} changesData={changesData} changesUnsupported={changesUnsupported} />
+      </QueryClientProvider>,
+    )
+  }
+
+  it('shows restart hint (not "no changes") when endpoint is unsupported (stale daemon)', () => {
+    const html = renderBodyWithChanges(undefined, true)
+    // Must render the unsupported hint.
+    expect(html).toContain('data-testid="changes-unsupported"')
+    expect(html).toContain('Restart the background engine')
+    // Must offer the Restart action button.
+    expect(html).toContain('data-testid="changes-restart-btn"')
+    // Must NOT show the misleading "No changes" or empty text.
+    expect(html).not.toContain('No changes recorded')
+    expect(html).not.toContain('data-testid="changes-empty"')
+  })
+
+  it('shows "This task changed no files." when branch-gone (200 with empty diff)', () => {
+    const branchGone: import('@/shared/schemas').TaskChangesResponse = {
+      reason: 'branch-gone',
+      base: null,
+      head: null,
+      landedSha: null,
+      files: [],
+      patch: '',
+      truncated: false,
+      commits: [],
+    }
+    const html = renderBodyWithChanges(branchGone)
+    expect(html).toContain('data-testid="changes-empty"')
+    expect(html).toContain('This task changed no files.')
+    // Must not render the restart hint.
+    expect(html).not.toContain('data-testid="changes-unsupported"')
+  })
+
+  it('renders file list and summary line when diff is present', () => {
+    const withFiles: import('@/shared/schemas').TaskChangesResponse = {
+      reason: undefined,
+      base: 'abc1234',
+      head: 'def5678',
+      landedSha: null,
+      files: [{ path: 'src/foo.ts', status: 'M', additions: 10, deletions: 3 }],
+      patch: `diff --git a/src/foo.ts b/src/foo.ts\n--- a/src/foo.ts\n+++ b/src/foo.ts\n@@ -1,3 +1,10 @@\n context\n+added\n`,
+      truncated: false,
+      commits: [],
+    }
+    const html = renderBodyWithChanges(withFiles)
+    expect(html).toContain('data-testid="changes-summary"')
+    expect(html).toContain('1 file')
+    expect(html).toContain('src/foo.ts')
+    // Neither unsupported hint nor empty message.
+    expect(html).not.toContain('data-testid="changes-unsupported"')
+    expect(html).not.toContain('data-testid="changes-empty"')
+  })
+})

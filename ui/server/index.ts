@@ -488,6 +488,15 @@ export const startServer = async (
           return jsonResponse(r.status, r.body)
         }
 
+        // GET /api/counts — board-level count summary (tasks by status + proposals).
+        // Proxied from the daemon's /view/counts so every project-selector context
+        // uses the same projection. The UI calls this path (not /api/status-counts)
+        // for the board header badges.
+        if (path === '/api/counts') {
+          const r = await proxyGet(ctx.stateDir, '/view/counts')
+          return jsonResponse(r.status, r.body)
+        }
+
         // GET /api/hot-paths — per-file/dir change frequency over a rolling
         // window. Proxies GET /view/hot-paths on the daemon.
         if (path === '/api/hot-paths') {

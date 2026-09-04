@@ -94,6 +94,8 @@ const FRONTEND_ROUTES: Array<{ method: string; path: string }> = [
   { method: 'POST', path: '/api/proposals/x/thread' },
   // Levers
   { method: 'POST', path: '/api/levers/x' },
+  // Board counts (distinct from /api/status-counts — different projection endpoint)
+  { method: 'GET', path: '/api/counts' },
 ]
 
 let repo: string

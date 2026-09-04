@@ -825,20 +825,33 @@ interface ChangesSectionProps {
   changesData?: TaskChangesResponse | null
   projectId?: string
   fetchImpl?: typeof fetch
+  /**
+   * Test-only seam: when true the section renders the "unsupported endpoint"
+   * state (404/405 from a stale daemon) immediately, without querying.
+   * Production callers omit it; tests pass `true` to exercise the hint branch
+   * synchronously under renderToStaticMarkup (where useQuery effects never fire).
+   */
+  isUnsupported?: boolean
 }
 
-const ChangesSection = ({ taskId, changesData: injected, projectId, fetchImpl }: ChangesSectionProps) => {
+const ChangesSection = ({ taskId, changesData: injected, projectId, fetchImpl, isUnsupported: injectedUnsupported }: ChangesSectionProps) => {
   const [expandedFiles, setExpandedFiles] = useState<Set<string>>(new Set())
   const [copyDone, setCopyDone] = useState(false)
+  const [restartLoading, setRestartLoading] = useState(false)
+  const [restartError, setRestartError] = useState<string | null>(null)
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError } = useQuery({
     queryKey: ['task-changes', taskId, projectId],
     queryFn: () => fetchTaskChanges(taskId, projectId, fetchImpl ?? fetch),
-    enabled: injected === undefined,
+    enabled: injected === undefined && !injectedUnsupported,
     staleTime: 30_000,
+    retry: false,
   })
 
   const changes = injected !== undefined ? injected : data ?? null
+
+  // 404/405 from a stale daemon: the route does not exist in the running binary.
+  const isUnsupported = injectedUnsupported ?? (isError && injected === undefined)
 
   const toggleFile = (path: string) => {
     setExpandedFiles((prev) => {
@@ -857,11 +870,45 @@ const ChangesSection = ({ taskId, changesData: injected, projectId, fetchImpl }:
     })
   }
 
+  const handleRestart = () => {
+    setRestartLoading(true)
+    setRestartError(null)
+    invokeAction('restart-daemon').catch((err) => {
+      setRestartError(err instanceof Error ? err.message : String(err))
+    }).finally(() => {
+      setRestartLoading(false)
+    })
+  }
+
   if (isLoading && !changes) {
     return (
       <div data-testid="changes-section">
         <SectionLabel>Changes</SectionLabel>
         <SkeletonBlock className="h-4 w-40" />
+      </div>
+    )
+  }
+
+  // Stale daemon (404/405): the /changes route is not supported yet.
+  if (isUnsupported) {
+    return (
+      <div data-testid="changes-section">
+        <SectionLabel>Changes</SectionLabel>
+        <p className="font-mono text-label text-muted-foreground" data-testid="changes-unsupported">
+          Restart the background engine to see changes for this task.
+        </p>
+        {restartError ? (
+          <p className="mt-1 font-mono text-micro text-error">{restartError}</p>
+        ) : null}
+        <button
+          type="button"
+          data-testid="changes-restart-btn"
+          onClick={handleRestart}
+          disabled={restartLoading}
+          className="mt-2 rounded border border-primary/30 px-3 py-1 font-mono text-label text-primary hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          {restartLoading ? 'Restarting…' : 'Restart'}
+        </button>
       </div>
     )
   }
@@ -896,7 +943,7 @@ const ChangesSection = ({ taskId, changesData: injected, projectId, fetchImpl }:
       </div>
 
       {isEmpty ? (
-        <p className="font-mono text-label text-muted-foreground">No changes recorded for this task yet.</p>
+        <p className="font-mono text-label text-muted-foreground" data-testid="changes-empty">This task changed no files.</p>
       ) : (
         <div className="flex flex-col gap-2">
           {/* Summary line */}
@@ -999,6 +1046,7 @@ export const TaskDetailBody = ({
   currentId,
   currentStep,
   changesData,
+  changesUnsupported,
 }: {
   task: Task
   /** Drill-in handler threaded into the OriginTree; omit for display-only. */
@@ -1018,6 +1066,12 @@ export const TaskDetailBody = ({
    * fetches live data from `/api/task/:id/changes`.
    */
   changesData?: TaskChangesResponse | null
+  /**
+   * Test-only seam: when true the Changes section renders the unsupported-
+   * endpoint hint (404/405 from a stale daemon) without querying. Passed
+   * through to ChangesSection.isUnsupported. Omit in production.
+   */
+  changesUnsupported?: boolean
 }) => {
   const promptLines = task.prompt.split('\n')
   const firstLine = promptLines[0] ?? task.prompt
@@ -1183,7 +1237,7 @@ export const TaskDetailBody = ({
 
       {/* h. Changes — per-file diff summary. Fetches live unless changesData was injected. */}
       {changesData !== null ? (
-        <ChangesSection taskId={task.id} changesData={changesData} />
+        <ChangesSection taskId={task.id} changesData={changesData} isUnsupported={changesUnsupported} />
       ) : null}
 
       {/* i. Diagnostics — collapsed by default. */}

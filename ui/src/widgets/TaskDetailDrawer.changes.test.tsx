@@ -143,7 +143,7 @@ describe('TaskDetailBody – Changes section', () => {
       <TaskDetailBody task={makeTask()} changesData={BRANCH_GONE} />,
     )
     expect(html).toContain('data-testid="changes-section"')
-    expect(html).toContain('No changes recorded for this task yet.')
+    expect(html).toContain('This task changed no files.')
     // No file rows
     expect(html).not.toContain('data-testid="file-row-')
   })
