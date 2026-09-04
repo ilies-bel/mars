@@ -77,7 +77,7 @@ import type { DbClient, DbStatement } from './db.js'
 import { __execSchemaBatch } from './db.js'
 
 /** Bumped when the canonical DDL changes shape. */
-export const SCHEMA_VERSION = '0042'
+export const SCHEMA_VERSION = '0043'
 
 /**
  * The well-known `chat_threads` row that backs the main thread.
@@ -480,6 +480,8 @@ const DDL: readonly string[] = [
      ON tasks(priority DESC, created_at ASC)`,
   `CREATE INDEX IF NOT EXISTS idx_tasks_fix_for
      ON tasks(fix_for_task_id, failure_signature)`,
+  `CREATE INDEX IF NOT EXISTS idx_tasks_failure_sig
+     ON tasks(failure_signature) WHERE failure_signature IS NOT NULL`,
   `CREATE INDEX IF NOT EXISTS idx_tasks_kind ON tasks(kind)`,
   `CREATE INDEX IF NOT EXISTS idx_tasks_origin_id ON tasks(origin_id)`,
   `CREATE INDEX IF NOT EXISTS idx_tasks_parent_proposal_id
