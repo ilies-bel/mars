@@ -92,6 +92,18 @@ export interface ChatThread {
   terminal_entity_id?: string | null
   parent_thread_id: string | null
   fork_idempotency_key: string | null
+  /**
+   * Provider model id selected for this thread (e.g. 'claude-sonnet-4-6').
+   * Null means "use the catalog default for the active provider".
+   * Fixed at the first turn of each thread.
+   */
+  model_id: string | null
+  /**
+   * Thinking-effort id selected for this thread (e.g. 'high').
+   * Null means "use the model-level or provider-level default from the catalog".
+   * Fixed at the first turn of each thread.
+   */
+  thinking_effort: string | null
 }
 
 export interface ChatMessage {
@@ -580,6 +592,8 @@ const rowToThread = (row: Record<string, unknown>): ChatThread => ({
   terminal_entity_id: (row.terminal_entity_id as string | null) ?? null,
   parent_thread_id: (row.parent_thread_id as string | null) ?? null,
   fork_idempotency_key: (row.fork_idempotency_key as string | null) ?? null,
+  model_id: (row.model_id as string | null) ?? null,
+  thinking_effort: (row.thinking_effort as string | null) ?? null,
 })
 
 const rowToMessage = (row: Record<string, unknown>): ChatMessage => {
@@ -662,6 +676,8 @@ export const createThread = async (
     terminal_entity_id: terminalEntityId ?? null,
     parent_thread_id: null,
     fork_idempotency_key: null,
+    model_id: null,
+    thinking_effort: null,
   }
 }
 
@@ -775,6 +791,8 @@ export const forkThread = async (opts: {
       terminal_entity_id: null,
       parent_thread_id: opts.sourceThreadId,
       fork_idempotency_key: opts.idempotencyKey,
+      model_id: null,
+      thinking_effort: null,
     },
     deduped: false,
   }
@@ -1176,6 +1194,23 @@ export const setThreadPosture = async (id: string, posture: ChatPosture): Promis
 }
 
 /**
+ * Persist the model id and thinking effort for a thread.
+ * Called once at the first turn; subsequent turns read the stored values.
+ * Null values are written as-is — callers pass null to clear a selection.
+ */
+export const setThreadModel = async (
+  id: string,
+  modelId: string | null,
+  thinkingEffort: string | null,
+): Promise<void> => {
+  const c = stateClient()
+  await c.execute({
+    sql: `UPDATE chat_threads SET model_id = ?, thinking_effort = ?, updated_at = ? WHERE id = ?`,
+    args: [modelId, thinkingEffort, now(), id],
+  })
+}
+
+/**
  * Close a Subject by stamping `closed_at` with the current epoch-millisecond
  * timestamp. Idempotent: the original closure timestamp is preserved.
  */
@@ -1294,6 +1329,8 @@ export const startThreadForQueueItem = async (
     terminal_entity_id: null,
     parent_thread_id: null,
     fork_idempotency_key: null,
+    model_id: null,
+    thinking_effort: null,
   }
 }
 
@@ -1493,6 +1530,8 @@ export const startThreadFromAlert = async (
     terminal_entity_id: terminal?.entityId ?? null,
     parent_thread_id: null,
     fork_idempotency_key: null,
+    model_id: null,
+    thinking_effort: null,
   }
 }
 

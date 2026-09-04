@@ -127,6 +127,8 @@ const makeThreadFixture = (id: string) => ({
     closed_at: null,
     parent_thread_id: null,
     fork_idempotency_key: null,
+    model_id: null,
+    thinking_effort: null,
   },
   messages: [],
   feedbacks: new Map(),

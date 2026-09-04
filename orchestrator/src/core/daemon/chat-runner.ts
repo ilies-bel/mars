@@ -39,6 +39,7 @@ import {
   appendMessage,
   getThread,
   listMainSessionMessages,
+  setThreadModel,
   setThreadPosture,
   setThreadStatus,
   updateThreadTitle,
@@ -59,6 +60,12 @@ import {
 } from './chat-memory-window'
 import { PROVIDERS, resolveProviderName } from '../workers/providers'
 import { PROVIDER_MODELS, type ConversationMemoryFacts } from '../workers/provider-types'
+import {
+  defaultModelIdFor,
+  resolveCatalogFacts,
+  resolveDefaultThinkingEffort,
+} from '../workers/model-catalog'
+import { loadDaemonConfig } from './config'
 import {
   CodexApiError,
   loadCodexAuth,
@@ -606,20 +613,80 @@ export const CHAT_TIMEOUT_MS = 10 * 60 * 1000
 /**
  * Conversation-memory facts for the chat model of the *active* provider.
  *
- * The chat model is provider-specific. Codex carries its own OAuth-configured
- * model (which the operator can override), so it keeps reading that. Every
- * other provider has no such config and must resolve through the shared
- * `PROVIDER_MODELS` tier map — reading the Codex config for them yields a
- * Codex model id, which `conversationMemory` rejects and which crashed the
- * daemon at boot whenever `defaultProvider` was set to `claude` or `gemini`.
+ * Uses the model catalog for resolution (never throws on unknown model id).
+ * The active model is:
+ *   1. The thread-stored model_id when set (resolved at turn start by _run).
+ *   2. The Codex OAuth-configured model for the codex provider.
+ *   3. The catalog's default model for any other provider.
+ *
+ * This constructor-time resolver is the fallback used when no thread is
+ * available (e.g. `new ChatRunner()` in tests or `describeConfig`). Per-turn
+ * resolution with thread context lives in `_run`.
  */
 const resolveChatConversationMemory = (): ConversationMemoryFacts => {
   const provider = resolveProviderName()
   const model =
     provider === 'codex'
       ? resolveCodexOAuthConfig().model
-      : PROVIDER_MODELS[provider].balanced
-  return PROVIDERS[provider].conversationMemory(model)
+      : (defaultModelIdFor(provider) ?? PROVIDER_MODELS[provider]?.balanced ?? '')
+  return resolveCatalogFacts(provider, model)
+}
+
+/**
+ * Resolve the effective model id and thinking effort for a chat thread.
+ *
+ * Priority order:
+ *   1. Thread-stored values (non-null model_id / thinking_effort).
+ *   2. Operator defaults from daemon.json (`chat.defaultModelId` /
+ *      `chat.defaultThinkingEffort` — set via `mars operator set chat-model`).
+ *   3. MARS_CHAT_MODEL / MARS_CHAT_EFFORT env vars (from OAuth config).
+ *   4. Catalog defaults for the active provider and resolved model.
+ *
+ * Returns `{ modelId, thinkingEffort, isNew }` where `isNew` is true when
+ * no stored values existed so the caller can persist the resolved defaults.
+ */
+const resolveThreadModelAndEffort = (
+  provider: string,
+  storedModelId: string | null,
+  storedEffort: string | null,
+): { modelId: string; thinkingEffort: string | undefined; isNew: boolean } => {
+  const cfg = resolveCodexOAuthConfig()
+
+  // Operator defaults (best-effort: loadDaemonConfig never throws).
+  let operatorModelId: string | undefined
+  let operatorEffort: string | undefined
+  try {
+    const daemonCfg = loadDaemonConfig()
+    const chatCfg = daemonCfg.chat
+    if (chatCfg !== null && typeof chatCfg === 'object' && !Array.isArray(chatCfg)) {
+      const rec = chatCfg as Record<string, unknown>
+      if (typeof rec.defaultModelId === 'string' && rec.defaultModelId.length > 0) {
+        operatorModelId = rec.defaultModelId
+      }
+      if (typeof rec.defaultThinkingEffort === 'string' && rec.defaultThinkingEffort.length > 0) {
+        operatorEffort = rec.defaultThinkingEffort
+      }
+    }
+  } catch {
+    // loadDaemonConfig failed (no daemon.json yet) — fall through to env/catalog defaults.
+  }
+
+  // Step 1: model id
+  const modelId: string =
+    storedModelId ??
+    operatorModelId ??
+    (provider === 'codex' ? cfg.model : (defaultModelIdFor(provider) ?? cfg.model))
+
+  // Step 2: thinking effort
+  const thinkingEffort: string | undefined =
+    storedEffort ??
+    operatorEffort ??
+    (provider === 'codex' ? cfg.effort : undefined) ??
+    resolveDefaultThinkingEffort(provider, modelId)
+
+  const isNew = storedModelId === null && storedEffort === null
+
+  return { modelId, thinkingEffort, isNew }
 }
 
 /**
@@ -1012,6 +1079,31 @@ export class ChatRunner {
       }
       posture = threadData.thread.posture
 
+      // ── Per-thread model and thinking-effort resolution ────────────────────
+      // Fixed at turn start (rule: "Fixed at turn start; a mid-turn change
+      // applies to the next turn"). On the very first turn, the thread has no
+      // stored values → resolve from defaults and persist them so subsequent
+      // turns in this thread use the same selection even across daemon restarts.
+      const provider = resolveProviderName()
+      const { modelId: chatModel, thinkingEffort: chatEffort, isNew: isFirstSelection } =
+        resolveThreadModelAndEffort(
+          provider,
+          threadData.thread.model_id,
+          threadData.thread.thinking_effort,
+        )
+      if (isFirstSelection) {
+        // Best-effort: a failure here must not abort the turn.
+        setThreadModel(threadId, chatModel, chatEffort ?? null).catch((err: unknown) => {
+          console.warn('[chat-runner] setThreadModel failed', {
+            threadId,
+            error: err instanceof Error ? err.message : String(err),
+          })
+        })
+      }
+      // Update conversationMemory facts for the resolved model so the memory
+      // window uses accurate limits for this thread's model.
+      const threadConversationMemory = resolveCatalogFacts(provider, chatModel)
+
       const hasMessages = threadData.messages.length > 0
 
       // Build user segments: always start with a text segment, then append one
@@ -1069,7 +1161,7 @@ export class ChatRunner {
       // Main-session cuts happen only while assembling the next Operator
       // request. They never run from an idle timer and never ask a provider to
       // summarize or maintain the prefix.
-      const memoryCut = await selectMemoryCut(undefined, this.conversationMemory)
+      const memoryCut = await selectMemoryCut(undefined, threadConversationMemory)
       if (memoryCut) await advanceMainMemoryWindow(undefined, memoryCut)
       const memoryWindow = await readMainMemoryWindow()
       const mainThreadMessages = await listMainSessionMessages(memoryWindow.startsAfterSeq)
@@ -1125,7 +1217,8 @@ export class ChatRunner {
             try {
               const providerRequest = streamCodexResponse({
                 auth,
-                model: cfg.model,
+                model: chatModel,
+                effort: chatEffort,
                 instructions: instructionsForPosture(),
                 input,
                 tools: toolsForPosture(),

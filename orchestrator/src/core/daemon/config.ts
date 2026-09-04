@@ -593,6 +593,17 @@ export interface DaemonConfig {
    * `loadDaemonConfig().code.*`.
    */
   code: CodeParamsConfig
+  /**
+   * Chat-specific operator defaults. Written by `mars operator set chat-model`
+   * / `mars operator set chat-effort`. Consumed by the chat runner as the
+   * fallback model and thinking-effort for new threads that have no per-thread
+   * selection stored yet.
+   *
+   * Shape: `{ defaultModelId?: string; defaultThinkingEffort?: string }`.
+   * Stored as a plain object in daemon.json so forward-compatible — future
+   * fields are addable without a schema migration.
+   */
+  chat?: Record<string, unknown> | null
 }
 
 /**

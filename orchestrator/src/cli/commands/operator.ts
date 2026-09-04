@@ -41,6 +41,7 @@ import {
   readPersistedPaused,
   writeControlLever,
 } from '../../core/daemon/config'
+import { ALL_THINKING_EFFORT_IDS } from '../../core/workers/model-catalog'
 import { isDaemonAlive } from '../../core/daemon/paths'
 import { describePauseState } from '../../core/daemon/pause-state'
 import type { DispatchPauseState } from '../../core/daemon/pause-state'
@@ -213,7 +214,9 @@ const operatorSet: Command = {
     '       mars operator set <budget-window|budget-window-tokens|budget-arc-tokens> <value>\n' +
     '       mars operator set integration-branch <branch-name>\n' +
     '       mars operator set implement-cap <n|off>    (pin implement semaphore; off clears pin)\n' +
-    '       mars operator set merge-watchdog <minutes|off>  (pin merge watchdog; off restores dynamic)',
+    '       mars operator set merge-watchdog <minutes|off>  (pin merge watchdog; off restores dynamic)\n' +
+    '       mars operator set chat-model <model-id>   # default model for new chat threads\n' +
+    '       mars operator set chat-effort <effort-id> # default thinking effort for new chat threads',
   run: async (args, deps) => {
     const positional = args.positional.filter((a) => !a.startsWith('--'))
     const lever = positional[0]
@@ -330,6 +333,43 @@ const operatorSet: Command = {
       deps.out(`merge-watchdog: ${minutes} min (${ms} ms)`)
       return { code: 0 }
     }
+    // ── chat-model / chat-effort — per-provider chat defaults ─────────────────
+    // Stored under `chat` in daemon.json. New threads inherit these as their
+    // initial model_id / thinking_effort selection when no per-thread override
+    // has been set. Existing threads are unaffected — their stored values win.
+    if (lever === 'chat-model') {
+      if (!value || value.trim().length === 0) {
+        deps.err('mars operator set: chat-model requires a non-empty model id')
+        return { code: 2 }
+      }
+      const existingCfg = readDaemonConfigFile()
+      const existingChat = (existingCfg.chat !== null && typeof existingCfg.chat === 'object' && !Array.isArray(existingCfg.chat))
+        ? (existingCfg.chat as Record<string, unknown>)
+        : {}
+      patchDaemonConfigFile({ chat: { ...existingChat, defaultModelId: value.trim() } })
+      deps.out(`chat-model: ${value.trim()}`)
+      return { code: 0 }
+    }
+    if (lever === 'chat-effort') {
+      if (!value || value.trim().length === 0) {
+        deps.err('mars operator set: chat-effort requires a non-empty effort id')
+        return { code: 2 }
+      }
+      const effortId = value.trim()
+      if (!ALL_THINKING_EFFORT_IDS.has(effortId)) {
+        deps.err(
+          `mars operator set: unknown chat-effort '${effortId}'; known: ${[...ALL_THINKING_EFFORT_IDS].sort().join(', ')}`,
+        )
+        return { code: 2 }
+      }
+      const existingCfg = readDaemonConfigFile()
+      const existingChat = (existingCfg.chat !== null && typeof existingCfg.chat === 'object' && !Array.isArray(existingCfg.chat))
+        ? (existingCfg.chat as Record<string, unknown>)
+        : {}
+      patchDaemonConfigFile({ chat: { ...existingChat, defaultThinkingEffort: effortId } })
+      deps.out(`chat-effort: ${effortId}`)
+      return { code: 0 }
+    }
     // integration-branch: persist the integration branch name so all tasks
     // target the correct branch without requiring the INTEGRATION_BRANCH env var.
     if (lever === 'integration-branch') {
@@ -346,7 +386,7 @@ const operatorSet: Command = {
     type LeverName = (typeof validLevers)[number]
     if (!validLevers.includes(lever as LeverName)) {
       deps.err(
-        `mars operator set: unknown lever '${lever}'; valid levers: ${validLevers.join(', ')}, integration-branch, qa-step-list, implement-cap, merge-watchdog, drift-threshold-pct, scoring-low-trend-threshold, scoring-low-trend-window, budget-window, budget-window-tokens, budget-arc-tokens`,
+        `mars operator set: unknown lever '${lever}'; valid levers: ${validLevers.join(', ')}, integration-branch, qa-step-list, implement-cap, merge-watchdog, chat-model, chat-effort, drift-threshold-pct, scoring-low-trend-threshold, scoring-low-trend-window, budget-window, budget-window-tokens, budget-arc-tokens`,
       )
       return { code: 2 }
     }

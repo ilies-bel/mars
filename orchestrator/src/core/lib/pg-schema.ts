@@ -77,7 +77,7 @@ import type { DbClient, DbStatement } from './db.js'
 import { __execSchemaBatch } from './db.js'
 
 /** Bumped when the canonical DDL changes shape. */
-export const SCHEMA_VERSION = '0041'
+export const SCHEMA_VERSION = '0042'
 
 /**
  * The well-known `chat_threads` row that backs the main thread.
@@ -2156,6 +2156,15 @@ const DDL: readonly string[] = [
   // crosses STALL_THRESHOLD and writes the stall row — persist that same value
   // instead of dropping the recipe field.
   `ALTER TABLE subscriber_stalls ADD COLUMN IF NOT EXISTS fail_count bigint NOT NULL DEFAULT 0`,
+
+  // mars-7adcd4c8: per-thread model and thinking-effort selection.
+  // model_id stores the resolved provider model id for this thread (e.g.
+  // 'claude-sonnet-4-6'); NULL means "use catalog default for the active
+  // provider". thinking_effort stores the resolved effort id (e.g. 'high');
+  // NULL means "use model-level or provider-level default from the catalog".
+  // Both are fixed at the first turn and persist across daemon restarts.
+  `ALTER TABLE chat_threads ADD COLUMN IF NOT EXISTS model_id text`,
+  `ALTER TABLE chat_threads ADD COLUMN IF NOT EXISTS thinking_effort text`,
 ]
 
 /**

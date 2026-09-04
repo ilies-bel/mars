@@ -121,6 +121,11 @@ export interface StreamCodexResponseOpts {
   signal: AbortSignal
   /** Invoked once per parsed SSE event, in stream order. */
   onEvent: (event: unknown) => void
+  /**
+   * Thinking/reasoning effort forwarded as `reasoning.effort` in the request
+   * body. When absent, falls back to the `MARS_CHAT_EFFORT` env var or 'high'.
+   */
+  effort?: string
 }
 
 // ── Auth file ─────────────────────────────────────────────────────────────────
@@ -286,7 +291,8 @@ const RATE_LIMIT_RE = /(rate.?limit|usage.?limit|quota|too many requests)/i
  * callers can distinguish user stops from provider failures.
  */
 export const streamCodexResponse = async (opts: StreamCodexResponseOpts): Promise<void> => {
-  const { baseUrl, effort } = resolveCodexOAuthConfig()
+  const { baseUrl, effort: configEffort } = resolveCodexOAuthConfig()
+  const effort = opts.effort ?? configEffort
   let res: Response
   try {
     res = await fetch(`${baseUrl}/responses`, {

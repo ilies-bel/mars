@@ -20,6 +20,7 @@ import {
   type RunHeadlessProviderOpts,
   type SpawnOpts,
 } from './provider-types'
+import { resolveCatalogFacts } from './model-catalog'
 // No import cycle: core/daemon/config imports only `import type { ProviderName }`
 // from core/workers/provider-types (a type-only import, erased at runtime), so
 // there is no runtime circular dependency through this path.
@@ -34,33 +35,15 @@ import {
 // call sites — the registry is now the source of truth (see provider-registry.ts).
 export { PROVIDERS, PROVIDER_MODELS, tierForModel, getProvider, requireProvider } from './provider-registry'
 
+/**
+ * Catalog-backed conversationMemory resolver. Never throws for an unknown
+ * model id — falls back through prefix-match → agent default → conservative
+ * defaults (see model-catalog.ts rule 3).
+ */
 const conversationMemoryFor = (
   provider: ProviderName,
-  models: Readonly<Record<string, ConversationMemoryFacts>>,
-): ((model: string) => ConversationMemoryFacts) => (model: string): ConversationMemoryFacts => {
-  const facts = models[model]
-  if (!facts) {
-    throw new Error(`Provider '${provider}' has no conversation-memory facts for model '${model}'`)
-  }
-  return facts
-}
-
-const CLAUDE_CONVERSATION_MEMORY: Readonly<Record<string, ConversationMemoryFacts>> = {
-  'claude-opus-4-6': { retentionMs: 5 * 60 * 1000, minimumReusablePrefixTokens: 1024, contextWindowTokens: 200_000 },
-  'claude-sonnet-4-6': { retentionMs: 5 * 60 * 1000, minimumReusablePrefixTokens: 1024, contextWindowTokens: 200_000 },
-}
-
-const GEMINI_CONVERSATION_MEMORY: Readonly<Record<string, ConversationMemoryFacts>> = {
-  'gemini-2.5-pro': { retentionMs: 5 * 60 * 1000, minimumReusablePrefixTokens: 4096, contextWindowTokens: 1_048_576 },
-  'gemini-2.5-flash': { retentionMs: 5 * 60 * 1000, minimumReusablePrefixTokens: 1024, contextWindowTokens: 1_048_576 },
-}
-
-const CODEX_CONVERSATION_MEMORY: Readonly<Record<string, ConversationMemoryFacts>> = {
-  'gpt-5.5': { retentionMs: 5 * 60 * 1000, minimumReusablePrefixTokens: 1024, contextWindowTokens: 200_000 },
-  'gpt-5.6-sol': { retentionMs: 5 * 60 * 1000, minimumReusablePrefixTokens: 1024, contextWindowTokens: 200_000 },
-  'gpt-5.6-terra': { retentionMs: 5 * 60 * 1000, minimumReusablePrefixTokens: 1024, contextWindowTokens: 200_000 },
-  'gpt-5.6-luna': { retentionMs: 5 * 60 * 1000, minimumReusablePrefixTokens: 1024, contextWindowTokens: 200_000 },
-}
+): ((model: string) => ConversationMemoryFacts) =>
+  (model: string): ConversationMemoryFacts => resolveCatalogFacts(provider, model)
 
 
 /**
@@ -107,7 +90,7 @@ const CODEX_MODELS: ProviderDescriptor['models'] = {
 const CLAUDE_PROVIDER: ProviderDescriptor = {
     name: 'claude',
     models: CLAUDE_MODELS,
-    conversationMemory: conversationMemoryFor('claude', CLAUDE_CONVERSATION_MEMORY),
+    conversationMemory: conversationMemoryFor('claude'),
     // Argv for interactive (non-headless) claude invocations under the native
     // TTY harness. No `-p` flag — the agent runs in interactive mode and
     // receives the task prompt via feedPrompt below.
@@ -227,7 +210,7 @@ const CLAUDE_PROVIDER: ProviderDescriptor = {
 const GEMINI_PROVIDER: ProviderDescriptor = {
     name: 'gemini',
     models: GEMINI_MODELS,
-    conversationMemory: conversationMemoryFor('gemini', GEMINI_CONVERSATION_MEMORY),
+    conversationMemory: conversationMemoryFor('gemini'),
     // Argv for interactive gemini invocations under the native TTY harness.
     // No headless/pipe flag — the agent runs interactively and receives the
     // task prompt via feedPrompt below.
@@ -257,7 +240,7 @@ const GEMINI_PROVIDER: ProviderDescriptor = {
 const CODEX_PROVIDER: ProviderDescriptor = {
     name: 'codex',
     models: CODEX_MODELS,
-    conversationMemory: conversationMemoryFor('codex', CODEX_CONVERSATION_MEMORY),
+    conversationMemory: conversationMemoryFor('codex'),
     // Argv for interactive codex invocations under the native TTY harness.
     // No headless/pipe flag — the agent runs interactively and receives the
     // task prompt via feedPrompt below.

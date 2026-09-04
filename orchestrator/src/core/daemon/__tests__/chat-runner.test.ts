@@ -478,6 +478,7 @@ const threadFixture = {
   origin: null, alert_item_id: null, alert_resolved: false,
   objective: null, archived_at: null, relevance_score: null, closed_at: null,
   parent_thread_id: null, fork_idempotency_key: null,
+  model_id: null, thinking_effort: null,
 }
 
 /** streamCodexResponse implementation that emits the given events and resolves. */

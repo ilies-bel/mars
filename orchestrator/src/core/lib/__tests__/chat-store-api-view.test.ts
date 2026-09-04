@@ -18,6 +18,8 @@ describe('toThreadApiView', () => {
       relevance_score: null,
       parent_thread_id: null,
       fork_idempotency_key: null,
+      model_id: null,
+      thinking_effort: null,
     }
 
     const view = toThreadApiView(thread)

@@ -17,10 +17,15 @@ describe('PROVIDERS registry', () => {
     }
   })
 
-  it('rejects an unknown model instead of borrowing another provider memory policy', () => {
-    expect(() => PROVIDERS.codex.conversationMemory('claude-sonnet-5')).toThrow(
-      "Provider 'codex' has no conversation-memory facts for model 'claude-sonnet-5'",
-    )
+  it('never throws for an unknown model — resolves via prefix match or conservative defaults', () => {
+    // An unknown model id should NOT throw; it falls back to conservative defaults.
+    expect(() => PROVIDERS.codex.conversationMemory('claude-sonnet-5')).not.toThrow()
+    const facts = PROVIDERS.codex.conversationMemory('claude-sonnet-5')
+    expect(facts).toMatchObject({
+      retentionMs: expect.any(Number),
+      minimumReusablePrefixTokens: expect.any(Number),
+      contextWindowTokens: expect.any(Number),
+    })
   })
 
   it('declares provider-native model ids for every semantic tier', () => {
