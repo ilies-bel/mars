@@ -1009,6 +1009,56 @@ describe('task set-verify', () => {
     expect(r.err.join('\n')).toContain('absolute path')
   })
 
+  it('rejects --no-exit-code in the terminal segment', async () => {
+    const fake = makeFakeDaemon()
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'set-verify', 'mars-abc123', 'knip --no-exit-code'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(2)
+    expect(fake.calls).toHaveLength(0)
+    expect(r.err.join('\n')).toContain('--no-exit-code')
+  })
+
+  it('rejects || true at the end of the command', async () => {
+    const fake = makeFakeDaemon()
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'set-verify', 'mars-abc123', 'cmd || true'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(2)
+    expect(fake.calls).toHaveLength(0)
+    expect(r.err.join('\n')).toContain('|| true')
+  })
+
+  it('rejects pipe into grep as the final stage', async () => {
+    const fake = makeFakeDaemon()
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'set-verify', 'mars-abc123', 'cmd | grep PASS'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(2)
+    expect(fake.calls).toHaveLength(0)
+    expect(r.err.join('\n')).toContain('grep')
+  })
+
+  it('accepts a valid scoped vitest command', async () => {
+    const fake = makeFakeDaemon(() => ({
+      id: 'mars-abc123',
+      verifyCmd: 'cd orchestrator && npx vitest run src/foo.test.ts',
+    }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'set-verify', 'mars-abc123', 'cd orchestrator && npx vitest run src/foo.test.ts'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(0)
+    expect(fake.calls).toHaveLength(1)
+  })
+
   it('forwards daemon errors to stderr and exits code 1', async () => {
     const fake = makeFakeDaemon(() => {
       throw new Error('task not found: mars-xyz')
@@ -1020,6 +1070,63 @@ describe('task set-verify', () => {
     )
     expect(r.code).toBe(1)
     expect(r.err.join('\n')).toContain('mars-xyz')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// task add --verify no-op guard
+// ---------------------------------------------------------------------------
+
+describe('task add --verify no-op guard', () => {
+  it('rejects --no-exit-code in the terminal segment', async () => {
+    const fake = makeFakeDaemon()
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'add', '--verify', 'knip --no-exit-code', 'Fix linting issues in src/foo.ts.'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(2)
+    expect(fake.calls).toHaveLength(0)
+    expect(r.err.join('\n')).toContain('--no-exit-code')
+  })
+
+  it('rejects || true at the end of the command', async () => {
+    const fake = makeFakeDaemon()
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'add', '--verify', 'cmd || true', 'Fix something in src/foo.ts.'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(2)
+    expect(fake.calls).toHaveLength(0)
+    expect(r.err.join('\n')).toContain('|| true')
+  })
+
+  it('rejects pipe into grep as the final stage', async () => {
+    const fake = makeFakeDaemon()
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'add', '--verify', 'cmd | grep PASS', 'Fix something in src/foo.ts.'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(2)
+    expect(fake.calls).toHaveLength(0)
+    expect(r.err.join('\n')).toContain('grep')
+  })
+
+  it('accepts a legitimate scoped vitest command', async () => {
+    const fake = makeFakeDaemon(() => ({ id: 'mars-task-noop1', status: 'queued' }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      [
+        'task', 'add',
+        '--verify', 'cd orchestrator && npx vitest run src/foo.test.ts',
+        'Fix something in src/foo.ts.',
+      ],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(0)
+    expect(fake.calls).toHaveLength(1)
   })
 })
 

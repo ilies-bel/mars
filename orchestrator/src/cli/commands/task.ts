@@ -20,6 +20,7 @@ import {
   parseTaskSpec,
   containsAbsoluteRepoPath,
   isFullSuiteVerifyCmd,
+  isNoOpVerifyCmd,
   detectNonexistentNpmScript,
   detectNonexistentVitestPath,
   findAtPathToken,
@@ -290,6 +291,13 @@ const taskAdd: Command = {
       )
       if (scriptErr !== null) {
         deps.err(scriptErr)
+        return { code: 2 }
+      }
+      // Reject --verify commands that are structurally no-op: they can never
+      // report a failure regardless of what the underlying tool finds.
+      const noOpErr = isNoOpVerifyCmd(specResult.value.verifyCmd)
+      if (noOpErr !== null) {
+        deps.err(noOpErr)
         return { code: 2 }
       }
       // Warn (but do not reject) when --verify names a literal vitest test
@@ -839,6 +847,12 @@ the command was authored without a 'cd <subdir> &&' prefix:
     const scriptErrSetVerify = detectNonexistentNpmScript(cmd, deps.ctx.repoRoot)
     if (scriptErrSetVerify !== null) {
       deps.err(scriptErrSetVerify)
+      return { code: 2 }
+    }
+    // Same no-op rejection as `task add --verify`.
+    const noOpErrSetVerify = isNoOpVerifyCmd(cmd)
+    if (noOpErrSetVerify !== null) {
+      deps.err(noOpErrSetVerify)
       return { code: 2 }
     }
     // Same vitest-path warning as `task add --verify`.
