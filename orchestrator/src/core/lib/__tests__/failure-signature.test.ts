@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import {
   asStepId,
   causeForSignature,
@@ -8,9 +8,11 @@ import {
   computeFailureSignature,
   errorClassRules,
   firstNonBlankLine,
+  getCustomClassifierMeta,
   isRecoveryFailedReason,
   isTerminalVerdictReason,
   isUnclassifiedSignature,
+  setCustomClassifierRules,
   STEP_ID_RE,
   stripRecoveryFailedPrefixes,
   TERMINAL_VERDICT_PREFIXES,
@@ -1325,5 +1327,86 @@ describe('missing-manifest error class rule', () => {
     )
     const enoentIdx = errorClassRules.findIndex((r) => r.errorClass === 'enoent')
     expect(missingManifestIdx).toBeLessThan(enoentIdx)
+  })
+})
+
+describe('custom classifier rules', () => {
+  // Always clear custom rules after each test so they do not leak into other suites.
+  afterEach(() => setCustomClassifierRules([]))
+
+  it('classifyError returns the custom rule name when output matches and no built-in rule matched', () => {
+    setCustomClassifierRules([
+      { errorClass: 'jest-failure', match: /jest encountered an unexpected token/i },
+    ])
+    expect(classifyError('jest encountered an unexpected token at src/foo.test.ts')).toBe(
+      'jest-failure',
+    )
+  })
+
+  it('built-in rules take priority even when a custom rule would also match', () => {
+    // 'no commits ahead of integration branch' matches the built-in 'no-commits-ahead' rule.
+    // Register a custom rule that would ALSO match (broader pattern) — built-in must win.
+    setCustomClassifierRules([
+      { errorClass: 'custom-catch-all', match: /no commits ahead/i },
+    ])
+    expect(classifyError('no commits ahead of integration branch')).toBe('no-commits-ahead')
+    expect(classifyError('no commits ahead of integration branch')).not.toBe('custom-catch-all')
+  })
+
+  it('returns unclassified when neither built-in nor custom rules match', () => {
+    setCustomClassifierRules([
+      { errorClass: 'custom-rule', match: /totally-different-pattern/i },
+    ])
+    expect(classifyError('some completely unique output that nothing matches')).toBe(
+      UNCLASSIFIED_ERROR_CLASS,
+    )
+  })
+
+  it('setCustomClassifierRules([]) restores default behaviour — custom rules no longer fire', () => {
+    setCustomClassifierRules([
+      { errorClass: 'jest-failure', match: /jest encountered an unexpected token/i },
+    ])
+    // Verify the rule fires before clearing.
+    expect(classifyError('jest encountered an unexpected token')).toBe('jest-failure')
+    // Clear custom rules.
+    setCustomClassifierRules([])
+    // Now the same output must fall through to unclassified.
+    expect(classifyError('jest encountered an unexpected token')).toBe(
+      UNCLASSIFIED_ERROR_CLASS,
+    )
+  })
+
+  it('getCustomClassifierMeta returns metadata for a registered custom error class', () => {
+    setCustomClassifierRules([
+      {
+        errorClass: 'jest-failure',
+        match: /jest encountered an unexpected token/i,
+        guidance: 'Check babel config',
+      },
+    ])
+    const meta = getCustomClassifierMeta('jest-failure')
+    expect(meta).not.toBeNull()
+    expect(meta?.guidance).toBe('Check babel config')
+  })
+
+  it('getCustomClassifierMeta returns null for a built-in error class', () => {
+    expect(getCustomClassifierMeta('no-commits-ahead')).toBeNull()
+    expect(getCustomClassifierMeta('unclassified')).toBeNull()
+  })
+
+  it('getCustomClassifierMeta returns null for an unknown error class', () => {
+    expect(getCustomClassifierMeta('completely-unknown-class')).toBeNull()
+  })
+
+  it('computeFailureSignature produces a named signature through the custom rule path', () => {
+    setCustomClassifierRules([
+      { errorClass: 'jest-failure', matchFull: /jest encountered an unexpected token/i },
+    ])
+    const sig = computeFailureSignature(
+      'verify:spec-verify-cmd',
+      'Command failed\njest encountered an unexpected token at src/foo.test.ts',
+    )
+    expect(sig).toBe('verify:spec-verify-cmd/jest-failure')
+    expect(isUnclassifiedSignature(sig)).toBe(false)
   })
 })

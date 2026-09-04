@@ -135,13 +135,14 @@ import {
 } from './main-dirty-action-queue'
 import { DAEMON_KILLED_SIGNATURE } from '../lib/retry-budget'
 import { createDefaultManualPark } from '../lib/park-for-human'
-import { computeFailureSignature } from '../lib/failure-signature'
+import { computeFailureSignature, setCustomClassifierRules } from '../lib/failure-signature'
 import { openTraceEventStore, sweepOrphanRunningSpans, type TraceEventStore, type TraceEventPhase } from '../lib/trace-events-store'
 import { setAmbientTraceStore } from '../ports/vcs/ambient-trace-store'
 import { setBusLogSink } from '../../bus/log'
 import { daemonPaths, isProcessAlive, readDaemonPid, tryConnectSocket, waitForProcessExit } from './paths'
 import {
   loadDaemonConfig,
+  readCustomClassifiers,
   readDaemonConfigFile,
   readPersistedPaused,
 } from './config'
@@ -1128,6 +1129,16 @@ export const startDaemon = async (
   // because they both contend on the same merge lock downstream — a second
   // slot would just sit waiting on the lock, so default to 1.
   const initialConfig = loadDaemonConfig()
+  // Register operator-defined custom classifier patterns from daemon.json so
+  // classifyError can produce named signatures for operator-written patterns.
+  setCustomClassifierRules(
+    readCustomClassifiers().map((p) => ({
+      errorClass: p.name,
+      match: p.match !== undefined ? new RegExp(p.match, 'i') : undefined,
+      matchFull: p.matchFull !== undefined ? new RegExp(p.matchFull, 'i') : undefined,
+      guidance: p.guidance,
+    })),
+  )
   // Persisted operator control levers need no re-application step: every
   // consumer resolves them from daemon.json on demand via
   // `resolveControlLevers()`, so a hold set before a daemon restart survives

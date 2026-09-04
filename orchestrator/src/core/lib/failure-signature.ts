@@ -641,10 +641,59 @@ export const errorClassRules: readonly ErrorClassRule[] = [
   },
 ]
 
+/**
+ * Module-level store for operator-defined custom classifier rules. Populated
+ * at daemon startup and on `daemon reload` via {@link setCustomClassifierRules}.
+ * Empty by default — no custom rules are registered unless the daemon wires them.
+ */
+let _customRules: readonly (ErrorClassRule & { guidance?: string })[] = []
+
+/**
+ * Register operator-defined custom classifier rules, replacing any previously
+ * registered set. Called by the daemon startup path and the `reload-config`
+ * handler so operator-authored patterns in `daemon.json` take effect without
+ * restarting the process.
+ *
+ * Custom rules are checked by {@link classifyError} AFTER all built-in rules,
+ * so a built-in rule always wins when both would match.
+ */
+export const setCustomClassifierRules = (
+  rules: readonly (ErrorClassRule & { guidance?: string })[],
+): void => {
+  _customRules = rules
+}
+
+/**
+ * Return the custom classifier metadata for the given error class, or `null`
+ * when the class is unknown or was registered by a built-in rule (not a custom one).
+ */
+export const getCustomClassifierMeta = (
+  errorClass: string,
+): { guidance?: string } | null => {
+  const found = _customRules.find((r) => r.errorClass === errorClass)
+  return found !== undefined ? { guidance: found.guidance } : null
+}
+
 export const classifyError = (errorOutput: string): string => {
   const head = firstNonBlankLine(errorOutput)
   if (head.length === 0) return UNCLASSIFIED_ERROR_CLASS
   for (const rule of errorClassRules) {
+    if (rule.match !== undefined) {
+      const matched =
+        typeof rule.match === 'string'
+          ? head.includes(rule.match)
+          : rule.match.test(head)
+      if (matched) return rule.errorClass
+    }
+    if (rule.matchFull !== undefined) {
+      const matched =
+        typeof rule.matchFull === 'string'
+          ? errorOutput.includes(rule.matchFull)
+          : rule.matchFull.test(errorOutput)
+      if (matched) return rule.errorClass
+    }
+  }
+  for (const rule of _customRules) {
     if (rule.match !== undefined) {
       const matched =
         typeof rule.match === 'string'

@@ -16,9 +16,10 @@
 
 import { existsSync, unlinkSync } from 'node:fs'
 import { DAEMON_KILLED_SIGNATURE } from '../../lib/retry-budget'
-import { loadDaemonConfig } from '../config'
+import { loadDaemonConfig, readCustomClassifiers } from '../config'
 import { setSemLimit } from '../semaphore'
 import { setInstallSemCap } from '../../lib/worktree-install'
+import { setCustomClassifierRules } from '../../lib/failure-signature'
 import { updateTask, getTask, listBlockers } from '../../queue'
 import { Arc } from '../../arc'
 import {
@@ -277,6 +278,16 @@ const reloadConfigHandler = handler('reload-config', async (_req, deps) => {
   // update it via the exported setter so the new cap takes effect immediately.
   setInstallSemCap(caps.setupInstall)
   setSemLimit(deps.sems.verify, caps.verify)
+  // Re-register operator-defined custom classifier patterns so a `mars daemon
+  // reload` picks up edits to the `customClassifiers` block in daemon.json.
+  setCustomClassifierRules(
+    readCustomClassifiers().map((p) => ({
+      errorClass: p.name,
+      match: p.match !== undefined ? new RegExp(p.match, 'i') : undefined,
+      matchFull: p.matchFull !== undefined ? new RegExp(p.matchFull, 'i') : undefined,
+      guidance: p.guidance,
+    })),
+  )
   deps.log(
     `concurrency reloaded: implement=${caps.implement} triage=${caps.triage} refine=${caps.refine} setup-install=${caps.setupInstall} verify=${caps.verify}`,
   )
