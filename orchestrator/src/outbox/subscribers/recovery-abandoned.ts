@@ -1,7 +1,5 @@
 import type { DbClient } from '../../core/lib/db.js'
 import type { BusEvent, EventName } from '../../bus/events.js'
-import { execFile } from 'child_process'
-import { promisify } from 'util'
 import { registerSubscriber } from '../../bus/subscribers.js'
 import { drainWithStall } from '../../core/daemon/subscriber-drain.js'
 import { getTask } from '../../core/queue.js'
@@ -9,8 +7,8 @@ import { raiseActionQueueItem } from '../../core/lib/action-queue.js'
 import { registerSubscriberName } from '../registry.js'
 import { integrationBranchName } from '../../core/lib/blocker-resolution-primitives.js'
 import { getRepoRoot } from '../../core/context.js'
-
-const execFileP = promisify(execFile)
+import { listUniqueCommitsAhead, type OrphanCommit } from '../../core/lib/sweep.js'
+import { SALVAGE_CHECKPOINT_SUBJECT_PREFIX } from '../../core/lib/git/checkpoint.js'
 
 /**
  * Durable outbox subscriber that raises an action-queue row when a fix
@@ -101,40 +99,48 @@ export async function drainRecoveryAbandoned(
       const originTask = await getTask(originId)
       if (!originTask || originTask.status !== 'failed') return false
 
-      // Count commits on the origin's branch ahead of the integration branch so
-      // the body can qualify the `mars restart` advice when the operator would
-      // be permanently discarding real work. Best-effort: a failed probe (no
-      // branch, missing worktree, git unavailable) falls through to the plain
-      // restart advice with no commit qualifier.
-      let commitsAhead: number | null = null
+      // List commits on the origin's branch ahead of the integration branch and
+      // classify them as real (operator-authored) vs salvage-checkpoint commits.
+      // Best-effort: a failed probe (no branch, missing worktree, git unavailable)
+      // falls through to the plain restart advice with no commit qualifier.
       const integration = integrationBranchName()
+      let commits: OrphanCommit[] = []
       if (originTask.branch) {
         try {
-          const { stdout } = await execFileP(
-            'git',
-            ['rev-list', '--count', `${integration}..${originTask.branch}`],
-            { cwd: getRepoRoot() },
-          )
-          const count = Number.parseInt(stdout.trim(), 10)
-          commitsAhead = Number.isFinite(count) ? count : null
+          commits = await listUniqueCommitsAhead(originTask.branch, integration, getRepoRoot())
         } catch {
           // best-effort; omit commit qualifier when the git probe fails
         }
       }
 
-      const restartAdvice =
-        commitsAhead !== null && commitsAhead > 0
-          ? `⚠ The origin branch has ${commitsAhead} commit(s) ahead of ` +
-            `${integration} — \`mars restart ${originId}\` will permanently ` +
-            `discard that work. Run \`mars remerge ${originId}\` to land those ` +
-            `commits first, or \`mars continue ${originId}\` to resume on the ` +
-            `existing branch.`
-          : `run \`mars restart ${originId}\` to wipe and re-run from scratch.`
+      const realCommits = commits.filter(
+        (c) => !c.subject.startsWith(SALVAGE_CHECKPOINT_SUBJECT_PREFIX),
+      )
+      const checkpointCommits = commits.filter((c) =>
+        c.subject.startsWith(SALVAGE_CHECKPOINT_SUBJECT_PREFIX),
+      )
+      const formatCommitList = (cs: OrphanCommit[]) =>
+        cs.map((c) => `  ${c.shortSha} ${c.subject}`).join('\n')
+
+      let escapeTail: string
+      if (realCommits.length > 0) {
+        escapeTail =
+          `\n\nThe origin branch has ${realCommits.length} real commit(s) ahead of ` +
+          `${integration}:\n${formatCommitList(realCommits)}\n\n` +
+          `Run \`mars remerge ${originId}\` to land those commits first.`
+      } else if (checkpointCommits.length > 0) {
+        escapeTail =
+          `\n\nThe origin branch has only salvage-checkpoint commit(s) ahead of ` +
+          `${integration}:\n${formatCommitList(checkpointCommits)}\n\n` +
+          `Run \`mars task add --supersede ${originId}\` to create a new task on this branch.`
+      } else {
+        escapeTail = ` or run \`mars restart ${originId}\` to wipe and re-run from scratch.`
+      }
 
       const body =
         `Recovery task ${fixTask.id} was manually dropped, not exhausted. ` +
-        `Run \`mars continue ${originId}\` to resume on the existing worktree, or ` +
-        restartAdvice
+        `Run \`mars continue ${originId}\` to resume on the existing worktree.` +
+        escapeTail
 
       await raiseActionQueueItem({
         kind: 'recovery-abandoned',

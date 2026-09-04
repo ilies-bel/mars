@@ -238,7 +238,7 @@ describe('recovery-abandoned outbox subscriber', () => {
     expect(await openRowCount(client)).toBe(0)
   })
 
-  it('row body contains both `mars continue` and `mars restart` with the origin id', async () => {
+  it('row body contains `mars continue` and `mars restart` with the origin id when no branch is set', async () => {
     const { q, ra, pub, client } = await loadModules(repo)
 
     const origin = await q.enqueueTask('implement feature Y', undefined, { skipTriage: true })
@@ -248,6 +248,7 @@ describe('recovery-abandoned outbox subscriber', () => {
     // Must be 'failed' for the item to be raised (Consumer 1 guard).
     await setTaskStatus(client, origin.id, 'failed')
 
+    // No branch set → falls through to plain restart advice.
     await ra.ensureRecoveryAbandonedSubscriber(client)
     await publish(pub, client, 'task.terminal', { taskId: fixTaskId, reason: 'dropped' })
     await ra.drainRecoveryAbandoned(client)
@@ -354,7 +355,7 @@ describe('recovery-abandoned outbox subscriber', () => {
     expect(row!.body).not.toMatch(/commit\(s\) ahead/)
   })
 
-  it('body warns about discarded commits when origin branch is ahead of main', async () => {
+  it('body recommends mars remerge when origin branch has real commits ahead of main', async () => {
     const { q, ra, pub, client } = await loadModules(repo)
 
     const origin = await q.enqueueTask('implement feature M', undefined, { skipTriage: true })
@@ -372,10 +373,104 @@ describe('recovery-abandoned outbox subscriber', () => {
 
     const row = await openRowForOrigin(client, origin.id)
     expect(row).not.toBeNull()
-    // Both verbs still appear; the restart advice is now qualified with a
-    // commit-count warning so the operator knows work would be discarded.
+    // Real (non-checkpoint) commit ahead → recommend mars remerge, not mars restart.
+    expect(row!.body).toContain(`mars continue ${origin.id}`)
+    expect(row!.body).toContain(`mars remerge ${origin.id}`)
+    expect(row!.body).toMatch(/real commit\(s\) ahead/)
+    expect(row!.body).not.toContain(`mars restart ${origin.id}`)
+  })
+
+  // -------------------------------------------------------------------------
+  // Consumer 2 new contract tests: commit-classification-based escape verb
+  // selection (real commits → remerge; checkpoint-only → supersede; none →
+  // restart).
+  // -------------------------------------------------------------------------
+
+  it('body recommends mars remerge and lists the commit SHA when real commits exist ahead', async () => {
+    const { q, ra, pub, client } = await loadModules(repo)
+
+    const origin = await q.enqueueTask('implement feature N', undefined, { skipTriage: true })
+    await setTaskStatus(client, origin.id, 'failed')
+    const branchName = `task/${origin.id}-n`
+    createBranchAhead(repo, branchName)
+    // Capture the short SHA of the tip commit on the branch.
+    const shortSha = execFileSync('git', ['rev-parse', '--short', branchName], { cwd: repo })
+      .toString()
+      .trim()
+    await setTaskBranch(client, origin.id, branchName)
+
+    const fixTaskId = 'fix-task-nu'
+    await insertFixTask(client, fixTaskId, origin.id)
+
+    await ra.ensureRecoveryAbandonedSubscriber(client)
+    await publish(pub, client, 'task.terminal', { taskId: fixTaskId, reason: 'dropped' })
+    await ra.drainRecoveryAbandoned(client)
+
+    const row = await openRowForOrigin(client, origin.id)
+    expect(row).not.toBeNull()
+    expect(row!.body).toContain(`mars continue ${origin.id}`)
+    expect(row!.body).toContain(`mars remerge ${origin.id}`)
+    // The commit listing must include the short SHA so the operator sees the work.
+    expect(row!.body).toContain(shortSha)
+    expect(row!.body).not.toContain(`mars restart ${origin.id}`)
+    expect(row!.body).not.toContain(`mars task add --supersede`)
+  })
+
+  it('body recommends mars task add --supersede when only checkpoint commits exist ahead', async () => {
+    const { q, ra, pub, client } = await loadModules(repo)
+
+    const origin = await q.enqueueTask('implement feature O', undefined, { skipTriage: true })
+    await setTaskStatus(client, origin.id, 'failed')
+    const branchName = `task/${origin.id}-o`
+    // Create a salvage-checkpoint commit on the branch.
+    const checkpointFile = `${branchName.replace(/\//g, '-')}.txt`
+    execFileSync('git', ['checkout', '-q', '-b', branchName], { cwd: repo })
+    writeFileSync(resolve(repo, checkpointFile), 'checkpoint content\n')
+    execFileSync('git', ['add', checkpointFile], { cwd: repo })
+    execFileSync('git', ['commit', '-q', '-m', 'wip(checkpoint): coder context exhausted'], {
+      cwd: repo,
+    })
+    execFileSync('git', ['checkout', '-q', 'main'], { cwd: repo })
+    await setTaskBranch(client, origin.id, branchName)
+
+    const fixTaskId = 'fix-task-omicron'
+    await insertFixTask(client, fixTaskId, origin.id)
+
+    await ra.ensureRecoveryAbandonedSubscriber(client)
+    await publish(pub, client, 'task.terminal', { taskId: fixTaskId, reason: 'dropped' })
+    await ra.drainRecoveryAbandoned(client)
+
+    const row = await openRowForOrigin(client, origin.id)
+    expect(row).not.toBeNull()
+    expect(row!.body).toContain(`mars continue ${origin.id}`)
+    expect(row!.body).toContain(`mars task add --supersede ${origin.id}`)
+    expect(row!.body).not.toContain(`mars restart ${origin.id}`)
+    expect(row!.body).not.toContain(`mars remerge ${origin.id}`)
+  })
+
+  it('body recommends mars restart when origin branch has no commits ahead of integration', async () => {
+    const { q, ra, pub, client } = await loadModules(repo)
+
+    const origin = await q.enqueueTask('implement feature P', undefined, { skipTriage: true })
+    await setTaskStatus(client, origin.id, 'failed')
+    // Create the branch but add no commits to it.
+    const branchName = `task/${origin.id}-p`
+    execFileSync('git', ['checkout', '-q', '-b', branchName], { cwd: repo })
+    execFileSync('git', ['checkout', '-q', 'main'], { cwd: repo })
+    await setTaskBranch(client, origin.id, branchName)
+
+    const fixTaskId = 'fix-task-pi'
+    await insertFixTask(client, fixTaskId, origin.id)
+
+    await ra.ensureRecoveryAbandonedSubscriber(client)
+    await publish(pub, client, 'task.terminal', { taskId: fixTaskId, reason: 'dropped' })
+    await ra.drainRecoveryAbandoned(client)
+
+    const row = await openRowForOrigin(client, origin.id)
+    expect(row).not.toBeNull()
     expect(row!.body).toContain(`mars continue ${origin.id}`)
     expect(row!.body).toContain(`mars restart ${origin.id}`)
-    expect(row!.body).toMatch(/commit\(s\) ahead/)
+    expect(row!.body).not.toContain(`mars remerge ${origin.id}`)
+    expect(row!.body).not.toContain(`mars task add --supersede`)
   })
 })
