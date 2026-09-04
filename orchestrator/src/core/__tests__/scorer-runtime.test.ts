@@ -394,7 +394,7 @@ describe('scoring pool', () => {
   })
 })
 
-describe('low-trend trigger (off by default, operator opt-in)', () => {
+describe('low-trend trigger (on by default, operator can disable)', () => {
   let repo: string
 
   beforeEach(() => {
@@ -419,7 +419,12 @@ describe('low-trend trigger (off by default, operator opt-in)', () => {
     }
   }
 
-  it('raises nothing while scoring.autoTrigger is off (the default)', async () => {
+  it('raises nothing while scoring.autoTrigger is off', async () => {
+    writeFileSync(
+      resolve(repo, '.mars', 'daemon.json'),
+      JSON.stringify({ scoring: { autoTrigger: false } }),
+      'utf8',
+    )
     const m = await loadMods(repo)
     await insertLowScores(m, 5)
     const { runScorerLowTrendTrigger } = await import('../lib/scorer-trend-trigger')
