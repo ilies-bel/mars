@@ -8,6 +8,7 @@ import { getTask } from '../../core/queue.js'
 import { raiseActionQueueItem } from '../../core/lib/action-queue.js'
 import { registerSubscriberName } from '../registry.js'
 import { integrationBranchName } from '../../core/lib/blocker-resolution-primitives.js'
+import { getRepoRoot } from '../../core/context.js'
 
 const execFileP = promisify(execFile)
 
@@ -112,7 +113,7 @@ export async function drainRecoveryAbandoned(
           const { stdout } = await execFileP(
             'git',
             ['rev-list', '--count', `${integration}..${originTask.branch}`],
-            { cwd: process.cwd() },
+            { cwd: getRepoRoot() },
           )
           const count = Number.parseInt(stdout.trim(), 10)
           commitsAhead = Number.isFinite(count) ? count : null
