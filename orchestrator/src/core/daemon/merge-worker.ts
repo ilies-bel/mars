@@ -33,6 +33,7 @@ import type { EventEmitter } from 'node:events'
 import type { MergeJob, MergeJobStore, EnqueueMergeJobInput } from '../store/merge-job-store.js'
 import type { AgentEvent } from '../lib/claude-stream.js'
 import { isOperatorAutoCommitDisabled, resolveControlLevers } from '../config/levers.js'
+import { readMergeWatchdogMs } from './config.js'
 import {
   raiseBrokenAutoCommitAlert,
   speakOperatorAutoCommitNotice,
@@ -487,10 +488,14 @@ async function runMergeJob(
   // the watchdog scales with the actual gate suite rather than a static
   // constant that was unrelated to gate count (production incident: 15 min
   // constant fired while a 10-gate suite was still running).
-  // MARS_MERGE_WATCHDOG_MS overrides the computed value entirely.
-  const watchdogMs = Number(
-    process.env.MARS_MERGE_WATCHDOG_MS ?? DEFAULT_WATCHDOG_MS + gateBudgetMs,
-  )
+  // Priority: operator-pinned mergeWatchdogMs > MARS_MERGE_WATCHDOG_MS > dynamic.
+  const watchdogMs = (() => {
+    const operatorMs = readMergeWatchdogMs()
+    if (operatorMs !== null) return operatorMs
+    const envMs = process.env.MARS_MERGE_WATCHDOG_MS
+    if (envMs !== undefined) return Number(envMs)
+    return DEFAULT_WATCHDOG_MS + gateBudgetMs
+  })()
   log(
     `[merge-worker] task ${job.taskId}: watchdog ${Math.round(watchdogMs / 60_000)}min ` +
       `(base ${Math.round(DEFAULT_WATCHDOG_MS / 60_000)}min + gates ${Math.round(gateBudgetMs / 60_000)}min; ` +

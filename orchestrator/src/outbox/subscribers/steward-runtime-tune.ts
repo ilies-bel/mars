@@ -197,10 +197,48 @@ export interface StewardRuntimeTuneDeps {
    * no place in a unit test.
    */
   readProcessDensity?: () => Promise<{ marsProcessCount: number; cores: number }>
+  /**
+   * Return the current number of active (queued + claimed + running) merge
+   * jobs. The bump lane holds when this is at or above
+   * {@link MERGE_QUEUE_HOLD_THRESHOLD}: raising the cap while the merge worker
+   * is already backed up only deepens the verify backlog without increasing
+   * merge throughput (the merge worker is single-consumer).
+   *
+   * Default: always returns 0 (safe for tests and callers that do not inject
+   * the merge-job store).
+   */
+  getMergeQueueDepth?: () => Promise<number>
+  /**
+   * Return the epoch-ms timestamp of the last merge-job watchdog fire, or
+   * null if no watchdog has fired since the daemon started. The bump lane
+   * holds for {@link WATCHDOG_COOLDOWN_MS} after a watchdog fire: a fire
+   * indicates the host was already overloaded, so adding workers would
+   * prolong the recovery.
+   *
+   * Default: always returns null (no cooldown applied).
+   */
+  getLastWatchdogFireMs?: () => number | null
 }
 
 const BUMP_FACTOR = 1.33
 const SHED_FACTOR = 0.67
+
+/**
+ * Hold the bump lane when this many merge jobs are queued or running.
+ * The merge worker is a single consumer; raising the implement cap while its
+ * queue is already deep only adds verify load without increasing merge
+ * throughput — the same quadratic feedback that the proc-density check
+ * targets but from the other side of the pipeline.
+ */
+export const MERGE_QUEUE_HOLD_THRESHOLD = 2
+
+/**
+ * After a merge-job watchdog fires, hold the bump lane for this long.
+ * A watchdog fire is proof the host was already overloaded; adding workers
+ * before the system has drained the in-flight work prolongs recovery.
+ * 30 minutes is enough for a full verify cycle to complete and drain.
+ */
+export const WATCHDOG_COOLDOWN_MS = 30 * 60_000
 
 /**
  * Safety floor. Below this much idle CPU the machine is genuinely out of
@@ -381,6 +419,11 @@ export function startStewardRuntimeTune(deps: StewardRuntimeTuneDeps): () => voi
   const readConfiguredImplementCap = deps.readConfiguredImplementCap ?? ((): number => baselineCap)
   const readAutotuneMaxImplement =
     deps.readAutotuneMaxImplement ?? readAutotuneMaxImplementFromConfig
+  // Default: 0 (no merge queue depth available) — safe for tests and callers
+  // that do not inject the merge-job store; the hold is simply never triggered.
+  const getMergeQueueDepth = deps.getMergeQueueDepth ?? ((): Promise<number> => Promise.resolve(0))
+  // Default: null (no recent watchdog fire) — the cooldown hold never fires.
+  const getLastWatchdogFireMs = deps.getLastWatchdogFireMs ?? ((): number | null => null)
 
   /**
    * Compute the effective ceiling for a bump decision.
@@ -526,6 +569,40 @@ export function startStewardRuntimeTune(deps: StewardRuntimeTuneDeps): () => voi
 
       const newCap = Math.min(Math.ceil(oldCap * BUMP_FACTOR), maxCap)
       if (newCap === oldCap) return
+
+      // ── Merge-queue depth guard ───────────────────────────────────────────
+      // The merge worker is a single consumer. Raising the implement cap while
+      // its queue is already deep adds verify load without any increase in
+      // merge throughput — same positive feedback the proc-density check breaks
+      // on the other side. Check before the CPU guard so a deep merge queue
+      // surfaces as a distinct reason.
+      const mergeDepth = await getMergeQueueDepth()
+      if (mergeDepth >= MERGE_QUEUE_HOLD_THRESHOLD) {
+        const reason =
+          `holding implement cap at ${oldCap}: merge queue depth ${mergeDepth} >= ${MERGE_QUEUE_HOLD_THRESHOLD} ` +
+          `(merge worker is backed up — adding workers deepens the verify pile)`
+        log(`[steward-tune] backlog degraded (${payload.pending} pending) but ${reason}`)
+        recordCapDecision(reason)
+        return
+      }
+
+      // ── Watchdog cooldown guard ───────────────────────────────────────────
+      // A recent merge-job watchdog fire is evidence the host was already
+      // overloaded. Hold until the system has had time to drain.
+      const lastWatchdog = getLastWatchdogFireMs()
+      if (lastWatchdog !== null) {
+        const elapsedMs = Date.now() - lastWatchdog
+        if (elapsedMs < WATCHDOG_COOLDOWN_MS) {
+          const elapsedMin = Math.round(elapsedMs / 60_000)
+          const cooldownMin = Math.round(WATCHDOG_COOLDOWN_MS / 60_000)
+          const reason =
+            `holding implement cap at ${oldCap}: merge watchdog fired ${elapsedMin} min ago ` +
+            `(cooldown ${cooldownMin} min — host was overloaded)`
+          log(`[steward-tune] backlog degraded (${payload.pending} pending) but ${reason}`)
+          recordCapDecision(reason)
+          return
+        }
+      }
 
       // ── Capacity guard, with an orphan sweep on the hold path ────────────
       let pressure = await readPressure()

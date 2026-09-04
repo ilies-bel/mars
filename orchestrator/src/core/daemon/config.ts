@@ -401,6 +401,21 @@ export const daemonConfigSchema = z
     steward: z
       .object({
         autotuneMaxImplement: z.number().optional(),
+        /**
+         * Operator-pinned implement cap. When set, takes precedence over the
+         * `MARS_MAX_IMPLEMENT` env var and the daemon startup baseline. Written
+         * by `mars operator set implement-cap <n>`. Read at bump-decision time
+         * by the tuner's `readConfiguredImplementCap` so a runtime change takes
+         * effect without a daemon restart.
+         */
+        pinnedImplementCap: z.number().optional(),
+        /**
+         * Operator-pinned merge watchdog budget in milliseconds. When set,
+         * replaces the dynamically-computed watchdog (DEFAULT_WATCHDOG_MS +
+         * sum of gate timeoutMin). Written by `mars operator set merge-watchdog
+         * <minutes>`. Read at the start of each runMergeJob.
+         */
+        mergeWatchdogMs: z.number().optional(),
       })
       .partial()
       .optional(),
@@ -981,6 +996,76 @@ export const persistAutotuneMaxImplement = (n: number | null): void => {
     patchDaemonConfigFile({ steward: Object.keys(rest).length > 0 ? rest : null })
   } else {
     patchDaemonConfigFile({ steward: { ...existing, autotuneMaxImplement: n } })
+  }
+}
+
+/**
+ * Read the persisted `steward.pinnedImplementCap` from daemon.json.
+ * Returns `null` when the lever is absent (cap is read from env var / baseline).
+ * Only positive integers are accepted; anything else is treated as absent.
+ */
+export const readPinnedImplementCap = (): number | null => {
+  const raw = readDaemonConfigFileLenient()
+  const steward = raw.steward
+  if (steward === null || typeof steward !== 'object' || Array.isArray(steward)) return null
+  const val = (steward as Record<string, unknown>).pinnedImplementCap
+  if (typeof val !== 'number' || !Number.isFinite(val) || !Number.isInteger(val) || val < 1)
+    return null
+  return val
+}
+
+/**
+ * Persist the `steward.pinnedImplementCap` to daemon.json. Pass `null` to
+ * clear the pin (restores env-var / baseline resolution).
+ */
+export const persistPinnedImplementCap = (n: number | null): void => {
+  const current = readDaemonConfigFileLenient()
+  const existing =
+    current.steward !== null &&
+    typeof current.steward === 'object' &&
+    !Array.isArray(current.steward)
+      ? (current.steward as Record<string, unknown>)
+      : {}
+  if (n === null) {
+    const { pinnedImplementCap: _removed, ...rest } = existing
+    patchDaemonConfigFile({ steward: Object.keys(rest).length > 0 ? rest : null })
+  } else {
+    patchDaemonConfigFile({ steward: { ...existing, pinnedImplementCap: n } })
+  }
+}
+
+/**
+ * Read the persisted `steward.mergeWatchdogMs` from daemon.json.
+ * Returns `null` when the lever is absent (watchdog is computed dynamically
+ * from gate timeoutMin values at the start of each merge job).
+ * Only positive finite numbers are accepted.
+ */
+export const readMergeWatchdogMs = (): number | null => {
+  const raw = readDaemonConfigFileLenient()
+  const steward = raw.steward
+  if (steward === null || typeof steward !== 'object' || Array.isArray(steward)) return null
+  const val = (steward as Record<string, unknown>).mergeWatchdogMs
+  if (typeof val !== 'number' || !Number.isFinite(val) || val <= 0) return null
+  return val
+}
+
+/**
+ * Persist the `steward.mergeWatchdogMs` to daemon.json. Pass `null` to clear
+ * the override (restores dynamic computation from gate timeoutMin values).
+ */
+export const persistMergeWatchdogMs = (ms: number | null): void => {
+  const current = readDaemonConfigFileLenient()
+  const existing =
+    current.steward !== null &&
+    typeof current.steward === 'object' &&
+    !Array.isArray(current.steward)
+      ? (current.steward as Record<string, unknown>)
+      : {}
+  if (ms === null) {
+    const { mergeWatchdogMs: _removed, ...rest } = existing
+    patchDaemonConfigFile({ steward: Object.keys(rest).length > 0 ? rest : null })
+  } else {
+    patchDaemonConfigFile({ steward: { ...existing, mergeWatchdogMs: ms } })
   }
 }
 

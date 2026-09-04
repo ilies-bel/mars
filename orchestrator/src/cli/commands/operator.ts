@@ -32,7 +32,9 @@ import {
   loadDaemonConfig,
   patchDaemonConfigFile,
   persistIntegrationBranch,
+  persistMergeWatchdogMs,
   persistPaused,
+  persistPinnedImplementCap,
   persistSelfEvolvePatch,
   persistScoringPatch,
   readDaemonConfigFile,
@@ -209,7 +211,9 @@ const operatorSet: Command = {
     'usage: mars operator set <dispatch|recovery|scoring|memory-capture|auto-run-reflect|operator-auto-commit|scoring-auto-trigger|qa-step-list> <on|off>\n' +
     '       mars operator set <drift-threshold-pct|scoring-low-trend-threshold|scoring-low-trend-window> <n>\n' +
     '       mars operator set <budget-window|budget-window-tokens|budget-arc-tokens> <value>\n' +
-    '       mars operator set integration-branch <branch-name>',
+    '       mars operator set integration-branch <branch-name>\n' +
+    '       mars operator set implement-cap <n|off>    (pin implement semaphore; off clears pin)\n' +
+    '       mars operator set merge-watchdog <minutes|off>  (pin merge watchdog; off restores dynamic)',
   run: async (args, deps) => {
     const positional = args.positional.filter((a) => !a.startsWith('--'))
     const lever = positional[0]
@@ -287,6 +291,45 @@ const operatorSet: Command = {
       deps.out(`qa-step-list: ${value}`)
       return { code: 0 }
     }
+    // implement-cap: pin the implement semaphore cap in daemon.json so a
+    // `mars operator set implement-cap <n>` takes effect on the next dispatch
+    // without a daemon restart. Pass 'off' to clear the pin and fall back to
+    // the MARS_MAX_IMPLEMENT env var / baseline.
+    if (lever === 'implement-cap') {
+      if (value === 'off') {
+        persistPinnedImplementCap(null)
+        deps.out(`implement-cap: cleared (env var / baseline applies)`)
+        return { code: 0 }
+      }
+      const n = Number(value)
+      if (!Number.isInteger(n) || n < 1) {
+        deps.err(`mars operator set: implement-cap must be a positive integer or 'off'; got '${value}'`)
+        return { code: 2 }
+      }
+      persistPinnedImplementCap(n)
+      deps.out(`implement-cap: ${n}`)
+      return { code: 0 }
+    }
+    // merge-watchdog: pin the merge-job watchdog budget in daemon.json, in
+    // minutes. Overrides the dynamic computation (DEFAULT_WATCHDOG_MS + sum
+    // of gate timeoutMin). Pass 'off' to clear the override and restore the
+    // dynamic computation.
+    if (lever === 'merge-watchdog') {
+      if (value === 'off') {
+        persistMergeWatchdogMs(null)
+        deps.out(`merge-watchdog: cleared (dynamic gate budget applies)`)
+        return { code: 0 }
+      }
+      const minutes = Number(value)
+      if (!Number.isFinite(minutes) || minutes <= 0) {
+        deps.err(`mars operator set: merge-watchdog must be a positive number (minutes) or 'off'; got '${value}'`)
+        return { code: 2 }
+      }
+      const ms = Math.round(minutes * 60_000)
+      persistMergeWatchdogMs(ms)
+      deps.out(`merge-watchdog: ${minutes} min (${ms} ms)`)
+      return { code: 0 }
+    }
     // integration-branch: persist the integration branch name so all tasks
     // target the correct branch without requiring the INTEGRATION_BRANCH env var.
     if (lever === 'integration-branch') {
@@ -303,7 +346,7 @@ const operatorSet: Command = {
     type LeverName = (typeof validLevers)[number]
     if (!validLevers.includes(lever as LeverName)) {
       deps.err(
-        `mars operator set: unknown lever '${lever}'; valid levers: ${validLevers.join(', ')}, integration-branch, qa-step-list, drift-threshold-pct, scoring-low-trend-threshold, scoring-low-trend-window, budget-window, budget-window-tokens, budget-arc-tokens`,
+        `mars operator set: unknown lever '${lever}'; valid levers: ${validLevers.join(', ')}, integration-branch, qa-step-list, implement-cap, merge-watchdog, drift-threshold-pct, scoring-low-trend-threshold, scoring-low-trend-window, budget-window, budget-window-tokens, budget-arc-tokens`,
       )
       return { code: 2 }
     }
