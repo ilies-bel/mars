@@ -12,6 +12,7 @@
 import { hasFlag } from '../args'
 import type { Command } from '../command'
 import { kpiAcknowledgeCommands } from './kpi-acknowledge'
+import { kpiDrillCommand } from './kpi-drill'
 
 const where: Command = {
   path: 'where',
@@ -175,26 +176,6 @@ const kpiShow: Command = {
     const result = await readKpiWindowComparison({
       now: new Date().toISOString(),
     })
-    deps.out(JSON.stringify(result, null, 2))
-    return { code: 0 }
-  },
-}
-
-const kpiDrill: Command = {
-  path: 'kpi drill',
-  summary: 'show per-arc breakdown for a KPI key (JSON to stdout)',
-  usage: `usage: mars kpi drill <${KPI_METRIC_KEYS.join('|')}>`,
-  run: async (args, deps) => {
-    const key = args.positional[0]
-    if (!isKpiMetricKey(key)) {
-      deps.err(
-        `mars kpi drill: unknown key '${key ?? ''}'\n` +
-          `usage: mars kpi drill <${KPI_METRIC_KEYS.join('|')}>`,
-      )
-      return { code: 1 }
-    }
-    const { listKpiArcs } = await import('../../core/daemon/kpi-store.js')
-    const result = await listKpiArcs(key)
     deps.out(JSON.stringify(result, null, 2))
     return { code: 0 }
   },
@@ -665,7 +646,7 @@ export const miscCommands: readonly Command[] = [
   uiStatus,
   kpiSnapshot,
   kpiShow,
-  kpiDrill,
+  kpiDrillCommand,
   kpiAck,
   ...kpiAcknowledgeCommands,
   kpiGroup,
