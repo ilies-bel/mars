@@ -13,6 +13,7 @@ import { resolveAuthor, formatAuthor, detectOriginSession, type Author } from '.
 import { detectNoCommitMarker } from '../../core/lib/no-commit-marker'
 import { causeForSignature } from '../../core/lib/failure-signature'
 import { taskDisplayTitle } from '../../core/lib/task-display-title'
+import { parseVerifyOutput, verifyFailureLine } from '../../core/lib/parse-verify-output'
 import { getProposal } from '../../core/proposals'
 import { planWorkflowCopies } from '../../init/scaffold-workflows'
 import { readWorkflowProvenance } from '../../workflows/agent-draft'
@@ -595,12 +596,20 @@ export const renderTaskDetail = async (
 const taskShow: Command = {
   path: 'task show',
   summary: 'show a single task',
-  usage: 'usage: mars task show <id> [--json]',
+  usage: 'usage: mars task show <id> [--json] [--verify-output]',
+  flags: [
+    { syntax: '--json', description: 'emit the raw task row as JSON' },
+    {
+      syntax: '--verify-output',
+      description: 'print the full raw verify commandOutput for a failed verify task',
+    },
+  ],
   run: async (args, deps) => {
     const emitJson = hasFlag(args, '--json')
+    const showVerifyOutput = hasFlag(args, '--verify-output')
     const id = args.positional[0]
     if (!id) {
-      deps.err('usage: mars task show <id> [--json]')
+      deps.err('usage: mars task show <id> [--json] [--verify-output]')
       return { code: 2 }
     }
     const task = await deps.store.getTask(id)
@@ -623,7 +632,57 @@ const taskShow: Command = {
       )
       return { code: 0 }
     }
+
+    // -- Fetch verify commandOutput for failed verify-phase tasks -----------
+    // Query the last step_ended trace event that recorded commandOutput for
+    // the verify phase. This is best-effort: if the daemon is down or the
+    // row is missing we continue without it.
+    let verifyCommandOutput: string | undefined
+    if (task.status === 'failed' && (task as { failedPhase?: string | null }).failedPhase === 'verify') {
+      try {
+        const { openTraceEventStore } = await import('../../core/lib/trace-events-store')
+        const { resolveDbTarget } = await import('../../core/context')
+        const traceStore = await openTraceEventStore(resolveDbTarget())
+        const events = await traceStore.query({
+          taskId: task.id,
+          phase: ['verify'],
+          kind: ['step_ended'],
+          limit: 1,
+        })
+        const raw = events[0]?.payload?.commandOutput
+        if (typeof raw === 'string' && raw.length > 0) {
+          verifyCommandOutput = raw
+        }
+      } catch {
+        // Best-effort — daemon may be unreachable; continue without it.
+      }
+    }
+
     await renderTaskDetail(deps, task, 'task')
+
+    // -- Render verify failure section (the "which gate failed?" answer) ---
+    if (verifyCommandOutput !== undefined) {
+      if (showVerifyOutput) {
+        deps.out(`--- verify output (raw) ---`)
+        deps.out(verifyCommandOutput)
+      } else {
+        const parsed = parseVerifyOutput(verifyCommandOutput)
+        const failLine = verifyFailureLine(parsed)
+        if (failLine !== null) {
+          deps.out(`--- verify failure ---`)
+          deps.out(`failing: ${failLine}`)
+          // Show each failing gate's output excerpt (up to 2 000 chars per gate).
+          for (const s of parsed.failingSections) {
+            const excerpt =
+              s.output.length > 2000 ? `${s.output.slice(0, 2000)}\n… (truncated)` : s.output
+            deps.out(`\n[${s.name}]`)
+            deps.out(excerpt)
+          }
+          deps.out(`\n(run \`mars task show ${task.id} --verify-output\` for the full raw output)`)
+        }
+      }
+    }
+
     const { Arc } = await import('../../core/arc')
     const journal = await Arc.listProgress(id, undefined, deps.store)
     if (journal.length > 0) {

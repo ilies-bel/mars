@@ -12,6 +12,15 @@ import type { ChatStreamHub } from './chat-contracts'
 import type { VerifyGate, VerifyGateInput } from '../verify-gates'
 import { registerRoutes } from './routes'
 
+/** One gate's outcome entry from the structured block appended to commandOutput. */
+export interface VerifyGateOutcome {
+  name: string
+  tier: string
+  passed: boolean
+  exitCode: number | null
+  duration?: number
+}
+
 /** Wire shape for a single step span, returned by GET /view/step-spans. */
 export interface StepSpan {
   stepName: string
@@ -29,6 +38,13 @@ export interface StepSpan {
   declaredTier: 'fast' | 'balanced' | 'flagship' | null
   /** Resolved native model id for this step (populated by Phase 4B slice 1). */
   resolvedModel: string | null
+  /**
+   * Parsed gate outcomes from the `=== gate outcomes ===` JSON block at the
+   * end of the verify step's `commandOutput`. Present only on verify-phase
+   * steps whose `step_ended` event recorded `commandOutput`. `null` when the
+   * block is absent; omitted for non-verify steps.
+   */
+  verifyGateOutcomes?: VerifyGateOutcome[] | null
 }
 
 /** A single step within a run timeline, returned by GET /view/runs/:taskId. */

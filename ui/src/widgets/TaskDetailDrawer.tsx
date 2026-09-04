@@ -41,6 +41,15 @@ import { StewardLedgerPanel } from './StewardLedgerPanel'
 import { LiveTaskPanel } from './LiveTaskPanel'
 
 /** A single step execution span — one step_started event paired with its step_ended (if any). */
+/** One gate entry from the verify step's structured gate outcomes block. */
+export interface VerifyGateOutcome {
+  name: string
+  tier: string
+  passed: boolean
+  exitCode: number | null
+  duration?: number
+}
+
 export interface StepSpan {
   stepName: string
   phase: string | null
@@ -58,6 +67,11 @@ export interface StepSpan {
   declaredTier?: 'fast' | 'balanced' | 'flagship' | null
   /** Resolved native model id for this step (populated by Phase 4B slice 1). */
   resolvedModel?: string | null
+  /**
+   * Parsed gate outcomes from the verify step's `commandOutput`. Present only
+   * on verify-phase steps; null when absent or not a verify step.
+   */
+  verifyGateOutcomes?: VerifyGateOutcome[] | null
 }
 
 /** A single step within a workflow run entry. */
@@ -1191,6 +1205,24 @@ export const TaskDetailBody = ({
                 aria-label={`Copy failure signature: ${task.failureSignature}`}
                 className="shrink-0 rounded border border-error/30 px-1.5 py-0.5 font-mono text-micro text-error/60 hover:bg-error/10"
               />
+            </div>
+          ) : null}
+          {/* Verify gate failure excerpt — shown outside the collapsible so
+              "which gate failed?" is answerable without opening Technical details.
+              Only for verify-phase failures where task.error holds the gate output. */}
+          {task.status === 'failed' &&
+           task.failureSignature != null &&
+           task.failureSignature.startsWith('verify:') &&
+           task.error != null ? (
+            <div
+              data-testid="task-detail-verify-failure"
+              className="mt-2"
+            >
+              <pre className="max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded bg-error/5 px-2 py-1.5 font-mono text-micro text-error/80">
+                {task.error.length > 1200
+                  ? `${task.error.slice(0, 1200)}\n… (truncated — see Technical details)`
+                  : task.error}
+              </pre>
             </div>
           ) : null}
           {/* Raw error and signature demoted to a secondary technical detail. */}

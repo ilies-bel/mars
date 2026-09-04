@@ -198,7 +198,16 @@ const RECIPE_DEFINITIONS = {
   failed: {
     humanSummary: (ctx) => {
       const taskId = str(ctx.payload['taskId']) || ctx.entityId
-      const base = `A task got stuck and Mars used up its automatic retry — nothing is fixing this now, you need to decide what to do (${taskId}).`
+      // When the failure is a verify gate, name the specific gate that failed
+      // so the operator can act without opening a separate terminal. Example:
+      //   "…the `test` verify gate failed…" vs "…got stuck…"
+      const sig = str(ctx.payload['failureSignature'])
+      const gateHint =
+        sig.startsWith('verify:') && sig !== 'verify:step-threw'
+          ? ` The \`${sig.slice('verify:'.length)}\` verify gate failed.`
+          : ''
+      const base =
+        `A task got stuck.${gateHint} Mars used up its automatic retry — nothing is fixing this now, you need to decide what to do (${taskId}).`
       // The dirty-worktree count belongs in the SUMMARY, not just the detail:
       // it is the fact that decides between `continue` and the destructive
       // verbs, and the destructive verbs sit one click away in this same row.

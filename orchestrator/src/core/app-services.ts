@@ -86,6 +86,7 @@ import {
   type KpiRecord,
 } from './daemon/kpi-store'
 import type { TraceEventStore } from './lib/trace-events-store'
+import { parseVerifyOutput } from './lib/parse-verify-output'
 import type { Proposal, ProposalSource } from './proposals'
 import type {
   ActionQueueRow,
@@ -688,6 +689,17 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
           rawTier === 'fast' || rawTier === 'balanced' || rawTier === 'flagship'
             ? rawTier
             : null
+        // Parse gate outcomes from the verify step's commandOutput.
+        // Only done for verify-phase steps with a commandOutput string;
+        // otherwise null (not shown in the UI).
+        const rawCommandOutput =
+          s.phase === 'verify' && typeof endEvent?.payload.commandOutput === 'string'
+            ? (endEvent.payload.commandOutput as string)
+            : null
+        const verifyGateOutcomes = rawCommandOutput !== null
+          ? (parseVerifyOutput(rawCommandOutput).gateOutcomes)
+          : null
+
         return {
           stepName: typeof stepName === 'string' ? stepName : '',
           phase: s.phase,
@@ -717,6 +729,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
             typeof s.payload.resolvedModel === 'string'
               ? s.payload.resolvedModel
               : null,
+          verifyGateOutcomes,
         }
       })
       // Ascending by startedAt — preserves workflow execution order.

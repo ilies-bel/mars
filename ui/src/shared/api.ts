@@ -221,6 +221,14 @@ export const fetchJson = async <T>(
   return result.data
 }
 
+const verifyGateOutcomeSchema = z.object({
+  name: z.string(),
+  tier: z.string(),
+  passed: z.boolean(),
+  exitCode: z.number().nullable(),
+  duration: z.number().optional(),
+})
+
 const stepSpanSchema = z.object({
   stepName: z.string(),
   phase: z.string().nullable(),
@@ -237,6 +245,8 @@ const stepSpanSchema = z.object({
     value: z.union([z.number(), z.string(), z.null()]),
     warn: z.boolean(),
   })).optional(),
+  /** Parsed gate outcomes from the verify step's commandOutput. Null for non-verify steps. */
+  verifyGateOutcomes: z.array(verifyGateOutcomeSchema).nullable().optional(),
 })
 
 const stepSpansResponseSchema = z.object({ spans: z.array(stepSpanSchema) })
