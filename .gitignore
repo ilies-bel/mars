@@ -118,3 +118,8 @@ failed-tasks-*
 /orchestrator/undefined
 /orchestrator/undefined-shm
 /orchestrator/undefined-wal
+
+# Generated UI kinds mirror — regenerated at test/build time from the orchestrator
+# source of truth. Never committed: committing it caused drift-gate failures on
+# branches created before a kind change (fixed by this entry; see task mars-1df7b397).
+ui/src/shared/action-queue-kinds.generated.ts

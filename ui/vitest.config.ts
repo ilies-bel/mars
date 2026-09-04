@@ -55,6 +55,11 @@ export default defineConfig({
   resolve: { alias: sharedAlias },
   test: {
     ...boundedPool,
+    // Generate the action-queue-kinds mirror before any test project starts.
+    // This ensures drift-gate tests pass on a branch created before a kind
+    // change, and on a fresh clone where the generated file is absent.
+    // The file is gitignored — it must always be generated, never committed.
+    globalSetup: ['./vitest-global-setup.mjs'],
     // Three inline projects so each runs with its own environment and timeout:
     //   node   — src/ unit tests (no DOM), 5 s default timeout
     //   server — every server/**/*.test.ts, 60 s (real HTTP server + PGlite)
