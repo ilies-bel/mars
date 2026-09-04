@@ -26,10 +26,10 @@
  * the page says so instead (see UnreachableState).
  */
 
-import { useState, useCallback, useEffect, useRef } from 'react'
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
-import { sortItems, buildRenderedRows, countNeedsYou } from '@/entities/actionQueue/clusterRows'
+import { sortItems, buildRenderedRows, countNeedsYou, type RenderedRow } from '@/entities/actionQueue/clusterRows'
 import { useProgress } from '@/hooks/useProgress'
 import { useProposals } from '@/entities/proposals/useProposals'
 import { useDaemonHealth } from '@/entities/daemon/useDaemonHealth'
@@ -627,8 +627,13 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
             {/* Recipe verb buttons. For task-recovery rows, copy verbs have
                 moved into the "⋯ More" disclosure (mainVerbs excludes them);
                 non-copy verbs (purge, dismiss, …) remain here as they are the
-                primary CTA for their recipe, not secondary recovery verbs. */}
-            {mainVerbs.map((verb) => (
+                primary CTA for their recipe, not secondary recovery verbs.
+                Verbs whose label already appears in item.decisions are filtered
+                out to prevent duplicate buttons (e.g. "Snooze Snooze" when the
+                server emits snooze in both the decisions and verbs arrays). */}
+            {mainVerbs
+              .filter((v) => !item.decisions.some((d) => d.label === v.label))
+              .map((verb) => (
               <button
                 key={verb.op === 'copy' ? `copy-${verb.label}` : verb.op}
                 disabled={pending !== null}
@@ -898,6 +903,139 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
   )
 }
 
+// ── TriageCauseGroupRow ───────────────────────────────────────────────────────
+
+/**
+ * A collapsible card representing N items that share the same failure cause
+ * (`failureReasonCode`). Collapsed by default; shows a count badge, cause
+ * label, and a bulk action button. Expanding reveals individual `TriageRow`
+ * cards for each member.
+ *
+ * Mirrors the CLI's cause-grouping model (orchestrator/src/cli/action-queue-group.ts)
+ * so a 35-row wall reads as a handful of distinct causes to resolve (HR-3).
+ */
+export const TriageCauseGroupRow = ({
+  group,
+}: {
+  group: Extract<RenderedRow, { type: 'causeGroup' }>
+}) => {
+  const qc = useQueryClient()
+  const [expanded, setExpanded] = useState(false)
+  const [pending, setPending] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const kindLabel =
+    (KIND_LABEL as Record<string, string | undefined>)[group.kind] ??
+    group.kind.replace(/-/g, ' ')
+  const kindIcon = KIND_ICON[group.kind] ?? '•'
+  const accentClass = KIND_ACCENT[group.kind] ?? 'border-l-muted'
+  const chipClass =
+    KIND_CHIP_CLASS[group.kind] ?? 'text-muted-foreground border-border'
+
+  // Cause label: prefer the signatureFamilyPhrase mapping; fall back to the
+  // slug portion after the first `/` (matches the CLI's causeLabel fallback).
+  const label =
+    signatureFamilyPhrase(group.signature) ??
+    (group.signature.includes('/')
+      ? group.signature.split('/').slice(1).join('/')
+      : group.signature)
+
+  // Primary bulk verb from the first member — all members share the same
+  // recipe so the first non-copy verb is representative of the group's action.
+  const sampleItem = group.members[0]
+  const bulkVerb =
+    sampleItem?.verbs?.find((v) => v.op !== 'copy' && v.style !== 'snooze') ??
+    sampleItem?.verbs?.[0] ??
+    null
+
+  const handleBulkAction = useCallback(async () => {
+    if (!bulkVerb || pending !== null) return
+    setPending(bulkVerb.op)
+    setError(null)
+    try {
+      await Promise.all(
+        group.members.map((member) =>
+          dispatchAlertVerb(member.id, member.entityId, bulkVerb.op),
+        ),
+      )
+      await qc.invalidateQueries({ queryKey: ['action-queue'] })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setPending(null)
+    }
+  }, [bulkVerb, pending, group.members, qc])
+
+  return (
+    <div
+      className={[
+        'mars-card rounded-lg border-l-2 bg-card px-4 py-3',
+        accentClass,
+      ].join(' ')}
+      data-testid="cause-group-row"
+    >
+      {/* Header: toggle + kind chip + count + cause label + bulk action */}
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((e) => !e)}
+          className="shrink-0 font-mono text-micro text-muted-foreground transition-colors hover:text-foreground"
+          data-testid="cause-group-toggle"
+        >
+          {expanded ? '▾' : '▸'}
+        </button>
+        <span
+          className={[
+            'inline-flex items-center gap-1 rounded border border-border px-1.5 py-0.5 font-mono text-micro leading-none',
+            chipClass,
+          ].join(' ')}
+        >
+          <span className="opacity-60">{kindIcon}</span>
+          {kindLabel}
+        </span>
+        <span className="rounded bg-primary/10 px-1.5 py-0.5 font-mono text-micro font-medium leading-none text-primary">
+          {group.count}×
+        </span>
+        <span className="flex-1 text-label font-medium leading-snug text-foreground">
+          {label}
+        </span>
+        {bulkVerb && (
+          <button
+            disabled={pending !== null}
+            onClick={() => void handleBulkAction()}
+            className="shrink-0 rounded border border-primary/30 bg-primary/10 px-2 py-1 font-mono text-micro font-medium text-primary transition-colors hover:bg-primary/20 disabled:opacity-50"
+            data-testid="cause-group-bulk-action"
+          >
+            {pending !== null ? '…' : `${bulkVerb.label} all`}
+          </button>
+        )}
+      </div>
+
+      {error && (
+        <p
+          className="mt-1 font-mono text-micro text-error"
+          data-testid="cause-group-error"
+        >
+          {error}
+        </p>
+      )}
+
+      {/* Expanded member list — individual TriageRow cards */}
+      {expanded && (
+        <div
+          className="mt-3 flex flex-col gap-3"
+          data-testid="cause-group-members"
+        >
+          {group.members.map((member) => (
+            <TriageRow key={member.id} item={member} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── FeedErrorCard ─────────────────────────────────────────────────────────────
 
 interface FeedErrorCardProps {
@@ -1024,8 +1162,42 @@ export const TriagePage = () => {
   const running = byCluster['In progress'].length
   const doneToday = aggregates.doneToday
 
+  // ── Search + kind filter ──────────────────────────────────────────────────
+  const [searchQuery, setSearchQuery] = useState('')
+  const [kindFilter, setKindFilter] = useState('')
+
+  /**
+   * Distinct kinds present in the current queue, alphabetically sorted.
+   * Restricted to kinds known at build time (i.e. in KIND_LABEL) so the
+   * select never emits raw machine slugs from daemon versions newer than
+   * the build — consistent with the existing fallback contract elsewhere
+   * in TriagePage where unknown kinds are humanised via .replace(/-/g, ' ').
+   */
+  const availableKinds = useMemo(() => {
+    const kinds = new Set(items.map((i) => i.kind))
+    return [...kinds].filter((k) => k in KIND_LABEL).sort()
+  }, [items])
+
   const sorted = sortItems(items)
-  const renderedRows = buildRenderedRows(sorted)
+
+  /** Items after applying the search + kind filter, in priority-recency order. */
+  const filteredSorted = useMemo(() => {
+    let result = sorted
+    if (kindFilter) result = result.filter((i) => i.kind === kindFilter)
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase()
+      result = result.filter(
+        (i) =>
+          (i.title && i.title.toLowerCase().includes(q)) ||
+          (i.humanSummary && i.humanSummary.toLowerCase().includes(q)) ||
+          (i.operatorGoal && i.operatorGoal.toLowerCase().includes(q)) ||
+          (i.entityId && i.entityId.toLowerCase().includes(q)),
+      )
+    }
+    return result
+  }, [sorted, kindFilter, searchQuery])
+
+  const renderedRows = buildRenderedRows(filteredSorted)
   const needsYouCount = countNeedsYou(items)
 
   // Only show the empty state when every feed succeeded AND there is genuinely
@@ -1072,6 +1244,33 @@ export const TriagePage = () => {
         </a>
       </div>
 
+      {/* Search + kind filter toolbar — always visible so the operator can
+          narrow a 35-row wall without scrolling first. */}
+      <div className="flex shrink-0 gap-2 border-b border-border px-4 py-2">
+        <input
+          type="search"
+          placeholder="Search…"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="flex-1 rounded border border-border bg-background px-2 py-1 font-mono text-micro text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/50"
+          data-testid="triage-search"
+        />
+        <select
+          value={kindFilter}
+          onChange={(e) => setKindFilter(e.target.value)}
+          className="rounded border border-border bg-background px-2 py-1 font-mono text-micro text-foreground focus:outline-none focus:ring-1 focus:ring-primary/50"
+          data-testid="triage-kind-filter"
+        >
+          <option value="">All kinds</option>
+          {availableKinds.map((k) => (
+            <option key={k} value={k}>
+              {(KIND_LABEL as Record<string, string | undefined>)[k] ??
+                k.replace(/-/g, ' ')}
+            </option>
+          ))}
+        </select>
+      </div>
+
       {/* Ranked list */}
       <div className="flex-1 overflow-y-auto">
         {isDown && renderedRows.length === 0 ? (
@@ -1095,6 +1294,11 @@ export const TriagePage = () => {
                     latestAt={row.latestAt}
                   />
                 )
+              }
+              // Cause group: many different tasks sharing the same failure cause.
+              // Collapsed by default; bulk action applies to all members.
+              if (row.type === 'causeGroup') {
+                return <TriageCauseGroupRow key={row.id} group={row} />
               }
               // Entity group: several conditions derived for ONE task. Render
               // the precedence-chosen row and surface the rest as read-only

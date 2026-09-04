@@ -106,6 +106,25 @@ export type RenderedRow =
   | { type: 'item'; item: ActionQueueItem }
   | { type: 'cluster'; kind: string; count: number; latestAt: string }
   | { type: 'entityGroup'; primary: ActionQueueItem; badgeKinds: string[] }
+  /**
+   * Cause group: multiple DIFFERENT tasks sharing the same `(kind, failureReasonCode)`.
+   * Mirrors the CLI's `groupActionQueueRows` algorithm (HR-3 shared grouping model) —
+   * same key, same singleton pass-through, same bulk-action surface.
+   * Singletons always pass through as plain `item` rows.
+   */
+  | {
+      type: 'causeGroup'
+      /** Synthetic stable id: `causeGroup:<kind>:<signature>`. */
+      id: string
+      kind: string
+      /** The shared `failureReasonCode` that defines this group. */
+      signature: string
+      count: number
+      /** Highest priority among members. */
+      priority: 'high' | 'normal' | 'low'
+      /** All member rows — expose for expand display and bulk actions. */
+      members: ActionQueueItem[]
+    }
 
 /**
  * Precedence used to pick the ONE verb set an entity-group card exposes when
@@ -122,36 +141,45 @@ const ENTITY_GROUP_KIND_RANK: Record<string, number> = {
   'gate-broken': 2,
 }
 
+/** Highest priority value among a set of items. */
+function highestPriority(items: ActionQueueItem[]): 'high' | 'normal' | 'low' {
+  if (items.some((r) => r.priority === 'high')) return 'high'
+  if (items.some((r) => r.priority === 'normal')) return 'normal'
+  return 'low'
+}
+
 /**
  * Collapses high-cardinality decision kinds into one cluster row per kind,
- * AND collapses several condition rows for the SAME task into one entity
- * group card.
+ * collapses several condition rows for the SAME task into one entity-group
+ * card, AND collapses several DIFFERENT tasks sharing the same failure cause
+ * into one cause-group card.
  *
- * These are two different problems with the same symptom (row-count
- * inflation) but different causes:
- * - Kind clustering: many DIFFERENT subjects sharing a kind (900
- *   draft-proposals) — collapsed to a "view all" link, count preserved.
- * - Entity grouping: the SAME subject represented by several independently
- *   derived condition rows (ADR-0057 kinds never reconcile with each other,
- *   so a `failed` task can also carry `recovery-abandoned` and `gate-broken`
- *   rows) — collapsed to one card with one chosen verb set (see
- *   ENTITY_GROUP_KIND_RANK) and the other kinds surfaced as read-only badges,
- *   because two verb sets for one task can — and did — contradict each other
- *   (a recovery-exhausted `failed` row saying Continue/Restart won't help,
- *   next to a `recovery-abandoned` row offering a live Restart for the same
- *   task).
+ * Three distinct compression axes — same symptom (row inflation), different
+ * causes:
+ *
+ * 1. **Kind clustering** — many DIFFERENT subjects sharing a high-cardinality
+ *    decision kind (900 draft-proposals) → collapsed to a "view all" link.
+ *
+ * 2. **Entity grouping** — the SAME task represented by several independently
+ *    derived condition rows (ADR-0057 kinds never reconcile) → collapsed to
+ *    one card with one chosen verb set, others as badges.
+ *
+ * 3. **Cause grouping** — many DIFFERENT tasks sharing the same
+ *    `(kind, failureReasonCode)` (19 PRDs that all timed out during slicing)
+ *    → collapsed to one collapsible row with a bulk action. Mirrors the CLI's
+ *    `groupActionQueueRows` algorithm (HR-3 shared model: one algorithm,
+ *    three call sites).
  *
  * Rules:
- * - Per-task condition rows (isGroupableConditionKind) sharing a non-empty
- *   entityId → one entity-group card, verb set chosen by
- *   ENTITY_GROUP_KIND_RANK / recoveryExhausted.
+ * - Per-task condition rows sharing a non-empty entityId → entity-group card.
+ * - Items NOT in an entity group, sharing a non-empty failureReasonCode and
+ *   the same kind → cause-group card (singletons pass through as items).
  * - Any other condition kind (stale-worktree, arc-failed) → always individual.
- * - draft-proposal → always one cluster row (the proposals backlog can reach 900+).
- * - Any other decision kind whose count exceeds CLUSTER_THRESHOLD → one cluster row.
+ * - draft-proposal → always one cluster row.
+ * - Any other decision kind whose count exceeds CLUSTER_THRESHOLD → cluster row.
  *
- * The cluster/group row is inserted at the position of the first
- * (highest-priority, most-recent) item of that kind/entity within the
- * already-sorted list.
+ * Each group row is inserted at the position of its first (highest-priority,
+ * most-recent) member within the already-sorted list.
  */
 export function buildRenderedRows(sorted: ActionQueueItem[]): RenderedRow[] {
   const kindCounts = new Map<string, number>()
@@ -167,11 +195,28 @@ export function buildRenderedRows(sorted: ActionQueueItem[]): RenderedRow[] {
     else entityBuckets.set(item.entityId, [item])
   }
 
+  // Cause buckets: group items by (kind, failureReasonCode).
+  // Items already destined for a multi-item entity group are excluded — they
+  // are collapsed by entity-grouping and must not also appear in a cause group.
+  const causeBuckets = new Map<string, ActionQueueItem[]>()
+  for (const item of sorted) {
+    const entityBucket = item.entityId ? entityBuckets.get(item.entityId) : undefined
+    if (entityBucket && entityBucket.length > 1) continue
+    const sig = item.failureReasonCode?.trim()
+    if (!sig) continue
+    const key = `${item.kind}\0${sig}`
+    const bucket = causeBuckets.get(key)
+    if (bucket) bucket.push(item)
+    else causeBuckets.set(key, [item])
+  }
+
   const emittedClusters = new Set<string>()
   const emittedEntityGroups = new Set<string>()
+  const emittedCauses = new Set<string>()
   const result: RenderedRow[] = []
 
   for (const item of sorted) {
+    // ── 1. Entity-group: several conditions for the SAME task ────────────────
     const bucket = item.entityId ? entityBuckets.get(item.entityId) : undefined
     if (bucket && bucket.length > 1) {
       if (emittedEntityGroups.has(item.entityId)) continue
@@ -186,6 +231,30 @@ export function buildRenderedRows(sorted: ActionQueueItem[]): RenderedRow[] {
       continue
     }
 
+    // ── 2. Cause-group: different tasks sharing the same failure cause ────────
+    const sig = item.failureReasonCode?.trim()
+    const causeKey = sig ? `${item.kind}\0${sig}` : null
+    if (causeKey) {
+      if (emittedCauses.has(causeKey)) continue // already emitted as group
+      const causeMembers = causeBuckets.get(causeKey)!
+      if (causeMembers.length > 1) {
+        emittedCauses.add(causeKey)
+        result.push({
+          type: 'causeGroup',
+          id: `causeGroup:${item.kind}:${sig}`,
+          kind: item.kind,
+          // sig is guaranteed non-null here: causeKey is only truthy when sig is a non-empty string
+          signature: sig!,
+          count: causeMembers.length,
+          priority: highestPriority(causeMembers),
+          members: causeMembers,
+        })
+        continue
+      }
+      // Singleton cause: fall through to item/cluster handling.
+    }
+
+    // ── 3. Kind-cluster or individual item ───────────────────────────────────
     const count = kindCounts.get(item.kind) ?? 1
     const isCondition =
       isGroupableConditionKind(item.kind) || NEVER_CLUSTER_KINDS.has(item.kind)
