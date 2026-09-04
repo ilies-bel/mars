@@ -529,7 +529,7 @@ const ReflectionRow = ({ report }: ReflectionRowProps) => (
       </span>
     </div>
     <div className="flex items-center gap-4 font-mono text-micro text-muted-foreground">
-      <span title={report.originId}>{truncateAtWord(report.originId, 24)}</span>
+      <span title={report.originId}>{truncateAtWord(report.originId, 20)}</span>
       {report.dissonantCallCount > 0 && (
         <span className="text-error">{report.dissonantCallCount} dissonant</span>
       )}

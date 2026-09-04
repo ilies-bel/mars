@@ -166,8 +166,9 @@ describe('truncateAtWord', () => {
   })
 
   it('strips the session date suffix from session IDs (integration)', () => {
-    // session-f0715a63-2026-08-17T13-50-43-815Z — the datetime should disappear
-    const result = truncateAtWord('session-f0715a63-2026-08-17T13-50-43-815Z', 24)
+    // session-f0715a63-2026-08-17T13-50-43-815Z — cut at the hyphen before 2026
+    // With max=20: slice = 'session-f0715a63-202', lastHyphen=16 → cut = 'session-f0715a63'
+    const result = truncateAtWord('session-f0715a63-2026-08-17T13-50-43-815Z', 20)
     expect(result).not.toContain('2026')
     expect(result).toMatch(/…$/)
   })
@@ -182,7 +183,8 @@ describe('formatTokensLabel', () => {
     const result = formatTokensLabel(197, 2443, 14837809)
     expect(result).toContain('in 197')
     expect(result).toContain('out 2k')
-    expect(result).toContain('cached 15M')
+    // 14837809 / 1_000_000 = 14.837… → toFixed(1) = '14.8'
+    expect(result).toContain('cached 14.8M')
   })
 
   it('omits the cache part when cache is zero', () => {

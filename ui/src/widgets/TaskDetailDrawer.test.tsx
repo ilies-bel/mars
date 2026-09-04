@@ -1699,7 +1699,8 @@ describe('TaskDetailDrawer – run timeline (via runTimeline prop)', () => {
     const html = renderDrawer(
       <TaskDetailDrawer taskId="t1" onClose={() => {}} runTimeline={timeline} />,
     )
-    expect(html).toContain('in 1234')
+    // 1234 >= 1000 → abbreviated to '1k'; 567 and 890 < 1000 → shown raw
+    expect(html).toContain('in 1k')
     expect(html).toContain('out 567')
     expect(html).toContain('cached 890')
   })
