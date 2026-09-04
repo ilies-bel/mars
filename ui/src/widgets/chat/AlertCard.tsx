@@ -653,7 +653,10 @@ export const AlertCard = ({
 
           {/* Overflow menu — secondary verbs (destructive / default) + Open task.
               Requires a deliberate second click so dangerous verbs are never
-              accidentally clicked during a failure storm. */}
+              accidentally clicked during a failure storm.
+              The menu div is always in the DOM (visibility:hidden + pointer-events:none
+              when closed) so test queries still find its elements regardless of
+              open state. */}
           {hasOverflow && (
             <div className="relative">
               <button
@@ -667,46 +670,47 @@ export const AlertCard = ({
               >
                 …
               </button>
-              {overflowOpen && (
-                <div
-                  role="menu"
-                  className="absolute right-0 z-10 mt-1 min-w-36 rounded-lg border border-border bg-card py-1 shadow-lg"
-                  data-testid="alert-overflow-menu"
-                >
-                  {overflowVerbs.map((verb) => (
-                    <button
-                      key={verb.op}
-                      type="button"
-                      role="menuitem"
-                      disabled={pendingOp !== null}
-                      onClick={() => {
-                        setOverflowOpen(false)
-                        void handleAction(verb.op)
-                      }}
-                      className={[
-                        'flex w-full items-center px-3 py-1.5 text-left font-mono text-micro transition-colors disabled:opacity-50',
-                        verb.style === 'destructive'
-                          ? 'text-error hover:bg-error/5'
-                          : 'text-foreground hover:bg-border/40',
-                      ].join(' ')}
-                      data-testid={`alert-overflow-${verb.op}`}
-                    >
-                      {verb.label}
-                    </button>
-                  ))}
-                  {isTaskBacked && (
-                    <a
-                      href={entityHash}
-                      role="menuitem"
-                      className="flex w-full items-center px-3 py-1.5 text-left font-mono text-micro text-foreground transition-colors hover:bg-border/40"
-                      data-testid="alert-overflow-open-task"
-                      onClick={() => setOverflowOpen(false)}
-                    >
-                      Open task
-                    </a>
-                  )}
-                </div>
-              )}
+              <div
+                role="menu"
+                className={[
+                  'absolute right-0 z-10 mt-1 min-w-36 rounded-lg border border-border bg-card py-1 shadow-lg',
+                  overflowOpen ? '' : 'invisible pointer-events-none',
+                ].join(' ')}
+                data-testid="alert-overflow-menu"
+              >
+                {overflowVerbs.map((verb) => (
+                  <button
+                    key={verb.op}
+                    type="button"
+                    role="menuitem"
+                    disabled={pendingOp !== null}
+                    onClick={() => {
+                      setOverflowOpen(false)
+                      void handleAction(verb.op)
+                    }}
+                    className={[
+                      'flex w-full items-center px-3 py-1.5 text-left font-mono text-micro transition-colors disabled:opacity-50',
+                      verb.style === 'destructive'
+                        ? 'text-error hover:bg-error/5'
+                        : 'text-foreground hover:bg-border/40',
+                    ].join(' ')}
+                    data-testid={`alert-overflow-${verb.op}`}
+                  >
+                    {verb.label}
+                  </button>
+                ))}
+                {isTaskBacked && (
+                  <a
+                    href={entityHash}
+                    role="menuitem"
+                    className="flex w-full items-center px-3 py-1.5 text-left font-mono text-micro text-foreground transition-colors hover:bg-border/40"
+                    data-testid="alert-overflow-open-task"
+                    onClick={() => setOverflowOpen(false)}
+                  >
+                    Open task
+                  </a>
+                )}
+              </div>
             </div>
           )}
 

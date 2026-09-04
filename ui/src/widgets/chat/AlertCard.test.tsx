@@ -320,19 +320,23 @@ describe('AlertCard – operatorGoal line', () => {
     expect(html).not.toContain('data-testid="alert-card-cause"')
   })
 
-  it('renders verify output toggle when operatorGoal + errorExcerpt are present', () => {
+  it('renders output toggle when operatorGoal is present (always shown for task-failure cards)', () => {
+    // When operatorGoal is present the OutputExpander always renders — even with
+    // only errorExcerpt it shows failure_reason, branch, worktree, and output.
     const html = render({
       operatorGoal: 'Build the widget',
       detail: { failureSignature: 'verify/test', errorExcerpt: 'Error: expected 1 but got 2\nfail\n' },
     })
-    expect(html).toContain('data-testid="alert-verify-output-toggle"')
+    expect(html).toContain('data-testid="alert-output-toggle"')
   })
 
-  it('does not render verify output toggle when operatorGoal is absent even with errorExcerpt', () => {
+  it('does not render output toggle when operatorGoal is absent and there is no gateOutput', () => {
+    // Non-goal cards (baseline-broken without gateOutput, condition-kind rows)
+    // do not show the output toggle unless gateOutput is set.
     const html = render({
       detail: { failureSignature: 'verify/test', errorExcerpt: 'Error: boom' },
     })
-    expect(html).not.toContain('data-testid="alert-verify-output-toggle"')
+    expect(html).not.toContain('data-testid="alert-output-toggle"')
   })
 })
 
@@ -341,9 +345,9 @@ describe('AlertCard – operatorGoal line', () => {
 // ---------------------------------------------------------------------------
 
 describe('AlertCard – baseline-broken gate output', () => {
-  it('renders verify output toggle for baseline-broken card with gateOutput (no goal)', () => {
+  it('renders output toggle for baseline-broken card with gateOutput (no goal)', () => {
     // When a baseline-broken card carries gateOutput but no goal, the
-    // VerifyExcerpt "Output ▸" toggle must be rendered so the operator can
+    // OutputExpander "Output ▸" toggle must be rendered so the operator can
     // see the failing-test summary without dropping to a terminal.
     const html = render({
       kind: 'baseline-broken',
@@ -359,22 +363,23 @@ describe('AlertCard – baseline-broken gate output', () => {
         ].join('\n'),
       },
     })
-    expect(html).toContain('data-testid="alert-verify-output-toggle"')
+    expect(html).toContain('data-testid="alert-output-toggle"')
   })
 
-  it('does not render verify output toggle for baseline-broken card without gateOutput', () => {
+  it('does not render output toggle for baseline-broken card without gateOutput', () => {
     const html = render({
       kind: 'baseline-broken',
       summary: 'Integration branch fails required gate "tests"',
       verbs: [],
       detail: { failingGateName: 'tests' } as Record<string, unknown> as Parameters<typeof render>[0]['detail'],
     })
-    expect(html).not.toContain('data-testid="alert-verify-output-toggle"')
+    expect(html).not.toContain('data-testid="alert-output-toggle"')
   })
 
-  it('does not render verify output toggle for non-baseline-broken card with gateOutput', () => {
-    // gateOutput on a task-failure card (with operatorGoal) does NOT trigger the
-    // output panel — that path only uses errorExcerpt/rawError.
+  it('task-failure card with operatorGoal but only gateOutput still shows the toggle (OutputExpander always rendered)', () => {
+    // operatorGoal triggers the task-failure branch of OutputExpander which always
+    // renders — gateOutput is ignored there (only errorExcerpt/rawError used for
+    // raw output) but the toggle still appears with at least the "No output" fallback.
     const html = render({
       kind: 'failed',
       operatorGoal: 'Implement the caching layer',
@@ -382,8 +387,8 @@ describe('AlertCard – baseline-broken gate output', () => {
         gateOutput: 'FAIL src/foo.test.ts\nTests: 1 failed',
       },
     })
-    // operatorGoal present but no errorExcerpt/rawError → no toggle from either path
-    expect(html).not.toContain('data-testid="alert-verify-output-toggle"')
+    // operatorGoal triggers showTaskOutput → OutputExpander always renders
+    expect(html).toContain('data-testid="alert-output-toggle"')
   })
 })
 

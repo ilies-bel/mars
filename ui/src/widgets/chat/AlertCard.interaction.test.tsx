@@ -164,10 +164,21 @@ describe('AlertCard – verb button invocation', () => {
     expect(mockInvokeAction).toHaveBeenCalledWith('restart', 't-1')
   })
 
-  it('clicking a destructive verb button calls invokeAction with the dismiss op', async () => {
+  it('clicking a destructive verb button (in overflow menu) calls invokeAction with the dismiss op', async () => {
+    // The dismiss verb (destructive style) is promoted to the overflow menu when
+    // a primary verb (restart) is present — the operator must open the menu
+    // first (deliberate second-click path to prevent misfire during storms).
     const { container } = renderCard()
 
-    const dismissBtn = container.querySelector('[data-testid="alert-card-verb-dismiss"]')!
+    // Open the overflow menu.
+    const overflowTrigger = container.querySelector('[data-testid="alert-overflow-trigger"]')!
+    expect(overflowTrigger).not.toBeNull()
+    await act(async () => {
+      overflowTrigger.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    // Now click the dismiss item inside the menu.
+    const dismissBtn = container.querySelector('[data-testid="alert-overflow-dismiss"]')!
     expect(dismissBtn).not.toBeNull()
 
     await act(async () => {

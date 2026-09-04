@@ -249,11 +249,8 @@ describe('ActionQueueRow – failed card headline and output', () => {
     const trigger = container.querySelector('[data-testid="alert-overflow-trigger"]')
     expect(trigger).not.toBeNull()
     expect(trigger!.getAttribute('aria-label')).toBe('More actions')
-    // Menu should not be visible before click.
-    expect(container.querySelector('[data-testid="alert-overflow-menu"]')).toBeNull()
-    await act(async () => {
-      trigger!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-    })
+    // The menu is always in the DOM (hidden via CSS when closed) so items are
+    // always queryable — only visibility changes on trigger click.
     const menu = container.querySelector('[data-testid="alert-overflow-menu"]')
     expect(menu).not.toBeNull()
     // Destructive secondary verb (Discard task) appears in the menu.
