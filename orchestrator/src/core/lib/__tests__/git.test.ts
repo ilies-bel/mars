@@ -23,7 +23,7 @@ import { execFile } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { isAbsolute, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
-import { acquireLock } from '../git/lock'
+import { acquireLock } from '../lock'
 import {
   buildWorkerEnv,
   claudeBinEnvFingerprint,

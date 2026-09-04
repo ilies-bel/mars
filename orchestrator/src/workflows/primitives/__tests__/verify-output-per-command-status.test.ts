@@ -76,7 +76,7 @@ vi.mock('../../../core/lib/gate-enrichment', () => ({
   recordEnrichmentShadowRuns: mockRecordEnrichmentShadowRuns,
 }))
 
-vi.mock('../../../core/lib/git/lock', () => ({
+vi.mock('../../../core/lib/lock', () => ({
   acquireLock: mockAcquireLock,
 }))
 
