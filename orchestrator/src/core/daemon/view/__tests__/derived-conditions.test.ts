@@ -18,8 +18,8 @@ import { tmpdir } from 'node:os'
 import { createConditionItemsSource } from '../derived-conditions.js'
 import { humanSummary as recipeHumanSummary } from '../../../lib/action-queue-recipes.js'
 import type { DbClient, DbStatement } from '../../../lib/db.js'
-import { planWorkflowCopies, WORKFLOWS_DEST_REL } from '../../../init/scaffold-workflows.js'
-import { writeInitManifest } from '../../../init/init-manifest.js'
+import { planWorkflowCopies, WORKFLOWS_DEST_REL } from '../../../../init/scaffold-workflows.js'
+import { writeInitManifest } from '../../../../init/init-manifest.js'
 
 // ── Minimal mock DbClient ─────────────────────────────────────────────────────
 // daemon-died derivation is filesystem-only; it never touches the DB.
