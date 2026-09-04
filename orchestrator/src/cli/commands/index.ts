@@ -54,6 +54,7 @@ import { kpiCommands } from './kpi-compare'
 import { kpiBreakdownCommands } from './kpi-breakdown'
 import { enterCommands } from './enter'
 import { evalCommands } from './eval'
+import { classifierCommands } from './classifier'
 
 export const allCommands: readonly Command[] = [
   ...taskCommands,
@@ -103,6 +104,7 @@ export const allCommands: readonly Command[] = [
   ...kpiBreakdownCommands,
   ...enterCommands,
   ...evalCommands,
+  ...classifierCommands,
 ]
 
 export const registry: CommandRegistry = buildRegistry(allCommands)

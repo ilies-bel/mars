@@ -142,6 +142,10 @@ export const FLAGS_WITH_VALUES: ReadonlySet<string> = new Set([
   // mars block <task> <new-blocker> --replace <old-blocker>: atomically swap
   // a blocker edge without the task passing through `queued`.
   '--replace',
+  // mars classifier add -- pattern matching flags and optional guidance.
+  '--match',
+  '--match-full',
+  '--guidance',
 ])
 
 /**
