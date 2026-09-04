@@ -56,9 +56,7 @@ import {
   raiseUnrelatedDirtActionQueue,
 } from './main-dirty-action-queue'
 import { resolveOriginIdForTask } from '../lib/origin'
-import { attributeIntegrationDirt } from '../lib/git/stale-tree-attribution'
-import { readLastSyncedSha } from '../lib/git/last-synced-sha'
-import type { TraceCtx } from '../lib/git/internal'
+import type { TraceCtx } from '../lib/run-tool'
 import { resolveVcs } from '../ports/vcs/registry'
 import { resolveControlLevers, isOperatorAutoCommitDisabled } from '../config/levers'
 import { staleTreeRewindSearchDepth } from '../config/tuning'
@@ -190,11 +188,11 @@ export const runMainDirtyDispatchCheck = async (
   // its own (see the module doc comment, ADR-0100 slice 12).
   const headSha = await resolveVcs().revParse({ cwd: repoRoot, rev: 'HEAD' })
   if (headSha !== null) {
-    const attribution = await attributeIntegrationDirt({
+    const lastSyncedSha = await resolveVcs().readLastSyncedSha({ cwd: repoRoot })
+    const attribution = await resolveVcs().attributeIntegrationDirt({
       repoRoot,
-      lastSyncedSha: readLastSyncedSha(repoRoot),
+      lastSyncedSha,
       headSha,
-      traceCtx: { taskId: task.id, originId, phase: 'setup', store: traceStore },
     })
 
     if (attribution.kind === 'clean' || attribution.kind === 'stale-tree-debris') {
