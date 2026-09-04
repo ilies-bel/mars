@@ -48,7 +48,7 @@ import {
   type CompactionSegment,
 } from '../lib/chat-store'
 import type { ViewInvalidationBus } from '../../bus/view-invalidation.js'
-import type { ChatSegment, ChatStreamHub } from './chat-contracts'
+import type { ChatSegment, ChatStreamHub, ChatStopReason } from './chat-contracts'
 import { resolveChatSystemPrompt } from './chat-system-prompt'
 import { buildMainThreadPrefix, MAIN_THREAD_PROVIDER_REQUEST_IDENTITY } from './chat-context'
 import {
@@ -180,8 +180,29 @@ export const parseEventToSegments = (event: unknown): ChatSegment[] => {
       if (thinking.length > 0) segs.push({ type: 'thinking', thinking })
     }
   } else if (event.type === 'response.completed') {
-    const usage = isObject(event.response) ? event.response.usage : undefined
+    const response = isObject(event.response) ? event.response : undefined
+    const usage = response ? response.usage : undefined
     const details = isObject(usage) ? usage.input_tokens_details : undefined
+    // Extract the stop reason from the Codex Responses API `response.status`
+    // field. Declared here (on the parser, not in a switch(provider) elsewhere)
+    // so the Codex Responses API mapping is co-located with the event handler.
+    let stopReason: ChatStopReason = 'unknown'
+    if (response) {
+      const status = typeof response.status === 'string' ? response.status : null
+      if (status === 'completed') {
+        stopReason = 'complete'
+      } else if (status === 'incomplete') {
+        const incompleteDetails = isObject(response.incomplete_details) ? response.incomplete_details : null
+        const reason = incompleteDetails && typeof incompleteDetails.reason === 'string' ? incompleteDetails.reason : null
+        if (reason === 'max_output_tokens') stopReason = 'max_tokens'
+        else if (reason === 'content_filter') stopReason = 'refusal'
+        else stopReason = 'unknown'
+      } else if (status !== null) {
+        // 'failed', 'cancelled', unrecognised future status values
+        stopReason = 'unknown'
+      }
+      // status === null (absent from event) → 'unknown' (pre-existing behaviour / test fixtures)
+    }
     segs.push({
       type: 'result',
       durationMs: null,
@@ -189,6 +210,7 @@ export const parseEventToSegments = (event: unknown): ChatSegment[] => {
       outputTokens: isObject(usage) && typeof usage.output_tokens === 'number' ? usage.output_tokens : null,
       cacheReadTokens: isObject(details) && typeof details.cached_tokens === 'number' ? details.cached_tokens : null,
       cost: null,
+      stopReason,
     })
   } else if (event.type === 'item.completed' && isObject(event.item)) {
     // Codex CLI JSONL: agent_message items carry the assistant's reply as a plain text field.
@@ -563,6 +585,14 @@ export const buildApiInput = (messages: readonly ChatMessage[]): ResponseInputIt
     chars += size
   }
   return [...checkpointItems, ...kept.flat()]
+}
+
+/** User-facing text for each non-complete stop reason. */
+const STOP_REASON_NOTICES: Record<Exclude<ChatStopReason, 'complete'>, string> = {
+  max_tokens: 'The response stopped early: the output-token limit was reached.',
+  refusal: 'The response stopped early: the model declined to continue.',
+  max_turns: 'The response stopped early: the tool-turn limit was reached.',
+  unknown: 'The response stopped early.',
 }
 
 /** Exponential backoff delays for throttled retries (ms). */
@@ -1079,6 +1109,12 @@ export class ChatRunner {
         // Aggregate usage across all tool-loop round-trips into one result segment.
         let sawUsage = false
         const usageTotals = { input: 0, output: 0, cached: 0 }
+        // Stop reason from the last `response.completed` event seen in any turn.
+        // May be overridden to 'max_turns' after the loop when the turn cap fires.
+        let lastTurnStopReason: ChatStopReason = 'complete'
+        // True when the loop exited because pendingCalls was empty (normal end).
+        // False if it ran to the cfg.maxToolTurns cap with pending calls remaining.
+        let exitedWithNoPending = false
 
         for (let turn = 0; turn < cfg.maxToolTurns; turn++) {
           type PendingCall = { callId: string; tool: string; input: unknown; seg: ChatSegment & { type: 'tool_use' } }
@@ -1102,6 +1138,8 @@ export class ChatRunner {
                       usageTotals.input += seg.inputTokens ?? 0
                       usageTotals.output += seg.outputTokens ?? 0
                       usageTotals.cached += seg.cacheReadTokens ?? 0
+                      // Capture the stop reason from this turn's result event.
+                      if (seg.stopReason) lastTurnStopReason = seg.stopReason
                       continue
                     }
                     // Defer tool_use broadcast until after execution so we can
@@ -1130,7 +1168,10 @@ export class ChatRunner {
             }
           }
 
-          if (abort.signal.aborted || pendingCalls.length === 0) break
+          if (abort.signal.aborted || pendingCalls.length === 0) {
+            exitedWithNoPending = pendingCalls.length === 0
+            break
+          }
 
           for (const call of pendingCalls) {
             const args = isObject(call.input) ? call.input : {}
@@ -1265,15 +1306,30 @@ export class ChatRunner {
           if (abort.signal.aborted) break
         }
 
-        if (!abort.signal.aborted && sawUsage) {
-          broadcastSegment({
-            type: 'result',
-            durationMs: null,
-            inputTokens: usageTotals.input,
-            outputTokens: usageTotals.output,
-            cacheReadTokens: usageTotals.cached,
-            cost: null,
-          })
+        if (!abort.signal.aborted) {
+          // Determine the final stop reason for this run.
+          // max_turns fires when the loop ran to its cap without a clean exit.
+          const finalStopReason: ChatStopReason =
+            !exitedWithNoPending && !abort.signal.aborted ? 'max_turns' : lastTurnStopReason
+
+          // Surface a plain notice for any non-complete stop so the truncation
+          // is visible both in the live stream and on reload. Broadcast it BEFORE
+          // the result segment so it lands in the stream before the run seals.
+          if (finalStopReason !== 'complete') {
+            broadcastSegment({ type: 'notice', text: STOP_REASON_NOTICES[finalStopReason] })
+          }
+
+          if (sawUsage) {
+            broadcastSegment({
+              type: 'result',
+              durationMs: null,
+              inputTokens: usageTotals.input,
+              outputTokens: usageTotals.output,
+              cacheReadTokens: usageTotals.cached,
+              cost: null,
+              stopReason: finalStopReason,
+            })
+          }
         }
       } catch (err) {
         clearTimeout(timer)
@@ -1337,7 +1393,15 @@ export class ChatRunner {
       }
 
       if (!accumulatedSegments.some((seg) => seg.type === 'text')) {
-        await finalize({ type: 'error', message: 'Codex completed without a chat response. Try again.' })
+        // The model completed a turn but produced zero assistant text. This is a
+        // distinct failure mode — it can happen when the selected model rejects
+        // the requested thinking mode, refuses the turn upstream before producing
+        // output, or the protocol delivers no message items. Surface it as an
+        // explicit empty-turn notice rather than rendering a blank message.
+        await finalize({
+          type: 'notice',
+          text: 'The model completed without producing any output. This may indicate a model capability mismatch or a transient issue — try again.',
+        })
         return
       }
 

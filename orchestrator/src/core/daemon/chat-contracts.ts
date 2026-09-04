@@ -6,15 +6,40 @@
  * any of their runtime implementations.
  */
 
+import type { ChatStopReason } from '../workers/provider-types'
+export type { ChatStopReason }
+
 /** A single typed segment produced while a chat run is streamed. */
 export type ChatSegment =
   | { type: 'text'; text: string }
   | { type: 'thinking'; thinking: string }
   | { type: 'tool_use'; id: string; name: string; tool: string; input: unknown; status?: 'executed' | 'proposed' | 'error' }
   | { type: 'tool_result'; tool_use_id: string; content: unknown; isError: boolean }
-  | { type: 'result'; durationMs: number | null; inputTokens: number | null; outputTokens: number | null; cacheReadTokens: number | null; cost: number | null }
+  | {
+      type: 'result'
+      durationMs: number | null
+      inputTokens: number | null
+      outputTokens: number | null
+      cacheReadTokens: number | null
+      cost: number | null
+      /**
+       * Normalized reason this turn ended. Set by the runner for every new
+       * message; absent only on messages written before this field existed
+       * (treat as `'unknown'`). Normal completions record `'complete'`.
+       */
+      stopReason?: ChatStopReason
+    }
   | { type: 'error'; message: string }
   | { type: 'attachment'; path: string; mimeType: string; name: string; size: number; kindHint: 'image' | 'audio' | 'video' }
+  | {
+      /**
+       * Plain user-facing marker for a non-complete turn stop. Persisted on the
+       * message so the reason is visible on reload, not just in the live stream.
+       * Never emitted for normal (`'complete'`) turns.
+       */
+      type: 'notice'
+      text: string
+    }
 
 /** Usage statistics carried on a terminal UI message chunk. */
 interface UiMessageMetadata {

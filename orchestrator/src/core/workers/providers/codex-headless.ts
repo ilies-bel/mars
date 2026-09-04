@@ -246,6 +246,24 @@ export const codexHeadless: HeadlessAdapter = {
   },
   readOutput: readCodexOutput,
 
+  /**
+   * The Codex CLI (`codex exec --json`) emits `turn.completed` at the end of
+   * every run. The normalized form is a `result` AgentEvent with `is_error`
+   * reflecting whether the run failed. There is no separate "stop_reason"
+   * field in the JSONL protocol — a clean run is always `'complete'` and an
+   * error (error/turn.failed events) is `'unknown'`.
+   */
+  extractStopReason: (events) => {
+    for (let i = events.length - 1; i >= 0; i--) {
+      const event = events[i]
+      if (event.type !== 'result') continue
+      // is_error:true on a result event means the run failed (quota, bad model,
+      // etc.). There is no finer-grained signal from the CLI.
+      return (event as { is_error?: unknown }).is_error === true ? 'unknown' : 'complete'
+    }
+    return 'unknown'
+  },
+
   run: async (
     prompt: string,
     opts: HeadlessRunOpts,

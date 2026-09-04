@@ -56,9 +56,9 @@ const reasoningEvent = (text: string): unknown => ({
   item: { type: 'reasoning', summary: [{ type: 'summary_text', text }] },
 })
 
-const completedEvent = (input = 5, output = 3, cached = 0): unknown => ({
+const completedEvent = (input = 5, output = 3, cached = 0, status = 'completed'): unknown => ({
   type: 'response.completed',
-  response: { usage: { input_tokens: input, output_tokens: output, input_tokens_details: { cached_tokens: cached } } },
+  response: { status, usage: { input_tokens: input, output_tokens: output, input_tokens_details: { cached_tokens: cached } } },
 })
 
 // ── Parser tests ──────────────────────────────────────────────────────────────
@@ -81,6 +81,7 @@ describe('parseEventToSegments', () => {
         inputTokens: 100,
         outputTokens: 50,
         cacheReadTokens: 10,
+        stopReason: 'complete',
       },
     ])
   })
@@ -699,7 +700,7 @@ describe('ChatRunner state machine', () => {
     expect(assistantCall![2]).toBe('Hello world!')
   })
 
-  it('finalises with an error segment when the run produces no text', async () => {
+  it('finalises with a notice segment when the run produces no text', async () => {
     mockStream.mockImplementation(streamEmitting(completedEvent()))
 
     const runner = new ChatRunner()
@@ -707,9 +708,9 @@ describe('ChatRunner state machine', () => {
     await new Promise((r) => setTimeout(r, 20))
 
     const assistantCall = vi.mocked(chatStore.appendMessage).mock.calls.find((c) => c[1] === 'assistant')
-    const segments = assistantCall![3] as Array<{ type: string; message?: string }>
-    const errSeg = segments.find((s) => s.type === 'error')
-    expect(errSeg?.message).toMatch(/without a chat response/i)
+    const segments = assistantCall![3] as Array<{ type: string; text?: string }>
+    const noticeSeg = segments.find((s) => s.type === 'notice')
+    expect(noticeSeg?.text).toMatch(/without producing any output/i)
   })
 
   it('auto-titles the thread from the first message when title is empty', async () => {

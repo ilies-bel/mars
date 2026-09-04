@@ -349,6 +349,41 @@ export const extractLastStreamText = (conversation: readonly AgentEvent[]): stri
 }
 
 /**
+ * Mapping from the Claude CLI's raw `stop_reason` values to the orchestrator's
+ * normalized `ChatStopReason` enum. Declared here so the Claude headless adapter
+ * can implement `HeadlessAdapter.extractStopReason` without importing from the
+ * daemon layer (which would create a lib→daemon cycle).
+ *
+ * Claude stop_reason values (as emitted in `assistant` events):
+ *   - `"end_turn"`      — model chose to stop        → `'complete'`
+ *   - `"max_tokens"`    — output-token limit reached  → `'max_tokens'`
+ *   - `"stop_sequence"` — a stop sequence was matched → `'complete'` (normal)
+ *   - `"tool_use"`      — an intermediate tool call   → not a final stop reason
+ *   - anything else / absent                          → `'unknown'`
+ */
+export const extractClaudeStopReason = (
+  events: readonly AgentEvent[],
+): 'complete' | 'max_tokens' | 'refusal' | 'max_turns' | 'unknown' => {
+  // Scan in reverse order — the last assistant event with a non-tool-use
+  // stop_reason is the final one for the turn.
+  for (let i = events.length - 1; i >= 0; i--) {
+    const event = events[i]
+    if (event.type !== 'assistant') continue
+    const message = (event as { message?: unknown }).message
+    if (!isObject(message)) continue
+    const stopReason = (message as { stop_reason?: unknown }).stop_reason
+    if (typeof stopReason !== 'string') continue
+    if (stopReason === 'tool_use') continue // intermediate, not final
+    if (stopReason === 'end_turn' || stopReason === 'stop_sequence') return 'complete'
+    if (stopReason === 'max_tokens') return 'max_tokens'
+    // Any other value (e.g. "content_filtered", unrecognised future values)
+    return 'unknown'
+  }
+  // No assistant event with a recognisable stop reason found.
+  return 'unknown'
+}
+
+/**
  * Select a concise diagnostic from a failed `claude -p` invocation.
  *
  * The stream begins with lifecycle events that carry session ids but no

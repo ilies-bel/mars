@@ -130,6 +130,17 @@ export class ChunkMapper {
       // 'attachment' segments are persisted on the user message, never streamed.
       case 'attachment':
         break
+      case 'notice': {
+        // A short informational line — surfaced as a standalone text block so
+        // the UI renders it visibly without terminating the run (a `result`
+        // segment follows and closes the stream).
+        this.closeText(out)
+        const nId = randomUUID()
+        out.push({ type: 'text-start', id: nId })
+        out.push({ type: 'text-delta', id: nId, delta: seg.text })
+        out.push({ type: 'text-end', id: nId })
+        break
+      }
     }
     return out
   }

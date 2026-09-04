@@ -6,7 +6,7 @@ import { installClaudeStopHook, waitForClaudeDone } from './claude-done-signal'
 import { AGENT_TO_USER_DENIED_TOOLS, toClaudeSessionId } from '../ports/executor/executor-helpers'
 import { resolveExecutor } from '../ports/executor/registry'
 import type { RunAgentResult } from '../ports/executor/types'
-import { readClaudeOutput } from '../lib/claude-stream'
+import { readClaudeOutput, extractClaudeStopReason } from '../lib/claude-stream'
 import type { ProviderUsageSemantics } from '../lib/claude-usage'
 import { codexHeadless } from './providers/codex-headless'
 import { geminiHeadless } from './providers/gemini-headless'
@@ -216,6 +216,7 @@ const CLAUDE_PROVIDER: ProviderDescriptor = {
         ctx?: HeadlessRunContext,
       ): Promise<RunAgentResult> => resolveExecutor().run({ prompt, ...opts }, ctx),
       readOutput: readClaudeOutput,
+      extractStopReason: extractClaudeStopReason,
     },
 }
 

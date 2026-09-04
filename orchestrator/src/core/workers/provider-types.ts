@@ -19,6 +19,20 @@ import type { ProviderUsageSemantics } from '../lib/claude-usage'
  */
 export type ProviderName = string
 
+/**
+ * Normalized reason a provider turn ended, independent of the raw token each
+ * provider uses. Declared on the provider descriptor so adding a fourth
+ * provider requires only a declaration change here, not a `switch (provider)`
+ * inside the chat runner.
+ *
+ * - `complete`   — the model finished normally (end_turn, stop, etc.)
+ * - `max_tokens` — hit the output-token limit; response may be truncated
+ * - `refusal`    — the model or API declined to continue (content filter, policy)
+ * - `max_turns`  — the orchestrator's own tool-turn cap was reached
+ * - `unknown`    — the provider did not surface a recognisable stop reason
+ */
+export type ChatStopReason = 'complete' | 'max_tokens' | 'refusal' | 'max_turns' | 'unknown'
+
 export type ProviderModelTier = 'flagship' | 'balanced' | 'fast'
 
 export interface ProviderModels {
@@ -144,6 +158,16 @@ export interface HeadlessAdapter {
     readonly quotaRejected: boolean
     readonly sessionId: boolean
   }
+  /**
+   * Extract the normalized stop reason from a completed provider event stream.
+   *
+   * Optional because existing stubs and adapters that do not yet surface a stop
+   * reason need not implement it. All built-in adapters (claude, gemini, codex)
+   * implement it; the result is `'unknown'` when the provider's output carries no
+   * recognisable reason signal. A fourth provider adds its own mapping here
+   * rather than adding a branch inside the chat runner.
+   */
+  readonly extractStopReason?: (events: readonly AgentEvent[]) => ChatStopReason
 }
 
 export type RunHeadlessProviderOpts = Omit<HeadlessRunOpts, 'model'> &

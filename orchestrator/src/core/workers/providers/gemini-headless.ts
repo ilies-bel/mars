@@ -53,6 +53,17 @@ export const geminiHeadless: HeadlessAdapter = {
   },
   readOutput: readGeminiOutput,
 
+  /**
+   * The Gemini CLI emits plain text with no structured protocol — there is no
+   * stop_reason or status field. If the stream produced any assistant content
+   * we treat the run as `'complete'`; with no output at all, the stop reason
+   * is `'unknown'` (the process may have exited without printing anything).
+   */
+  extractStopReason: (events) => {
+    const hasOutput = events.some((e) => e.type === 'assistant')
+    return hasOutput ? 'complete' : 'unknown'
+  },
+
   run: async (
     prompt: string,
     opts: HeadlessRunOpts,
