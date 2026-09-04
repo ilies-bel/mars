@@ -438,6 +438,14 @@ const actionQueueBaseSchema = z.object({
    * Falls back to empty for daemon versions predating this field.
    */
   decisions: z.array(zDecision).default([]),
+  /**
+   * Semantic class of this action-queue item, assigned by the daemon.
+   * - 'alert'    — requires operator attention (e.g. arc-failed, stale-worktree).
+   * - 'notice'   — informational; acknowledged by reading (e.g. spend-control-notice).
+   * - 'decision' — requires a choice (e.g. draft-proposal, awaiting-human).
+   * Optional for compatibility with daemon versions that predate this field.
+   */
+  class: z.enum(['alert', 'notice', 'decision']).optional(),
 })
 
 // Detail block carried by every 'stale-worktree' row — absent on all other kinds.

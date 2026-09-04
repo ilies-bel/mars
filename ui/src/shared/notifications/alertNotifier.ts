@@ -3,27 +3,6 @@ import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
 import type { ActionQueueItem } from '@/shared/schemas'
 import { getNotificationsEnabled, notificationsSupported } from './notificationPrefs'
 
-/**
- * Action-queue kinds that raise a desktop notification. The user opted into
- * "failed tasks + stale worktrees". Task failures retain their persisted kinds,
- * so they are classified with the same rule as the daemon rather than a stale
- * `failed-task` display bucket. `draft-proposal` and `awaiting-validation` are
- * intentionally excluded.
- */
-export const NOTIFY_KINDS: ReadonlySet<string> = new Set([
-  'arc-failed',
-  'stale-worktree',
-])
-
-/** Human-readable notification heading per notifiable kind. */
-const KIND_TITLE: Record<string, string> = {
-  failed: 'Task failed',
-  'daemon-killed': 'Task interrupted by daemon',
-  'stale-queued': 'Task stalled in queue',
-  'arc-failed': 'Task failed',
-  'stale-worktree': 'Stale worktree',
-}
-
 export interface DiffResult {
   /** Items that are newly present and notifiable since the last snapshot. */
   toNotify: ActionQueueItem[]
@@ -38,7 +17,7 @@ export interface DiffResult {
  *
  * - `seed = true` (first settled load): notify nothing, just record current ids
  *   so pre-existing alerts don't storm the user on page open / SSE reconnect.
- * - otherwise: an item fires when its `kind` is notifiable AND its `id` was not
+ * - otherwise: an item fires when its `class` is 'alert' AND its `id` was not
  *   in `prevSeen`. The next seen-set is exactly the current item ids, so a
  *   resolved-then-re-raised alert (same id reappearing) notifies again.
  *
@@ -54,7 +33,7 @@ export const diffNotifiable = (
   for (const item of items) {
     nextSeen.add(item.id)
     if (seed) continue
-    if (!prevSeen.has(item.id) && NOTIFY_KINDS.has(item.kind)) {
+    if (!prevSeen.has(item.id) && item.class === 'alert') {
       toNotify.push(item)
     }
   }
@@ -62,10 +41,9 @@ export const diffNotifiable = (
 }
 
 const fireNotification = (item: ActionQueueItem): void => {
-  const title = KIND_TITLE[item.kind] ?? 'New alert'
   try {
-    const notification = new Notification(title, {
-      body: item.title || item.entityId,
+    const notification = new Notification('Alert', {
+      body: item.humanSummary || item.title || item.entityId,
       tag: item.id,
     })
     notification.onclick = () => {
@@ -81,8 +59,8 @@ const fireNotification = (item: ActionQueueItem): void => {
 
 /**
  * Watches the action queue and raises a browser notification when a new
- * task-failure / stale-worktree alert appears, while the tab is open. Gated on
- * the user's opt-in flag AND live `Notification.permission === 'granted'`.
+ * alert-class item appears, while the tab is open. Gated on the user's
+ * opt-in flag AND live `Notification.permission === 'granted'`.
  *
  * Render exactly once near the app root, inside the FocusedProjectProvider (so
  * it shares the focused-project scope). It owns no fetch of its own — it rides
