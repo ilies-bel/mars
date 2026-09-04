@@ -28,8 +28,6 @@ import {
 import { resolveContext, getStateDir } from '../../core/context'
 import { type AgentEvent } from '../../core/lib/claude-stream'
 import { IllegalTransitionError, getTask, updateTask } from '../../core/queue'
-import { unlink } from 'node:fs/promises'
-import { resolve } from 'node:path'
 import { handleTaskFailureWithFixTask } from '../../core/queue-fix-tasks'
 import { computeFailureSignature } from '../../core/lib/failure-signature'
 import { type DomainTaskStore as TaskStore } from '../../core/store/task-store'
@@ -694,10 +692,12 @@ export const merge = async (
           ])
         } catch (err: unknown) {
           if (err instanceof MergeHardTimeoutError) {
-            // Best-effort: unlink the merge lock so subsequent merges aren't
-            // blocked. The running mergeBranch call will also call release()
-            // via its own finally block when the merge-worker eventually exits.
-            await unlink(resolve(getStateDir(), '.merge.lock')).catch(() => {})
+            // Do NOT unlink .merge.lock here. The timer starts before
+            // enqueueMergeJobAndAwait is called, so the timing-out task may
+            // still be queued and may never have acquired the lock at all.
+            // Blindly unlinking it would delete a mutex held by a different,
+            // healthy merge that is actively running. The lock's own finally
+            // block (inside mergeBranch) is the sole authority that releases it.
             const hardMsg = `merge:hard-timeout — merge step for task ${taskId} exceeded the step-level ceiling of ${Math.round(MERGE_HARD_TIMEOUT_MS / 60_000)} min`
             await updateTask(
               taskId,

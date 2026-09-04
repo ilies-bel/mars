@@ -6,8 +6,8 @@
  * timeout:
  *   (a) the step rejects within `MERGE_HARD_TIMEOUT_MS + slack`,
  *   (b) the task is marked failed with failureSignature `merge:hard-timeout`,
- *   (c) the `.merge.lock` file is absent (the primitive unlinks it
- *       best-effort so subsequent merges are not blocked).
+ *   (c) the timing-out task does NOT unlink `.merge.lock` — the lock belongs
+ *       to the running merge worker, not to this waiter.
  *
  * We set `MARS_MERGE_HARD_TIMEOUT_MS` to a short value (150 ms) before
  * importing so the timeout fires quickly without relying on fake timers.
@@ -219,8 +219,10 @@ describe('merge — hard step-level timeout', () => {
       )
       expect(hardTimeoutCall).toBeDefined()
 
-      // (c) Lock file is absent — the primitive unlinked it best-effort.
-      await expect(access(LOCK_PATH)).rejects.toMatchObject({ code: 'ENOENT' })
+      // (c) Lock file is still present — the timing-out task must NOT unlink
+      //     a mutex it never acquired. The lock belongs to the running merge
+      //     worker's own finally block, not to this waiter.
+      await expect(access(LOCK_PATH)).resolves.toBeUndefined()
     },
     // Generous test timeout — the step itself must exit within 150 + 600 ms,
     // but vitest also applies its own timeout ceiling.
@@ -262,4 +264,39 @@ describe('merge — hard step-level timeout', () => {
       'merge-hard-timeout',
     )
   }, 1000)
+
+  it(
+    'a queued waiter that times out does not unlink .merge.lock',
+    async () => {
+      // This is the ownership-safety test (the incident root cause, 2026-09-03).
+      // The hard timer starts BEFORE enqueueMergeJobAndAwait is called, so a
+      // task can time out while still waiting in the queue — it never held the
+      // lock. Verify that the primitive does not unlink a lock it never acquired.
+
+      const taskId = 'mars-hard-timeout-04'
+      const { writeFileSync } = await import('node:fs')
+
+      // Simulate a different (healthy) merge already holding the lock.
+      writeFileSync(LOCK_PATH, 'other-task-pid')
+
+      // enqueueFn never writes to the lock and never resolves — simulating
+      // this task still sitting in the queue when the timeout fires.
+      const enqueueFn = vi.fn().mockImplementation(() => new Promise<never>(() => {}))
+
+      const ctx = makeCtx(taskId, enqueueFn)
+
+      await expect(
+        merge(ctx, { kind: 'task', ...worktreeOpts(taskId) }),
+      ).rejects.toThrow()
+
+      // The lock file written by the other merge must still be present.
+      // If merge.ts had blindly unlinked it, this would throw ENOENT.
+      await expect(access(LOCK_PATH)).resolves.toBeUndefined()
+
+      // Content must be unchanged — this task did not write to it.
+      const { readFileSync } = await import('node:fs')
+      expect(readFileSync(LOCK_PATH, 'utf8')).toBe('other-task-pid')
+    },
+    2000,
+  )
 })
