@@ -1,9 +1,10 @@
 /**
  * Payload contracts for the slice-workflow action-queue kind family.
  *
- * Kinds: `slices-dropped`, `slice-failed`, `hitl-slice-needs-operator`
+ * Kinds: `slices-dropped`, `slice-failed`, `hitl-slice-needs-operator`,
+ *        `slicer-transport-outage`
  *
- * All three are raised inside `src/workflows/slice-workflow.ts` by the slicer
+ * All four are raised inside `src/workflows/slice-workflow.ts` by the slicer
  * that turns a PRD into task rows.
  */
 
@@ -54,16 +55,37 @@ export interface HitlSliceNeedsOperatorPayload extends OccurrenceTrail {
   subTaskId: string
 }
 
+/**
+ * The provider transport layer was unreachable during slicing — DNS failure,
+ * TCP connect refusal, or firewall block. All affected PRDs are reset to
+ * `prd-ready` (no `last_slice_error`) so the startup reconciler re-dispatches
+ * them automatically when the provider is healthy again.
+ *
+ * This alert uses a FIXED signature (`'slicer:provider-transport'`) so N
+ * concurrent transport failures produce exactly ONE action-queue row.
+ *
+ * Raised at: src/workflows/slice-workflow.ts (kind `slicer-transport-outage`)
+ */
+export interface SlicerTransportOutagePayload extends OccurrenceTrail {
+  /** ID of the PRD that triggered this alert (one representative PRD per row). */
+  proposalId: string
+  /** Human-readable title of that PRD. */
+  proposalTitle?: string
+  /** The raw error message from the transport failure. */
+  error: string
+}
+
 /** Kind-to-payload map for intersection into `AuditedPayloads`. */
 export interface SliceWorkflowContracts {
   'slices-dropped': SlicesDroppedPayload
   'slice-failed': SliceFailedPayload
   'hitl-slice-needs-operator': HitlSliceNeedsOperatorPayload
+  'slicer-transport-outage': SlicerTransportOutagePayload
 }
 
 /** Representative fixtures for the payload/recipe contract test. */
 export const REPRESENTATIVE_PAYLOADS: Record<
-  'slices-dropped' | 'slice-failed' | 'hitl-slice-needs-operator',
+  'slices-dropped' | 'slice-failed' | 'hitl-slice-needs-operator' | 'slicer-transport-outage',
   Record<string, unknown>
 > = {
   'slices-dropped': {
@@ -80,5 +102,10 @@ export const REPRESENTATIVE_PAYLOADS: Record<
     proposalId: 'prop-abc123',
     sliceIndex: 3,
     subTaskId: 'mars-deadbeef',
+  },
+  'slicer-transport-outage': {
+    proposalId: 'prop-abc123',
+    proposalTitle: 'Ship the feature',
+    error: 'provider worker exited 1: API Error: Connection refused (ConnectionRefused)',
   },
 }

@@ -456,13 +456,27 @@ const RECIPE_DEFINITIONS = {
 
   'slice-failed': {
     humanSummary: () =>
-      'Mars could not turn this PRD into tasks — inspect the failure, then explicitly slice it again when ready.',
+      'Mars could not turn this PRD into tasks — inspect the PRD, then slice it again when ready.',
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
       entityId: ctx.entityId,
       errorExcerpt: str(ctx.payload['error']),
     }),
     verbs: [],
+  },
+
+  'slicer-transport-outage': {
+    humanSummary: () =>
+      'Provider was unreachable during slicing — affected PRDs will retry automatically when the provider is back.',
+    humanDetail: (ctx) => ({
+      raisedAt: ctx.raisedAt,
+      entityId: ctx.entityId,
+      errorExcerpt: str(ctx.payload['error']),
+    }),
+    verbs: [
+      { op: 'proposal.slice', label: 'Retry now', style: 'primary' as const },
+      { op: 'snooze', label: 'Snooze', style: 'snooze' as const },
+    ],
   },
 
   'hitl-slice-needs-operator': {

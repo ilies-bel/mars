@@ -236,6 +236,7 @@ export const ACTION_QUEUE_PAYLOAD_AUDIT = {
   'fragmented-repo-layout': 'typed',
   'recovery-abandoned': 'typed',
   'mockup-ready': 'typed',
+  'slicer-transport-outage': 'typed',
   'qa-step-list-opt-in': 'typed',
   'qa-step-list-promote': 'typed',
   'worktree-hook-trust-request': 'typed',

@@ -190,6 +190,35 @@ export class SlicerRefusalError extends Error {
 }
 
 /**
+ * Matches provider CLI output that signals a network/transport failure rather
+ * than a model-quality failure: DNS resolution, TCP connect refusal, firewall
+ * block, or explicit API-error prefix with a connect-class cause. Each pattern
+ * corresponds to a token that appears verbatim in the error message produced by
+ * `diagnoseClaudeFailure` or the provider CLI itself.
+ *
+ * Bare `ECONNREFUSED` and `ETIMEDOUT` are intentionally excluded: they also
+ * appear in local test-fixture errors (e.g. PostgreSQL connection refused) and
+ * would create false positives in that context. The API-Error-qualified form
+ * `API Error.*ConnectionRefused` is included because it only appears when the
+ * provider CLI wraps a connect-class OS error.
+ */
+const TRANSPORT_ERROR_RE =
+  /ConnectionRefused|ENOTFOUND|EAI_AGAIN|Unable to connect to API|API Error[^:]*:.*(?:ECONNREFUSED)/i
+
+/**
+ * Returns true when `error` looks like a provider transport failure (DNS,
+ * TCP connect, firewall). These are transient and should be retried before
+ * raising an operator alert.
+ *
+ * Exported so tests can verify the classifier directly without exercising the
+ * full slice-workflow execution path.
+ */
+export const isTransportError = (error: unknown): boolean => {
+  const msg = error instanceof Error ? error.message : String(error)
+  return TRANSPORT_ERROR_RE.test(msg)
+}
+
+/**
  * Concatenate a slice's `modifies` + `creates` into the single flat
  * `files` list the queue persists into `task_spec_files`. The slicer
  * schema splits the two so the prompt can discipline path hallucination
@@ -1382,6 +1411,13 @@ export const createOutOfScopeSuccessors = async (
 export interface SliceServices {
   store: DomainTaskStore
   traceStore: TraceEventStore
+  /**
+   * Millisecond delays between transport-error retry attempts. The length of
+   * this array controls how many retries are attempted (one per entry). Defaults
+   * to `[5_000, 30_000]` in production (3 total attempts). Pass `[0, 0]` in
+   * tests to skip real waits.
+   */
+  retryDelaysMs?: number[]
 }
 
 export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput, SliceServices>({
@@ -1424,22 +1460,36 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput, SliceServic
     try {
       const traceStore = ctx.services.traceStore
     let slicedTaskCount = 0
-    const r = await runWorkerWithSpan({
-      worker: Workers.Slicer,
-      prompt: buildSlicerPrompt(proposal, inputData.resliceFeedback),
-      runOptions: { cwd: getRepoRoot() },
-      traceStore,
-      stepName: 'generate-slices',
-      workflowInstanceId: ctx.runId,
-      originId: inputData.proposalId,
-      taskId: null,
-      getExtraPayload: () => ({ slicedTaskCount }),
-    })
-    if (r.exitCode !== 0) {
-      throw new Error(
-        `provider worker exited ${r.exitCode}: ${diagnoseClaudeFailure(r.stdout, r.stderr)}`,
+    // Transport-error retry: attempt the slicer worker up to (retryDelays.length + 1) times.
+    // Only transport failures (DNS / connect / firewall) are retried — bad model output
+    // throws immediately. On exhaustion the last error propagates to the outer catch,
+    // which raises a single provider-level 'slicer-transport-outage' alert instead of
+    // a per-PRD 'slice-failed' alert.
+    const retryDelays = ctx.services.retryDelaysMs ?? [5_000, 30_000]
+    const maxAttempts = retryDelays.length + 1
+    let r: Awaited<ReturnType<typeof runWorkerWithSpan>> | undefined
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const candidate = await runWorkerWithSpan({
+        worker: Workers.Slicer,
+        prompt: buildSlicerPrompt(proposal, inputData.resliceFeedback),
+        runOptions: { cwd: getRepoRoot() },
+        traceStore,
+        stepName: 'generate-slices',
+        workflowInstanceId: ctx.runId,
+        originId: inputData.proposalId,
+        taskId: null,
+        getExtraPayload: () => ({ slicedTaskCount }),
+      })
+      if (candidate.exitCode === 0) { r = candidate; break }
+      const workerError = new Error(
+        `provider worker exited ${candidate.exitCode}: ${diagnoseClaudeFailure(candidate.stdout, candidate.stderr)}`,
       )
+      // Non-transport errors or last attempt: throw immediately (no more retries).
+      if (!isTransportError(workerError) || attempt === maxAttempts - 1) throw workerError
+      // Transport error with retries remaining: wait then try again.
+      await new Promise<void>((resolve) => setTimeout(resolve, retryDelays[attempt]))
     }
+    if (!r) throw new Error('unexpected: no worker result after retry loop')
 
     const parsed = parseSlicerOutput(r.stdout)
     // Pre-repair: detect hotspot files (same file in modifies of 2+ non-drop
@@ -1896,47 +1946,89 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput, SliceServic
 
     return { proposalId: proposal.id, status: 'sliced', taskIds, queuedTaskIds, blockedTaskIds }
     } catch (error: unknown) {
-      // Compensating revert for the atomic claim. Covers every failure
-      // path between the claim above and a successful return — including
-      // failures that fire BEFORE the inner Phase 1-5 catch (slicer process
-      // failure, parse failure, validation failure) and would otherwise
-      // strand the proposal at 'slicing' with no surviving tasks. The WHERE
-      // runs for every failure after this workflow owns the claim, including
-      // post-Phase-4 failures whose inner cleanup already restored
-      // 'prd-ready'. Recording the failure beside that reset prevents the
-      // boot reconciler from blindly repeating a deterministic attempt.
-      // Best-effort — a revert failure must not mask the original cause.
+      // Compensating revert for the atomic claim. Covers every failure path
+      // between the claim above and a successful return — including failures
+      // that fire BEFORE the inner Phase 1-5 catch (slicer process failure,
+      // parse failure, validation failure) and would otherwise strand the
+      // proposal at 'slicing'. The WHERE runs for every failure after this
+      // workflow owns the claim, including post-Phase-4 failures whose inner
+      // cleanup already restored 'prd-ready'. Best-effort — a revert failure
+      // must not mask the original cause.
       const revertStore = await getDefaultStateStore()
-      const failure = describeSliceFailure({ status: 'failed', error })
-      await revertStore
-        .execute({
-          sql: `UPDATE proposals
-                SET status = 'prd-ready', last_slice_error = ?, last_slice_failed_at = ?, updated_at = ?
-                WHERE id = ?`,
-          args: [failure, Date.now(), Date.now(), proposal.id],
-        })
-        .catch(() => {})
-      // A SlicerRefusalError means the slicer recognised that the PRD's body
-      // is empty or unsliceable. Surface an actionable operator message that
-      // names the situation and what to do — NOT the raw parse-error string.
-      // Any other error keeps the generic "Slicer failed" message and body.
       const isRefusal = error instanceof SlicerRefusalError
-      await raiseActionQueueItem({
-        kind: 'slice-failed',
-        category: 'orchestrator',
-        priority: 'high',
-        title: isRefusal
-          ? `PRD ${proposal.id} has no content to slice`
-          : `Slicer failed for PRD ${proposal.id}`,
-        body: isRefusal
-          ? `PRD ${proposal.id} (${proposal.title}) could not be sliced because its body appears to be empty or contains no decomposable content.\n\nSlicer's reason: ${(error as SlicerRefusalError).refusalReason}\n\nAdd a Problem and Solution to the PRD and run \`mars proposal slice ${proposal.id}\` to retry, or dismiss the proposal if it is no longer needed.`
-          : `PRD ${proposal.id} (${proposal.title}) could not be sliced: ${failure}. Inspect the PRD and run \`mars proposal slice ${proposal.id}\` to retry explicitly.`,
-        payload: { proposalId: proposal.id, proposalTitle: proposal.title, error: isRefusal ? (error as SlicerRefusalError).refusalReason : failure },
-        context: {},
-        raisedBy: 'slicer',
-        signature: proposal.id,
-        originTaskId: proposal.id,
-      }).catch(() => {})
+      const isTransport = !isRefusal && isTransportError(error)
+
+      if (isTransport) {
+        // Transport failure (DNS / TCP connect / firewall): the provider was
+        // unreachable, not the PRD. Revert WITHOUT recording last_slice_error
+        // so the startup reconciler re-dispatches this proposal automatically
+        // when the provider is healthy again.
+        await revertStore
+          .execute({
+            sql: `UPDATE proposals SET status = 'prd-ready', updated_at = ? WHERE id = ?`,
+            args: [Date.now(), proposal.id],
+          })
+          .catch(() => {})
+        // Raise ONE provider-level alert. The fixed signature deduplicates
+        // across all concurrent transport failures: N proposals → 1 AQ row.
+        await raiseActionQueueItem({
+          kind: 'slicer-transport-outage',
+          category: 'orchestrator',
+          priority: 'high',
+          title: 'Provider unreachable — PRD slicing will retry automatically',
+          body:
+            `PRD ${proposal.id} (${proposal.title}) could not be sliced because the ` +
+            `provider was unreachable (${error instanceof Error ? error.message : String(error)}). ` +
+            `The PRD has been reset and will be retried automatically when the provider is back. ` +
+            `Run \`mars proposal slice ${proposal.id}\` to retry explicitly now.`,
+          payload: {
+            proposalId: proposal.id,
+            proposalTitle: proposal.title,
+            error: error instanceof Error ? error.message : String(error),
+          },
+          context: {},
+          raisedBy: 'slicer',
+          // Fixed signature: all transport failures collapse onto one AQ row.
+          signature: 'slicer:provider-transport',
+        }).catch(() => {})
+      } else {
+        // Genuine slicer failure (bad model output, refusal, parse error, etc.).
+        // Record last_slice_error so the startup reconciler skips the proposal and
+        // re-raises this alert rather than dispatching a likely-doomed re-slice.
+        const failure = describeSliceFailure({ status: 'failed', error })
+        await revertStore
+          .execute({
+            sql: `UPDATE proposals
+                  SET status = 'prd-ready', last_slice_error = ?, last_slice_failed_at = ?, updated_at = ?
+                  WHERE id = ?`,
+            args: [failure, Date.now(), Date.now(), proposal.id],
+          })
+          .catch(() => {})
+        // A SlicerRefusalError means the slicer recognised that the PRD's body is
+        // empty or unsliceable. Surface an actionable operator message that names
+        // the situation and what to do — NOT the raw parse-error string. Any other
+        // genuine error keeps the "Slicer failed" message so the operator can act.
+        await raiseActionQueueItem({
+          kind: 'slice-failed',
+          category: 'orchestrator',
+          priority: 'high',
+          title: isRefusal
+            ? `PRD ${proposal.id} has no content to slice`
+            : `Slicer failed for PRD ${proposal.id}`,
+          body: isRefusal
+            ? `PRD ${proposal.id} (${proposal.title}) could not be sliced because its body appears to be empty or contains no decomposable content.\n\nSlicer's reason: ${(error as SlicerRefusalError).refusalReason}\n\nAdd a Problem and Solution to the PRD and run \`mars proposal slice ${proposal.id}\` to retry, or dismiss the proposal if it is no longer needed.`
+            : `PRD ${proposal.id} (${proposal.title}) could not be sliced: ${failure}. Inspect the PRD and run \`mars proposal slice ${proposal.id}\` to retry explicitly.`,
+          payload: {
+            proposalId: proposal.id,
+            proposalTitle: proposal.title,
+            error: isRefusal ? (error as SlicerRefusalError).refusalReason : failure,
+          },
+          context: {},
+          raisedBy: 'slicer',
+          signature: proposal.id,
+          originTaskId: proposal.id,
+        }).catch(() => {})
+      }
       throw error
     }
     }),
@@ -2085,7 +2177,11 @@ export const runSlice = async (
     { proposalId, resliceFeedback, priority: services?.priority },
     {
       store: createQueueWorkflowStore(),
-      services: { store: taskStore, traceStore },
+      services: {
+        store: taskStore,
+        traceStore,
+        ...(services?.retryDelaysMs !== undefined && { retryDelaysMs: services.retryDelaysMs }),
+      },
     },
   )
   if (result.status !== 'completed' || !result.output) {

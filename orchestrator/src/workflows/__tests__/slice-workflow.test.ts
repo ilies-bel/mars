@@ -4580,3 +4580,261 @@ describe('Slicer refusal: readable terminal outcome (regression 290bd1ae)', () =
     expect(item?.body).toMatch(/Add a Problem and Solution|dismiss/)
   })
 })
+
+// ── Transport-error handling (slicer-transport-outage) ────────────────────────
+
+describe('isTransportError', () => {
+  it('matches ConnectionRefused in provider worker exit message', async () => {
+    const { isTransportError } = await import('../slice-workflow')
+    expect(
+      isTransportError(
+        new Error(
+          'provider worker exited 1: API Error: Connection refused — a firewall or proxy may be blocking it (ConnectionRefused)',
+        ),
+      ),
+    ).toBe(true)
+  })
+
+  it('matches ENOTFOUND (DNS failure)', async () => {
+    const { isTransportError } = await import('../slice-workflow')
+    expect(isTransportError(new Error('getaddrinfo ENOTFOUND api.openai.com'))).toBe(true)
+  })
+
+  it('matches EAI_AGAIN (transient DNS)', async () => {
+    const { isTransportError } = await import('../slice-workflow')
+    expect(isTransportError(new Error('getaddrinfo EAI_AGAIN api.anthropic.com'))).toBe(true)
+  })
+
+  it('matches Unable to connect to API', async () => {
+    const { isTransportError } = await import('../slice-workflow')
+    expect(isTransportError(new Error('Unable to connect to API: connection refused'))).toBe(true)
+  })
+
+  it('does NOT match a generic model-output failure', async () => {
+    const { isTransportError } = await import('../slice-workflow')
+    expect(
+      isTransportError(new Error('provider worker exited 1: model refused to produce valid JSON')),
+    ).toBe(false)
+  })
+
+  it('does NOT match a parse error', async () => {
+    const { isTransportError } = await import('../slice-workflow')
+    expect(isTransportError(new Error('failed to parse claude JSON: Unexpected token'))).toBe(false)
+  })
+})
+
+describe('runSlice transport error handling', () => {
+  let repo: string
+
+  const setupRepo = (): string => {
+    const r = mkdtempSync(resolve(tmpdir(), 'mars-slice-transport-'))
+    execFileSync('git', ['init', '-q'], { cwd: r })
+    mkdirSync(resolve(r, '.mars'), { recursive: true })
+    return r
+  }
+
+  beforeEach(() => {
+    repo = setupRepo()
+    process.env.MARS_REPO = repo
+    process.env.MARS_WORKER_PROVIDER = 'claude'
+  })
+
+  afterEach(async () => {
+    const { closeAllDbs } = await import('../../core/lib/db')
+    await closeAllDbs()
+    vi.resetModules()
+    vi.doUnmock('../../core/lib/git/claude')
+    delete process.env.MARS_REPO
+    delete process.env.MARS_WORKER_PROVIDER
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  const transportError = {
+    exitCode: 1,
+    stdout: '',
+    stderr: 'API Error: Connection refused — a firewall or proxy may be blocking it (ConnectionRefused)',
+    sessionId: 'stub-session',
+    conversation: [],
+  }
+
+  const seedPrdReadyProposal = async (): Promise<string> => {
+    const proposals = await import('../../core/proposals')
+    await proposals.initProposals()
+    const proposal = await proposals.createProposal('t', { problem: 'p', solution: 's' })
+    await proposals.addProposalUserStory(proposal.id, 'as a user, I want X')
+    const promoted = await proposals.promoteProposal(proposal.id, {})
+    expect(promoted.status).toBe('prd-ready')
+    return proposal.id
+  }
+
+  it('raises slicer-transport-outage (not slice-failed) when all retries fail', async () => {
+    vi.doMock('../../core/lib/git/claude', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git/claude')>(
+        '../../core/lib/git/claude',
+      )
+      return {
+        ...actual,
+        runClaudeCode: vi.fn(async () => transportError),
+      }
+    })
+    vi.resetModules()
+    const proposalId = await seedPrdReadyProposal()
+
+    const slice = await import('../slice-workflow')
+    // Pass retryDelaysMs: [0, 0] so all three attempts fire with no real wait.
+    await slice.runSlice(proposalId, undefined, { retryDelaysMs: [0, 0] }).catch(() => {})
+
+    const actionQueue = await import('../../core/lib/action-queue')
+
+    // Should have raised slicer-transport-outage, NOT slice-failed.
+    const transportAlerts = await actionQueue.listActionQueueItems('open', {
+      kind: 'slicer-transport-outage',
+    })
+    expect(transportAlerts.length).toBeGreaterThanOrEqual(1)
+    expect(transportAlerts[0].signature).toBe('slicer:provider-transport')
+
+    // No per-PRD slice-failed alert.
+    const failures = await actionQueue.listActionQueueItems('open', { kind: 'slice-failed' })
+    expect(failures.filter((f) => f.payload['proposalId'] === proposalId)).toHaveLength(0)
+
+    // Proposal must be prd-ready WITHOUT last_slice_error so reconciler retries.
+    const proposals = await import('../../core/proposals')
+    const after = await proposals.getProposal(proposalId)
+    expect(after?.status).toBe('prd-ready')
+    expect(after?.lastSliceError).toBeNull()
+  })
+
+  it('two transport-failure calls dedup to one slicer-transport-outage row', async () => {
+    vi.doMock('../../core/lib/git/claude', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git/claude')>(
+        '../../core/lib/git/claude',
+      )
+      return {
+        ...actual,
+        runClaudeCode: vi.fn(async () => transportError),
+      }
+    })
+    vi.resetModules()
+
+    const proposals = await import('../../core/proposals')
+    await proposals.initProposals()
+    const p1 = await proposals.createProposal('t1', { problem: 'p', solution: 's' })
+    await proposals.addProposalUserStory(p1.id, 'as a user, I want X')
+    await proposals.promoteProposal(p1.id, {})
+
+    const p2 = await proposals.createProposal('t2', { problem: 'p', solution: 's' })
+    await proposals.addProposalUserStory(p2.id, 'as a user, I want Y')
+    await proposals.promoteProposal(p2.id, {})
+
+    const slice = await import('../slice-workflow')
+    await slice.runSlice(p1.id, undefined, { retryDelaysMs: [0, 0] }).catch(() => {})
+    await slice.runSlice(p2.id, undefined, { retryDelaysMs: [0, 0] }).catch(() => {})
+
+    const actionQueue = await import('../../core/lib/action-queue')
+    const transportAlerts = await actionQueue.listActionQueueItems('open', {
+      kind: 'slicer-transport-outage',
+    })
+    // Both failures dedup onto a single row.
+    expect(transportAlerts).toHaveLength(1)
+  })
+
+  it('raises slice-failed (not slicer-transport-outage) for a bad-output error', async () => {
+    vi.doMock('../../core/lib/git/claude', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git/claude')>(
+        '../../core/lib/git/claude',
+      )
+      return {
+        ...actual,
+        runClaudeCode: vi.fn(async () => ({
+          exitCode: 1,
+          stdout: '',
+          stderr: 'model refused to produce valid JSON: Unexpected token',
+          sessionId: 'stub-session',
+          conversation: [],
+        })),
+      }
+    })
+    vi.resetModules()
+    const proposalId = await seedPrdReadyProposal()
+
+    const slice = await import('../slice-workflow')
+    await slice.runSlice(proposalId, undefined, { retryDelaysMs: [0, 0] }).catch(() => {})
+
+    const actionQueue = await import('../../core/lib/action-queue')
+    const failures = await actionQueue.listActionQueueItems('open', { kind: 'slice-failed' })
+    expect(failures.filter((f) => f.payload['proposalId'] === proposalId)).toHaveLength(1)
+
+    // No transport-outage alert.
+    const transportAlerts = await actionQueue.listActionQueueItems('open', {
+      kind: 'slicer-transport-outage',
+    })
+    expect(transportAlerts.filter((a) => a.payload['proposalId'] === proposalId)).toHaveLength(0)
+
+    // Proposal records the error so reconciler skips it.
+    const proposals = await import('../../core/proposals')
+    const after = await proposals.getProposal(proposalId)
+    expect(after?.lastSliceError).toBeTruthy()
+  })
+
+  it('raises no alert when a transport error succeeds on retry', async () => {
+    const envelope = (jsonResult: unknown): string =>
+      JSON.stringify({ result: JSON.stringify(jsonResult), is_error: false })
+    const successOutput = envelope({
+      slices: [
+        {
+          title: 't',
+          type: 'AFK',
+          whatToBuild: 'x',
+          acceptanceCriteria: ['a'],
+          blockedBy: [],
+          readFirst: ['src/foo.ts'],
+          prescriptiveAction: 'In fooFn (src/foo.ts:1), change return type to void.',
+          modifies: [],
+          creates: [],
+          verifyCmd: null,
+          mergeMode: 'auto',
+        },
+      ],
+    })
+    vi.doMock('../../core/lib/git/claude', async () => {
+      const actual = await vi.importActual<typeof import('../../core/lib/git/claude')>(
+        '../../core/lib/git/claude',
+      )
+      return {
+        ...actual,
+        runClaudeCode: vi
+          .fn()
+          // First call: transport error
+          .mockResolvedValueOnce(transportError)
+          // Second call (retry): success
+          .mockResolvedValueOnce({
+            exitCode: 0,
+            stdout: successOutput,
+            stderr: '',
+            sessionId: 'stub-session',
+            conversation: [],
+          }),
+      }
+    })
+    vi.resetModules()
+    const proposalId = await seedPrdReadyProposal()
+
+    const slice = await import('../slice-workflow')
+    // Pass [0] → 2 total attempts (1 retry) — the second succeeds.
+    await slice.runSlice(proposalId, undefined, { retryDelaysMs: [0] })
+
+    const actionQueue = await import('../../core/lib/action-queue')
+    const transportAlerts = await actionQueue.listActionQueueItems('open', {
+      kind: 'slicer-transport-outage',
+    })
+    expect(transportAlerts).toHaveLength(0)
+
+    const failures = await actionQueue.listActionQueueItems('open', { kind: 'slice-failed' })
+    expect(failures.filter((f) => f.payload['proposalId'] === proposalId)).toHaveLength(0)
+
+    // Proposal should be sliced.
+    const proposals = await import('../../core/proposals')
+    const after = await proposals.getProposal(proposalId)
+    expect(after?.status).toBe('sliced')
+  })
+})

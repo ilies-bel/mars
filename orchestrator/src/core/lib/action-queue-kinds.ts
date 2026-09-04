@@ -61,6 +61,7 @@ export const ACTION_QUEUE_KINDS = [
   'qa-step-list-opt-in',
   'qa-step-list-promote',
   'worktree-hook-trust-request',
+  'slicer-transport-outage',
 ] as const
 
 export type ActionQueueKind = (typeof ACTION_QUEUE_KINDS)[number]
@@ -89,7 +90,7 @@ export type ActionQueueClass = 'notice' | 'alert' | 'decision'
 
 /**
  * Exhaustive mapping from every action-queue kind to its operator-obligation
- * class. All 61 kinds are listed; adding a new kind to {@link ACTION_QUEUE_KINDS}
+ * class. All 62 kinds are listed; adding a new kind to {@link ACTION_QUEUE_KINDS}
  * without a corresponding entry here is a TypeScript error.
  */
 export const KIND_CLASS: Record<ActionQueueKind, ActionQueueClass> = {
@@ -132,6 +133,7 @@ export const KIND_CLASS: Record<ActionQueueKind, ActionQueueClass> = {
   'health-check-alert': 'alert',           // health check failure
   'fragmented-repo-layout': 'alert',       // repo layout fragmented
   'recovery-abandoned': 'alert',           // recovery gave up; no automated moves left
+  'slicer-transport-outage': 'alert',     // provider unreachable during slicing; PRDs will auto-retry
   'arc-verification-failed': 'alert',      // arc-level verification failed
   'workflow-install-drift': 'alert',       // workflow templates drifted
   'done-with-unmerged-commits': 'alert',   // task done but commits not merged

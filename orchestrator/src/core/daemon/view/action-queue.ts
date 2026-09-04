@@ -595,6 +595,9 @@ export const OPERATIONAL_ALERT_COPY: Record<
   'qa-step-list-opt-in': null,
   'qa-step-list-promote': null,
   'worktree-hook-trust-request': null,
+  // Transport failures during slicing: one provider-level alert instead of per-PRD.
+  // The recipe humanSummary is accurate; no override needed.
+  'slicer-transport-outage': null,
 }
 
 const renderOperationalAlertCopy = (
