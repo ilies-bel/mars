@@ -110,15 +110,14 @@ export interface AutonomousNoticePayloads {
   }
   /**
    * The steward has drafted a patch to a workflow file and is asking the
-   * operator to accept or reject it before anything is applied.
-   * `proposalId` is the proposals-table row; `workflowPath` is the target
-   * file (within `.mars/workflows/`); `summary` is a one-phrase description
-   * of the change.
+   * operator to review it before anything is applied.
+   * `proposalId` is the proposals-table row; `path` is the target file
+   * (within `.mars/workflows/`); `diff` is the unified diff text.
    */
   'steward.workflow-patch': {
+    path: string
+    diff: string
     proposalId: string
-    workflowPath: string
-    summary: string
   }
 }
 
@@ -386,31 +385,16 @@ const REGISTRY: { [Kind in AutonomousNoticeKind]: NoticeKindEntry<Kind> } = {
     offers: () => ackOnly(),
   },
   'steward.workflow-patch': {
-    act: 'offer',
+    act: 'announcement',
     actionable: true,
-    lever: STEWARD_WORKFLOW_PATCH_LEVER,
     render: (p) =>
-      `A proposed workflow change is ready — ${sentenceValue(p.summary)}.`,
+      `I drafted a workflow patch for ${sentenceValue(p.path)} because the steward identified an improvement.`,
     offers: (p) => [
       {
-        id: 'apply',
-        label: 'Apply it',
-        target: {
-          type: 'verb',
-          op: 'apply-workflow-patch',
-          entityId: p.proposalId,
-        },
+        id: 'review',
+        label: 'Review it',
+        target: { type: 'subject', title: `Workflow patch: ${p.path}` },
       },
-      {
-        id: 'reject',
-        label: 'Reject it',
-        target: {
-          type: 'verb',
-          op: 'reject-workflow-patch',
-          entityId: p.proposalId,
-        },
-      },
-      silence(STEWARD_WORKFLOW_PATCH_LEVER, 'Stop suggesting workflow changes', 'stop'),
     ],
   },
 }

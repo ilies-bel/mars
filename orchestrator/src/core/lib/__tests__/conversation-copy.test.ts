@@ -47,9 +47,9 @@ const payloads: { [K in AutonomousNoticeKind]: AutonomousNoticePayloads[K] } = {
     ledgerId: 'ledger-abc123',
   },
   'steward.workflow-patch': {
+    path: '.mars/workflows/implement.md',
+    diff: '--- a\n+++ b\n@@ -1 +1 @@\n-old\n+new',
     proposalId: 'prop-xyz789',
-    workflowPath: '.mars/workflows/implement.md',
-    summary: 'speed up the triage handoff step',
   },
 }
 

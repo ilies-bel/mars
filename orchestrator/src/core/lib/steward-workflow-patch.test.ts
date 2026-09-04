@@ -11,10 +11,6 @@ interface PatchModule {
   getWorkflowPatchProposal: typeof import('./steward-workflow-patch').getWorkflowPatchProposal
 }
 
-interface ChatModule {
-  getThread: typeof import('./chat-store').getThread
-}
-
 const setupRepo = (): string => {
   const repo = mkdtempSync(resolve(tmpdir(), 'mars-patch-test-'))
   execFileSync('git', ['init', '-q'], { cwd: repo })
@@ -22,12 +18,11 @@ const setupRepo = (): string => {
   return repo
 }
 
-const loadModules = async (repo: string): Promise<PatchModule & ChatModule> => {
+const loadModules = async (repo: string): Promise<PatchModule> => {
   vi.resetModules()
   process.env.MARS_REPO = repo
   const patch = await import('./steward-workflow-patch')
-  const chat = await import('./chat-store')
-  return { ...patch, ...chat }
+  return { ...patch }
 }
 
 describe('steward-workflow-patch', () => {
@@ -53,28 +48,20 @@ describe('steward-workflow-patch', () => {
     ).rejects.toThrow('.mars/workflows/')
   })
 
-  it('creates a proposal and a validation chat message', async () => {
+  it('creates a proposal and posts a conversation notice', async () => {
     const m = await loadModules(repo)
-    const { proposalId, threadId } = await m.stewardProposeWorkflowPatch({
+    const { proposalId } = await m.stewardProposeWorkflowPatch({
       workflowPath: '.mars/workflows/test-flow.js',
       unifiedDiff: '--- a\n+++ b\n@@ -1 +1 @@\n-old\n+new',
       rationale: 'The orchestrator noticed a performance bottleneck',
     })
 
     expect(proposalId).toBeTruthy()
-    expect(threadId).toBeTruthy()
 
     const proposal = await m.getWorkflowPatchProposal(proposalId)
     expect(proposal).not.toBeNull()
     expect(proposal!.status).toBe('awaiting-human')
     expect(proposal!.workflow_path).toBe('.mars/workflows/test-flow.js')
-
-    const threadDetail = await m.getThread(threadId)
-    expect(threadDetail).not.toBeNull()
-    expect(threadDetail!.messages.length).toBe(1)
-    expect(threadDetail!.messages[0]!.kind).toBe('validation')
-    expect(threadDetail!.messages[0]!.backing_entity_id).toBe(proposalId)
-    expect(threadDetail!.messages[0]!.content).toContain('```diff')
   })
 
   it('rejectWorkflowPatch sets status to rejected', async () => {

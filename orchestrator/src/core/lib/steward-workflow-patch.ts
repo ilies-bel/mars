@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { resolveStateClient } from '../store/state-client.js'
-import { createThread, appendMessage } from './chat-store.js'
-import { renderMarsVoice } from './chat-mars-verbs.js'
+import { postConversationNotice } from './conversation-delivery.js'
 import { exec } from './git/internal.js'
 
 const stateClient = resolveStateClient
@@ -19,7 +18,6 @@ interface WorkflowPatchProposal {
 
 export interface ProposeResult {
   proposalId: string
-  threadId: string
 }
 
 /**
@@ -50,15 +48,13 @@ export const stewardProposeWorkflowPatch = async (input: {
     args: [id, workflowPath, unifiedDiff, rationale, ts],
   })
 
-  const thread = await createThread(`Workflow patch: ${workflowPath}`)
-  const voicedRationale = renderMarsVoice(rationale)
-  const body = `${voicedRationale}\n\n\`\`\`diff\n${unifiedDiff}\n\`\`\``
-  await appendMessage(thread.id, 'assistant', body, undefined, {
-    kind: 'validation',
-    backingEntityId: id,
+  await postConversationNotice({
+    kind: 'steward.workflow-patch',
+    payload: { path: workflowPath, diff: unifiedDiff, proposalId: id },
+    priority: 'routine',
   })
 
-  return { proposalId: id, threadId: thread.id }
+  return { proposalId: id }
 }
 
 /**
