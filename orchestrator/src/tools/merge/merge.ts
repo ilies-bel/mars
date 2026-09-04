@@ -325,6 +325,61 @@ export const merge = async (
             }
           }
 
+          // Recovery-success exception: if a completed recovery task
+          // (kind='fix', fix_for_task_id=taskId, status='done') exists, the
+          // recovery delivered the work on its own branch. The origin's empty
+          // branch is the EXPECTED state — the pipeline produced deliverable
+          // commits, just under the recovery task's SHA. Classifying this as
+          // merge:zero-commit-branch would be a false failure identical to the
+          // phantom-merge mirror bug (a recovery delivering work that shows up
+          // as a no-op on the origin). Mark the origin done and return success.
+          let doneRecoveryId: string | null = null
+          try {
+            const doneRecoveryResult = await store.query({
+              sql: `SELECT id FROM tasks WHERE fix_for_task_id = ? AND kind = 'fix' AND status = 'done' LIMIT 1`,
+              args: [taskId],
+            })
+            if (doneRecoveryResult.rows.length > 0) {
+              doneRecoveryId = (doneRecoveryResult.rows[0] as { id: string }).id
+            }
+          } catch {
+            // best-effort: if the probe fails, fall through to the standard
+            // zero-commit-branch failure path.
+          }
+          if (doneRecoveryId !== null) {
+            // Recovery task already landed the work. The origin's branch being
+            // empty is correct — mark it done and clean up the worktree.
+            // Mark done BEFORE removing the worktree/branch so the
+            // done-implies-merged guard sees aheadCount===0 and allows the
+            // transition (same pattern as the main-committer no-op above).
+            console.log(
+              `[merge] task ${taskId}: branch ${branch} has zero commits ahead of ` +
+              `${integrationBranch} — recovery ${doneRecoveryId} already delivered the work; ` +
+              `marking origin done`,
+            )
+            await updateTask(taskId, { status: 'done', failedPhase: null }, store)
+            if (implementStillInFlight()) {
+              console.log(
+                `[merge] task ${taskId}: PRESERVING worktree ${worktreePath} — ` +
+                  `a coder process is still in flight for this task id`,
+              )
+            } else {
+              await resolveVcs().removeWorktree({
+                path: worktreePath,
+                branch,
+                force: true,
+                keepBranch: false,
+                tombstone: { taskId, reason: 'zero-commit-recovery-done' },
+                trace: buildTraceIdentity(trace, taskId, 'merge'),
+              })
+            }
+            return {
+              taskId,
+              success: true,
+              message: `zero-commit branch — recovery ${doneRecoveryId} already delivered the work`,
+            }
+          }
+
           // Non-main-committer task: zero commits is a bug. Check whether prior
           // commits existed (parked ref from phase-recovery eviction, or a
           // checkpoint ref from the code step). If so, use merge:work-lost so

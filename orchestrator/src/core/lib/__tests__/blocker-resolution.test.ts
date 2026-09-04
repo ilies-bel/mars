@@ -1191,6 +1191,52 @@ describe('blocker-resolution (task_blockers)', () => {
       expect(originReloaded?.failureReason).not.toBe('recovery_exhausted_at_unblock')
       expect(depReloaded?.status).toBe('queued')
     })
+
+    it('propagateRecoveryDone: atomically settles a FAILED origin to done without an intermediate queued state', async () => {
+      // Regression guard for the race condition: the old two-step sequence
+      // (reopenTerminalTask → setTaskStatus done) emitted a task.queued event
+      // that caused the dispatch loop to re-run the origin, which then had its
+      // empty branch re-stamped failed. The atomic batch skips the queued state
+      // entirely, going directly failed → done in ONE write.
+      const { q, br } = await loadModules(repo)
+      const dep = await q.enqueueTask('downstream-dep', undefined, { skipTriage: true })
+      const origin = await q.enqueueTask('failed-origin', undefined, { skipTriage: true })
+
+      // Drive origin into the failed state with a recovery_exhausted signature.
+      await q.resolveQueueClient().execute({
+        sql: `UPDATE tasks
+                 SET status = 'failed',
+                     failure_reason = 'recovery_exhausted:code/unclassified',
+                     failure_reason_code = 'code/unclassified',
+                     recovery_spawned_count = 1
+               WHERE id = ?`,
+        args: [origin.id],
+      })
+      // Block the downstream on the origin.
+      await q.addBlockers(dep.id, [origin.id])
+      await q.resolveQueueClient().execute({
+        sql: `UPDATE tasks SET status = 'blocked' WHERE id = ?`,
+        args: [dep.id],
+      })
+      // Create the recovery task in 'done' state.
+      await makeOwnRecovery(q, origin.id, 'done')
+
+      // propagateRecoveryDone should flip origin from failed → done in one atomic
+      // batch — no intermediate queued row — and cascade the downstream to queued.
+      const propagation = await br.markOriginDoneFromRecovery(origin.id)
+      expect(propagation.originFlipped).toBe(true)
+
+      const originReloaded = await q.getTask(origin.id)
+      expect(originReloaded?.status).toBe('done')
+      // Error columns must be cleared: failure_reason and failure_reason_code
+      // would cause a false "recovery_exhausted" display in the UI.
+      expect(originReloaded?.failureReason).toBeFalsy()
+      expect(originReloaded?.failureReasonCode).toBeFalsy()
+
+      // Downstream must be unblocked now that its blocker settled to done.
+      const depReloaded = await q.getTask(dep.id)
+      expect(depReloaded?.status).toBe('queued')
+    })
   })
 
   describe('recoverAllBlockedTasks', () => {

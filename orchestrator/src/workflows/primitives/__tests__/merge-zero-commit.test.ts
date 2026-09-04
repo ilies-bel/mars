@@ -334,3 +334,98 @@ describe('merge — non-zero-commit branch falls through to normal path', () => 
     expect(mockCheckMergeTargetStatus).toHaveBeenCalledOnce()
   })
 })
+
+// ---------------------------------------------------------------------------
+// Suite 4 — zero-commit branch + completed recovery: origin marked done
+// ---------------------------------------------------------------------------
+
+describe('merge — zero-commit branch: completed recovery task → origin marked done', () => {
+  /**
+   * A ctx whose store.query simulates a completed recovery task row existing for
+   * the origin. The default ctx (makeCtx) has store.query returning `{ rows: [] }`,
+   * so the recovery probe falls through to the standard zero-commit failure path.
+   * This variant overrides store.query to return a done-recovery row so the
+   * recovery-success exception fires instead.
+   */
+  const makeCtxWithDoneRecovery = (taskId: string, recoveryId = 'fix-recovery-01') =>
+    ({
+      runId: taskId,
+      workflowId: 'task',
+      input: { taskId, kind: 'task', integrationBranch: 'main' },
+      logger: { child: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn() }) },
+      signal: new AbortController().signal,
+      services: {
+        store: {
+          getTask: mockGetTask,
+          // Returning a recovery row causes the recovery-success exception to fire.
+          query: vi.fn().mockResolvedValue({ rows: [{ id: recoveryId }] }),
+          execute: vi.fn().mockResolvedValue({ rows: [] }),
+          batch: vi.fn().mockResolvedValue([]),
+          atomic: vi.fn().mockResolvedValue(undefined),
+        },
+        traceStore: null,
+      },
+      currentStep: null,
+      emit: vi.fn(),
+      step: vi.fn(),
+    }) as never
+
+  it('marks the origin DONE (not failed) when a completed recovery task exists', async () => {
+    const taskId = 'mars-zero-recovery-01'
+    mockIsZeroCommitBranch.mockResolvedValue(true)
+
+    // Must not throw — recovery path returns success.
+    await merge(makeCtxWithDoneRecovery(taskId), { kind: 'task', ...worktreeOpts(taskId) })
+
+    const doneCalls = mockUpdateTask.mock.calls.filter(
+      (c) => (c[1] as Record<string, unknown>)?.status === 'done',
+    )
+    expect(doneCalls).toHaveLength(1)
+    expect(doneCalls[0][0]).toBe(taskId)
+
+    const failedCalls = mockUpdateTask.mock.calls.filter(
+      (c) => (c[1] as Record<string, unknown>)?.status === 'failed',
+    )
+    expect(failedCalls).toHaveLength(0)
+  })
+
+  it('does NOT raise an action-queue item when recovery delivered the work', async () => {
+    const taskId = 'mars-zero-recovery-02'
+    mockIsZeroCommitBranch.mockResolvedValue(true)
+
+    await merge(makeCtxWithDoneRecovery(taskId), { kind: 'task', ...worktreeOpts(taskId) })
+
+    expect(mockRaiseActionQueueItem).not.toHaveBeenCalled()
+  })
+
+  it('removes the worktree after marking origin done', async () => {
+    const taskId = 'mars-zero-recovery-03'
+    mockIsZeroCommitBranch.mockResolvedValue(true)
+
+    await merge(makeCtxWithDoneRecovery(taskId), { kind: 'task', ...worktreeOpts(taskId) })
+
+    expect(mockRemoveWorktree).toHaveBeenCalledOnce()
+  })
+
+  it('does NOT throw WorkflowTerminalError when a done recovery exists', async () => {
+    const taskId = 'mars-zero-recovery-04'
+    mockIsZeroCommitBranch.mockResolvedValue(true)
+
+    await expect(
+      merge(makeCtxWithDoneRecovery(taskId), { kind: 'task', ...worktreeOpts(taskId) }),
+    ).resolves.not.toThrow()
+  })
+
+  it('still fails with merge-zero-commit when no recovery task is done (no recovery row)', async () => {
+    // Default ctx has store.query returning { rows: [] } → no recovery found →
+    // must fall through to the standard zero-commit-branch failure.
+    const taskId = 'mars-zero-recovery-05'
+    mockIsZeroCommitBranch.mockResolvedValue(true)
+
+    const err = await merge(makeCtx(taskId), { kind: 'task', ...worktreeOpts(taskId) }).catch(
+      (e) => e,
+    )
+    expect(err).toBeInstanceOf(WorkflowTerminalError)
+    expect((err as WorkflowTerminalError).kind).toBe('merge-zero-commit')
+  })
+})

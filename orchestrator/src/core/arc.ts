@@ -2813,33 +2813,79 @@ export class Arc {
         actionQueueItemsClosed,
       }
     }
-    // Route the status change and its paired event through the single-writer
-    // chokepoint (Arc.setTaskStatus) so they commit atomically. We intentionally
-    // reconcile 'failed' and 'dropped' origins to 'done' here — a successful
-    // recovery shipping the work is the authoritative signal that the origin
-    // reached done, regardless of what the retry-budget guard or any other
-    // upstream writer previously stamped. Failed and dropped rows must first
-    // cross the audited reopen seam so the database trigger permits the
-    // terminal transition.
+    // Atomically reconcile the origin to 'done'. We intentionally reconcile
+    // 'failed' and 'dropped' origins here — a successful recovery shipping the
+    // work is the authoritative signal that the origin reached done, regardless
+    // of what the retry-budget guard or any other upstream writer stamped.
+    //
+    // ORDERING HAZARD — why this must be ONE batch for terminal origins:
+    //
+    // The former two-step sequence was:
+    //   1. Arc.reopenTerminalTask → status='queued', task.queued event committed
+    //   2. Arc.setTaskStatus(done) → status='done'
+    //
+    // Between commits 1 and 2, the dispatch loop could pick up the task.queued
+    // event, re-dispatch the origin, and run its full pipeline. If the
+    // pipeline's merge step found 0 commits ahead it would re-stamp the origin
+    // 'failed'. Then commit 2 tried to write 'done' on a 'failed' row — but
+    // the DB trigger (reject_terminal_task_transition) rejected it because the
+    // task_terminal_reopens token had already been consumed in step 1. The
+    // origin remained 'failed'.
+    //
+    // The fix: for terminal origins use ONE batch that inserts the DB-trigger
+    // audit token, flips to 'done' directly (skipping 'queued' entirely), emits
+    // the lifecycle events, and marks the token consumed — with no intermediate
+    // task.queued commit visible to the dispatch loop.
     const store = await getDefaultArcStore()
-    if (origin.status === 'failed' || origin.status === 'dropped') {
-      await Arc.reopenTerminalTask(originTaskId, 'successful recovery', store)
-    }
-    await Arc.setTaskStatus(originTaskId, 'done', { result: { via: 'recovery' } }, store)
-    // Clear the error field and emit the terminal event in a second transaction.
     const now = new Date().toISOString()
-    await store.atomic(async (scope) => {
-      await scope.execute({
-        sql: `UPDATE tasks SET error = NULL, updated_at = ? WHERE id = ?`,
-        args: [now, originTaskId],
-      })
-      await scope.execute(
-        buildEventInsert('task.terminal', {
-          taskId: originTaskId,
-          reason: 'done',
-        }),
+    if (origin.status === 'failed' || origin.status === 'dropped') {
+      // Single atomic batch: terminal → done, no intermediate 'queued' state.
+      await store.batch(
+        [
+          // 1. Insert the reopen audit token so the DB trigger permits the write.
+          {
+            sql: `INSERT INTO task_terminal_reopens (task_id, reason, reopened_by, reopened_at)
+                  VALUES (?, 'successful recovery', 'operator', ?)`,
+            args: [originTaskId, now],
+          },
+          // 2. Flip to 'done', clearing all failure/error columns in the same row update.
+          {
+            sql: `UPDATE tasks SET status = 'done', updated_at = ?,
+                  error = NULL, failure_reason = NULL, failure_signature = NULL, failure_reason_code = NULL
+                  WHERE id = ?`,
+            args: [now, originTaskId],
+          },
+          // 3. Lifecycle events (task.completed + task.terminal).
+          buildEventInsert('task.completed', { taskId: originTaskId, result: { via: 'recovery' } }),
+          buildEventInsert('task.terminal', { taskId: originTaskId, reason: 'done' }),
+          // 4. Consume the audit token in the same transaction so no second writer
+          //    can claim it for an unrelated reopen.
+          {
+            sql: `UPDATE task_terminal_reopens SET consumed_at = ?
+                  WHERE task_id = ? AND consumed_at IS NULL`,
+            args: [now, originTaskId],
+          },
+        ],
+        'write',
       )
-    })
+    } else {
+      // Non-terminal origin (blocked, queued, running, …): the DB trigger only
+      // fires for terminal→non-identical transitions, so no audit token is needed.
+      // Go directly to 'done' in one batch.
+      await store.batch(
+        [
+          {
+            sql: `UPDATE tasks SET status = 'done', updated_at = ?,
+                  error = NULL, failure_reason = NULL, failure_signature = NULL, failure_reason_code = NULL
+                  WHERE id = ?`,
+            args: [now, originTaskId],
+          },
+          buildEventInsert('task.completed', { taskId: originTaskId, result: { via: 'recovery' } }),
+          buildEventInsert('task.terminal', { taskId: originTaskId, reason: 'done' }),
+        ],
+        'write',
+      )
+    }
     const unblock = await Arc.unblockByCompletion(originTaskId)
     return {
       originTaskId,
