@@ -187,3 +187,57 @@ describe('QueueThreadRow – keyboard accessibility', () => {
     expect(renderRow(BASE_ITEM, { active: false })).not.toContain('aria-current')
   })
 })
+
+// ---------------------------------------------------------------------------
+// Failed task headline — DEC-18 / VISION §7
+// ---------------------------------------------------------------------------
+
+describe('QueueThreadRow – failed task headline', () => {
+  const FAILED_WITH_GOAL = makeItem({
+    kind: 'failed',
+    title: 'Task mars-abc failed at merge:hard-timeout: The changes could not be merged',
+    humanSummary: 'A task got stuck and Mars used up its automatic retry.',
+    operatorGoal: 'Shared contract: config.ts',
+    humanDetail: {
+      failureSignature: 'merge:hard-timeout',
+      branch: 'task/mars-abc',
+    },
+  })
+
+  it('renders operatorGoal as the primary headline when present', () => {
+    const html = renderRow(FAILED_WITH_GOAL)
+    expect(html).toContain('Shared contract: config.ts')
+    expect(html).toContain('data-testid="queue-row-goal"')
+  })
+
+  it('does not render the machine signature slug in the headline area', () => {
+    const html = renderRow(FAILED_WITH_GOAL)
+    // The goal element should not contain the raw slug.
+    const goalMatch = html.match(/data-testid="queue-row-goal"[^>]*>([\s\S]*?)<\/div>/)
+    const goalText = goalMatch ? goalMatch[1] : ''
+    expect(goalText).not.toContain('merge:hard-timeout')
+  })
+
+  it('shows a plain-language subhead (mapped from signature family)', () => {
+    const html = renderRow(FAILED_WITH_GOAL)
+    expect(html).toContain('data-testid="queue-row-subhead"')
+    // The subhead should contain the plain phrase, not the raw slug.
+    const subheadMatch = html.match(/data-testid="queue-row-subhead"[^>]*>([\s\S]*?)<\/div>/)
+    const subheadText = subheadMatch ? subheadMatch[1] : ''
+    expect(subheadText).not.toContain('merge:hard-timeout')
+    // Mapped phrase for "merge" family
+    expect(subheadText.toLowerCase()).toMatch(/merge|timed out|failed/)
+  })
+
+  it('falls back to title when operatorGoal is absent', () => {
+    const itemNoGoal = makeItem({
+      kind: 'failed',
+      title: 'Fallback title text',
+      humanSummary: '',
+      operatorGoal: null,
+    })
+    const html = renderRow(itemNoGoal)
+    expect(html).toContain('Fallback title text')
+    expect(html).not.toContain('data-testid="queue-row-goal"')
+  })
+})

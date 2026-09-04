@@ -62,11 +62,43 @@ const SNOOZE_PRESETS: { value: SnoozePreset; label: string }[] = [
 ]
 
 // ---------------------------------------------------------------------------
+// Signature family → plain phrase mapping (DEC-18: slugs stay behind disclosure)
+// ---------------------------------------------------------------------------
+
+/**
+ * Map a failure signature (e.g. "merge:hard-timeout") to a plain English phrase
+ * shown as the secondary headline on task-failure cards.
+ * Exact match is tried first; on miss, only the family prefix before ":" is used.
+ * Raw slugs must NEVER appear on the face of the card — only behind the
+ * "Technical details" disclosure.
+ */
+const SIGNATURE_FAMILY_PHRASES: Record<string, string> = {
+  'merge:hard-timeout': 'Could not be merged — the merge step timed out',
+  'merge:conflict':     'Could not be merged — there were conflicts',
+  'merge:dirty-main':   'Could not be merged — the integration branch was dirty',
+  merge:               'Could not be merged',
+  'verify:has-diff':   'Verification failed — the branch has uncommitted changes',
+  'verify:dirty-main': 'Verification failed — integration branch was dirty',
+  verify:             'Verification failed',
+  'code:timeout':     'Coding step timed out',
+  code:              'Coding step failed',
+  'setup:':           'Setup step failed',
+  setup:             'Setup step failed',
+}
+
+export const signatureFamilyPhrase = (sig: string | undefined): string | undefined => {
+  if (!sig) return undefined
+  if (SIGNATURE_FAMILY_PHRASES[sig]) return SIGNATURE_FAMILY_PHRASES[sig]
+  const family = sig.split(':')[0]
+  return SIGNATURE_FAMILY_PHRASES[family]
+}
+
+// ---------------------------------------------------------------------------
 // Verify output tail
 // ---------------------------------------------------------------------------
 
 /** Extract the last `n` non-empty lines from a multi-line string. */
-const verifyTail = (text: string | undefined, n = 3): string | undefined => {
+const verifyTail = (text: string | undefined, n = 40): string | undefined => {
   if (!text?.trim()) return undefined
   const lines = text.trim().split('\n').filter((l) => l.trim())
   if (lines.length === 0) return undefined
@@ -163,11 +195,40 @@ export interface AlertCardProps {
 }
 
 // ---------------------------------------------------------------------------
-// VerifyExcerpt — last lines of verify output in a collapsible section
+// OutputExpander — evidence disclosure for task-failure cards
+//
+// Shows failure_reason (the signature mapped to plain text), the last ~40 lines
+// of captured verify/merge output, and branch + worktree paths. Renders a
+// "No output was captured for this step." fallback when nothing is available.
+// Raw signature slugs appear here — never on the face of the card (DEC-18).
 // ---------------------------------------------------------------------------
 
-const VerifyExcerpt = ({ tail }: { tail: string }) => {
+interface OutputExpanderProps {
+  /** Raw failure signature slug (e.g. "merge:hard-timeout"). Rendered verbatim inside this disclosure. */
+  signature?: string
+  branch?: string
+  worktree?: string
+  /** Tail-trimmed raw output from the failing step. */
+  rawOutput?: string
+  /** Backwards-compat: plain verify-output tail from non-failure cards (e.g. baseline-broken gate output). */
+  tail?: string
+}
+
+const OutputExpander = ({ signature, branch, worktree, rawOutput, tail }: OutputExpanderProps) => {
   const [open, setOpen] = useState(false)
+
+  // Build the structured preamble lines.
+  const preamble: string[] = []
+  if (signature) preamble.push(`failure_reason: ${signature}`)
+  if (branch)    preamble.push(`branch: ${branch}`)
+  if (worktree)  preamble.push(`worktree: ${worktree}`)
+
+  const outputText = verifyTail(rawOutput) ?? tail
+  const content = [
+    ...preamble,
+    ...(outputText ? [outputText] : []),
+  ].join('\n').trim()
+
   return (
     <div className="mt-2">
       <button
@@ -175,16 +236,16 @@ const VerifyExcerpt = ({ tail }: { tail: string }) => {
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
         className="font-mono text-micro text-primary/60 hover:text-primary transition-colors select-none"
-        data-testid="alert-verify-output-toggle"
+        data-testid="alert-output-toggle"
       >
         Output {open ? '▾' : '▸'}
       </button>
       {open && (
         <pre
-          className="mt-1 max-h-28 overflow-y-auto rounded bg-primary/10 p-1.5 font-mono text-micro text-primary/80 whitespace-pre-wrap break-all"
-          data-testid="alert-verify-output-panel"
+          className="mt-1 max-h-40 overflow-y-auto rounded bg-primary/10 p-1.5 font-mono text-micro text-primary/80 whitespace-pre-wrap break-all"
+          data-testid="alert-output-panel"
         >
-          {tail}
+          {content || 'No output was captured for this step.'}
         </pre>
       )}
     </div>
@@ -328,6 +389,7 @@ export const AlertCard = ({
   const [actionError, setActionError] = useState<string | null>(null)
   const [resolvedOp, setResolvedOp] = useState<string | null>(null)
   const [snoozeMenuOpen, setSnoozeMenuOpen] = useState(false)
+  const [overflowOpen, setOverflowOpen] = useState(false)
   const [snoozedUntil, setSnoozedUntil] = useState<number | null>(
     initialSnoozeUntil ?? null,
   )
@@ -340,14 +402,12 @@ export const AlertCard = ({
 
   const isSnoozed = snoozedUntil !== null && snoozedUntil > Date.now()
 
-  // Derive verify output tail for the expandable section.
-  // - When an operatorGoal is present: show the last ~3 lines of the error excerpt
-  //   (enough context for a continue-vs-restart decision in place).
-  // - When no operatorGoal: show the gate output excerpt for baseline-broken cards so
-  //   the operator can see the failing-test summary without a terminal.
-  const verifyOutputTail = operatorGoal
-    ? verifyTail(detail?.errorExcerpt ?? detail?.rawError)
-    : (detail?.gateOutput?.trim() || undefined)
+  // Derive output section props.
+  // - For task-failure cards (operatorGoal present): full OutputExpander with
+  //   signature, branch, worktree, and last ~40 lines of error output.
+  // - For baseline-broken / gate cards: show gate output tail (backwards compat).
+  const showTaskOutput = Boolean(operatorGoal)
+  const gateOutputTail = !showTaskOutput ? (detail?.gateOutput?.trim() || undefined) : undefined
 
   const handleAction = async (op: string) => {
     if (pendingOp !== null) return
@@ -419,6 +479,22 @@ export const AlertCard = ({
       ? proposalHash(entityId, 'chat')
       : taskHash(entityId, 'chat')
 
+  // Verb separation: when there is at least one primary verb, move
+  // destructive/default verbs into the overflow menu so the action row stays
+  // focused and the dangerous verbs require a deliberate second click.
+  const hasPrimaryVerb = verbs.some((v) => v.style === 'primary')
+  const mainVerbs = hasPrimaryVerb
+    ? verbs.filter((v) => v.style === 'primary' || v.style === 'snooze' || v.op === 'copy')
+    : verbs
+  const overflowVerbs = hasPrimaryVerb
+    ? verbs.filter((v) => v.style !== 'primary' && v.style !== 'snooze' && v.op !== 'copy')
+    : []
+  const hasOverflow = overflowVerbs.length > 0 || isTaskBacked
+
+  // Subhead phrase — for task-failure cards, map the raw signature to a plain
+  // English phrase so no machine slug appears on the face of the card.
+  const subheadPhrase = signatureFamilyPhrase(detail?.failureSignature) ?? summary
+
   if (isSnoozed) {
     return (
       <div
@@ -467,20 +543,22 @@ export const AlertCard = ({
         <div className="flex-1 min-w-0">
           {operatorGoal ? (
             <>
-              {/* Primary headline: operator-facing goal (what the task was trying to achieve) */}
+              {/* Primary headline: operator-facing goal (what the task was trying to achieve).
+                  No raw failure signature slug here — that stays behind the Output disclosure. */}
               <p
                 className="font-mono text-label font-semibold text-foreground line-clamp-2"
                 data-testid="alert-card-goal"
               >
                 {operatorGoal}
               </p>
-              {/* summary as subhead (humanSummary / plain-language title) */}
-              {summary && (
+              {/* Subhead: plain-language cause phrase mapped from signature family.
+                  Body font at readable size (not micro monospace). */}
+              {subheadPhrase && (
                 <p
-                  className="mt-0.5 font-mono text-micro text-primary/70"
+                  className="mt-0.5 text-body text-muted-foreground"
                   data-testid="alert-card-summary"
                 >
-                  {summary}
+                  {subheadPhrase}
                 </p>
               )}
             </>
@@ -523,11 +601,11 @@ export const AlertCard = ({
         </p>
       )}
 
-      {/* Verb buttons (per-task) + optional secondary bulk action */}
+      {/* Verb buttons (per-task) + overflow menu + optional secondary bulk action */}
       {!resolved && resolvedOp === null && (verbs.length > 0 || bulkContinue) && (
         <div className="relative flex flex-wrap gap-1.5 mb-2 items-center">
-          {/* Per-task verbs (primary actions) */}
-          {verbs.map((verb) => (
+          {/* Primary per-task verbs */}
+          {mainVerbs.map((verb) => (
             verb.op === 'copy' ? (
               <button
                 key={verb.op}
@@ -572,6 +650,65 @@ export const AlertCard = ({
               </button>
             )
           ))}
+
+          {/* Overflow menu — secondary verbs (destructive / default) + Open task.
+              Requires a deliberate second click so dangerous verbs are never
+              accidentally clicked during a failure storm. */}
+          {hasOverflow && (
+            <div className="relative">
+              <button
+                type="button"
+                aria-label="More actions"
+                aria-expanded={overflowOpen}
+                disabled={pendingOp !== null}
+                onClick={() => setOverflowOpen((v) => !v)}
+                className="rounded px-1.5 py-0.5 font-mono text-micro text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+                data-testid="alert-overflow-trigger"
+              >
+                …
+              </button>
+              {overflowOpen && (
+                <div
+                  role="menu"
+                  className="absolute right-0 z-10 mt-1 min-w-36 rounded-lg border border-border bg-card py-1 shadow-lg"
+                  data-testid="alert-overflow-menu"
+                >
+                  {overflowVerbs.map((verb) => (
+                    <button
+                      key={verb.op}
+                      type="button"
+                      role="menuitem"
+                      disabled={pendingOp !== null}
+                      onClick={() => {
+                        setOverflowOpen(false)
+                        void handleAction(verb.op)
+                      }}
+                      className={[
+                        'flex w-full items-center px-3 py-1.5 text-left font-mono text-micro transition-colors disabled:opacity-50',
+                        verb.style === 'destructive'
+                          ? 'text-error hover:bg-error/5'
+                          : 'text-foreground hover:bg-border/40',
+                      ].join(' ')}
+                      data-testid={`alert-overflow-${verb.op}`}
+                    >
+                      {verb.label}
+                    </button>
+                  ))}
+                  {isTaskBacked && (
+                    <a
+                      href={entityHash}
+                      role="menuitem"
+                      className="flex w-full items-center px-3 py-1.5 text-left font-mono text-micro text-foreground transition-colors hover:bg-border/40"
+                      data-testid="alert-overflow-open-task"
+                      onClick={() => setOverflowOpen(false)}
+                    >
+                      Open task
+                    </a>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Secondary bulk action — visually lighter than per-task buttons */}
           {bulkContinue && (
@@ -676,11 +813,38 @@ export const AlertCard = ({
         </p>
       )}
 
-      {/* Verify output excerpt — last ~3 lines so the decision can be made in place */}
-      {verifyOutputTail && <VerifyExcerpt tail={verifyOutputTail} />}
+      {/* Output section — task-failure cards: signature, branch, worktree, captured output.
+          Gate/baseline-broken cards: gate output tail (backwards compat). */}
+      {showTaskOutput ? (
+        <OutputExpander
+          signature={detail?.failureSignature}
+          branch={detail?.branch}
+          worktree={detail?.worktree}
+          rawOutput={detail?.errorExcerpt ?? detail?.rawError}
+        />
+      ) : gateOutputTail ? (
+        <OutputExpander tail={gateOutputTail} />
+      ) : null}
 
-      {/* Detail expander */}
+      {/* Detail expander — Technical details (raw signature, branch, changelog…) */}
       {detail && <DetailExpander detail={detail} />}
+
+      {/* Footer: entity id chip — shown once, copyable, for task-backed rows.
+          DEC-18: the id must not dominate the face of the card; a small chip in
+          the footer provides a copy affordance without visual weight. */}
+      {isTaskBacked && (
+        <div className="mt-3 flex items-center justify-end">
+          <button
+            type="button"
+            className="rounded bg-primary/5 px-1.5 py-0.5 font-mono text-micro text-primary/40 hover:text-primary/60 transition-colors select-all"
+            title="Copy task id"
+            onClick={() => void navigator.clipboard.writeText(entityId)}
+            data-testid="alert-card-id-chip"
+          >
+            {entityId}
+          </button>
+        </div>
+      )}
     </div>
   )
 }

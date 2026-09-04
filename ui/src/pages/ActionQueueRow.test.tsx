@@ -175,3 +175,99 @@ describe('ActionQueueRow – task-failure rows relabel the restart verb', () => 
     expect(mockInvokeAction).toHaveBeenCalledWith('restart', 'task-1')
   })
 })
+
+// ---------------------------------------------------------------------------
+// Failed card display — headline, output, overflow menu (DEC-18 / VISION §7)
+// ---------------------------------------------------------------------------
+
+describe('ActionQueueRow – failed card headline and output', () => {
+  const FAILED_CARD: ActionQueueItem = {
+    ...PROPOSAL_ITEM,
+    id: 'failed:mars-8e4c98a5',
+    kind: 'failed',
+    entityId: 'mars-8e4c98a5',
+    dag: { id: 'mars-8e4c98a5' },
+    title: 'Task mars-8e4c98a5 failed at merge:hard-timeout: The changes could not be merged',
+    humanSummary: 'A task got stuck and Mars used up its automatic retry.',
+    operatorGoal: 'Shared contract: config.ts',
+    humanDetail: {
+      failureSignature: 'merge:hard-timeout',
+      errorExcerpt: 'Error: hard timeout reached after 30000ms\nBranch task/mars-8e4c98a5 could not be fast-forwarded.',
+      branch: 'task/mars-8e4c98a5',
+      worktree: '/tmp/worktrees/mars-8e4c98a5',
+    },
+    actions: [],
+    verbs: [
+      { op: 'restart', label: 'Restart', style: 'primary' },
+      { op: 'purge', label: 'Discard task', style: 'destructive' },
+    ],
+  } as unknown as ActionQueueItem
+
+  it('primary headline is the operatorGoal (task intent), not the machine slug', () => {
+    const { container } = renderRow(FAILED_CARD)
+    const goal = container.querySelector('[data-testid="alert-card-goal"]')
+    expect(goal).not.toBeNull()
+    expect(goal!.textContent).toContain('Shared contract: config.ts')
+    expect(goal!.textContent).not.toContain('merge:hard-timeout')
+  })
+
+  it('machine slug is not visible on the card face at initial render', () => {
+    const { container } = renderRow(FAILED_CARD)
+    // Neither the output panel nor the detail panel are open at render time,
+    // so the raw signature slug must not appear anywhere in the visible text.
+    const card = container.querySelector('[data-testid="alert-card"]')
+    expect(card!.textContent).not.toContain('merge:hard-timeout')
+  })
+
+  it('OUTPUT disclosure shows failure_reason text when opened', async () => {
+    const { container } = renderRow(FAILED_CARD)
+    const toggleBtn = container.querySelector('[data-testid="alert-output-toggle"]')
+    expect(toggleBtn).not.toBeNull()
+    await act(async () => {
+      toggleBtn!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    const panel = container.querySelector('[data-testid="alert-output-panel"]')
+    expect(panel).not.toBeNull()
+    // The raw signature is shown inside the Output panel as failure_reason.
+    expect(panel!.textContent).toContain('merge:hard-timeout')
+    expect(panel!.textContent).toContain('failure_reason')
+  })
+
+  it('OUTPUT disclosure shows branch and worktree when opened', async () => {
+    const { container } = renderRow(FAILED_CARD)
+    const toggleBtn = container.querySelector('[data-testid="alert-output-toggle"]')!
+    await act(async () => {
+      toggleBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    const panel = container.querySelector('[data-testid="alert-output-panel"]')!
+    expect(panel.textContent).toContain('task/mars-8e4c98a5')
+    expect(panel.textContent).toContain('/tmp/worktrees/mars-8e4c98a5')
+  })
+
+  it('overflow … trigger renders and opens a menu with secondary verbs', async () => {
+    const { container } = renderRow(FAILED_CARD)
+    const trigger = container.querySelector('[data-testid="alert-overflow-trigger"]')
+    expect(trigger).not.toBeNull()
+    expect(trigger!.getAttribute('aria-label')).toBe('More actions')
+    // Menu should not be visible before click.
+    expect(container.querySelector('[data-testid="alert-overflow-menu"]')).toBeNull()
+    await act(async () => {
+      trigger!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    const menu = container.querySelector('[data-testid="alert-overflow-menu"]')
+    expect(menu).not.toBeNull()
+    // Destructive secondary verb (Discard task) appears in the menu.
+    expect(menu!.textContent).toContain('Discard task')
+  })
+
+  it('overflow menu also has Open task when row is task-backed', async () => {
+    const { container } = renderRow(FAILED_CARD)
+    const trigger = container.querySelector('[data-testid="alert-overflow-trigger"]')!
+    await act(async () => {
+      trigger.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    const openTask = container.querySelector('[data-testid="alert-overflow-open-task"]')
+    expect(openTask).not.toBeNull()
+    expect(openTask!.textContent).toContain('Open task')
+  })
+})

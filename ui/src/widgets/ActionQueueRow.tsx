@@ -11,7 +11,7 @@
  * `detail.errorExcerpt` field when `operatorGoal` is present.
  */
 
-import { AlertCard } from '@/widgets/chat/AlertCard'
+import { AlertCard, signatureFamilyPhrase } from '@/widgets/chat/AlertCard'
 import { isTaskFailureActionQueueKind, hasResolvableTask } from '@/shared/schemas'
 import type { ActionQueueItem, AlertVerb } from '@/shared/schemas'
 
@@ -46,7 +46,13 @@ export const ActionQueueRow = ({ item }: ActionQueueRowProps) => {
       : 'default',
   }))
 
-  const summary = item.humanSummary || item.title
+  // Prefer humanSummary (recipe-generated, human-readable).
+  // If absent, derive a plain phrase from the failure signature before falling
+  // back to item.title — which may contain raw machine slugs (DEC-18).
+  const summary =
+    item.humanSummary ||
+    signatureFamilyPhrase(item.humanDetail?.failureSignature) ||
+    item.title
 
   return (
     <AlertCard

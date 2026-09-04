@@ -12,6 +12,7 @@ import { isTaskFailureActionQueueKind, type ActionDescriptor, type ActionQueueIt
 import { kindBadgeLabel, whyNowText } from '@/shared/actionQueueDetail'
 import { relativeTime, formatAbsoluteDateTime } from '@/shared/time'
 import { draftRowHeadline } from './queueThreads'
+import { signatureFamilyPhrase } from './AlertCard'
 
 // ---- Shared row helpers ----
 
@@ -134,8 +135,9 @@ export const QueueThreadRow = memo(({
           )}
           {hasConversation && (
             <span
+              aria-label="Discuss in chat"
+              title="Discuss in chat"
               className="shrink-0 font-mono text-micro text-muted-foreground"
-              title="Conversation started"
               data-testid="projection-has-conversation"
             >
               💬
@@ -153,19 +155,47 @@ export const QueueThreadRow = memo(({
           {item.entityId}
         </span>
 
-        {/* Headline: title, line-clamped */}
-        <div
-          className={
-            item.kind === 'draft-proposal'
-              ? 'mt-1 line-clamp-2 break-words font-mono text-body text-foreground'
-              : 'mt-1 line-clamp-4 break-words font-mono text-body text-foreground'
-          }
-          title={item.kind === 'draft-proposal' ? item.title : undefined}
-        >
-          {item.kind === 'draft-proposal'
-            ? draftRowHeadline(item.title) || '(no title)'
-            : item.title || '(no title)'}
-        </div>
+        {/* Headline — §7 narrative hierarchy:
+            - draft-proposal: first sentence of title (proposal still being shaped).
+            - task-failure with operatorGoal: goal is primary, plain-phrase subhead.
+            - everything else: humanSummary || title as sole headline.
+            No raw failure-signature slug ever appears on the card face (DEC-18). */}
+        {item.kind === 'draft-proposal' ? (
+          <div
+            className="mt-1 line-clamp-2 break-words font-mono text-body text-foreground"
+            title={item.title}
+          >
+            {draftRowHeadline(item.title) || '(no title)'}
+          </div>
+        ) : item.operatorGoal ? (
+          <>
+            <div
+              className="mt-1 line-clamp-2 break-words font-mono text-body text-foreground"
+              data-testid="queue-row-goal"
+            >
+              {item.operatorGoal.split('\n')[0]?.trim() || '(no title)'}
+            </div>
+            {/* Plain-phrase subhead — maps signature family to English; slug stays hidden */}
+            {(() => {
+              const phrase =
+                signatureFamilyPhrase(item.humanDetail?.failureSignature) ??
+                item.humanSummary ??
+                null
+              return phrase ? (
+                <div
+                  className="mt-0.5 line-clamp-1 font-mono text-micro text-muted-foreground"
+                  data-testid="queue-row-subhead"
+                >
+                  {phrase}
+                </div>
+              ) : null
+            })()}
+          </>
+        ) : (
+          <div className="mt-1 line-clamp-4 break-words font-mono text-body text-foreground">
+            {item.humanSummary || item.title || '(no title)'}
+          </div>
+        )}
 
         {/* "Why now" subtitle — explains why the operator must act */}
         {why !== null && (
