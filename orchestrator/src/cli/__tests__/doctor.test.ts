@@ -83,6 +83,9 @@ const passingProbes = (overrides?: Partial<DoctorProbes>): DoctorProbes => ({
   async installSites(_root) {
     return [] // 0 sites → no H7 row; safe default for tests not targeting H7
   },
+  gitRefExists(_branch, _cwd) {
+    return true // integration branch exists → PASS for tests not targeting H6
+  },
   ...overrides,
 })
 

@@ -407,6 +407,13 @@ export const daemonConfigSchema = z
     paused: z.boolean().optional(),
     lastReflectRanAt: z.string().optional(),
     proposalExpiryDays: z.number().optional(),
+    /**
+     * The integration branch name for this repo. Set by `mars init` when the
+     * repo's default branch is not `main`, and by `mars operator set
+     * integration-branch <name>`. Overridden per-invocation by the
+     * `INTEGRATION_BRANCH` env var.
+     */
+    integrationBranch: z.string().optional(),
     verifyStep: z
       .object({
         timeoutMin: z.number().optional(),
@@ -865,6 +872,30 @@ export const patchDaemonConfigFile = (
     closeSync(dirFd)
   }
   return next
+}
+
+/**
+ * Read the persisted `integrationBranch` from daemon.json.
+ *
+ * Returns `null` when the field is absent, non-string, or empty — callers
+ * fall back to the `INTEGRATION_BRANCH` env var and then to `'main'`. The
+ * env var always wins per-invocation; this value is the persisted default.
+ */
+export const readIntegrationBranch = (): string | null => {
+  const raw = readDaemonConfigFileLenient()
+  const val = raw.integrationBranch
+  return typeof val === 'string' && val.trim().length > 0 ? val.trim() : null
+}
+
+/**
+ * Persist the integration branch name to daemon.json.
+ *
+ * Callers: `mars init` (auto-detected on first run when the repo default
+ * branch is not `main`) and `mars operator set integration-branch <name>`.
+ * The `INTEGRATION_BRANCH` env var still wins per-invocation.
+ */
+export const persistIntegrationBranch = (name: string): void => {
+  patchDaemonConfigFile({ integrationBranch: name })
 }
 
 /**

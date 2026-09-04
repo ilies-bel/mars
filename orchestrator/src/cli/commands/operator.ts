@@ -31,6 +31,7 @@ import type { Command } from '../command'
 import {
   loadDaemonConfig,
   patchDaemonConfigFile,
+  persistIntegrationBranch,
   persistPaused,
   persistSelfEvolvePatch,
   persistScoringPatch,
@@ -207,7 +208,8 @@ const operatorSet: Command = {
   usage:
     'usage: mars operator set <dispatch|recovery|scoring|memory-capture|auto-run-reflect|operator-auto-commit|scoring-auto-trigger|qa-step-list> <on|off>\n' +
     '       mars operator set <drift-threshold-pct|scoring-low-trend-threshold|scoring-low-trend-window> <n>\n' +
-    '       mars operator set <budget-window|budget-window-tokens|budget-arc-tokens> <value>',
+    '       mars operator set <budget-window|budget-window-tokens|budget-arc-tokens> <value>\n' +
+    '       mars operator set integration-branch <branch-name>',
   run: async (args, deps) => {
     const positional = args.positional.filter((a) => !a.startsWith('--'))
     const lever = positional[0]
@@ -285,11 +287,23 @@ const operatorSet: Command = {
       deps.out(`qa-step-list: ${value}`)
       return { code: 0 }
     }
+    // integration-branch: persist the integration branch name so all tasks
+    // target the correct branch without requiring the INTEGRATION_BRANCH env var.
+    if (lever === 'integration-branch') {
+      if (!value || value.trim().length === 0) {
+        deps.err(`mars operator set: integration-branch requires a non-empty branch name`)
+        return { code: 2 }
+      }
+      persistIntegrationBranch(value.trim())
+      deps.out(`integration-branch: ${value.trim()}`)
+      return { code: 0 }
+    }
+
     const validLevers = ['dispatch', 'recovery', 'scoring', 'memory-capture', 'auto-run-reflect', 'operator-auto-commit', 'scoring-auto-trigger'] as const
     type LeverName = (typeof validLevers)[number]
     if (!validLevers.includes(lever as LeverName)) {
       deps.err(
-        `mars operator set: unknown lever '${lever}'; valid levers: ${validLevers.join(', ')}, qa-step-list, drift-threshold-pct, scoring-low-trend-threshold, scoring-low-trend-window, budget-window, budget-window-tokens, budget-arc-tokens`,
+        `mars operator set: unknown lever '${lever}'; valid levers: ${validLevers.join(', ')}, integration-branch, qa-step-list, drift-threshold-pct, scoring-low-trend-threshold, scoring-low-trend-window, budget-window, budget-window-tokens, budget-arc-tokens`,
       )
       return { code: 2 }
     }

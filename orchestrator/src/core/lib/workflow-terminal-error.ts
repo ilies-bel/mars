@@ -56,6 +56,13 @@ export type WorkflowTerminalKind =
    */
   | 'setup-dirty-integration'
   /**
+   * The setup step detected that the configured integration branch does not
+   * exist as a local git ref. Every task targets this branch; a missing branch
+   * means all tasks will die in setup. The operator must run
+   * `mars operator set integration-branch <name>` to point at the correct branch.
+   */
+  | 'setup-integration-branch-missing'
+  /**
    * The merge gate detected that the task branch has zero commits ahead of the
    * integration branch. For non-main-committer tasks this is a defect — either
    * the coder's git commits were blocked by the sandbox (index.lock permission

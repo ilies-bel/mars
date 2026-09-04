@@ -523,6 +523,54 @@ export const setupWorktree = async (
         }
       }
 
+      // Guard: verify the integration branch exists before attempting to create
+      // a worktree off it. When it is absent git emits a raw
+      // `fatal: invalid reference: <branch>` message that gives no hint about
+      // how to fix the misconfiguration. Catch it here and emit an actionable
+      // failure reason instead.
+      //
+      // Exempt recovery tasks that attach to an existing origin worktree
+      // (`attachesToOrigin`) — they branch off the origin's tip, not off the
+      // integration branch, so the branch need not exist for them to proceed.
+      // Main-committer fix tasks are also exempt because they target the
+      // integration checkout directly, not a new branch off it.
+      if (!attachesToOrigin && !isMainCommiterFix) {
+        const { repoRoot: integRootForCheck } = resolveContext()
+        const branchCheckR = await runTool(
+          {
+            tool: 'git',
+            argv: ['rev-parse', '--verify', `refs/heads/${integrationBranch}`],
+            cwd: integRootForCheck,
+            taskId,
+            originId: trace.originId,
+            phase: 'setup',
+          },
+          trace.traceStore,
+        )
+        if (branchCheckR.exitCode !== 0) {
+          const missingMsg =
+            `setup:integration-branch-missing: '${integrationBranch}' does not exist; ` +
+            `run: mars operator set integration-branch <your-branch>`
+          const missingSignature = computeFailureSignature('setup:integration-branch-missing', missingMsg)
+          await updateTask(
+            taskId,
+            {
+              status: 'failed',
+              error: missingMsg,
+              failedPhase: 'setup',
+              failureReason: missingMsg,
+              failureSignature: missingSignature,
+              failureReasonCode: missingSignature,
+            },
+            store,
+          )
+          throw new WorkflowTerminalError(
+            'setup-integration-branch-missing',
+            `Task ${taskId}: ${missingMsg}`,
+          )
+        }
+      }
+
       // A main-commiter recovery MUST carry the integration branch's dirty
       // state into its fresh worktree (checkpoint capture on repoRoot → apply
       // by object id in the worktree, see `core/lib/git/checkpoint.ts`) so the

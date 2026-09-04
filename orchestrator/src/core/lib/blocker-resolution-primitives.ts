@@ -23,6 +23,7 @@ import type { ActionQueueKind } from './action-queue-kinds'
 import { ORIGIN_RECOVERY_FAILED_PREFIX } from './failure-signature'
 import { raiseActionQueueItem } from './action-queue'
 import { WORKTREE_AHEAD_FAILURE_REASON as _WORKTREE_AHEAD_FAILURE_REASON } from './worktree-ahead-payload'
+import { readIntegrationBranch } from '../daemon/config'
 
 const execFileP = promisify(execFile)
 
@@ -32,8 +33,16 @@ export const CANCELLED_CASCADE_FAILURE_REASON = 'cancelled-blocker-cascade'
 export { WORKTREE_AHEAD_FAILURE_REASON } from './worktree-ahead-payload'
 export const WORKTREE_AHEAD_ACTION_QUEUE_KIND: ActionQueueKind = 'worktree-ahead'
 
+/**
+ * Resolve the integration branch name for this repo.
+ *
+ * Override priority (first wins):
+ *   1. `INTEGRATION_BRANCH` env var (per-invocation override)
+ *   2. `integrationBranch` key in `.mars/daemon.json` (persisted by `mars init` / `mars operator set`)
+ *   3. `'main'` (built-in default)
+ */
 export const integrationBranchName = (): string =>
-  process.env.INTEGRATION_BRANCH ?? 'main'
+  process.env.INTEGRATION_BRANCH ?? readIntegrationBranch() ?? 'main'
 
 /**
  * Refusal sentinel: a dependent's worktree branch has commits ahead of the

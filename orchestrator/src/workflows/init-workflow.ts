@@ -26,6 +26,8 @@ import { readInitManifest, writeInitManifest } from '../init/init-manifest'
 import { writeRecipesSeed } from '../init/recipes-seed'
 import { activatePlugin, realDeps, type ClaudePluginDeps } from '../commands/claude-plugin.js'
 import { ensureProjectRegistered } from '../registry/projects.js'
+import { detectCurrentBranch } from '../init/detect-branch.js'
+import { persistIntegrationBranch } from '../core/daemon/config.js'
 
 // Mirrors WizardChoices exactly so a resolved WizardChoices feeds the
 // workflow input without a structural-type mismatch.
@@ -227,6 +229,22 @@ const initWorkflow = defineWorkflow<InitInput, InitWorkflowOutput>({
   id: 'init',
   inputSchema: initInputSchema,
   fn: async (ctx: WorkflowCtx, input: InitInput): Promise<InitWorkflowOutput> => {
+    // Detect the repo's default branch before any other step so all subsequent
+    // steps (including enqueueTask) target the right integration branch.
+    await ctx.step('detect-integration-branch', () => {
+      // INTEGRATION_BRANCH env already wins at dispatch time; only persist
+      // from git detection when the env var is not set.
+      if (process.env.INTEGRATION_BRANCH) return
+      const appCtx = resolveContext()
+      const branch = detectCurrentBranch(appCtx.repoRoot)
+      if (branch !== null && branch !== 'main') {
+        persistIntegrationBranch(branch)
+        process.stdout.write(
+          `Integration branch: ${branch} (detected). Change with: mars operator set integration-branch <name>\n`,
+        )
+      }
+    })
+
     const w1 = await ctx.step('slim-init', () => {
       const appCtx = resolveContext()
       const slimResult = writeSlimInit({

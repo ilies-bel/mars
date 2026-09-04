@@ -7,10 +7,12 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs'
+import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { writeSlimInit } from '../writer'
+import { detectCurrentBranch } from '../detect-branch'
 
 const slimInputFor = (root: string) => ({
   repoRoot: root,
@@ -67,5 +69,64 @@ describe('writeSlimInit', () => {
       )
       expect(briefings).toEqual([])
     }
+  })
+})
+
+describe('detectCurrentBranch', () => {
+  let root: string
+
+  beforeEach(() => {
+    root = mkdtempSync(resolve(tmpdir(), 'mars-detect-branch-'))
+  })
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  /**
+   * Create a minimal git repo at `dir` with `branch` as the initial branch
+   * and a single empty commit so symbolic-ref returns a stable answer.
+   */
+  const makeRepo = (dir: string, branch: string): void => {
+    spawnSync('git', ['init', '-b', branch, dir], { stdio: 'ignore' })
+    spawnSync('git', ['-C', dir, 'config', 'user.email', 'test@test.com'], { stdio: 'ignore' })
+    spawnSync('git', ['-C', dir, 'config', 'user.name', 'Test'], { stdio: 'ignore' })
+    spawnSync('git', ['-C', dir, 'commit', '--allow-empty', '-m', 'root'], { stdio: 'ignore' })
+  }
+
+  it('returns master for a repo whose current branch is master', () => {
+    makeRepo(root, 'master')
+    expect(detectCurrentBranch(root)).toBe('master')
+  })
+
+  it('returns main for a repo whose current branch is main', () => {
+    makeRepo(root, 'main')
+    expect(detectCurrentBranch(root)).toBe('main')
+  })
+
+  it('returns null for a directory that is not a git repo', () => {
+    expect(detectCurrentBranch(root)).toBeNull()
+  })
+
+  it('persists to daemon.json so setup would target master instead of main', () => {
+    makeRepo(root, 'master')
+
+    const branch = detectCurrentBranch(root)
+    expect(branch).toBe('master')
+
+    // Simulate what init does: write integrationBranch to .mars/daemon.json
+    const marsDir = resolve(root, '.mars')
+    mkdirSync(marsDir, { recursive: true })
+    writeFileSync(
+      resolve(marsDir, 'daemon.json'),
+      JSON.stringify({ integrationBranch: branch }),
+      'utf8',
+    )
+
+    // Assert daemon.json carries the detected branch
+    const raw = JSON.parse(readFileSync(resolve(marsDir, 'daemon.json'), 'utf8')) as {
+      integrationBranch: string
+    }
+    expect(raw.integrationBranch).toBe('master')
   })
 })

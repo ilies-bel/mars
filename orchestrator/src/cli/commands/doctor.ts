@@ -115,6 +115,12 @@ export interface DoctorProbes {
    * the real filesystem during the fragmentation health check.
    */
   installSites(root: string): Promise<InstallSite[]>
+  /**
+   * Check whether `branch` exists as a local git ref in the repo at `cwd`.
+   * Used by the integration-branch health check to detect a misconfigured
+   * branch name before tasks start failing in setup.
+   */
+  gitRefExists(branch: string, cwd: string): boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -211,6 +217,14 @@ export const realProbes: DoctorProbes = {
   installSites(root) {
     return detectInstallSites(root)
   },
+  gitRefExists(branch, cwd) {
+    const r = spawnSync('git', ['rev-parse', '--verify', `refs/heads/${branch}`], {
+      cwd,
+      stdio: 'ignore',
+      timeout: 5_000,
+    })
+    return r.status === 0
+  },
 }
 
 // ---------------------------------------------------------------------------
@@ -227,6 +241,7 @@ const KNOWN_DAEMON_CONFIG_KEYS = new Set([
   'levers',
   'workerPrompts',
   'paused',
+  'integrationBranch',
 ])
 
 // ---------------------------------------------------------------------------
@@ -632,7 +647,47 @@ export const runDoctorChecks = async (
     }
   }
 
-  // H6. node_modules boundary — detect a corrupted virtualStoreDir in a
+  // H6. Integration branch — the configured (or defaulted) integration branch
+  // must exist as a local ref. A missing branch causes every task to die in
+  // setup with a raw `fatal: invalid reference: main` git error rather than an
+  // actionable message. Detect it here while the doctor output is visible.
+  if (repoRoot !== null) {
+    const dcPath = resolve(repoRoot, '.mars', 'daemon.json')
+    const dcText = probes.readTextFile(dcPath)
+    let configuredBranch = 'main'
+    if (dcText !== null) {
+      try {
+        const dc = JSON.parse(dcText) as Record<string, unknown>
+        if (typeof dc.integrationBranch === 'string' && dc.integrationBranch.trim().length > 0) {
+          configuredBranch = dc.integrationBranch.trim()
+        }
+      } catch {
+        // Malformed daemon.json — keep the default
+      }
+    }
+    // env var wins even in doctor (mirrors dispatch-time resolution)
+    const effectiveBranch = process.env.INTEGRATION_BRANCH ?? configuredBranch
+    const branchExists = probes.gitRefExists(effectiveBranch, repoRoot)
+    if (!branchExists) {
+      results.push({
+        label: 'integration branch',
+        status: 'FAIL',
+        section: 'health',
+        message:
+          `configured integration branch '${effectiveBranch}' does not exist as a local ref — ` +
+          `tasks will fail in setup; fix: mars operator set integration-branch <your-branch>`,
+      })
+    } else {
+      results.push({
+        label: 'integration branch',
+        status: 'PASS',
+        section: 'health',
+        message: `'${effectiveBranch}' exists`,
+      })
+    }
+  }
+
+  // H8. node_modules boundary — detect a corrupted virtualStoreDir in a
   // workspace's node_modules/.modules.yaml that points outside the checkout.
   //
   // Root cause: a dispatched task ran `pnpm install` whose workspace-root
@@ -690,7 +745,7 @@ export const runDoctorChecks = async (
     }
   }
 
-  // H7. Install-site fragmentation — warn when the repo has multiple independent
+  // H9. Install-site fragmentation — warn when the repo has multiple independent
   // lockfiles with no workspace config unifying them.  Each dispatched worktree
   // runs one install per site, so N independent sites = N full installs per task.
   //

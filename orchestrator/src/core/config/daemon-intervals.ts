@@ -115,10 +115,30 @@ export const resolveSweepIntervalsMs = (env: NodeJS.ProcessEnv = process.env): S
  * `sweeps.ts`'s notice-sweep reads `INTEGRATION_BRANCH` (not a `MARS_*` var —
  * shared with `merge.ts` and `server.ts`, which are out of this module's
  * scope and keep their own reads for now).
+ *
+ * Override priority (first wins):
+ *   1. `INTEGRATION_BRANCH` env var (per-invocation override)
+ *   2. `integrationBranch` key in `.mars/daemon.json` (persisted by `mars init`)
+ *   3. `'main'` (built-in default)
+ *
  * @param env injectable for hermetic tests; defaults to `process.env`.
  */
-export const resolveIntegrationBranch = (env: NodeJS.ProcessEnv = process.env): string =>
-  env.INTEGRATION_BRANCH ?? 'main'
+export const resolveIntegrationBranch = (env: NodeJS.ProcessEnv = process.env): string => {
+  if (env.INTEGRATION_BRANCH) return env.INTEGRATION_BRANCH
+  try {
+    // Dynamic import avoids a hard dependency on daemon/config at module
+    // load time; the function is called at daemon startup and sweep time
+    // when the context is always available.
+    const { readIntegrationBranch } = require('../daemon/config') as {
+      readIntegrationBranch: () => string | null
+    }
+    const persisted = readIntegrationBranch()
+    if (persisted) return persisted
+  } catch {
+    // config unavailable (e.g. test env without stateDir) — fall through
+  }
+  return 'main'
+}
 
 /**
  * Cadence for `lib/git/checkpoint.ts`'s periodic coder-checkpoint timer.
