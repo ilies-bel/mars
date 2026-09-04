@@ -486,8 +486,14 @@ export interface MergeResult {
   mergePreSha?: string
   /**
    * The task-branch SHA that was fast-forwarded into `integrationBranch`
-   * (i.e. the new tip after the fast-forward). Set in the same conditions as
-   * `mergePreSha`.
+   * (i.e. the new tip after the fast-forward). Also set on an already-merged
+   * no-op (to the branch tip at the time of the no-op check) so that the
+   * caller's post-merge ancestry assertion runs unconditionally and can catch
+   * wrong no-op determinations before they become false-done tombstones.
+   *
+   * Absent when the merge was aborted or the integration gate reverted the
+   * fast-forward. {@link mergePreSha} remains absent for no-ops (there is no
+   * pre-fast-forward tip to record).
    */
   mergePostSha?: string
 }
@@ -1017,11 +1023,29 @@ export const mergeBranch = async ({
       ).exitCode === 0
     if (aheadCount === 0 && taskIsAncestorOfIntegration) {
       lastStep = 'already-merged-noop'
+      // Capture the branch tip SHA before returning so the caller's post-merge
+      // ancestry assertion can run unconditionally (see MergeResult.mergePostSha).
+      // Logging the SHA gives operators an audit trail to reconstruct what commit
+      // was on the branch at the time the no-op determination was made — critical
+      // for diagnosing false-done tombstones where the task's work was never
+      // actually fast-forwarded into integration.
+      const branchTipSha = (
+        await gexec(['rev-parse', branch], repoRoot())
+      ).stdout.trim()
+      console.info(
+        `[merge] already-merged no-op: task branch ${branch} tip ${branchTipSha} ` +
+        `is fully contained in ${integrationBranch} (0 commits ahead); ` +
+        `returning mergePostSha for caller ancestry assertion`,
+      )
       return {
         merged: true,
         conflictResolved: false,
         aborted: false,
-        output: `task branch ${branch} is already fully contained in ${integrationBranch} (0 commits ahead); merge is a no-op.`,
+        mergePostSha: branchTipSha,
+        output: (
+          `task branch ${branch} (tip ${branchTipSha}) is already fully contained ` +
+          `in ${integrationBranch} (0 commits ahead); merge is a no-op.`
+        ),
         supervisorConversation: [],
         vegaSessionId: null,
         retriesAttempted: 0,
