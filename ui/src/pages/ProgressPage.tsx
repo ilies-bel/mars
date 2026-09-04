@@ -112,7 +112,7 @@ export const ProgressPage = () => {
         {dispatch.paused && (
           <div
             data-testid="dispatch-pause-banner"
-            className="flex items-center justify-between gap-4 border-b border-amber-500/30 bg-amber-500/10 px-4 py-2 font-mono text-label text-amber-700 dark:text-amber-400"
+            className="flex items-center justify-between gap-4 border-b border-warn/30 bg-warn/10 px-4 py-2 font-mono text-label text-warn"
           >
             <span>
               {dispatch.reason === 'operator'
@@ -129,7 +129,7 @@ export const ProgressPage = () => {
               <a
                 href="#/triage"
                 data-testid="dispatch-pause-banner-gate-link"
-                className="shrink-0 rounded-md border border-amber-500/40 px-3 py-1 text-amber-700 transition-colors hover:bg-amber-500/20 dark:text-amber-400"
+                className="shrink-0 rounded-md border border-warn/40 px-3 py-1 text-warn transition-colors hover:bg-warn/20"
               >
                 View failing gate
               </a>
@@ -138,7 +138,7 @@ export const ProgressPage = () => {
                 type="button"
                 data-testid="dispatch-pause-banner-resume"
                 onClick={() => void postOperatorDispatch('on').catch(() => {})}
-                className="shrink-0 rounded-md border border-amber-500/40 px-3 py-1 text-amber-700 transition-colors hover:bg-amber-500/20 dark:text-amber-400"
+                className="shrink-0 rounded-md border border-warn/40 px-3 py-1 text-warn transition-colors hover:bg-warn/20"
               >
                 Resume dispatch
               </button>
