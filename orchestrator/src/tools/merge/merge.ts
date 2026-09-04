@@ -698,6 +698,39 @@ export const merge = async (
             // Blindly unlinking it would delete a mutex held by a different,
             // healthy merge that is actively running. The lock's own finally
             // block (inside mergeBranch) is the sole authority that releases it.
+
+            // Establish the actual merge outcome before deciding the task
+            // status. The merge job was still running when the timer fired;
+            // it may have completed successfully in the background. The
+            // branch is the source of truth: zero commits ahead of the
+            // integration branch means the fast-forward landed.
+            let branchAlreadyMerged = false
+            try {
+              branchAlreadyMerged = await isBranchTipInIntegration(branch, integrationBranch)
+            } catch {
+              // Cannot determine merge status — fall through to the failure path.
+            }
+
+            if (branchAlreadyMerged) {
+              // The merge completed successfully despite exceeding the step
+              // ceiling. Mark the task done and emit a Notice so the slowness
+              // stays visible without being reported as a failure.
+              const noticeMsg = (
+                `merge:hard-timeout — branch ${branch} is already an ancestor of ` +
+                `${integrationBranch}; the merge succeeded before the step ceiling ` +
+                `of ${Math.round(MERGE_HARD_TIMEOUT_MS / 60_000)} min expired`
+              )
+              console.log(
+                `[merge] task ${taskId}: hard-timeout but merge already done — ${noticeMsg}`,
+              )
+              await updateTask(taskId, { status: 'done', failedPhase: null }, store)
+              return {
+                taskId,
+                success: true,
+                message: noticeMsg,
+              }
+            }
+
             const hardMsg = `merge:hard-timeout — merge step for task ${taskId} exceeded the step-level ceiling of ${Math.round(MERGE_HARD_TIMEOUT_MS / 60_000)} min`
             await updateTask(
               taskId,

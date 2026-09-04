@@ -28,6 +28,7 @@ const {
   mockUpdateTask,
   mockGetTask,
   mockIsZeroCommitBranch,
+  mockIsBranchTipInIntegration,
   mockCheckMergeTargetStatus,
   mockRemoveWorktree,
   mockHandleTaskFailureWithFixTask,
@@ -36,6 +37,8 @@ const {
   mockUpdateTask: vi.fn().mockResolvedValue(undefined),
   mockGetTask: vi.fn().mockResolvedValue(null),
   mockIsZeroCommitBranch: vi.fn().mockResolvedValue(false),
+  // Default: not yet merged (preserves existing test behaviour).
+  mockIsBranchTipInIntegration: vi.fn().mockResolvedValue(false),
   mockCheckMergeTargetStatus: vi.fn().mockResolvedValue({ kind: 'clean' }),
   mockRemoveWorktree: vi.fn().mockResolvedValue(undefined),
   mockHandleTaskFailureWithFixTask: vi.fn().mockResolvedValue({ outcome: 'fix-task-spawned' }),
@@ -61,6 +64,7 @@ vi.mock('../../../core/lib/git/merge', async (importOriginal) => {
   return {
     ...orig,
     isZeroCommitBranch: mockIsZeroCommitBranch,
+    isBranchTipInIntegration: mockIsBranchTipInIntegration,
     checkMergeTargetStatus: mockCheckMergeTargetStatus,
   }
 })
@@ -138,6 +142,7 @@ beforeEach(async () => {
   mockUpdateTask.mockResolvedValue(undefined)
   mockGetTask.mockResolvedValue(null)
   mockIsZeroCommitBranch.mockResolvedValue(false)
+  mockIsBranchTipInIntegration.mockResolvedValue(false)
   mockCheckMergeTargetStatus.mockResolvedValue({ kind: 'clean' })
   mockRemoveWorktree.mockResolvedValue(undefined)
   mockHandleTaskFailureWithFixTask.mockResolvedValue({ outcome: 'fix-task-spawned' })
@@ -298,5 +303,98 @@ describe('merge — hard step-level timeout', () => {
       expect(readFileSync(LOCK_PATH, 'utf8')).toBe('other-task-pid')
     },
     2000,
+  )
+})
+
+// ---------------------------------------------------------------------------
+// New tests: outcome check on hard timeout
+// ---------------------------------------------------------------------------
+
+describe('merge — hard-timeout: outcome check before failing', () => {
+  it(
+    'marks the task done when the branch is already an ancestor of the integration branch',
+    async () => {
+      const taskId = 'mars-hard-timeout-already-merged-01'
+
+      // Merge job never resolves — simulates a slow/wedged worker.
+      const enqueueFn = vi.fn().mockImplementation(async () => {
+        return new Promise<never>(() => {})
+      })
+
+      // Branch is already merged: the slow merge job completed in the background.
+      mockIsBranchTipInIntegration.mockResolvedValue(true)
+
+      const ctx = makeCtx(taskId, enqueueFn)
+
+      // Should resolve successfully, not reject.
+      const result = await merge(ctx, { kind: 'task', ...worktreeOpts(taskId) })
+
+      expect(result.success).toBe(true)
+      expect(result.taskId).toBe(taskId)
+
+      // Task must be marked done.
+      const doneCalls = mockUpdateTask.mock.calls.filter(
+        (c) => (c[1] as Record<string, unknown>)?.status === 'done',
+      )
+      expect(doneCalls.length).toBeGreaterThanOrEqual(1)
+
+      // Task must NOT be marked failed.
+      const failedCalls = mockUpdateTask.mock.calls.filter(
+        (c) => (c[1] as Record<string, unknown>)?.status === 'failed',
+      )
+      expect(failedCalls.length).toBe(0)
+    },
+    1000,
+  )
+
+  it(
+    'spawns no recovery task when the branch is already merged',
+    async () => {
+      const taskId = 'mars-hard-timeout-already-merged-02'
+
+      const enqueueFn = vi.fn().mockImplementation(async () => {
+        return new Promise<never>(() => {})
+      })
+
+      mockIsBranchTipInIntegration.mockResolvedValue(true)
+
+      const ctx = makeCtx(taskId, enqueueFn)
+      await merge(ctx, { kind: 'task', ...worktreeOpts(taskId) })
+
+      // No recovery/fix task must be spawned for a merge that succeeded.
+      expect(mockHandleTaskFailureWithFixTask).not.toHaveBeenCalled()
+    },
+    1000,
+  )
+
+  it(
+    'marks the task failed when the branch still has unmerged commits',
+    async () => {
+      const taskId = 'mars-hard-timeout-unmerged-01'
+
+      const enqueueFn = vi.fn().mockImplementation(async () => {
+        return new Promise<never>(() => {})
+      })
+
+      // Branch NOT yet merged — the existing failure path must run.
+      mockIsBranchTipInIntegration.mockResolvedValue(false)
+
+      const ctx = makeCtx(taskId, enqueueFn)
+
+      await expect(
+        merge(ctx, { kind: 'task', ...worktreeOpts(taskId) }),
+      ).rejects.toThrow()
+
+      // Task stamped with the hard-timeout failure signature.
+      const hardTimeoutCalls = mockUpdateTask.mock.calls.filter(
+        (c) =>
+          (c[1] as Record<string, unknown>)?.failureSignature === 'merge:hard-timeout',
+      )
+      expect(hardTimeoutCalls.length).toBeGreaterThanOrEqual(1)
+
+      // Recovery task must be spawned.
+      expect(mockHandleTaskFailureWithFixTask).toHaveBeenCalled()
+    },
+    1000,
   )
 })
