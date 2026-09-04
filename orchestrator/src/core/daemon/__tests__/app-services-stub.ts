@@ -74,6 +74,11 @@ export const stubAppServices = (
     truncated: false as false,
     commits: [] as [],
   }),
+  viewHotPaths: async ({ window }: { window: '7d' | '30d' | '90d'; group: 'file' | 'dir' }) => ({
+    paths: [],
+    window,
+    total: 0,
+  }),
   viewPrimitives: async () => ({ primitives: [] }),
   viewPrimitive: async () => null,
   viewSessions: async () => ({ sessions: [] }),

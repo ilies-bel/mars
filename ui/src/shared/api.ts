@@ -36,7 +36,9 @@ import {
   visionResponseSchema,
   workerSessionsResponseSchema,
   taskChangesResponseSchema,
+  hotPathsResponseSchema,
   type TaskChangesResponse,
+  type HotPathsResponse,
   type ActionQueueHistoryResponse,
   type ActionQueueItem,
   type AdrEntry,
@@ -371,6 +373,18 @@ export const fetchStatusCounts = async (
 ): Promise<StatusCounts> => {
   const path = appendProject('/api/status-counts', projectId)
   return fetchJson(path, statusCountsSchema, signal)
+}
+
+export const fetchHotPaths = async (
+  opts: { window?: '7d' | '30d' | '90d'; group?: 'file' | 'dir'; projectId?: string },
+  signal?: AbortSignal,
+): Promise<HotPathsResponse> => {
+  const qs = new URLSearchParams()
+  if (opts.window) qs.set('window', opts.window)
+  if (opts.group) qs.set('group', opts.group)
+  const base = `/api/hot-paths${qs.size > 0 ? `?${qs.toString()}` : ''}`
+  const path = appendProject(base, opts.projectId)
+  return fetchJson(path, hotPathsResponseSchema, signal)
 }
 
 export const fetchProposalsPayload = async (

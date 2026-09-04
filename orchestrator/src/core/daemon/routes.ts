@@ -768,6 +768,26 @@ export const registerRoutes = (
       return
     }
 
+    // GET /view/hot-paths?window=7d|30d|90d&group=file|dir — per-file or
+    // per-directory change frequency over a rolling window. Ranked list of the
+    // 50 most-touched paths with task attribution. Results are cached for 60 s.
+    // Pure read; no draining gate.
+    if (req.method === 'GET' && req.url && req.url.startsWith('/view/hot-paths')) {
+      const urlObj = new URL(req.url, 'http://localhost')
+      const rawWindow = urlObj.searchParams.get('window') ?? '7d'
+      const rawGroup = urlObj.searchParams.get('group') ?? 'file'
+      const window =
+        rawWindow === '7d' || rawWindow === '30d' || rawWindow === '90d'
+          ? (rawWindow as '7d' | '30d' | '90d')
+          : ('7d' as const)
+      const group = rawGroup === 'dir' ? ('dir' as const) : ('file' as const)
+      deps.appServices
+        .viewHotPaths({ window, group })
+        .then((body) => sendJson(res, 200, body))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
     // GET /view/tasks — full task list from the daemon's DomainTaskStore.
     // The read-only UI proxies this endpoint instead of opening the DB
     // directly, so the daemon is the single reader of its own database.

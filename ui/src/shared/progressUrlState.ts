@@ -104,7 +104,14 @@ export const decodeProgressState = (hash: string): ProgressUrlState => {
   const col: 'proposals' | null = rawCol === 'proposals' ? 'proposals' : null
 
   // col=proposals implies board view (the sidebar shortcut activates the board).
-  const view: Tab = rawView === 'board' ? 'board' : col !== null ? 'board' : DEFAULT_TAB
+  const view: Tab =
+    rawView === 'board'
+      ? 'board'
+      : rawView === 'hot-paths'
+        ? 'hot-paths'
+        : col !== null
+          ? 'board'
+          : DEFAULT_TAB
 
   const query = params.get('q') ?? ''
 
@@ -164,7 +171,8 @@ export const decodeProgressStateFromTaskHash = (hash: string): ProgressUrlState 
   }
 
   const rawView = params.get('pView')
-  const view: Tab = rawView === 'board' ? 'board' : DEFAULT_TAB
+  const view: Tab =
+    rawView === 'board' ? 'board' : rawView === 'hot-paths' ? 'hot-paths' : DEFAULT_TAB
 
   const query = params.get('pQ') ?? ''
 
@@ -243,7 +251,9 @@ export const readExplicitViewFromUrl = (): Tab | null => {
     const val = safeDecode(pair.slice(eqIdx + 1))
     if (val === null) continue
     if (key === 'view') {
-      return val === 'board' || val === 'topology' ? (val as Tab) : null
+      return val === 'board' || val === 'topology' || val === 'hot-paths'
+        ? (val as Tab)
+        : null
     }
     if (key === 'col' && val === 'proposals') {
       hasColProposals = true

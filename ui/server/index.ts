@@ -488,6 +488,13 @@ export const startServer = async (
           return jsonResponse(r.status, r.body)
         }
 
+        // GET /api/hot-paths — per-file/dir change frequency over a rolling
+        // window. Proxies GET /view/hot-paths on the daemon.
+        if (path === '/api/hot-paths') {
+          const r = await proxyGet(ctx.stateDir, `/view/hot-paths${url.search}`)
+          return jsonResponse(r.status, r.body)
+        }
+
         if (path.startsWith('/api/tasks/')) {
           const id = decodeURIComponent(path.slice('/api/tasks/'.length))
           if (!id) {

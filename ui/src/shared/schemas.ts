@@ -1993,3 +1993,23 @@ export const taskChangesResponseSchema = z.discriminatedUnion('reason', [
 export type TaskChangesFileStat = z.infer<typeof taskChangesFileStatSchema>
 export type TaskChangesCommit = z.infer<typeof taskChangesCommitSchema>
 export type TaskChangesResponse = z.infer<typeof taskChangesResponseSchema>
+
+// ── Hot paths — per-file/dir change frequency ─────────────────────────────────
+
+const hotPathEntrySchema = z.object({
+  path: z.string(),
+  changes: z.number(),
+  tasks: z.array(z.string()),
+  lastChangedAt: z.string(),
+  touchedByHumans: z.number(),
+  touchedByMars: z.number(),
+})
+
+export const hotPathsResponseSchema = z.object({
+  paths: z.array(hotPathEntrySchema),
+  window: z.enum(['7d', '30d', '90d']),
+  total: z.number(),
+})
+
+export type HotPathEntry = z.infer<typeof hotPathEntrySchema>
+export type HotPathsResponse = z.infer<typeof hotPathsResponseSchema>

@@ -113,6 +113,7 @@ import type {
   DeepReflectionsListResult,
   DeepReflectionDetail,
   ReflectionSuggestionOutcome,
+  HotPathsResult,
 } from './daemon/http-server'
 import {
   PRIMITIVE_CATALOG,
@@ -344,6 +345,11 @@ export interface AppServices {
   viewAgentToolCalls: (taskId: string, sessionId: string) => Promise<{ calls: AgentToolCall[] }>
   // ── task changes diff surface ────────────────────────────────────────────────
   viewTaskChanges: (taskId: string) => Promise<TaskChangesResult>
+  // ── hot paths — per-file/dir change frequency over a rolling window ──────────
+  viewHotPaths: (opts: {
+    window: '7d' | '30d' | '90d'
+    group: 'file' | 'dir'
+  }) => Promise<HotPathsResult>
   // ── primitives (facet of the Studio surface) ───────────────────────────────
   viewPrimitives: () => Promise<{ primitives: PrimitiveSummary[] }>
   viewPrimitive: (params: { name: string; limit?: number }) => Promise<PrimitiveDetail | null>
@@ -1118,6 +1124,18 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
         authoredAt: authoredAtMap.get(c.sha) ?? '',
       })),
     }
+  }
+
+  // ── hot paths — per-file/dir change frequency over a rolling window ──────────
+
+  const viewHotPaths: AppServices['viewHotPaths'] = async ({ window, group }) => {
+    const { buildHotPathsView } = await import('./daemon/view/hot-paths.js')
+    return buildHotPathsView({
+      stateDir: resolveContext().stateDir,
+      repoRoot: getRepoRoot(),
+      window,
+      group,
+    })
   }
 
   // ── primitives — the per-primitive facet of the Studio surface ─────────────
@@ -2313,6 +2331,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     viewStepPrompt,
     viewAgentToolCalls,
     viewTaskChanges,
+    viewHotPaths,
     viewPrimitives,
     viewPrimitive,
     viewSessions,

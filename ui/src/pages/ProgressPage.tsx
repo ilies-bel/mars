@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { FallbackSurface } from '@/components/FallbackSurface'
 import { useProgress } from '@/hooks/useProgress'
+import { useHotPaths } from '@/hooks/useHotPaths'
 import {
   readExplicitViewFromUrl,
   readProgressStateFromUrl,
@@ -9,6 +10,7 @@ import {
 import type { Tab } from '@/shared/tabs'
 import { DEFAULT_TAB } from '@/shared/tabs'
 import { postOperatorDispatch } from '@/shared/api'
+import { taskHash } from '@/shared/routing'
 import { BoardView } from '@/widgets/BoardView'
 import { Footer } from '@/widgets/Footer'
 import { TabStrip } from '@/widgets/TabStrip'
@@ -16,6 +18,148 @@ import { TopologyView } from '@/widgets/TopologyView'
 import { TopStripe } from '@/widgets/TopStripe'
 import { useDispatchState } from '@/entities/operator/useDispatchState'
 import { useDaemonHealth } from '@/entities/daemon/useDaemonHealth'
+import type { HotPathEntry } from '@/shared/schemas'
+
+// ── Hot paths section ─────────────────────────────────────────────────────────
+
+interface HotPathsSectionProps {
+  window: '7d' | '30d' | '90d'
+  group: 'file' | 'dir'
+  onWindowChange: (w: '7d' | '30d' | '90d') => void
+  onGroupChange: (g: 'file' | 'dir') => void
+}
+
+const WINDOWS = ['7d', '30d', '90d'] as const
+const GROUPS = ['file', 'dir'] as const
+
+const HotPathsSection = ({
+  window,
+  group,
+  onWindowChange,
+  onGroupChange,
+}: HotPathsSectionProps) => {
+  const { data, isLoading, error } = useHotPaths({ window, group })
+
+  const toggleBtn = (active: boolean): string =>
+    [
+      'px-2 py-0.5 font-mono text-label rounded border transition-colors',
+      active
+        ? 'border-highlight bg-highlight/10 text-foreground'
+        : 'border-border text-muted-foreground hover:text-foreground hover:border-highlight/40',
+    ].join(' ')
+
+  return (
+    <main
+      data-testid="hot-paths-section"
+      className="flex min-h-0 flex-1 flex-col overflow-auto p-4 bg-background"
+    >
+      {/* Controls */}
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <span className="font-mono text-label text-muted-foreground uppercase tracking-wide">Window</span>
+        {WINDOWS.map((w) => (
+          <button
+            key={w}
+            type="button"
+            data-testid={`hot-paths-window-${w}`}
+            className={toggleBtn(w === window)}
+            onClick={() => onWindowChange(w)}
+          >
+            {w}
+          </button>
+        ))}
+        <span className="ml-4 font-mono text-label text-muted-foreground uppercase tracking-wide">Group</span>
+        {GROUPS.map((g) => (
+          <button
+            key={g}
+            type="button"
+            data-testid={`hot-paths-group-${g}`}
+            className={toggleBtn(g === group)}
+            onClick={() => onGroupChange(g)}
+          >
+            {g}
+          </button>
+        ))}
+      </div>
+
+      {/* Content */}
+      {error ? (
+        <FallbackSurface error={error} of="hot paths" variant="pane" />
+      ) : isLoading || !data ? (
+        <div className="font-mono text-label text-muted-foreground">Loading…</div>
+      ) : data.paths.length === 0 ? (
+        <div
+          data-testid="hot-paths-empty"
+          className="font-mono text-label text-muted-foreground"
+        >
+          No changes found in the last {window}.
+        </div>
+      ) : (
+        <div data-testid="hot-paths-list" className="flex flex-col gap-0.5">
+          {data.paths.map((entry: HotPathEntry) => (
+            <HotPathRow key={entry.path} entry={entry} />
+          ))}
+          {data.total > data.paths.length && (
+            <div className="mt-2 font-mono text-label text-muted-foreground">
+              Showing top 50 of {data.total} paths
+            </div>
+          )}
+        </div>
+      )}
+    </main>
+  )
+}
+
+interface HotPathRowProps {
+  entry: HotPathEntry
+}
+
+const HotPathRow = ({ entry }: HotPathRowProps) => {
+  // Clicking a row with associated tasks opens the first task's drawer.
+  // For rows with multiple tasks, the task list is shown inline.
+  const firstTaskId = entry.tasks[0]
+
+  return (
+    <div
+      data-testid="hot-paths-row"
+      className="flex items-center gap-3 rounded px-2 py-1 hover:bg-card"
+    >
+      {/* Path */}
+      <span className="min-w-0 flex-1 truncate font-mono text-label text-foreground">
+        {firstTaskId ? (
+          <a
+            href={taskHash(firstTaskId)}
+            className="hover:text-highlight transition-colors"
+          >
+            {entry.path}
+          </a>
+        ) : (
+          entry.path
+        )}
+      </span>
+      {/* Change count bar */}
+      <span
+        data-testid="hot-paths-count"
+        className="shrink-0 font-mono text-label text-muted-foreground tabular-nums"
+      >
+        {entry.changes}
+      </span>
+      {/* Mars vs humans split */}
+      <span className="shrink-0 font-mono text-label text-muted-foreground tabular-nums">
+        <span className="text-highlight" title="Mars commits">
+          {entry.touchedByMars}M
+        </span>
+        {' / '}
+        <span title="Human commits">{entry.touchedByHumans}H</span>
+      </span>
+      {/* Task count */}
+      {entry.tasks.length > 0 && (
+        <span className="shrink-0 font-mono text-label text-muted-foreground tabular-nums">
+          {entry.tasks.length} task{entry.tasks.length === 1 ? '' : 's'}
+        </span>
+      )}
+    </div>
+  )
+}
 
 export const ProgressPage = () => {
   // Initialise query and proposal filter dimensions from the URL on first render.
@@ -36,6 +180,10 @@ export const ProgressPage = () => {
   const [activeTab, setActiveTab] = useState<Tab>(
     () => readExplicitViewFromUrl() ?? DEFAULT_TAB,
   )
+
+  // Hot-paths controls — window and group toggles for the hot-paths tab.
+  const [hotPathsWindow, setHotPathsWindow] = useState<'7d' | '30d' | '90d'>('7d')
+  const [hotPathsGroup, setHotPathsGroup] = useState<'file' | 'dir'>('file')
 
   const [selectedProposalId, setSelectedProposalId] = useState<string | null>(
     initialUrlState.proposal,
@@ -168,6 +316,13 @@ export const ProgressPage = () => {
           <main className="flex min-h-0 flex-1 overflow-hidden bg-background">
             <FallbackSurface error={error} of="tasks" variant="pane" />
           </main>
+        ) : activeTab === 'hot-paths' ? (
+          <HotPathsSection
+            window={hotPathsWindow}
+            group={hotPathsGroup}
+            onWindowChange={setHotPathsWindow}
+            onGroupChange={setHotPathsGroup}
+          />
         ) : activeTab === 'topology' ? (
           <TopologyView
             tasks={tasks ?? []}

@@ -368,6 +368,40 @@ export interface GateListView {
 }
 
 /**
+ * One path entry in the hot-paths aggregation, returned by
+ * GET /view/hot-paths. A path is either a file (when `group=file`) or a
+ * directory (when `group=dir`).
+ */
+export interface HotPathEntry {
+  /** The file or directory path relative to the repo root. */
+  path: string
+  /** Total number of commits that touched this path in the window. */
+  changes: number
+  /** IDs of tasks whose merge commit touched this path. */
+  tasks: string[]
+  /** ISO-8601 timestamp of the most recent commit that touched this path. */
+  lastChangedAt: string
+  /** Number of commits attributed to human (non-task) authors. */
+  touchedByHumans: number
+  /** Number of commits attributed to Mars tasks. */
+  touchedByMars: number
+}
+
+/**
+ * Wire shape returned by GET /view/hot-paths — ranked paths by change
+ * frequency over a rolling window, plus a total count of distinct paths found
+ * before the 50-entry cap.
+ */
+export interface HotPathsResult {
+  /** Top-50 paths ranked by change count, most-changed first. */
+  paths: HotPathEntry[]
+  /** The window this aggregation covers. */
+  window: '7d' | '30d' | '90d'
+  /** Total distinct paths in the window (before the 50-entry cap). */
+  total: number
+}
+
+/**
  * Handlers the daemon supplies for each recovery verb the local HTTP server
  * exposes. Each should throw {@link RestartTaskError} (with `code` set to
  * `'NOT_FOUND'` or `'WRONG_STATUS'`) for known validation failures; any other
