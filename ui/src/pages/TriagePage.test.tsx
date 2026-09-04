@@ -717,121 +717,61 @@ describe('TriageRow – error feedback shown when mutation fails', () => {
 })
 
 // ---------------------------------------------------------------------------
-// TriageRow — Chat control opens a thread for the row and navigates to it
+// TriageRow — Chat link carries the alert's identity in its href
 // ---------------------------------------------------------------------------
 
-describe('TriageRow – Chat control opens a thread and navigates', () => {
-  it('arc-failed row: calls startThreadFromAlert with entityId, navigates to #/chat?thread=<id>', async () => {
-    mockItems.mockReturnValue([makeItem('arc-failed', { entityId: 'arc-xyz' })])
-    mockStartThreadFromAlert.mockResolvedValueOnce({ threadId: 'alert-thread-id' })
+describe('TriageRow – Chat link hrefs are scoped to each alert', () => {
+  it('each Chat link carries the alert item id in the href', () => {
+    mockItems.mockReturnValue([makeItem('stale-worktree', { id: 'item-alpha' })])
     const { container } = renderPage()
-    const btn = container.querySelector('[data-testid="triage-chat"]') as HTMLButtonElement
-    expect(btn).not.toBeNull()
-    await act(async () => {
-      btn.click()
-    })
-    expect(mockStartThreadFromAlert).toHaveBeenCalledWith('arc-xyz')
-    expect(mockStartThreadForQueueItem).not.toHaveBeenCalled()
-    expect(window.location.hash).toBe('#/chat?thread=alert-thread-id')
+    const link = container.querySelector('[data-testid="triage-chat"]') as HTMLAnchorElement
+    expect(link).not.toBeNull()
+    expect(link.tagName).toBe('A')
+    expect(link.getAttribute('href')).toContain('item=item-alpha')
   })
 
-  it('non-task-failure row: opens the row-keyed thread with a seeded opener', async () => {
+  it('two different alerts produce two different hrefs', () => {
     mockItems.mockReturnValue([
-      makeItem('stale-worktree', { entityId: 'task-stale', humanSummary: 'Deploy step broke' }),
+      makeItem('failed', { id: 'item-one', entityId: 'mars-1' }),
+      makeItem('stale-worktree', { id: 'item-two', entityId: 'mars-2' }),
     ])
-    mockStartThreadForQueueItem.mockResolvedValueOnce({ id: 'new-thread-id' })
     const { container } = renderPage()
-    const btn = container.querySelector('[data-testid="triage-chat"]') as HTMLButtonElement
-    await act(async () => {
-      btn.click()
-    })
-    expect(mockStartThreadFromAlert).not.toHaveBeenCalled()
-    // Keyed on the row id (so a second click reuses the thread) and carrying a
-    // non-empty seed message.
-    const [itemId, title, seed] = mockStartThreadForQueueItem.mock.calls[0] as string[]
-    expect(itemId).toBeTruthy()
-    expect(title).toBe('Deploy step broke')
-    expect(seed).toContain('Deploy step broke')
-    expect(window.location.hash).toBe('#/chat?thread=new-thread-id')
+    const links = container.querySelectorAll('[data-testid="triage-chat"]') as NodeListOf<HTMLAnchorElement>
+    expect(links.length).toBeGreaterThanOrEqual(2)
+    const hrefs = Array.from(links).map((a) => a.getAttribute('href'))
+    // Every href is unique
+    expect(new Set(hrefs).size).toBe(hrefs.length)
+    // Each carries its own item id
+    expect(hrefs.some((h) => h?.includes('item=item-one'))).toBe(true)
+    expect(hrefs.some((h) => h?.includes('item=item-two'))).toBe(true)
   })
 
-  it('preserves the focused project id in the navigation hash', async () => {
+  it('includes the focused project id in the href', () => {
     mockFocusedProjectId.mockReturnValue('proj-1')
-    mockItems.mockReturnValue([makeItem('stale-worktree')])
-    mockStartThreadForQueueItem.mockResolvedValueOnce({ id: 'new-thread-id' })
+    mockItems.mockReturnValue([makeItem('stale-worktree', { id: 'item-proj' })])
     const { container } = renderPage()
-    const btn = container.querySelector('[data-testid="triage-chat"]') as HTMLButtonElement
-    await act(async () => {
-      btn.click()
-    })
-    expect(mockStartThreadForQueueItem).toHaveBeenCalledWith(
-      expect.anything(), expect.anything(), expect.anything(), 'proj-1',
-    )
-    expect(window.location.hash).toBe('#/chat?thread=new-thread-id&project=proj-1')
+    const link = container.querySelector('[data-testid="triage-chat"]') as HTMLAnchorElement
+    expect(link.getAttribute('href')).toContain('item=item-proj')
+    expect(link.getAttribute('href')).toContain('project=proj-1')
   })
 
-  it('shows error feedback when thread resolution fails', async () => {
-    mockItems.mockReturnValue([makeItem('stale-worktree')])
-    mockStartThreadForQueueItem.mockRejectedValueOnce(new Error('Daemon unreachable'))
+  it('failed (task-recovery) row renders the chat icon link, not a text link', () => {
+    mockItems.mockReturnValue([makeItem('failed', { id: 'item-fail' })])
     const { container } = renderPage()
-    const btn = container.querySelector('[data-testid="triage-chat"]') as HTMLButtonElement
-    await act(async () => {
-      btn.click()
-    })
-    const errorEl = container.querySelector('[data-testid="triage-error"]')
-    expect(errorEl).not.toBeNull()
-    expect(errorEl?.textContent).toContain('Daemon unreachable')
+    const link = container.querySelector('[data-testid="triage-chat"]') as HTMLAnchorElement
+    expect(link).not.toBeNull()
+    expect(link.tagName).toBe('A')
+    expect(link.getAttribute('href')).toContain('item=item-fail')
   })
 
-  // -------------------------------------------------------------------------
-  // 'failed' kind — the real action-queue condition kind (CLAUDE.md/ADR-0057).
-  // Regression coverage for the bug: clicking Chat → on a failed row landed on
-  // Main thread with no thread= param because resolveThreadForItem only
-  // special-cased the never-emitted 'arc-failed' string. It must dedup via the
-  // Alert-backed startThreadFromAlert, keyed by the arc's origin id.
-  // -------------------------------------------------------------------------
-
-  it('failed row (origin task): calls startThreadFromAlert with entityId, produces a non-empty thread=', async () => {
-    mockItems.mockReturnValue([makeItem('failed', { entityId: 'mars-origin1', fixForTaskId: null })])
-    mockStartThreadFromAlert.mockResolvedValueOnce({ threadId: 'origin-thread-id' })
-    const { container } = renderPage()
-    const btn = container.querySelector('[data-testid="triage-chat"]') as HTMLButtonElement
-    await act(async () => {
-      btn.click()
-    })
-    expect(mockStartThreadFromAlert).toHaveBeenCalledWith('mars-origin1')
-    expect(mockStartThreadForQueueItem).not.toHaveBeenCalled()
-    expect(window.location.hash).toBe('#/chat?thread=origin-thread-id')
-  })
-
-  it('failed row (recovery/fix task): calls startThreadFromAlert with fixForTaskId, not entityId', async () => {
-    // Reproduces the reported row: "Recovery task dropped [task mars-bff7e039]" —
-    // entityId is the recovery task's own id; fixForTaskId is the arc's origin.
+  it('no Chat link fires thread resolution APIs on render', () => {
     mockItems.mockReturnValue([
-      makeItem('failed', { entityId: 'mars-bff7e039', fixForTaskId: 'mars-origin1' }),
+      makeItem('failed', { id: 'f1' }),
+      makeItem('stale-worktree', { id: 's1' }),
     ])
-    mockStartThreadFromAlert.mockResolvedValueOnce({ threadId: 'origin-thread-id' })
-    const { container } = renderPage()
-    const btn = container.querySelector('[data-testid="triage-chat"]') as HTMLButtonElement
-    await act(async () => {
-      btn.click()
-    })
-    expect(mockStartThreadFromAlert).toHaveBeenCalledWith('mars-origin1')
+    renderPage()
+    expect(mockStartThreadFromAlert).not.toHaveBeenCalled()
     expect(mockStartThreadForQueueItem).not.toHaveBeenCalled()
-    expect(window.location.hash).toBe('#/chat?thread=origin-thread-id')
-  })
-
-  it('failed row: shows error feedback when the Alert-backed thread lookup fails', async () => {
-    mockItems.mockReturnValue([makeItem('failed')])
-    mockStartThreadFromAlert.mockRejectedValueOnce(new Error('Daemon unreachable'))
-    const { container } = renderPage()
-    const btn = container.querySelector('[data-testid="triage-chat"]') as HTMLButtonElement
-    await act(async () => {
-      btn.click()
-    })
-    const errorEl = container.querySelector('[data-testid="triage-error"]')
-    expect(errorEl).not.toBeNull()
-    expect(errorEl?.textContent).toContain('Daemon unreachable')
   })
 })
 
