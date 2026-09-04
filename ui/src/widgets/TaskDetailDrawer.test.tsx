@@ -2753,10 +2753,11 @@ describe('RecoveryCommands', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Changes section — three distinct states:
+// Changes section — four distinct states:
 //   1. Unsupported (404/405 from stale daemon) → restart hint
-//   2. Empty (branch-gone or no files) → "This task changed no files."
-//   3. Has files → renders the file list
+//   2. Branch-gone (branch deleted after merge) → cleanup message, not "no files"
+//   3. Empty diff (genuinely no files changed) → "This task changed no files."
+//   4. Has files → renders the file list
 // ---------------------------------------------------------------------------
 
 describe('TaskDetailBody – Changes section states', () => {
@@ -2786,7 +2787,7 @@ describe('TaskDetailBody – Changes section states', () => {
     expect(html).not.toContain('data-testid="changes-empty"')
   })
 
-  it('shows "This task changed no files." when branch-gone (200 with empty diff)', () => {
+  it('shows branch-cleaned-up message (not "This task changed no files.") for branch-gone', () => {
     const branchGone: import('@/shared/schemas').TaskChangesResponse = {
       reason: 'branch-gone',
       base: null,
@@ -2798,8 +2799,12 @@ describe('TaskDetailBody – Changes section states', () => {
       commits: [],
     }
     const html = renderBodyWithChanges(branchGone)
-    expect(html).toContain('data-testid="changes-empty"')
-    expect(html).toContain('This task changed no files.')
+    // Must render the branch-gone container, not the empty-diff message.
+    expect(html).toContain('data-testid="changes-branch-gone"')
+    expect(html).toContain('cleaned up after merging')
+    // "changed no files" is wrong here — the diff is unavailable, not empty.
+    expect(html).not.toContain('This task changed no files.')
+    expect(html).not.toContain('data-testid="changes-empty"')
     // Must not render the restart hint.
     expect(html).not.toContain('data-testid="changes-unsupported"')
   })

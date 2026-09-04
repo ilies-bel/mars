@@ -55,12 +55,18 @@ function commit(repo: string, filename: string, content: string, message: string
 }
 
 /** Write a tombstone with reason=merged and null mergeCommitSha for `taskId`. */
-function writeTombstone(repo: string, taskId: string): void {
+function writeTombstone(repo: string, taskId: string, opts: { removedAt?: string } = {}): void {
   const dir = join(repo, '.mars', 'worktrees')
   mkdirSync(dir, { recursive: true })
   writeFileSync(
     join(dir, `${taskId}.removed.json`),
-    JSON.stringify({ taskId, branch: `task/${taskId}`, reason: 'merged', mergeCommitSha: null }),
+    JSON.stringify({
+      taskId,
+      branch: `task/${taskId}`,
+      reason: 'merged',
+      mergeCommitSha: null,
+      ...(opts.removedAt !== undefined ? { removedAt: opts.removedAt } : {}),
+    }),
   )
 }
 
@@ -250,6 +256,32 @@ describe(
 
       const rows = await source.derive({ kinds: new Set(['phantom-merge', 'phantom-merge-unknown']) })
       expect(rows).toHaveLength(0)
+    })
+
+    // ── Case 7: raisedAt comes from tombstone.removedAt, not nowMs ────────────
+
+    it('uses the tombstone removedAt timestamp as raisedAt, not the derivation time', async () => {
+      const taskId = 'mars-test-timestamp'
+      const removedAt = '2026-01-15T08:30:00.000Z'
+      const expectedMs = Date.parse(removedAt) // 1736929800000
+
+      // Write tombstone with a known removedAt in the past.
+      writeTombstone(repo, taskId, { removedAt })
+
+      const nowMs = Date.now() // current time, well after removedAt
+      const source = createConditionItemsSource({
+        getClient: () => makeDbClient([taskId]),
+        repoRoot: repo,
+        nowMs,
+      })
+
+      const rows = await source.derive({ kinds: new Set(['phantom-merge', 'phantom-merge-unknown']) })
+      expect(rows).toHaveLength(1)
+      // The alert's raisedAt must reflect when the merge occurred (tombstone
+      // removedAt), not the query time — so the UI shows the real age instead
+      // of "0s ago" on every refresh.
+      expect(rows[0]!.raisedAt).toBe(expectedMs)
+      expect(rows[0]!.raisedAt).not.toBe(nowMs)
     })
   },
 )

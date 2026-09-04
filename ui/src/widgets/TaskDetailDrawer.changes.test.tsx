@@ -8,7 +8,8 @@
  *   - Summary line: file count, +A -D, commit count
  *   - File list: status pill and path per file
  *   - Expandable hunks: rendered in a monospace block (checked via data-testid)
- *   - Empty state text when changes have the branch-gone reason
+ *   - Branch-gone: distinct message from an empty diff; sha offered when known
+ *   - Empty diff: "This task changed no files." (only when diff is genuinely empty)
  *   - changesData=null suppresses the Changes section entirely
  */
 import { describe, expect, it } from 'vitest'
@@ -94,6 +95,27 @@ const BRANCH_GONE: TaskChangesResponse = {
   commits: [],
 }
 
+const BRANCH_GONE_WITH_SHA: TaskChangesResponse = {
+  reason: 'branch-gone',
+  base: null,
+  head: null,
+  landedSha: 'abc1234def567890abc1234def567890abc12345',
+  files: [],
+  patch: '',
+  truncated: false,
+  commits: [],
+}
+
+const EMPTY_DIFF: TaskChangesResponse = {
+  base: 'abc1234',
+  head: 'def5678',
+  landedSha: null,
+  files: [],
+  patch: '',
+  truncated: false,
+  commits: [],
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe('TaskDetailBody – Changes section', () => {
@@ -138,14 +160,42 @@ describe('TaskDetailBody – Changes section', () => {
     expect(html).not.toContain('data-testid="file-hunks-src/foo.ts"')
   })
 
-  it('renders empty-state text for the branch-gone shape', () => {
+  it('renders a distinct branch-gone message (not "changed no files") for the branch-gone shape', () => {
     const html = renderBody(
       <TaskDetailBody task={makeTask()} changesData={BRANCH_GONE} />,
     )
     expect(html).toContain('data-testid="changes-section"')
-    expect(html).toContain('This task changed no files.')
+    // Must show branch-gone container, not the empty-diff message
+    expect(html).toContain('data-testid="changes-branch-gone"')
+    expect(html).toContain('cleaned up after merging')
+    // Must NOT say "changed no files" — that is reserved for genuinely empty diffs
+    expect(html).not.toContain('This task changed no files.')
+    // No sha shown when landedSha is null
+    expect(html).not.toContain('data-testid="changes-branch-gone-sha"')
     // No file rows
     expect(html).not.toContain('data-testid="file-row-')
+  })
+
+  it('shows the merge commit sha when branch-gone includes a landedSha', () => {
+    const html = renderBody(
+      <TaskDetailBody task={makeTask()} changesData={BRANCH_GONE_WITH_SHA} />,
+    )
+    expect(html).toContain('data-testid="changes-branch-gone"')
+    expect(html).toContain('data-testid="changes-branch-gone-sha"')
+    // Sha is shown abbreviated to 7 chars
+    expect(html).toContain('abc1234')
+    expect(html).not.toContain('This task changed no files.')
+  })
+
+  it('renders "This task changed no files." only for a genuinely empty diff (no branch-gone)', () => {
+    const html = renderBody(
+      <TaskDetailBody task={makeTask()} changesData={EMPTY_DIFF} />,
+    )
+    expect(html).toContain('data-testid="changes-section"')
+    expect(html).toContain('data-testid="changes-empty"')
+    expect(html).toContain('This task changed no files.')
+    // Must NOT show the branch-gone container
+    expect(html).not.toContain('data-testid="changes-branch-gone"')
   })
 
   it('suppresses the Changes section entirely when changesData is null', () => {

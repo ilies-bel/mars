@@ -170,15 +170,18 @@ export interface TaskChangesCommit {
  * The result of {@link AppServices.viewTaskChanges}.
  *
  * When the branch and worktree are both gone and there is no tombstone,
- * `reason` is `'branch-gone'` and all collections are empty. In all other
- * cases at least `base` and `head` are non-null.
+ * `reason` is `'branch-gone'` and all collections are empty. `landedSha` is
+ * non-null when the merge-commit SHA is known from the tombstone even though
+ * the full diff cannot be reconstructed (e.g. the parent commit is no longer
+ * locally reachable). In all other cases at least `base` and `head` are
+ * non-null.
  */
 export type TaskChangesResult =
   | {
       reason: 'branch-gone'
       base: null
       head: null
-      landedSha: null
+      landedSha: string | null
       files: []
       patch: ''
       truncated: false
@@ -1044,7 +1047,11 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
         landedSha = sha
         // diff range: parent → landed commit
         const parentSha = await localGitVcs.revParse({ cwd: repoRoot, rev: `${sha}^` })
-        if (!parentSha) return BRANCH_GONE
+        // The sha is known but the parent is unreachable — diff is unavailable yet
+        // the sha itself is useful to the caller for identification. Return the
+        // branch-gone shape with landedSha populated instead of null so the UI
+        // can surface "the work landed at <sha>" rather than "no files changed".
+        if (!parentSha) return { ...BRANCH_GONE, landedSha: sha }
         base = parentSha
         head = sha
       } catch {

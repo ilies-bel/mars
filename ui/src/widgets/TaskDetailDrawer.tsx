@@ -914,12 +914,19 @@ const ChangesSection = ({ taskId, changesData: injected, projectId, fetchImpl, i
     )
   }
 
-  const isEmpty = !changes || changes.reason === 'branch-gone'
-  const files = isEmpty ? [] : changes.files
-  const patch = isEmpty ? '' : changes.patch
-  const truncated = isEmpty ? false : changes.truncated
-  const commits = isEmpty ? [] : changes.commits
-  const landedSha = isEmpty ? null : changes.landedSha
+  // Distinguish the branch-gone case (branch deleted after merge) from a
+  // genuinely empty diff (task ran but touched no files). They need different
+  // copy: one says the diff is unavailable, the other says no files changed.
+  // Use inline narrowing on `changes.reason` (not a stored boolean) so
+  // TypeScript can narrow the discriminated union in each expression.
+  const isBranchGone = !!changes && changes.reason === 'branch-gone'
+  const isEmptyDiff = !changes || (changes.reason !== 'branch-gone' && changes.files.length === 0)
+  const files = !changes || changes.reason === 'branch-gone' ? [] : changes.files
+  const patch = !changes || changes.reason === 'branch-gone' ? '' : changes.patch
+  const truncated = !changes || changes.reason === 'branch-gone' ? false : changes.truncated
+  const commits = !changes || changes.reason === 'branch-gone' ? [] : changes.commits
+  // landedSha is available on both shapes (string | null), so no narrowing needed.
+  const landedSha = changes?.landedSha ?? null
 
   const totalAdditions = files.reduce((s, f) => s + Math.max(f.additions, 0), 0)
   const totalDeletions = files.reduce((s, f) => s + Math.max(f.deletions, 0), 0)
@@ -943,7 +950,18 @@ const ChangesSection = ({ taskId, changesData: injected, projectId, fetchImpl, i
         )}
       </div>
 
-      {isEmpty ? (
+      {isBranchGone ? (
+        <div data-testid="changes-branch-gone" className="flex flex-col gap-1">
+          <p className="font-mono text-label text-muted-foreground">
+            The branch was cleaned up after merging — the full diff is no longer available.
+          </p>
+          {landedSha != null ? (
+            <p className="font-mono text-micro text-muted-foreground" data-testid="changes-branch-gone-sha">
+              Merge commit: <span className="text-primary">{landedSha.slice(0, 7)}</span>
+            </p>
+          ) : null}
+        </div>
+      ) : isEmptyDiff ? (
         <p className="font-mono text-label text-muted-foreground" data-testid="changes-empty">This task changed no files.</p>
       ) : (
         <div className="flex flex-col gap-2">

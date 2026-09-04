@@ -44,6 +44,12 @@ interface DaemonCodeDriftState {
   dependencyDrift: boolean
   /** Commit distance sourceSha..currentSha, or null when it couldn't be computed. */
   behindBy?: number | null
+  /**
+   * Unix-ms timestamp of when drift was first detected in this daemon session.
+   * Used as `raisedAt` so the card age reflects the detection event, not the
+   * derivation query time (which would always be "0s ago").
+   */
+  detectedAt?: number | null
 }
 
 export interface ConditionsDeps {
@@ -653,11 +659,15 @@ function deriveDaemonCodeDriftConditions(
 ): PersistedActionQueueRow[] {
   const codeDrift = getCodeDrift?.()
   if (!codeDrift) return []
-  const { sourceSha, currentSha, dependencyDrift, behindBy = null } = codeDrift
+  const { sourceSha, currentSha, dependencyDrift, behindBy = null, detectedAt } = codeDrift
   if (!sourceSha || !currentSha || sourceSha === currentSha) return []
 
   const shortSrc = sourceSha.slice(0, 7)
   const shortHead = currentSha.slice(0, 7)
+  // Use the detection timestamp as raisedAt so the card shows when the drift
+  // was first detected rather than always claiming "0s ago" (derived items
+  // are regenerated on every read, so nowMs would always be current time).
+  const driftRaisedAt = typeof detectedAt === 'number' && Number.isFinite(detectedAt) ? detectedAt : nowMs
   return [
     {
       id: deriveId('daemon-code-drift', `${sourceSha}:${currentSha}`),
@@ -674,7 +684,7 @@ function deriveDaemonCodeDriftConditions(
       // always rendered empty even though the daemon held all three values.
       payload: { runningCommit: sourceSha, headCommit: currentSha, behindBy, dependencyDrift },
       context: {},
-      raisedAt: nowMs,
+      raisedAt: driftRaisedAt,
       lastSeenAt: nowMs,
       signature: 'daemon-code-drift',
     },
@@ -1065,7 +1075,7 @@ async function derivePhantomMergeConditions(
     const taskId = (r as { id: string }).id
     const tombstonePath = join(marsWorktreesDir, `${taskId}.removed.json`)
     if (!existsSync(tombstonePath)) continue
-    let tombstone: { reason?: string; mergeCommitSha?: string | null; taskId?: string }
+    let tombstone: { reason?: string; mergeCommitSha?: string | null; taskId?: string; removedAt?: string }
     try {
       tombstone = JSON.parse(readFileSync(tombstonePath, 'utf8')) as typeof tombstone
     } catch {
@@ -1074,6 +1084,13 @@ async function derivePhantomMergeConditions(
     if (tombstone.reason !== 'merged') continue
     // null or missing mergeCommitSha with reason='merged' is the phantom-merge symptom.
     if (tombstone.mergeCommitSha) continue
+    // Use the tombstone's recorded removal time as the alert's raisedAt so the
+    // card shows when the merge (and the gap) actually occurred rather than
+    // always saying "0s ago" (derived items are regenerated on every read).
+    const tombstoneRemovedAt = typeof tombstone.removedAt === 'string'
+      ? Date.parse(tombstone.removedAt)
+      : NaN
+    const phantomRaisedAt = Number.isFinite(tombstoneRemovedAt) ? tombstoneRemovedAt : nowMs
 
     // Check whether the work actually landed on the integration branch before
     // raising an alert. The outcome is cached per (taskId, intSha) so the git
@@ -1163,7 +1180,7 @@ async function derivePhantomMergeConditions(
         ].join('\n'),
         payload: { taskId, tombstonePath, reason: 'merged', mergeCommitSha: null },
         context: {},
-        raisedAt: nowMs,
+        raisedAt: phantomRaisedAt,
         lastSeenAt: nowMs,
         signature: `phantom-merge-unknown:${taskId}`,
       })
@@ -1190,7 +1207,7 @@ async function derivePhantomMergeConditions(
       ].join('\n'),
       payload: { taskId, tombstonePath, reason: 'merged', mergeCommitSha: null },
       context: {},
-      raisedAt: nowMs,
+      raisedAt: phantomRaisedAt,
       lastSeenAt: nowMs,
       signature: `phantom-merge:${taskId}`,
     })

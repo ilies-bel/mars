@@ -1034,6 +1034,10 @@ export const startDaemon = async (
   }
   let currentSha: string | null = sourceSha
   let isStale = false
+  // Unix-ms timestamp of when drift was first detected in this daemon session.
+  // Set once and never reset so the alert age reflects the original detection
+  // event, not the query time.
+  let driftDetectedAt: number | null = null
   let lastDependencyDrift = false
   // Commit distance sourceSha..currentSha, refreshed alongside dependency
   // drift below. Feeds the daemon-code-drift row's `behindBy` payload field
@@ -5385,7 +5389,7 @@ export const startDaemon = async (
         getPauseState: () => pause.get(),
         crashMarkerPath: crashMarker,
         getCodeDrift: () => isStale && sourceSha && currentSha && sourceSha !== currentSha
-          ? { sourceSha, currentSha, dependencyDrift: lastDependencyDrift, behindBy: lastBehindBy }
+          ? { sourceSha, currentSha, dependencyDrift: lastDependencyDrift, behindBy: lastBehindBy, detectedAt: driftDetectedAt }
           : null,
         isBaselinePoisoned: () => _baselineHealthChecker?.isBaselinePoisoned() ?? false,
         baselineDetail: () => {
@@ -6535,6 +6539,11 @@ export const startDaemon = async (
         }
 
         currentSha = head
+        if (!isStale) {
+          // Record the first detection time; never overwrite so the alert age
+          // stays anchored to when drift was discovered, not the last check.
+          driftDetectedAt = Date.now()
+        }
         isStale = true
         const dependencyDrift = await hasDevDependencyDrift(sourceSha, head, sourceRepoDir)
         lastDependencyDrift = dependencyDrift

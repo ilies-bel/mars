@@ -1900,7 +1900,9 @@ export const taskChangesResponseSchema = z.discriminatedUnion('reason', [
     reason: z.literal('branch-gone'),
     base: z.null(),
     head: z.null(),
-    landedSha: z.null(),
+    // Non-null when the merge-commit SHA is known even though the full diff
+    // cannot be reconstructed (e.g. the parent commit is unreachable locally).
+    landedSha: z.string().nullable(),
     files: z.tuple([]),
     patch: z.literal(''),
     truncated: z.literal(false),
