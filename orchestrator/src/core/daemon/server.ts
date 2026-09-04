@@ -5450,6 +5450,22 @@ export const startDaemon = async (
     purgeTask: async (id) => {
       await handlePurge(id, false)
     },
+    dropTask: async (id, force = false) => {
+      await handleDrop(id, force)
+    },
+    setBlockers: async (id, add, remove) => {
+      let added: readonly string[] = []
+      let removed: readonly string[] = []
+      if (add.length > 0) {
+        const result = await handleBlock(id, add)
+        added = result.blockerIds
+      }
+      if (remove.length > 0) {
+        const result = await handleRemoveBlockers(id, remove)
+        removed = result.removed
+      }
+      return { added, removed }
+    },
     pruneWorktree: async (id) => {
       // Guard: never remove a live task's worktree mid-flight. Removing the
       // spawn cwd while verify is running produces a cryptic "spawn git ENOENT"

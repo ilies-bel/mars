@@ -629,6 +629,36 @@ export interface HttpServerDeps {
    */
   abortRelease?: (id: string) => Promise<void>
   /**
+   * Drop a task and its worktree permanently. Unlike `purgeTask`, this verb
+   * accepts any task status and applies a commits-ahead guard by default.
+   *
+   * When `force` is false (default) and the branch has commits ahead of the
+   * integration branch, the call throws with a message that includes
+   * `"is in flight"` or `"refusing to drop"` — the caller surfaces the
+   * error to the operator so they can decide whether to pass `force=true`.
+   *
+   * Optional — when absent the endpoint returns 501 Not Implemented.
+   * Backs the `POST /actions/drop/:id` route (body: `{ force?: boolean }`).
+   */
+  dropTask?: (id: string, force?: boolean) => Promise<void>
+  /**
+   * Add and/or remove blocker edges on a task in one atomic call. Edges in
+   * `add` are inserted (same semantics as `mars block <id> <blockerIds>`);
+   * edges in `remove` are deleted (same semantics as `mars unblock <id>
+   * <blockerIds>`). Both arrays may be empty — the call is a no-op for the
+   * empty half. Returns the ids that were actually added/removed so the UI
+   * can confirm the mutation without a follow-up GET.
+   *
+   * Optional — when absent the endpoint returns 501 Not Implemented.
+   * Backs the `POST /actions/set-blockers/:id` route
+   * (body: `{ add?: string[], remove?: string[] }`).
+   */
+  setBlockers?: (
+    id: string,
+    add: readonly string[],
+    remove: readonly string[],
+  ) => Promise<{ added: readonly string[]; removed: readonly string[] }>
+  /**
    * Complete the current manual step of a live workflow. Transitions the task
    * from `awaiting-human` → `queued` (keeping the lease so the pipeline can
    * re-grant it when it parks at the next manual step). Idempotent: if the task

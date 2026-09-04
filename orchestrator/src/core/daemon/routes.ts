@@ -3665,6 +3665,79 @@ export const registerRoutes = (
       return
     }
 
+    // POST /actions/drop/:id — drop a task regardless of status.
+    // Body (optional): { force?: boolean } — bypasses the commits-ahead guard.
+    if (op === 'drop') {
+      if (!deps.dropTask) {
+        sendJson(res, 501, { ok: false, error: 'drop not implemented' })
+        return
+      }
+      let rawBody = ''
+      req.on('data', (chunk: Buffer) => { rawBody += chunk.toString() })
+      req.on('end', () => {
+        let force = false
+        try {
+          const parsed = JSON.parse(rawBody || '{}') as { force?: unknown }
+          if (parsed.force === true) force = true
+        } catch {}
+        deps.dropTask!(id, force)
+          .then(() => sendJson(res, 200, { ok: true }))
+          .catch((err: unknown) => {
+            const msg = err instanceof Error ? err.message : String(err)
+            if (msg.includes('not found')) {
+              sendJson(res, 404, { ok: false, error: msg })
+            } else if (msg.includes('is in flight') || msg.includes('refusing to drop')) {
+              sendJson(res, 409, { ok: false, error: msg })
+            } else {
+              sendError(res, err)
+            }
+          })
+      })
+      req.on('error', (err: unknown) => sendError(res, err))
+      return
+    }
+
+    // POST /actions/set-blockers/:id — add/remove blocker edges atomically.
+    // Body: { add?: string[], remove?: string[] }
+    if (op === 'set-blockers') {
+      if (!deps.setBlockers) {
+        sendJson(res, 501, { ok: false, error: 'set-blockers not implemented' })
+        return
+      }
+      let rawBody = ''
+      req.on('data', (chunk: Buffer) => { rawBody += chunk.toString() })
+      req.on('end', () => {
+        let parsed: unknown
+        try {
+          parsed = JSON.parse(rawBody || '{}')
+        } catch {
+          sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
+          return
+        }
+        const body = parsed as { add?: unknown; remove?: unknown }
+        const add = Array.isArray(body.add)
+          ? body.add.filter((x): x is string => typeof x === 'string')
+          : []
+        const remove = Array.isArray(body.remove)
+          ? body.remove.filter((x): x is string => typeof x === 'string')
+          : []
+        deps.setBlockers!(id, add, remove)
+          .then((result) => sendJson(res, 200, { ok: true, ...result }))
+          .catch((err: unknown) => {
+            const msg = err instanceof Error ? err.message : String(err)
+            if (msg.includes('not found')) {
+              sendJson(res, 404, { ok: false, error: msg })
+            } else if (msg.includes('cannot block itself') || msg.includes('no blocker edge')) {
+              sendJson(res, 409, { ok: false, error: msg })
+            } else {
+              sendError(res, err)
+            }
+          })
+      })
+      req.on('error', (err: unknown) => sendError(res, err))
+      return
+    }
+
     const handler = entityHandlers[op as EntityOp]
     if (!handler) {
       sendJson(res, 404, { ok: false, error: `Unknown action op: ${op}` })
