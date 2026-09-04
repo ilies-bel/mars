@@ -8,7 +8,7 @@
  */
 import { runTool } from '../../core/lib/run-tool'
 import { resolveVcs } from '../../core/ports/vcs/registry'
-import { type WorktreeResult as WorktreeRef } from '../../core/ports/vcs/types'
+import { type WorktreeResult as WorktreeRef, type MergeResult } from '../../core/ports/vcs/types'
 import {
   checkMergeTargetStatus,
   isZeroCommitBranch,
@@ -16,7 +16,6 @@ import {
   MergeAbortedError,
   MERGE_HARD_TIMEOUT_MS,
   MergeHardTimeoutError,
-  type MergeResult,
 } from '../../core/lib/git/merge'
 import {
   checkpointRefFor,
@@ -855,7 +854,7 @@ export const merge = async (
             )
             // Store the Vega conversation in the durable trace rather than
             // embedding raw transcript JSON in the task row (VISION DEC-18).
-            if (m.supervisorConversation.length > 0) {
+            if ((m.supervisorConversation?.length ?? 0) > 0) {
               await trace.traceStore.appendDurableTranscript?.(
                 taskId,
                 m.vegaSessionId ?? `vcs-supervisor-merge-${taskId}`,
@@ -899,7 +898,7 @@ export const merge = async (
             `for task ${taskId}; worktree at ${worktreePath}`
           )
           // Store the Vega conversation in the durable trace
-          if (m.supervisorConversation.length > 0) {
+          if ((m.supervisorConversation?.length ?? 0) > 0) {
             await trace.traceStore.appendDurableTranscript?.(
               taskId,
               m.vegaSessionId ?? `vcs-supervisor-merge-${taskId}`,

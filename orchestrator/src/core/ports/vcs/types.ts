@@ -153,6 +153,12 @@ export interface MergeResult {
   conflictResolved: boolean
   aborted: boolean
   output: string
+  /**
+   * Full conversation from a vcs-supervisor (Vega) run — typed as `unknown[]` to
+   * avoid importing `AgentEvent` across the serialization boundary (ADR-0097).
+   * An empty array when no supervisor was invoked.
+   */
+  supervisorConversation?: unknown[]
   /** Number of times the rebase+fast-forward was retried due to a concurrent integration advance. */
   retriesAttempted: number
   /** Claude session id from a vcs-supervisor (Vega) run, or `null` when none was invoked. */

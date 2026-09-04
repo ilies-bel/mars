@@ -11,3 +11,15 @@ export {
   WorktreeRebaseConflictError,
   ResumeWorktreeUnrecoverable,
 } from '../../lib/git/worktree'
+
+/**
+ * Re-exports of merge error classes and timeout constants from `lib/git/merge`
+ * so port consumers can `instanceof`-check merge errors and reference the
+ * canonical timeout budgets without importing `lib/git/merge` directly.
+ */
+export {
+  MergeAbortedError,
+  MergeHardTimeoutError,
+  DEFAULT_WATCHDOG_MS,
+  MERGE_HARD_TIMEOUT_MS,
+} from '../../lib/git/merge'
