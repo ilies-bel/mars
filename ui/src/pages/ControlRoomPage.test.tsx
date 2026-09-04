@@ -28,6 +28,7 @@ vi.mock('@/shared/api', async (importOriginal) => {
     fetchOperatorState: vi.fn(() => new Promise(() => {})),
     fetchGlossary: vi.fn(() => new Promise(() => {})),
     fetchAdrs: vi.fn(() => new Promise(() => {})),
+    fetchVerifyGates: vi.fn(() => new Promise(() => {})),
   }
 })
 
@@ -149,5 +150,52 @@ describe('ControlRoomPage – NOW block dispatch indicator', () => {
     const html = renderControlRoom()
 
     expect(html).toContain('>Live<')
+  })
+})
+
+describe('ControlRoomPage — Gates section', () => {
+  it('renders the Gates section with testid', () => {
+    mockUseDispatchState.mockReturnValue({
+      paused: false,
+      reason: null,
+      since: null,
+      detail: null,
+    })
+
+    const html = renderControlRoom()
+    expect(html).toContain('data-testid="gates-section"')
+  })
+
+  it('renders the "Gates" section label', () => {
+    mockUseDispatchState.mockReturnValue({
+      paused: false,
+      reason: null,
+      since: null,
+      detail: null,
+    })
+
+    const html = renderControlRoom()
+    // The section label is rendered as text in the page
+    expect(html).toContain('Gates')
+  })
+
+  it('Gates section appears between Levers and Now in the DOM', () => {
+    mockUseDispatchState.mockReturnValue({
+      paused: false,
+      reason: null,
+      since: null,
+      detail: null,
+    })
+
+    const html = renderControlRoom()
+
+    // All three sections must be present
+    expect(html).toContain('data-testid="gates-section"')
+    expect(html).toContain('>Live<')
+
+    // Gates must precede the Now section's Live indicator
+    const gatesIdx = html.indexOf('data-testid="gates-section"')
+    const liveIdx = html.indexOf('>Live<')
+    expect(gatesIdx).toBeLessThan(liveIdx)
   })
 })

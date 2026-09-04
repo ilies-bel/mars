@@ -96,6 +96,7 @@ import {
 import {
   VerifyGateInputSchema,
   addVerifyGate,
+  listVerifyGates,
   removeVerifyGate,
   restoreVerifyGate,
 } from '../verify-gates'
@@ -348,6 +349,7 @@ const handleEventsRequest = async (
  *   POST /actions/restart-daemon       → re-exec the daemon
  *   POST /actions/run-reflect          → run reflect flow + clear reflect-recommended row
  *   POST /actions/land-work/:id        → merge ahead commits onto integration branch
+ *   GET  /view/verify-gates            → list all verify gates
  *   POST /verify-gates                 → add a verify gate ({ id })
  *   DELETE /verify-gates/:id           → remove a verify gate
  *   POST /verify-gates/:id/restore     → restore a quarantined gate (config write)
@@ -824,6 +826,16 @@ export const registerRoutes = (
       } catch (err: unknown) {
         sendError(res, err)
       }
+      return
+    }
+
+    // GET /view/verify-gates — full list of verify gate rows, ordered by scope
+    // then creation time. Returns { gates: VerifyGate[] }. Bypasses the draining
+    // gate — read-only, no side effects.
+    if (req.method === 'GET' && req.url === '/view/verify-gates') {
+      listVerifyGates()
+        .then((gates) => sendJson(res, 200, { gates }))
+        .catch((err: unknown) => sendError(res, err))
       return
     }
 

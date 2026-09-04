@@ -416,6 +416,66 @@ export const fetchActionQueue = async (projectId?: string): Promise<ActionQueueI
   return fetchJson(appendProject('/api/action-queue', projectId), actionQueueResponseSchema)
 }
 
+// ---------------------------------------------------------------------------
+// Verify gates
+// ---------------------------------------------------------------------------
+
+/** A single verify gate as returned by GET /api/verify-gates. */
+export interface VerifyGate {
+  id: string
+  scope: string
+  name: string
+  cmd: string
+  args: string[]
+  required: boolean
+  tier: 'task' | 'integration'
+  source: string
+  createdAt: number
+  state: 'active' | 'quarantined'
+  quarantinedAt: number | null
+  lastFailureAt: number | null
+  timeoutMin: number | null
+}
+
+const verifyGatesResponseSchema = z.object({
+  gates: z.array(
+    z.object({
+      id: z.string(),
+      scope: z.string(),
+      name: z.string(),
+      cmd: z.string(),
+      args: z.array(z.string()),
+      required: z.boolean(),
+      tier: z.enum(['task', 'integration']),
+      source: z.string(),
+      createdAt: z.number(),
+      state: z.enum(['active', 'quarantined']),
+      quarantinedAt: z.number().nullable(),
+      lastFailureAt: z.number().nullable(),
+      timeoutMin: z.number().nullable(),
+      // Keep remaining fields optional so older daemons don't cause parse failures
+      quarantineSignature: z.string().nullable().optional(),
+      lastFailureSignature: z.string().nullable().optional(),
+      lastFailureOriginId: z.string().nullable().optional(),
+      evidence: z.string().nullable().optional(),
+    }),
+  ),
+})
+
+export const fetchVerifyGates = async (projectId?: string): Promise<VerifyGate[]> => {
+  const json = await fetchJson(
+    appendProject('/api/verify-gates', projectId),
+    verifyGatesResponseSchema,
+  )
+  return json.gates as VerifyGate[]
+}
+
+export const postRestoreVerifyGate = async (id: string, projectId?: string): Promise<void> => {
+  const path = appendProject(`/api/verify-gates/${encodeURIComponent(id)}/restore`, projectId)
+  const r = await fetch(`${BASE}${path}`, { method: 'POST' })
+  if (!r.ok) await throwMutationError(path, r)
+}
+
 /**
  * Fetch a cursor-paged slice of resolved action-queue rows (history).
  * Rows are newest-first by resolved_at. Pass the returned `nextCursor`

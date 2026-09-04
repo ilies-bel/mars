@@ -923,6 +923,31 @@ export const startServer = async (
           return jsonResponse(r.status, r.body)
         }
 
+        // GET /api/verify-gates — full list of verify gates. Proxied from the
+        // daemon's GET /view/verify-gates. Returns { gates: VerifyGate[] }.
+        if (path === '/api/verify-gates' && req.method === 'GET') {
+          const r = await proxyGet(ctx.stateDir, '/view/verify-gates')
+          return jsonResponse(r.status, r.body)
+        }
+
+        // POST /api/verify-gates/:id/restore — restore a quarantined gate to
+        // active. Proxied to the daemon's POST /verify-gates/:id/restore.
+        {
+          const restoreMatch =
+            req.method === 'POST'
+              ? path.match(/^\/api\/verify-gates\/([^/]+)\/restore$/)
+              : null
+          if (restoreMatch && restoreMatch[1]) {
+            const id = decodeURIComponent(restoreMatch[1])
+            const r = await proxyPost(
+              ctx.stateDir,
+              `/verify-gates/${encodeURIComponent(id)}/restore`,
+              {},
+            )
+            return jsonResponse(r.status, r.body)
+          }
+        }
+
         if (path === '/api/glossary' && req.method === 'GET') {
           const r = await proxyGet(ctx.stateDir, '/view/glossary')
           return jsonResponse(r.status, r.body)

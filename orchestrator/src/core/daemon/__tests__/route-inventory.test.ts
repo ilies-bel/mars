@@ -62,6 +62,7 @@ const DECLARED_ROUTE_MARKERS: string[] = [
   "req.url === '/view/status-counts'",
   "req.url === '/view/primitives'",
   "req.url === '/view/framework-update'",
+  "req.url === '/view/verify-gates'",
   "req.url === '/view/steward'",
   "req.url === '/view/scorer-workflows'",
   "req.url === '/view/scorer-suggestions'",

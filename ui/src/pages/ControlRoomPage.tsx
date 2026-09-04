@@ -4,9 +4,11 @@
  * Sections (top → bottom):
  *   1. Levers — dispatch pause/resume, recovery kill-switch, and concurrency
  *      caps. All controls show a confirm dialog before firing.
- *   2. Now — SSE liveness dot + task counts by lifecycle cluster.
- *   3. Advisory Digest — collapsed advisory action-queue items.
- *   4. Rules & Language — glossary chips and ADR list, collapsed by default
+ *   2. Gates — verify-gate registry: name, tier, command, last failure, and a
+ *      Restore button for quarantined gates. Empty state links to detect command.
+ *   3. Now — SSE liveness dot + task counts by lifecycle cluster.
+ *   4. Advisory Digest — collapsed advisory action-queue items.
+ *   5. Rules & Language — glossary chips and ADR list, collapsed by default
  *      behind a search/filter input so the heavy list doesn't scroll-block
  *      the controls above.
  *
@@ -19,9 +21,12 @@ import {
   fetchGlossary,
   fetchAdrs,
   fetchOperatorState,
+  fetchVerifyGates,
   postOperatorDispatch,
   postOperatorRecovery,
+  postRestoreVerifyGate,
   type OperatorState,
+  type VerifyGate,
 } from '@/shared/api'
 import { useProgress } from '@/hooks/useProgress'
 import { useStatusCounts } from '@/hooks/useStatusCounts'
@@ -308,7 +313,131 @@ const CapStat = ({ label, value }: { label: string; value: number }) => (
 )
 
 // ---------------------------------------------------------------------------
-// Section 2 — Now (dispatch state + task counts)
+// Section 2 — Gates (verify-gate registry)
+// ---------------------------------------------------------------------------
+
+const GatesSection = () => {
+  const queryClient = useQueryClient()
+  const { data: gatesData, isLoading, isError, error: queryError } = useQuery<VerifyGate[]>({
+    queryKey: ['verify-gates'],
+    queryFn: () => fetchVerifyGates(),
+    refetchInterval: 30_000,
+  })
+
+  const [restoring, setRestoring] = useState<string | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
+
+  const handleRestore = async (id: string) => {
+    setRestoring(id)
+    setActionError(null)
+    try {
+      await postRestoreVerifyGate(id)
+      void queryClient.invalidateQueries({ queryKey: ['verify-gates'] })
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setRestoring(null)
+    }
+  }
+
+  if (isLoading) {
+    return (
+      <section data-testid="gates-section">
+        <div className="mb-3"><SectionLabel>Gates</SectionLabel></div>
+        <SkeletonList rows={2} rowClassName="h-10 w-full mb-2" label="Loading gates" />
+      </section>
+    )
+  }
+
+  if (isError || !gatesData) {
+    return (
+      <section data-testid="gates-section">
+        <div className="mb-3"><SectionLabel>Gates</SectionLabel></div>
+        <ErrorState
+          error={queryError ?? new Error('Verify gates unavailable')}
+          of="gates"
+          variant="inline"
+        />
+      </section>
+    )
+  }
+
+  return (
+    <section data-testid="gates-section">
+      <div className="mb-3"><SectionLabel>Gates</SectionLabel></div>
+
+      {actionError && (
+        <p className="mb-2 font-mono text-label text-error">{actionError}</p>
+      )}
+
+      {gatesData.length === 0 ? (
+        <p className="font-mono text-label text-muted-foreground/50">
+          No gates yet — run <code className="font-mono text-micro bg-surface px-1 rounded">mars verify-gate detect</code>
+        </p>
+      ) : (
+        <ul className="space-y-2">
+          {gatesData.map((gate) => (
+            <li
+              key={gate.id}
+              className="mars-card flex items-start justify-between gap-3 rounded bg-surface px-4 py-3"
+            >
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-mono text-body font-medium text-foreground">
+                    {gate.name}
+                  </span>
+                  <span
+                    className={[
+                      'shrink-0 rounded-full px-2 py-0.5 font-mono text-micro font-medium uppercase tracking-wide',
+                      gate.tier === 'integration'
+                        ? 'bg-primary/10 text-primary/70'
+                        : 'bg-surface-elevated text-muted-foreground',
+                    ].join(' ')}
+                  >
+                    {gate.tier}
+                  </span>
+                  {!gate.required && (
+                    <span className="shrink-0 rounded-full px-2 py-0.5 font-mono text-micro font-medium uppercase tracking-wide bg-warn/10 text-warn">
+                      advisory
+                    </span>
+                  )}
+                  {gate.state === 'quarantined' && (
+                    <span className="shrink-0 rounded-full px-2 py-0.5 font-mono text-micro font-medium uppercase tracking-wide bg-error/10 text-error">
+                      quarantined
+                    </span>
+                  )}
+                </div>
+                <p className="mt-1 font-mono text-micro text-muted-foreground/70">
+                  <span className="font-mono">{[gate.cmd, ...gate.args].join(' ')}</span>
+                  {gate.scope !== '.' && (
+                    <span className="ml-2 text-muted-foreground/40">in {gate.scope}</span>
+                  )}
+                </p>
+                {gate.lastFailureAt !== null && (
+                  <p className="mt-0.5 font-mono text-micro text-error/60">
+                    Last failure: {new Date(gate.lastFailureAt).toLocaleString()}
+                  </p>
+                )}
+              </div>
+              {gate.state === 'quarantined' && (
+                <button
+                  onClick={() => { void handleRestore(gate.id) }}
+                  disabled={restoring === gate.id}
+                  className="shrink-0 rounded-md border border-border px-3 py-1.5 font-mono text-label text-foreground hover:bg-surface transition-colors disabled:opacity-50"
+                >
+                  {restoring === gate.id ? 'Restoring…' : 'Restore'}
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Section 3 — Now (dispatch state + task counts)
 // ---------------------------------------------------------------------------
 
 const NowSection = () => {
@@ -396,7 +525,7 @@ const Stat = ({ label, value, colorClass }: StatProps) => (
 )
 
 // ---------------------------------------------------------------------------
-// Section 3 — Advisory Digest
+// Section 4 — Advisory Digest
 // ---------------------------------------------------------------------------
 
 const ADVISORY_LABELS: Record<string, string> = {
@@ -457,7 +586,7 @@ const AdvisorySection = () => {
 }
 
 // ---------------------------------------------------------------------------
-// Section 4 — Rules & Language (collapsed, searchable)
+// Section 5 — Rules & Language (collapsed, searchable)
 // ---------------------------------------------------------------------------
 
 const RulesSection = () => {
@@ -555,7 +684,7 @@ const RulesSection = () => {
 }
 
 // ---------------------------------------------------------------------------
-// Section 5 — Steward history
+// Section 6 — Steward history
 // ---------------------------------------------------------------------------
 
 /**
@@ -621,6 +750,7 @@ export const ControlRoomPage = () => (
   <main className="flex h-full min-h-0 flex-1 flex-col gap-8 overflow-y-auto bg-background p-6">
     <h1 className="font-mono text-title font-semibold text-foreground">Control Room</h1>
     <LeversSection />
+    <GatesSection />
     <NowSection />
     <AdvisorySection />
     <RulesSection />
