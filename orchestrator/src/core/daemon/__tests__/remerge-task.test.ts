@@ -231,6 +231,79 @@ describe('coreRemergeTask', () => {
     ).rejects.toMatchObject({ code: 'NO_COMMITS_AHEAD' })
   })
 
+  // ── Fast-forward-already-landed (2026-09-03 merge-timeout incident) ──────────
+
+  it(
+    'settles done when the branch tip is already on main (fast-forward landed, watchdog fired late)',
+    async () => {
+      const { q, remerge } = await loadModules(repo)
+
+      const task = await q.enqueueTask('watchdog fired late', undefined, { skipTriage: true })
+      const branch = `task/${task.id}`
+
+      // Create the task branch with a commit ahead of main.
+      execFileSync('git', ['checkout', '-b', branch], { cwd: repo })
+      writeFileSync(resolve(repo, 'feature.ts'), 'export const feature = true\n')
+      execFileSync('git', ['add', 'feature.ts'], { cwd: repo })
+      execFileSync('git', ['commit', '-m', 'implement feature'], { cwd: repo })
+
+      // Simulate a fast-forward merge: advance main to the task branch tip.
+      execFileSync('git', ['checkout', 'main'], { cwd: repo })
+      execFileSync('git', ['merge', '--ff-only', branch], { cwd: repo })
+      // The branch still exists (worktree cleanup hasn't run yet), but its tip
+      // is now reachable from main — `main..branch` is empty.
+
+      await q.resolveQueueClient().execute({
+        sql: `UPDATE tasks SET status = 'failed', branch = ? WHERE id = ?`,
+        args: [branch, task.id],
+      })
+
+      const result = await remerge.coreRemergeTask(task.id, new Set(['failed']), new InMemoryStore())
+
+      expect(result.status).toBe('done')
+      expect(result.message).toMatch(/already reachable/i)
+
+      const updated = await q.getTask(task.id)
+      expect(updated?.status).toBe('done')
+      expect(updated?.failureReasonCode).toBeNull()
+      expect(updated?.failureSignature).toBeNull()
+      expect(updated?.error).toBeNull()
+      expect(updated?.branch).toBeNull()
+
+      // The superseded branch ref is cleaned up.
+      expect(branchExists(repo, branch)).toBe(false)
+    },
+  )
+
+  it(
+    'throws NO_COMMITS_AHEAD for a never-committed branch even when it is an ancestor of main',
+    async () => {
+      const { q, remerge } = await loadModules(repo)
+
+      const task = await q.enqueueTask('never committed, ancestor', undefined, { skipTriage: true })
+      const branch = `task/${task.id}`
+
+      // Branch created at main tip — the tip IS an ancestor of main (it IS main),
+      // but there are zero commits between the fork point and the tip.
+      execFileSync('git', ['branch', branch], { cwd: repo })
+
+      await q.resolveQueueClient().execute({
+        sql: `UPDATE tasks SET status = 'failed', branch = ? WHERE id = ?`,
+        args: [branch, task.id],
+      })
+
+      await expect(
+        remerge.coreRemergeTask(task.id, new Set(['failed']), new InMemoryStore()),
+      ).rejects.toMatchObject({ code: 'NO_COMMITS_AHEAD' })
+
+      // Task remains failed — not settled done.
+      const after = await q.getTask(task.id)
+      expect(after?.status).toBe('failed')
+      // Branch survives — it was never cleaned up.
+      expect(branchExists(repo, branch)).toBe(true)
+    },
+  )
+
   // ── Already-landed-by-patch (mars-a98bec46 regression) ──────────────────────
 
   it(

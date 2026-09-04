@@ -128,6 +128,95 @@ export const coreRemergeTask = async (
   // integrated. A branch at the integration tip has no work to verify or merge.
   const commitsAhead = await listUniqueCommitsAhead(branch, integrationBranch, repoRoot)
   if (commitsAhead.length === 0) {
+    // Escape hatch for the merge-timeout incident (mars-c360c793 / 2026-09-03):
+    // the outer merge watchdog fired AFTER the fast-forward already landed, so
+    // the task ended `failed` while its branch tip is literally on main (an
+    // ancestor by SHA). `main..branch` is empty — not because the branch never
+    // had commits, but because those commits ARE on main. Detect this by:
+    //   1. Confirming the tip is an ancestor of the integration branch.
+    //   2. Counting commits between the fork point and the tip; > 0 means the
+    //      branch authored real work that made it to integration.
+    // If both hold, the task's work is safely on main — settle it done directly.
+    // Keep the `NO_COMMITS_AHEAD` throw only for a branch that truly never had
+    // any authored commits (fork point == tip, count == 0).
+    const { exec: gitExec, execProbe } = await import('../lib/git/internal')
+
+    // Resolve the branch tip SHA.
+    const { stdout: tipRaw } = await gitExec('git', ['rev-parse', branch], { cwd: repoRoot })
+    const branchTip = tipRaw.trim()
+
+    // Is the tip already reachable from the integration branch?
+    const ancestorProbe = await execProbe(
+      'git',
+      ['merge-base', '--is-ancestor', branchTip, integrationBranch],
+      { cwd: repoRoot },
+    )
+    const tipOnIntegration = ancestorProbe.exitCode === 0
+
+    if (tipOnIntegration) {
+      // After a fast-forward merge, the branch tip IS the integration tip (or
+      // is an ancestor of it). `git merge-base branch integration` returns the
+      // tip itself, so `fork..tip` = 0 — a useless result. Instead, use the
+      // branch's reflog to recover the ORIGINAL fork point (the SHA the branch
+      // was created from). `git reflog show` lists events newest-first; the
+      // LAST entry is the creation event, whose SHA is the original base.
+      const reflogResult = await gitExec(
+        'git',
+        ['reflog', 'show', '--format=%H', branch],
+        { cwd: repoRoot },
+      ).catch(() => ({ stdout: '' }))
+      const reflogShas = reflogResult.stdout
+        .split('\n')
+        .map((s) => s.trim())
+        .filter(Boolean)
+      // Fall back to branchTip if reflog is unavailable (gives count = 0,
+      // which safely falls through to NO_COMMITS_AHEAD rather than a false
+      // 'done' settlement).
+      const originalBase = reflogShas.at(-1) ?? branchTip
+
+      // Count commits between the original base and the branch tip.
+      const { stdout: countRaw } = await gitExec(
+        'git',
+        ['rev-list', '--count', `${originalBase}..${branchTip}`],
+        { cwd: repoRoot },
+      )
+      const commitCount = parseInt(countRaw.trim(), 10)
+
+      if (commitCount > 0) {
+        // The branch had real work that landed via fast-forward (or exact-SHA
+        // merge) while the watchdog fired late. Settle the task done directly.
+        if (task.worktreePath && exists(task.worktreePath)) {
+          await removeWorktree({ path: task.worktreePath, branch }, true, false).catch(() => {})
+        }
+        // Delete the branch ref so updateTask's done-implies-merged invariant
+        // (which checks `git rev-list integration..branch`) sees 0-ahead and
+        // allows the done transition without redirecting to 'failed'.
+        await resolveVcs().deleteBranch({ cwd: repoRoot, branch }).catch(() => {})
+        if (TERMINAL_TASK_STATUSES.has(task.status)) {
+          await reopenTerminalTask(id, 'mars remerge: branch tip already on integration')
+        }
+        const message =
+          `branch tip ${branchTip} is already reachable from '${integrationBranch}' — ` +
+          `the branch's ${commitCount} commit(s) landed via fast-forward while the ` +
+          `merge watchdog fired late. Nothing to merge; settling done.`
+        await updateTask(id, {
+          status: 'done',
+          workflow: null,
+          worktreePath: null,
+          branch: null,
+          claudeSessionId: null,
+          error: null,
+          failedPhase: null,
+          failureReason: null,
+          failureSignature: null,
+          failureReasonCode: null,
+        })
+        return { status: 'done', message }
+      }
+    }
+
+    // Genuinely never-committed branch (original base == tip, or tip not on
+    // integration at all). The user must restart from scratch.
     throw new RemergeTaskError(
       `Branch '${branch}' has no un-integrated commits ahead of '${integrationBranch}'. ` +
         `Run \`mars restart ${id}\` to start fresh from setup.`,
