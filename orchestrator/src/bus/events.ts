@@ -111,6 +111,13 @@ export const EventMap = {
     category: z.string(),
     priority: z.string(),
     signature: z.string().nullable(),
+    /**
+     * Plain-language sentence computed from the recipe registry at raise time.
+     * Optional for backward compat — old events emitted before this field was
+     * added do not carry it; the desktop-notify subscriber falls back to
+     * `signature`, then to `itemId`, when absent.
+     */
+    humanSummary: z.string().optional(),
   }),
   'action-queue.resolved': z.object({
     itemId: z.string(),

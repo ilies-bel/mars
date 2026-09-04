@@ -50,6 +50,7 @@ const db = {} as DbClient;
 function makeRaisedEvent(overrides?: {
   signature?: string | null;
   itemId?: string;
+  humanSummary?: string;
 }): BusEvent {
   return {
     id: 1,
@@ -63,6 +64,11 @@ function makeRaisedEvent(overrides?: {
         overrides?.signature !== undefined
           ? overrides.signature
           : 'task.blocked:task-xyz',
+      // Omit humanSummary when not provided so the fallback chain
+      // (signature → itemId) can be exercised by tests that don't supply it.
+      ...(overrides?.humanSummary !== undefined
+        ? { humanSummary: overrides.humanSummary }
+        : {}),
     },
     ts: Date.now(),
   };
@@ -157,6 +163,35 @@ describe('desktop-notify subscriber', () => {
       expect(mockExecFile).toHaveBeenCalledOnce();
       const [, args] = mockExecFile.mock.calls[0] as unknown as [string, string[]];
       expect(args[1]).toContain('item-fallback');
+    });
+
+    it('uses humanSummary as label when present, preferring it over signature', async () => {
+      const sub = buildDesktopNotifySubscriber(db, 'darwin');
+      await sub.handler(
+        makeRaisedEvent({
+          humanSummary: 'Task mars-abc123 failed at the verify step.',
+          signature: 'task.blocked:task-xyz',
+        }),
+      );
+
+      vi.advanceTimersByTime(NOTIFY_DEBOUNCE_MS);
+
+      expect(mockExecFile).toHaveBeenCalledOnce();
+      const [, args] = mockExecFile.mock.calls[0] as unknown as [string, string[]];
+      // humanSummary must appear in the notification script.
+      expect(args[1]).toContain('Task mars-abc123 failed at the verify step.');
+      // The raw signature must NOT appear when humanSummary is present.
+      expect(args[1]).not.toContain('task.blocked:task-xyz');
+    });
+
+    it('falls back to signature when humanSummary is absent', async () => {
+      const sub = buildDesktopNotifySubscriber(db, 'darwin');
+      await sub.handler(makeRaisedEvent({ signature: 'task.blocked:task-xyz' }));
+
+      vi.advanceTimersByTime(NOTIFY_DEBOUNCE_MS);
+
+      const [, args] = mockExecFile.mock.calls[0] as unknown as [string, string[]];
+      expect(args[1]).toContain('task.blocked:task-xyz');
     });
 
     it('escapes double-quotes in the label so AppleScript is not broken', async () => {

@@ -121,12 +121,13 @@ export function buildDesktopNotifySubscriber(
         category: string;
         priority: string;
         signature: string | null;
+        humanSummary?: string;
       };
 
-      // Use the human-readable signature when present; fall back to the raw
-      // item id. The signature encodes the alert key (e.g.
-      // "task.blocked:task-abc123" or "stale-worktree:wt-xyz").
-      const label = p.signature ?? p.itemId;
+      // Prefer the plain-language humanSummary so the system banner shows a
+      // readable sentence (e.g. "Task mars-abc failed at verify"). Fall back
+      // to the signature, then to the raw item id.
+      const label = p.humanSummary ?? p.signature ?? p.itemId;
       // Escape backslashes and double-quotes so the label is safe inside an
       // AppleScript string literal.
       const escaped = label.replace(/\\/g, '\\\\').replace(/"/g, '\\"');

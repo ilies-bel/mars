@@ -621,12 +621,33 @@ export const raiseActionQueueItem = async <K extends ActionQueueKind>(
     ],
   })
   await insertHistory(c, id, null, 'open', item.raisedBy, null)
+  // Compute a plain-language summary for the desktop-notify subscriber so the
+  // system banner shows a human-readable sentence rather than the raw signature.
+  // Mirrors the pattern in buildAlertSegment — same recipe context, same guard.
+  const entityId = deriveEntityId(item, id)
+  let raisedHumanSummary: string
+  if (isActionQueueKind(item.kind)) {
+    const recipe = lookupRecipe(item.kind)
+    const ctx = {
+      kind: item.kind,
+      entityId,
+      payload: item.payload as Record<string, unknown>,
+      context: item.context ?? {},
+      title: item.title,
+      body: item.body,
+      raisedAt: new Date(now).toISOString(),
+    }
+    raisedHumanSummary = recipe.humanSummary(ctx)
+  } else {
+    raisedHumanSummary = item.signature ?? item.kind
+  }
   await emitActionQueueBusEvent('action-queue.raised', {
     itemId: id,
     kind: item.kind,
     category: item.category,
     priority: item.priority,
     signature: item.signature,
+    humanSummary: raisedHumanSummary,
   })
   return id
 }
