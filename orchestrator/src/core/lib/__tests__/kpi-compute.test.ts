@@ -1293,6 +1293,29 @@ describe('listCostPerArcArcs — phaseBreakdown', () => {
     const phaseSum = Object.values(phaseBreakdown!).reduce((a, b) => a + b, 0)
     expect(phaseSum).toBeCloseTo(costTokens!, 10)
   })
+
+  it('asserts individual per-phase values for code and verify phases', async () => {
+    // Seeds two trace_events with distinct stepName values ('code', 'verify') for the
+    // same arc and asserts phaseBreakdown keys and values individually — the minimal
+    // vertical slice the PRD requested.
+    const store = await makeStore()
+    await insertTask(store, { id: 'pb-cv-arc', status: 'done' })
+    // code: 620 input tokens → 620 weighted
+    await insertSignal(store, { taskId: 'pb-cv-arc', stepName: 'code', inputTokens: 620 })
+    // verify: 180 input tokens → 180 weighted
+    await insertSignal(store, { taskId: 'pb-cv-arc', stepName: 'verify', inputTokens: 180 })
+
+    const arcs = await listCostPerArcArcs(store, WINDOW)
+
+    expect(arcs).toHaveLength(1)
+    const arc = arcs[0]
+    expect(arc.phaseBreakdown).toBeDefined()
+    // Per-phase values
+    expect(arc.phaseBreakdown!['code']).toBeCloseTo(620, 10)
+    expect(arc.phaseBreakdown!['verify']).toBeCloseTo(180, 10)
+    // Aggregate must equal sum
+    expect(arc.costTokens).toBeCloseTo(800, 10)
+  })
 })
 
 // ---------------------------------------------------------------------------
