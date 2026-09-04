@@ -928,6 +928,7 @@ const ChangesSection = ({ taskId, changesData: injected, projectId, fetchImpl, i
   const commits = !changes || changes.reason === 'branch-gone' ? [] : changes.commits
   // landedSha is available on both shapes (string | null), so no narrowing needed.
   const landedSha = changes?.landedSha ?? null
+  const gateChecks = !changes || changes.reason === 'branch-gone' ? null : (changes.gateChecks ?? null)
 
   const totalAdditions = files.reduce((s, f) => s + Math.max(f.additions, 0), 0)
   const totalDeletions = files.reduce((s, f) => s + Math.max(f.deletions, 0), 0)
@@ -981,6 +982,28 @@ const ChangesSection = ({ taskId, changesData: injected, projectId, fetchImpl, i
             ) : null}
             {truncated ? <span className="text-warn"> (patch truncated)</span> : null}
           </p>
+
+          {/* Gate checks: show what was verified before this task landed */}
+          {gateChecks !== null && gateChecks.length > 0 && (
+            <p className="font-mono text-micro text-muted-foreground" data-testid="gate-checks-summary">
+              {'Checks: '}
+              {gateChecks.map((check, i) => {
+                const totalMs = gateChecks.reduce((s, c) => s + (c.durationMs ?? 0), 0)
+                const durationLabel = i === gateChecks.length - 1 && totalMs > 0
+                  ? ` — ${(totalMs / 1000).toFixed(1)}s`
+                  : null
+                return (
+                  <span key={check.name}>
+                    {i > 0 ? '  ' : ''}
+                    <span className={check.passed ? 'text-success' : 'text-error'}>
+                      {check.name} {check.passed ? '✓' : '✗'}
+                    </span>
+                    {durationLabel}
+                  </span>
+                )
+              })}
+            </p>
+          )}
 
           {/* File list */}
           <ul className="flex flex-col gap-0.5">

@@ -30,7 +30,7 @@
  */
 
 import type { EventEmitter } from 'node:events'
-import type { MergeJob, MergeJobStore, EnqueueMergeJobInput } from '../store/merge-job-store.js'
+import type { MergeJob, MergeJobStore, EnqueueMergeJobInput, GateCheckEntry } from '../store/merge-job-store.js'
 import type { AgentEvent } from '../lib/claude-stream.js'
 import { isOperatorAutoCommitDisabled, resolveControlLevers } from '../config/levers.js'
 import { readMergeWatchdogMs } from './config.js'
@@ -469,9 +469,14 @@ async function runMergeJob(
   // onAfterFastForward) share the same snapshot and the watchdog can be sized
   // from the gates' own declared timeoutMin values rather than a static
   // constant that is unrelated to how many gates are registered.
-  const { loadVerifyGates } = await import('../../core/verify-gates.js')
+  const { loadVerifyGates, recordVerifyGatePasses } = await import('../../core/verify-gates.js')
   const { resolveStateClient } = await import('../store/state-client.js')
   const preloadedGateScopes = await loadVerifyGates(resolveStateClient())
+
+  // Accumulated gate check results for both task-tier and integration-tier gates.
+  // Written by the onVerifyRebasedTree and onAfterFastForward closures and
+  // persisted after markDone so the task drawer can show "Checks: X ✓ Y ✓".
+  const collectedGateChecks: GateCheckEntry[] = []
 
   // Derive the gate-tier budget from the declared timeoutMin of every step.
   // Fall back to the module-level constant for each gate that has no declared
@@ -592,6 +597,12 @@ async function runMergeJob(
         outputParts.push(
           `=== ${s.name} (${s.passed ? 'pass' : 'FAIL'}) [integration]${durationBadge} ===\n${s.output}`,
         )
+        collectedGateChecks.push({
+          name: s.name,
+          gateId: step.gateId ?? null,
+          passed: s.passed,
+          durationMs: s.duration ?? null,
+        })
       }
 
       if (!gateResult.passed) {
@@ -688,6 +699,12 @@ async function runMergeJob(
         outputParts.push(
           `=== ${s.name} (${s.passed ? 'pass' : 'FAIL'}) [task]${durationBadge} ===\n${s.output}`,
         )
+        collectedGateChecks.push({
+          name: s.name,
+          gateId: step.gateId ?? null,
+          passed: s.passed,
+          durationMs: s.duration ?? null,
+        })
       }
 
       if (!gateResult.passed) {
@@ -871,6 +888,19 @@ async function runMergeJob(
         `[merge-worker] job ${job.id} markDone failed (non-fatal): ${(e as Error).message}`,
       )
     })
+    // Persist gate check results and record passes for Control Room status display.
+    // Both are best-effort — never allowed to fail the merge.
+    if (collectedGateChecks.length > 0) {
+      await store.recordGateChecks(job.id, collectedGateChecks).catch((e: unknown) => {
+        log(
+          `[merge-worker] job ${job.id} recordGateChecks failed (non-fatal): ${(e as Error).message}`,
+        )
+      })
+      const passedGateIds = collectedGateChecks
+        .filter((c) => c.passed && c.gateId !== null)
+        .map((c) => c.gateId as string)
+      await recordVerifyGatePasses(passedGateIds).catch(() => {})
+    }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
     const errorCode: 'watchdog' | 'crash' | 'canceled' =

@@ -1914,6 +1914,13 @@ const taskChangesCommitSchema = z.object({
   authoredAt: z.string(),
 })
 
+const gateCheckEntrySchema = z.object({
+  name: z.string(),
+  gateId: z.string().nullable(),
+  passed: z.boolean(),
+  durationMs: z.number().nullable(),
+})
+
 export const taskChangesResponseSchema = z.discriminatedUnion('reason', [
   z.object({
     reason: z.literal('branch-gone'),
@@ -1926,6 +1933,7 @@ export const taskChangesResponseSchema = z.discriminatedUnion('reason', [
     patch: z.literal(''),
     truncated: z.literal(false),
     commits: z.tuple([]),
+    gateChecks: z.null().optional(),
   }),
   z.object({
     reason: z.undefined().optional(),
@@ -1936,9 +1944,12 @@ export const taskChangesResponseSchema = z.discriminatedUnion('reason', [
     patch: z.string(),
     truncated: z.boolean(),
     commits: z.array(taskChangesCommitSchema),
+    /** Gate check results from the merge verify step. Null for older tasks or tasks without gates. */
+    gateChecks: z.array(gateCheckEntrySchema).nullable().optional(),
   }),
 ])
 
+export type GateCheckEntry = z.infer<typeof gateCheckEntrySchema>
 export type TaskChangesFileStat = z.infer<typeof taskChangesFileStatSchema>
 export type TaskChangesCommit = z.infer<typeof taskChangesCommitSchema>
 export type TaskChangesResponse = z.infer<typeof taskChangesResponseSchema>

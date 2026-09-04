@@ -128,6 +128,24 @@ function rowToMergeJob(raw: unknown): MergeJob {
   }
 }
 
+// ── Gate check entry ─────────────────────────────────────────────────────────
+
+/**
+ * Summary of a single gate's outcome during the merge verify step.
+ * Stored as JSON in `merge_jobs.gate_checks_json` and surfaced in the task
+ * drawer so the operator can see what was checked before a task landed.
+ */
+export interface GateCheckEntry {
+  /** Gate display name (scope + name, e.g. "orchestrator: typecheck"). */
+  name: string
+  /** Gate registry id, or null for gates without a db record. */
+  gateId: string | null
+  /** Whether this gate passed. */
+  passed: boolean
+  /** Wall-clock duration in milliseconds, or null when not recorded. */
+  durationMs: number | null
+}
+
 // ── Store interface ───────────────────────────────────────────────────────────
 
 export interface MergeJobStore {
@@ -194,6 +212,19 @@ export interface MergeJobStore {
    * that would tear down a worktree under an in-flight merge.
    */
   getActiveMergeJob(taskId: string): Promise<MergeJob | null>
+
+  /**
+   * Persist the gate check results for a finished merge job. Best-effort —
+   * callers must catch errors; a failure here is never fatal.
+   */
+  recordGateChecks(id: string, checks: GateCheckEntry[]): Promise<void>
+
+  /**
+   * Retrieve the gate checks recorded for the most recently completed merge
+   * job for a given task. Returns `null` when no done job exists or when no
+   * gate checks were recorded (older jobs pre-dating this column).
+   */
+  getGateChecksForTask(taskId: string): Promise<GateCheckEntry[] | null>
 }
 
 // ── Factory ───────────────────────────────────────────────────────────────────
@@ -343,6 +374,32 @@ export const createMergeJobStore = (client: DbClient): MergeJobStore => {
       })
       if (rs.rows.length === 0) return null
       return rowToMergeJob(rs.rows[0])
+    },
+
+    async recordGateChecks(id, checks) {
+      await client.execute({
+        sql: `UPDATE merge_jobs SET gate_checks_json = ? WHERE id = ?`,
+        args: [JSON.stringify(checks), id],
+      })
+    },
+
+    async getGateChecksForTask(taskId) {
+      const rs = await client.execute({
+        sql: `SELECT gate_checks_json
+              FROM   merge_jobs
+              WHERE  task_id = ? AND status = 'done'
+              ORDER  BY finished_at DESC
+              LIMIT  1`,
+        args: [taskId],
+      })
+      if (rs.rows.length === 0) return null
+      const row = rs.rows[0] as unknown as { gate_checks_json: string | null }
+      if (!row.gate_checks_json) return null
+      try {
+        return JSON.parse(row.gate_checks_json) as GateCheckEntry[]
+      } catch {
+        return null
+      }
     },
   }
 

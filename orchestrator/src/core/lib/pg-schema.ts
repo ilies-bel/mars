@@ -1433,6 +1433,9 @@ const DDL: readonly string[] = [
   // Added in schema 0039; required before any verify_gates SELECT that
   // projects `evidence` so a restarted daemon migrates it first.
   `ALTER TABLE verify_gates ADD COLUMN IF NOT EXISTS evidence text`,
+  // last_pass_at: timestamp of the most recent passing run (epoch ms). Used by
+  // Control Room to show current pass/fail status instead of last-failure-ever.
+  `ALTER TABLE verify_gates ADD COLUMN IF NOT EXISTS last_pass_at bigint`,
   // ── quarantined verify-gate repair proposals ─────────────────────────────
   // The unique quarantine episode key is the durable idempotency boundary for
   // the gate-fix Steward. A replay may re-run diagnosis, but it can never
@@ -1732,6 +1735,10 @@ const DDL: readonly string[] = [
     updated_at         timestamptz NOT NULL DEFAULT now()
   )`,
   `ALTER TABLE merge_jobs ADD COLUMN IF NOT EXISTS merged_sha text`,
+  // gate_checks_json: JSON array of { name, passed, durationMs? } for each gate
+  // that ran during the merge verify step. Used by the task drawer to show
+  // "Checks: typecheck ✓ knip ✓ — 13.3s" next to the landed SHA.
+  `ALTER TABLE merge_jobs ADD COLUMN IF NOT EXISTS gate_checks_json text`,
   // At most one active (queued/claimed/running) merge job per task_id.
   `CREATE UNIQUE INDEX IF NOT EXISTS merge_jobs_active_task_uidx
      ON merge_jobs(task_id)

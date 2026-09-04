@@ -39,6 +39,7 @@ const VERIFY_GATES_DDL = `CREATE TABLE IF NOT EXISTS verify_gates (
   last_failure_origin_id text,
   timeout_min REAL,
   evidence   text,
+  last_pass_at bigint,
   UNIQUE(scope, name)
 )`
 
@@ -56,6 +57,9 @@ export const ensureVerifyGatesSchema = async (client: DbTx): Promise<void> => {
   await client.execute(`ALTER TABLE verify_gates ADD COLUMN IF NOT EXISTS last_failure_origin_id text`)
   await client.execute(`ALTER TABLE verify_gates ADD COLUMN IF NOT EXISTS timeout_min REAL`)
   await client.execute(`ALTER TABLE verify_gates ADD COLUMN IF NOT EXISTS evidence TEXT`)
+  // last_pass_at: timestamp of the most recent passing run for this gate.
+  // Added to distinguish "currently passing" from "last run was a failure".
+  await client.execute(`ALTER TABLE verify_gates ADD COLUMN IF NOT EXISTS last_pass_at bigint`)
   await client.execute(`UPDATE verify_gates SET state = 'active' WHERE state IS NULL`)
 }
 
@@ -128,6 +132,12 @@ export interface VerifyGate {
   timeoutMin: number | null
   /** Free-text description of the observation that justified adding this gate, or `null` if not recorded. */
   evidence: string | null
+  /**
+   * Timestamp (epoch ms) of the most recent passing run for this gate, or
+   * `null` if the gate has never been recorded as passing. When non-null and
+   * greater than `lastFailureAt`, the gate is currently passing.
+   */
+  lastPassAt: number | null
 }
 
 interface VerifyGateRow {
@@ -148,6 +158,7 @@ interface VerifyGateRow {
   last_failure_origin_id: string | null
   timeout_min: number | null
   evidence: string | null
+  last_pass_at: number | null
 }
 
 const rowToGate = (row: VerifyGateRow): VerifyGate => ({
@@ -168,6 +179,7 @@ const rowToGate = (row: VerifyGateRow): VerifyGate => ({
   lastFailureOriginId: row.last_failure_origin_id,
   timeoutMin: row.timeout_min,
   evidence: row.evidence,
+  lastPassAt: row.last_pass_at ?? null,
 })
 
 /**
@@ -390,7 +402,7 @@ export const getVerifyGate = async (
   const c = resolveStateClient()
   const columns = `id, scope, name, cmd, args_json, required, tier, source, created_at,
             state, quarantined_at, quarantine_signature, last_failure_signature,
-            last_failure_at, last_failure_origin_id, timeout_min, evidence`
+            last_failure_at, last_failure_origin_id, timeout_min, evidence, last_pass_at`
   const r =
     typeof idOrRef === 'string'
       ? await c.execute(`SELECT ${columns} FROM verify_gates WHERE id = ?`, [idOrRef])
@@ -445,7 +457,7 @@ export const listVerifyGates = async (): Promise<VerifyGate[]> => {
   const r = await c.execute(
     `SELECT id, scope, name, cmd, args_json, required, tier, source, created_at,
             state, quarantined_at, quarantine_signature, last_failure_signature,
-            last_failure_at, last_failure_origin_id, timeout_min, evidence
+            last_failure_at, last_failure_origin_id, timeout_min, evidence, last_pass_at
      FROM verify_gates ORDER BY scope, created_at`,
   )
   return (r.rows as unknown as VerifyGateRow[]).map(rowToGate)
@@ -463,7 +475,7 @@ export const loadVerifyGates = async (client: DbTx): Promise<VerifyScope[]> => {
   const r = await client.execute(
     `SELECT id, scope, name, cmd, args_json, required, tier, source, created_at,
             state, quarantined_at, quarantine_signature, last_failure_signature,
-            last_failure_at, last_failure_origin_id, timeout_min, evidence
+            last_failure_at, last_failure_origin_id, timeout_min, evidence, last_pass_at
        FROM verify_gates
       WHERE state = 'active'
       ORDER BY scope, created_at`,
@@ -495,4 +507,28 @@ export const loadVerifyGates = async (client: DbTx): Promise<VerifyScope[]> => {
   }
 
   return order.map((scope) => ({ scope, steps: byScope.get(scope)! }))
+}
+
+/**
+ * Record a passing run for the given gate ids, stamping `last_pass_at = now()`.
+ *
+ * This is called by the merge worker when task-tier or integration-tier gates
+ * all pass so that Control Room can show "currently passing" rather than
+ * displaying the gate's last historical failure as if it were current state.
+ *
+ * Best-effort: a failure to update is non-fatal — the gate's pass data is
+ * informational and must never block a successful merge.
+ */
+export const recordVerifyGatePasses = async (gateIds: string[]): Promise<void> => {
+  if (gateIds.length === 0) return
+  const c = resolveStateClient()
+  const now = Date.now()
+  // Run all updates in parallel; swallow individual failures.
+  await Promise.all(
+    gateIds.map((id) =>
+      c
+        .execute(`UPDATE verify_gates SET last_pass_at = ? WHERE id = ?`, [now, id])
+        .catch(() => {}),
+    ),
+  )
 }

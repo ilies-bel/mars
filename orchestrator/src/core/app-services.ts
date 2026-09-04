@@ -42,6 +42,7 @@ import {
   getCompositionRootClient,
   runCompositionRootMigrations,
 } from './store/task-store-default'
+import { getDefaultMergeJobStore, type GateCheckEntry } from './store/merge-job-store'
 import { buildSessionsView } from './daemon/view/sessions'
 import { listTerminalEvents } from './daemon/view/terminal-events'
 import { listReleaseNotes } from './daemon/view/release-notes'
@@ -186,6 +187,7 @@ export type TaskChangesResult =
       patch: ''
       truncated: false
       commits: []
+      gateChecks: null
     }
   | {
       reason?: undefined
@@ -196,6 +198,8 @@ export type TaskChangesResult =
       patch: string
       truncated: boolean
       commits: TaskChangesCommit[]
+      /** Gate check results from the merge verify step, or null when not recorded. */
+      gateChecks: GateCheckEntry[] | null
     }
 
 /** Operator-facing verify-gate health, projected from the registry row. */
@@ -214,6 +218,7 @@ export type GateHealthEntry = Pick<
   | 'lastFailureSignature'
   | 'lastFailureOriginId'
   | 'lastFailureAt'
+  | 'lastPassAt'
 > & {
   command: Pick<VerifyGate, 'cmd' | 'args'>
 }
@@ -1021,6 +1026,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     patch: '',
     truncated: false,
     commits: [],
+    gateChecks: null,
   }
 
   const viewTaskChanges: AppServices['viewTaskChanges'] = async (taskId) => {
@@ -1112,6 +1118,12 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
       ? patch.slice(0, PATCH_SIZE_LIMIT)
       : patch
 
+    // Read gate checks from the most recent completed merge job for this task.
+    // Best-effort: null when no done job exists or no checks were recorded.
+    const gateChecks = await getDefaultMergeJobStore()
+      .getGateChecksForTask(taskId)
+      .catch(() => null)
+
     return {
       base,
       head,
@@ -1130,6 +1142,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
         subject: c.subject,
         authoredAt: authoredAtMap.get(c.sha) ?? '',
       })),
+      gateChecks,
     }
   }
 

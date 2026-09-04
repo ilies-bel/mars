@@ -362,9 +362,40 @@ const GatesSection = () => {
     )
   }
 
+  // A gate is currently failing when it has a failure timestamp and either
+  // has never passed or its last failure is more recent than its last pass.
+  const isCurrentlyFailing = (gate: VerifyGate): boolean => {
+    if (gate.lastFailureAt === null) return false
+    if (gate.lastPassAt === null) return true
+    return gate.lastFailureAt > gate.lastPassAt
+  }
+
+  // Required gates that are quarantined — merges are proceeding without them.
+  const quarantinedRequired = gatesData.filter(
+    (g) => g.state === 'quarantined' && g.required,
+  )
+
   return (
     <section data-testid="gates-section">
       <div className="mb-3"><SectionLabel>Gates</SectionLabel></div>
+
+      {quarantinedRequired.length > 0 && (
+        <div
+          className="mb-3 rounded border border-error/30 bg-error/5 px-4 py-3"
+          data-testid="quarantine-banner"
+        >
+          <p className="font-mono text-label font-medium text-error">
+            ⚠ {quarantinedRequired.length} required gate{quarantinedRequired.length !== 1 ? 's are' : ' is'} quarantined — merges are proceeding unchecked
+          </p>
+          <ul className="mt-1 space-y-0.5">
+            {quarantinedRequired.map((g) => (
+              <li key={g.id} className="font-mono text-micro text-error/70">
+                {g.scope !== '.' ? `${g.scope}: ` : ''}{g.name}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {actionError && (
         <p className="mb-2 font-mono text-label text-error">{actionError}</p>
@@ -376,60 +407,86 @@ const GatesSection = () => {
         </p>
       ) : (
         <ul className="space-y-2">
-          {gatesData.map((gate) => (
-            <li
-              key={gate.id}
-              className="mars-card flex items-start justify-between gap-3 rounded bg-surface px-4 py-3"
-            >
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-mono text-body font-medium text-foreground">
-                    {gate.name}
-                  </span>
-                  <span
-                    className={[
-                      'shrink-0 rounded-full px-2 py-0.5 font-mono text-micro font-medium uppercase tracking-wide',
-                      gate.tier === 'integration'
-                        ? 'bg-primary/10 text-primary/70'
-                        : 'bg-surface-elevated text-muted-foreground',
-                    ].join(' ')}
-                  >
-                    {gate.tier}
-                  </span>
-                  {!gate.required && (
-                    <span className="shrink-0 rounded-full px-2 py-0.5 font-mono text-micro font-medium uppercase tracking-wide bg-warn/10 text-warn">
-                      advisory
+          {gatesData.map((gate) => {
+            const failing = isCurrentlyFailing(gate)
+            const gateDisplayName = gate.scope !== '.' ? `${gate.scope}: ${gate.name}` : gate.name
+            return (
+              <li
+                key={gate.id}
+                className="mars-card flex items-start justify-between gap-3 rounded bg-surface px-4 py-3"
+                data-testid={`gate-row-${gate.id}`}
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-mono text-body font-medium text-foreground">
+                      {gateDisplayName}
                     </span>
+                    {/* Current run status badge */}
+                    {gate.lastPassAt !== null || gate.lastFailureAt !== null ? (
+                      <span
+                        className={[
+                          'shrink-0 rounded-full px-2 py-0.5 font-mono text-micro font-medium uppercase tracking-wide',
+                          failing
+                            ? 'bg-error/10 text-error'
+                            : 'bg-success/10 text-success',
+                        ].join(' ')}
+                        data-testid={failing ? 'gate-status-failing' : 'gate-status-passing'}
+                      >
+                        {failing ? 'failing' : 'passing'}
+                      </span>
+                    ) : null}
+                    <span
+                      className={[
+                        'shrink-0 rounded-full px-2 py-0.5 font-mono text-micro font-medium uppercase tracking-wide',
+                        gate.tier === 'integration'
+                          ? 'bg-primary/10 text-primary/70'
+                          : 'bg-surface-elevated text-muted-foreground',
+                      ].join(' ')}
+                    >
+                      {gate.tier}
+                    </span>
+                    {!gate.required && (
+                      <span className="shrink-0 rounded-full px-2 py-0.5 font-mono text-micro font-medium uppercase tracking-wide bg-warn/10 text-warn">
+                        advisory
+                      </span>
+                    )}
+                    {gate.state === 'quarantined' && (
+                      <span className="shrink-0 rounded-full px-2 py-0.5 font-mono text-micro font-medium uppercase tracking-wide bg-error/10 text-error">
+                        quarantined
+                      </span>
+                    )}
+                  </div>
+                  <p className="mt-1 font-mono text-micro text-muted-foreground/70">
+                    <span className="font-mono">{[gate.cmd, ...gate.args].join(' ')}</span>
+                    {gate.scope !== '.' && (
+                      <span className="ml-2 text-muted-foreground/40">in {gate.scope}</span>
+                    )}
+                  </p>
+                  {/* Show last pass when gate is currently passing */}
+                  {!failing && gate.lastPassAt !== null && (
+                    <p className="mt-0.5 font-mono text-micro text-success/60" data-testid="gate-last-pass">
+                      Last passed: {new Date(gate.lastPassAt).toLocaleString()}
+                    </p>
                   )}
-                  {gate.state === 'quarantined' && (
-                    <span className="shrink-0 rounded-full px-2 py-0.5 font-mono text-micro font-medium uppercase tracking-wide bg-error/10 text-error">
-                      quarantined
-                    </span>
+                  {/* Show last failure as secondary detail when gate is currently passing, or primary when failing */}
+                  {gate.lastFailureAt !== null && (
+                    <p className={`mt-0.5 font-mono text-micro ${failing ? 'text-error/60' : 'text-muted-foreground/40'}`} data-testid="gate-last-failure">
+                      Last failure: {new Date(gate.lastFailureAt).toLocaleString()}
+                    </p>
                   )}
                 </div>
-                <p className="mt-1 font-mono text-micro text-muted-foreground/70">
-                  <span className="font-mono">{[gate.cmd, ...gate.args].join(' ')}</span>
-                  {gate.scope !== '.' && (
-                    <span className="ml-2 text-muted-foreground/40">in {gate.scope}</span>
-                  )}
-                </p>
-                {gate.lastFailureAt !== null && (
-                  <p className="mt-0.5 font-mono text-micro text-error/60">
-                    Last failure: {new Date(gate.lastFailureAt).toLocaleString()}
-                  </p>
+                {gate.state === 'quarantined' && (
+                  <button
+                    onClick={() => { void handleRestore(gate.id) }}
+                    disabled={restoring === gate.id}
+                    className="shrink-0 rounded-md border border-border px-3 py-1.5 font-mono text-label text-foreground hover:bg-surface transition-colors disabled:opacity-50"
+                  >
+                    {restoring === gate.id ? 'Restoring…' : 'Restore'}
+                  </button>
                 )}
-              </div>
-              {gate.state === 'quarantined' && (
-                <button
-                  onClick={() => { void handleRestore(gate.id) }}
-                  disabled={restoring === gate.id}
-                  className="shrink-0 rounded-md border border-border px-3 py-1.5 font-mono text-label text-foreground hover:bg-surface transition-colors disabled:opacity-50"
-                >
-                  {restoring === gate.id ? 'Restoring…' : 'Restore'}
-                </button>
-              )}
-            </li>
-          ))}
+              </li>
+            )
+          })}
         </ul>
       )}
     </section>

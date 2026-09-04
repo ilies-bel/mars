@@ -435,6 +435,12 @@ export interface VerifyGate {
   quarantinedAt: number | null
   lastFailureAt: number | null
   timeoutMin: number | null
+  /**
+   * Timestamp (epoch ms) of the most recent passing run for this gate, or
+   * null when the gate has never been recorded as passing. When non-null and
+   * greater than lastFailureAt, the gate is currently passing.
+   */
+  lastPassAt: number | null
 }
 
 const verifyGatesResponseSchema = z.object({
@@ -458,6 +464,7 @@ const verifyGatesResponseSchema = z.object({
       lastFailureSignature: z.string().nullable().optional(),
       lastFailureOriginId: z.string().nullable().optional(),
       evidence: z.string().nullable().optional(),
+      lastPassAt: z.number().nullable().optional(),
     }),
   ),
 })
@@ -467,7 +474,10 @@ export const fetchVerifyGates = async (projectId?: string): Promise<VerifyGate[]
     appendProject('/api/verify-gates', projectId),
     verifyGatesResponseSchema,
   )
-  return json.gates as VerifyGate[]
+  return json.gates.map((g) => ({
+    ...g,
+    lastPassAt: g.lastPassAt ?? null,
+  })) as VerifyGate[]
 }
 
 export const postRestoreVerifyGate = async (id: string, projectId?: string): Promise<void> => {
