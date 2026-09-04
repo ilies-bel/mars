@@ -170,9 +170,9 @@ export const ProgressPage = () => {
 
   // Resolve the initial active tab:
   //   1. Explicit ?view= param in the URL (shareable links are always honoured)
-  //   2. DEFAULT_TAB ('board')
+  //   2. DEFAULT_TAB ('topology')
   //
-  // Board is the landing view. Topology and Hot-paths are available via the tab
+  // Topology is the landing view. Board and Hot-paths are available via the tab
   // strip. The tab is NOT persisted to localStorage — a per-session tab choice
   // is not worth overriding the primary view of the page.
   const [activeTab, setActiveTab] = useState<Tab>(

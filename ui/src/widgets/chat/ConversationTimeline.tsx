@@ -1,8 +1,9 @@
-import { Fragment } from 'react'
+import { Fragment, useRef } from 'react'
 import type { ChatConversationEntry, PreloadedResponse, SubjectBoundary } from '@/shared/schemas'
 import { MemoryBoundaryLine } from './MemoryBoundaryLine'
 import { PreloadedResponses } from './PreloadedResponses'
 import { SubjectBoundaryLine } from './SubjectBoundaryLine'
+import { TypedBody, markRevealed } from './TypedBody'
 
 export interface ConversationTimelineProps {
   entries: ChatConversationEntry[]
@@ -97,6 +98,16 @@ export const ConversationTimeline = ({
   composerHeight = 0,
   loadError,
 }: ConversationTimelineProps) => {
+  // Mark all notice entries present on first render as already-revealed so
+  // TypedBody does not replay the whole backlog when the timeline mounts.
+  // This runs synchronously during render (before any layout effects), so
+  // TypedBody's own layout effect sees the ids as revealed and skips animation.
+  const initialRevealDone = useRef(false)
+  if (!initialRevealDone.current) {
+    initialRevealDone.current = true
+    markRevealed(entries.filter((e) => e.kind === 'notice').map((e) => e.id))
+  }
+
   const visibleEntries = entries.filter((entry) => entry.threadId !== activeThreadId)
   const boundariesBySubject = new Map(boundaries.map((boundary) => [boundary.subjectId, boundary]))
 
@@ -267,7 +278,15 @@ export const ConversationTimeline = ({
                     <span data-testid="conversation-message-resolved">Resolved</span>
                   )}
                 </header>
-                <p className="whitespace-pre-wrap font-mono text-body text-foreground">{body}</p>
+                {isNotice ? (
+                  <TypedBody
+                    id={entry.id}
+                    text={body}
+                    className="whitespace-pre-wrap font-mono text-body text-foreground"
+                  />
+                ) : (
+                  <p className="whitespace-pre-wrap font-mono text-body text-foreground">{body}</p>
+                )}
                 {entry.segments.filter(isOfferSegment).map((segment) => (
                   <PreloadedResponses
                     key={`${entry.id}-preloaded-responses`}
