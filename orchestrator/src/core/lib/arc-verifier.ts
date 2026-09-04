@@ -35,7 +35,9 @@ import { runHeadlessProvider } from '../workers/providers.js'
 import { collectAssistantText } from './reflector.js'
 import { getProposal } from '../proposals.js'
 import { probeE2eTooling } from './e2e-tooling.js'
-import { acquireLock } from './git/lock.js'
+import { acquireLock } from './lock.js'
+import type { Vcs } from '../ports/vcs/types.js'
+import { resolveVcs } from '../ports/vcs/registry.js'
 import { discoverAppBoot, type BootPlan } from '../../workflows/primitives/app-boot-discovery.js'
 import { runBrowserCheck, type CriterionResult } from '../../workflows/primitives/browser-check.js'
 import {
@@ -558,20 +560,13 @@ async function runVerifyCmd(
 async function getMergedDiff(
   landedCommits: readonly string[],
   cwd: string,
+  vcs: Pick<Vcs, 'diffText'>,
 ): Promise<string> {
   if (landedCommits.length === 0) return ''
   const base = landedCommits[0]
   const tip = landedCommits[landedCommits.length - 1]
-  try {
-    const { stdout } = await execFileAsync(
-      'git',
-      ['diff', `${base}^`, tip, '--', '.'],
-      { cwd, timeout: 30_000 },
-    )
-    return stdout.slice(0, DIFF_SIZE_CAP)
-  } catch {
-    return ''
-  }
+  const text = await vcs.diffText({ cwd, from: `${base}^`, to: tip, timeoutMs: 30_000 })
+  return (text ?? '').slice(0, DIFF_SIZE_CAP)
 }
 
 function buildVerifierPrompt(
@@ -802,6 +797,11 @@ export async function runArcVerification(
     e2eDeps?: Partial<ArcE2eDeps>
     /** Injectable seams for the tooling-missing Steward proposal path. */
     stewardDeps?: Partial<StewardPatchDeps>
+    /**
+     * Injectable Vcs implementation.  Defaults to the active Vcs port resolved
+     * via `resolveVcs()`.  Override in tests to avoid real git subprocess calls.
+     */
+    vcs?: Pick<Vcs, 'diffText'>
   },
 ): Promise<ArcVerificationVerdict> {
   const store = await getDefaultTaskStore()
@@ -843,8 +843,9 @@ export async function runArcVerification(
     }
   }
 
-  // Get the merged diff (best-effort; empty string if git fails).
-  const diff = await getMergedDiff(arcStatus.landedCommits, opts.cwd)
+  // Get the merged diff via the Vcs port (best-effort; empty string on failure).
+  const vcs = opts.vcs ?? resolveVcs()
+  const diff = await getMergedDiff(arcStatus.landedCommits, opts.cwd, vcs)
 
   // Load PRD reachability context (populated for Proposal Arcs, empty for task arcs).
   const prdContext = await loadPrdReachabilityContext(originId)
