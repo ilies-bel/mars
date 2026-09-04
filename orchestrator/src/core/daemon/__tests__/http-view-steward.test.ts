@@ -181,7 +181,7 @@ describe('GET /view/steward', () => {
 
     expect(view.runtimeTuning.acks).toEqual([
       {
-        text: 'I bumped implement workers from 11 to 12.',
+        text: 'I bumped implement workers from 11 to 12 because the backlog was sustained.',
         timestamp: '2026-08-01T10:03:34.014Z',
         pair: { from: 11, to: 12 },
       },

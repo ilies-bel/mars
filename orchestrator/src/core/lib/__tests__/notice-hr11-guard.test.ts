@@ -75,6 +75,7 @@ const REPRESENTATIVE_PAYLOADS: { [K in AutonomousNoticeKind]: AutonomousNoticePa
     diff: '--- a\n+++ b\n@@ -1 +1 @@\n-old\n+new',
     proposalId: 'prop-xyz789',
   },
+  'steward.runtime-tune': { from: 6, to: 8, reason: 'the backlog was sustained' },
 }
 
 // ── Helper ────────────────────────────────────────────────────────────────────

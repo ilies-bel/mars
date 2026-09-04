@@ -146,6 +146,7 @@ import {
   type VerifyGate,
   type VerifyGateInput,
 } from './verify-gates'
+import { renderConversationNotice } from './lib/conversation-copy'
 
 export type { AgentToolCall, VerifyGateInput, VerifyGate }
 
@@ -2200,10 +2201,16 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
         const fromN = capMatch ? Number(capMatch[1]) : null
         const toN = capMatch ? Number(capMatch[2]) : null
         const pair = fromN !== null && toN !== null ? { from: fromN, to: toN } : null
-        // Compose plain-language operator text; the raw rationale is preserved in the DB as evidence.
-        const verb = fromN !== null && toN !== null && fromN < toN ? 'bumped' : 'shed'
+        // Compose plain-language operator text using the shared notice renderer so
+        // the steward page and the chat stream describe the same event identically.
+        // For historical rows the reason is inferred from the direction (no separate
+        // reason column existed before this change).
         const text = pair
-          ? `I ${verb} implement workers from ${pair.from} to ${pair.to}.`
+          ? renderConversationNotice('steward.runtime-tune', {
+              from: pair.from,
+              to: pair.to,
+              reason: pair.from < pair.to ? 'the backlog was sustained' : 'host pressure was detected',
+            })
           : String(r.outcome)
         // ts is timestamptz — normalise to ISO-8601 via Date. Do NOT use Number(), which
         // would produce garbage from a timestamp string (unlike chat_messages.created_at

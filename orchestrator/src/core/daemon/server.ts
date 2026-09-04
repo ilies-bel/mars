@@ -6652,6 +6652,19 @@ export const startDaemon = async (
     },
     // Hold the bump lane for WATCHDOG_COOLDOWN_MS after a merge watchdog fire.
     getLastWatchdogFireMs: getLastMergeWatchdogFireMs,
+    // Post a notice to the chat stream so the operator sees the same cap-change
+    // text on the chat and steward surfaces. Imported lazily to avoid a circular
+    // module dependency (server → conversation-delivery → … → server).
+    postCapNotice: async (payload) => {
+      const { postConversationNotice } = await import('../lib/conversation-delivery.js')
+      await postConversationNotice({
+        kind: 'steward.runtime-tune',
+        payload,
+        priority: 'routine',
+        dedupKey: 'steward-runtime-tune',
+        bus,
+      })
+    },
   })
   // Prompt health follows the same daemon event bus as the other autonomous
   // Steward capabilities. Its own autonomy lever decides whether a degraded

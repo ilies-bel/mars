@@ -51,6 +51,7 @@ const payloads: { [K in AutonomousNoticeKind]: AutonomousNoticePayloads[K] } = {
     diff: '--- a\n+++ b\n@@ -1 +1 @@\n-old\n+new',
     proposalId: 'prop-xyz789',
   },
+  'steward.runtime-tune': { from: 6, to: 8, reason: 'the backlog was sustained' },
 }
 
 const bodyFor = (kind: AutonomousNoticeKind): string =>

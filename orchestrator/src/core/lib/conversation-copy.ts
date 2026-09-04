@@ -39,6 +39,7 @@ export const AutonomousNoticeKindSchema = z.enum([
   'steward.prompt-optimizer-ack',
   'steward.prompt-optimization',
   'steward.workflow-patch',
+  'steward.runtime-tune',
 ])
 
 export type AutonomousNoticeKind = z.infer<typeof AutonomousNoticeKindSchema>
@@ -118,6 +119,21 @@ export interface AutonomousNoticePayloads {
     path: string
     diff: string
     proposalId: string
+  }
+  /**
+   * The Steward autotuner changed the implement cap — bumped it to absorb a
+   * sustained backlog, or shed it in response to memory/process pressure.
+   * `from` and `to` are the cap values before and after the change; `reason`
+   * is a short operator-facing phrase explaining why the change was made (e.g.
+   * "the backlog was sustained", "the host was swapping memory").
+   *
+   * This notice uses a `dedupKey` so rapid successive changes are folded into
+   * one row rather than flooding the conversation.
+   */
+  'steward.runtime-tune': {
+    from: number
+    to: number
+    reason: string
   }
 }
 
@@ -405,6 +421,26 @@ const REGISTRY: { [Kind in AutonomousNoticeKind]: NoticeKindEntry<Kind> } = {
         label: 'Review it',
         target: { type: 'subject', title: `Workflow patch: ${p.path}` },
       },
+    ],
+  },
+  'steward.runtime-tune': {
+    act: 'announcement',
+    actionable: false,
+    /**
+     * Fold repeated cap changes into one notice so the chat does not fill up
+     * with incremental bumps on a sustained backlog. The dedupKey is fixed so
+     * any update within the coalesce window replaces the existing row.
+     */
+    collapseKey: 'steward-runtime-tune',
+    dedupKey: () => 'steward-runtime-tune',
+    render: (p) => {
+      const verb = p.from < p.to ? 'bumped' : 'shed'
+      return `I ${verb} implement workers from ${p.from} to ${p.to} because ${sentenceValue(p.reason)}.`
+    },
+    lever: STEWARD_RUNTIME_TUNE_LEVER,
+    offers: () => [
+      ack(),
+      silence(STEWARD_RUNTIME_TUNE_LEVER, 'Stop adjusting the cap', 'stop'),
     ],
   },
 }

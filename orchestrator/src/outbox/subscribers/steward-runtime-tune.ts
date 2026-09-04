@@ -209,6 +209,15 @@ export interface StewardRuntimeTuneDeps {
    */
   getMergeQueueDepth?: () => Promise<number>
   /**
+   * Post a chat notice whenever the implement cap changes. Called after every
+   * durable bump or shed so both the chat stream and the steward page describe
+   * the same event in the same first-person voice.
+   *
+   * Optional — defaults to a no-op so existing tests do not need to wire it.
+   * Production wires it to `postConversationNotice` in `server.ts`.
+   */
+  postCapNotice?: (payload: { from: number; to: number; reason: string }) => Promise<void>
+  /**
    * Return the epoch-ms timestamp of the last merge-job watchdog fire, or
    * null if no watchdog has fired since the daemon started. The bump lane
    * holds for {@link WATCHDOG_COOLDOWN_MS} after a watchdog fire: a fire
@@ -424,6 +433,10 @@ export function startStewardRuntimeTune(deps: StewardRuntimeTuneDeps): () => voi
   const getMergeQueueDepth = deps.getMergeQueueDepth ?? ((): Promise<number> => Promise.resolve(0))
   // Default: null (no recent watchdog fire) — the cooldown hold never fires.
   const getLastWatchdogFireMs = deps.getLastWatchdogFireMs ?? ((): number | null => null)
+  // Default: no-op so tests do not need to wire a DB-backed postConversationNotice.
+  // Production wires this to postConversationNotice in server.ts so the chat stream
+  // shows the same cap-change text that the steward page shows.
+  const postCapNotice = deps.postCapNotice ?? ((): Promise<void> => Promise.resolve())
 
   /**
    * Compute the effective ceiling for a bump decision.
@@ -503,15 +516,17 @@ export function startStewardRuntimeTune(deps: StewardRuntimeTuneDeps): () => voi
   }
 
   /**
-   * Record a cap change as durable evidence. Cap changes are log-only (no chat
-   * notice); the ledger is what answers "when did Mars start doing this, and
-   * how often?" weeks later.
+   * Record a cap change as durable evidence in the steward ledger AND post a
+   * chat notice so the operator sees the same event on both surfaces. The ledger
+   * answers "when did Mars start doing this?" weeks later; the notice surfaces
+   * the change immediately in the conversation stream.
    */
   const ledger = async (
     lane: string,
     from: number,
     to: number,
     rationale: string,
+    noticeReason: string,
   ): Promise<void> => {
     try {
       await recordLedger({
@@ -524,6 +539,14 @@ export function startStewardRuntimeTune(deps: StewardRuntimeTuneDeps): () => voi
       })
     } catch (err) {
       log(`[steward-tune] ledger write failed: ${(err as Error).message}`)
+    }
+    // Post a chat notice so the operator sees the cap change on both the chat
+    // and steward surfaces. Failures here are non-fatal: the ledger write is
+    // the durable record; the notice is a convenience.
+    try {
+      await postCapNotice({ from, to, reason: noticeReason })
+    } catch (err) {
+      log(`[steward-tune] chat notice failed (non-fatal): ${(err as Error).message}`)
     }
   }
 
@@ -648,6 +671,7 @@ export function startStewardRuntimeTune(deps: StewardRuntimeTuneDeps): () => voi
         oldCap,
         newCap,
         `sustained backlog: ${payload.pending} pending for ${Math.round(payload.sustainedMs / 1000)}s (${decision.explanation}; ${evidence})`,
+        'the backlog was sustained',
       )
     })()
   })
@@ -668,7 +692,7 @@ export function startStewardRuntimeTune(deps: StewardRuntimeTuneDeps): () => voi
       const detail = `paging ${Math.round(pagingPps)} pages/s >= ${PAGING_SHED_TRIGGER}`
       log(`[steward-tune] shed implement cap ${oldCap} → ${newCap} (${detail})`)
       recordCapDecision(`steward autotune shed implement ${oldCap} → ${newCap} (${detail})`)
-      await ledger('shed', oldCap, newCap, detail)
+      await ledger('shed', oldCap, newCap, detail, 'the host was swapping memory')
       return
     }
 
@@ -697,7 +721,7 @@ export function startStewardRuntimeTune(deps: StewardRuntimeTuneDeps): () => voi
               `(${procPerCore.toFixed(1)}/core) exceeds ${PROC_PER_CORE_CEIL} ceiling`
             log(`[steward-tune] shed implement cap ${oldCap} → ${newCap} (${detail})`)
             recordCapDecision(`steward autotune shed implement ${oldCap} → ${newCap} (${detail})`)
-            await ledger('shed-proc', oldCap, newCap, detail)
+            await ledger('shed-proc', oldCap, newCap, detail, 'the host was oversubscribed on processes')
           }
         }
         // Block recover while oversubscribed: the cap just went down to reduce
@@ -740,6 +764,7 @@ export function startStewardRuntimeTune(deps: StewardRuntimeTuneDeps): () => voi
       oldCap,
       newCap,
       `paging ${Math.round(pagingPps)} pages/s < ${PAGING_ACTIVE_PPS}, baseline ${baselineCap}`,
+      'paging cleared',
     )
   }
 
