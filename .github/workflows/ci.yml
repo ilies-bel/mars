@@ -61,6 +61,16 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # Regenerate the UI kinds mirror from orchestrator source before any
+      # tsc/build/test step. This is the self-healing step: a stale committed
+      # artifact never fails the gate — only a genuine source conflict (e.g. the
+      # orchestrator regex anchor changed) can break it. The template-sync-check
+      # job separately enforces that the committed file stays current (it runs the
+      # orchestrator-side generator and fails on git diff), so this step is purely
+      # defensive for the case where a merge race left a stale file on main.
+      - name: Regenerate UI kinds mirror
+        run: node scripts/gen-action-queue-kinds.mjs
+
       - run: pnpm run typecheck
 
       - run: pnpm run build

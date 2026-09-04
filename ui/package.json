@@ -19,6 +19,7 @@
     "test:e2e": "npm run build && playwright test --config playwright.smoke.config.ts --grep @smoke",
     "test:src": "vitest run",
     "test:server": "node scripts/run-bun-server-tests.mjs",
+    "gen:kinds": "node scripts/gen-action-queue-kinds.mjs",
     "lint": "knip --no-exit-code",
     "start": "node bin/mars-ui.mjs",
     "knip": "knip --no-exit-code"
