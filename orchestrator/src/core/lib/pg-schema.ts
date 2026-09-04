@@ -71,6 +71,7 @@
  * respectively) — these are NOT renamed.
  */
 
+import { createHash } from 'node:crypto'
 import { sep } from 'path'
 import type { DbClient, DbStatement } from './db.js'
 import { __execSchemaBatch } from './db.js'
@@ -2153,6 +2154,39 @@ const DDL: readonly string[] = [
   `ALTER TABLE subscriber_stalls ADD COLUMN IF NOT EXISTS fail_count bigint NOT NULL DEFAULT 0`,
 ]
 
+/**
+ * Columns added to `tasks` via ALTER TABLE (net after any DROP COLUMN).
+ * Used by the fast-path staleness probe in {@link ensureSchema}: a SELECT
+ * naming all of these on every boot-with-fast-path catches the case where
+ * DDL was added without bumping SCHEMA_VERSION (the 2026-09-04 incident).
+ */
+const TASKS_ALTER_PROBE_COLS: readonly string[] = (() => {
+  const added = new Set<string>()
+  const dropped = new Set<string>()
+  const addRe = /ALTER TABLE (?:IF EXISTS )?tasks ADD COLUMN IF NOT EXISTS "?(\w+)"?/i
+  const dropRe = /ALTER TABLE (?:IF EXISTS )?tasks DROP COLUMN (?:IF EXISTS )?"?(\w+)"?/i
+  for (const stmt of DDL) {
+    const add = addRe.exec(stmt)
+    if (add) added.add(add[1])
+    const drop = dropRe.exec(stmt)
+    if (drop) dropped.add(drop[1])
+  }
+  for (const col of dropped) added.delete(col)
+  return [...added]
+})()
+
+/**
+ * Stable SHA-256 prefix of the DDL array content. Changes whenever any DDL
+ * statement changes, regardless of SCHEMA_VERSION. Tests compare this against
+ * a checked-in fixture (`pg-schema.ddl.sha`) to catch DDL edits that forget
+ * to bump the version (the 2026-09-04 incident pattern).
+ *
+ * To regenerate the fixture after a legitimate DDL+version bump:
+ *   node -e "import('./src/core/lib/pg-schema.js').then(m => console.log(m.DDL_HASH))"
+ * or just run the test; it prints the new hash in the failure message.
+ */
+export const DDL_HASH = createHash('sha256').update(DDL.join('\n')).digest('hex').slice(0, 16)
+
 // ADR-0057 (now ADR-0094): pure derived/condition kinds that were previously
 // stored as rows are stale artifacts from before the derivation refactor.
 // Delete them once at startup — they carry no operator-authored content, so
@@ -2435,6 +2469,30 @@ export async function ensureSchema(client: DbClient): Promise<void> {
     skipDdl = rows.length > 0
   } catch {
     // schema_migrations does not exist yet — first boot; run full DDL below.
+  }
+
+  // Fast-path staleness probe (guard for the 2026-09-04 incident).
+  //
+  // Even when schema_migrations already records SCHEMA_VERSION, a column added
+  // via ALTER TABLE may be absent on an existing database if DDL was updated
+  // without bumping the version — the fast path skips the whole DDL batch, so
+  // every query that touches the new column fails at runtime with no signal
+  // that the schema is stale.
+  //
+  // This probe selects all columns that are net-added to `tasks` via ALTER TABLE
+  // (computed at module load from the DDL array by TASKS_ALTER_PROBE_COLS).  The
+  // query touches 0 rows and costs one round-trip.  On failure it means a column
+  // is missing despite the version matching — fall back to the full DDL replay
+  // so the idempotent ALTER TABLE re-runs and adds the missing column.
+  if (skipDdl && TASKS_ALTER_PROBE_COLS.length > 0) {
+    try {
+      const quotedCols = TASKS_ALTER_PROBE_COLS.map((c) => `"${c}"`).join(', ')
+      await client.execute(`SELECT ${quotedCols} FROM tasks LIMIT 0`)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.warn(`[schema] fast path stale (${msg}), replaying DDL`)
+      skipDdl = false
+    }
   }
 
   if (skipDdl) {

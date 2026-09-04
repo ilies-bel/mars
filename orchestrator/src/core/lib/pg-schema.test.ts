@@ -1,6 +1,9 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { __execSchemaBatch, __resetDbRegistryForTests, openDb, type DbClient } from './db.js'
 import {
+  DDL_HASH,
   ensureSchema,
   IDENTITY_COLUMNS,
   SCHEMA_ADVISORY_LOCK_KEY,
@@ -1065,6 +1068,64 @@ describe('ensureSchema', () => {
     } finally {
       process.env.MARS_DB_BACKEND = savedBackend
       cwdSpy.mockRestore()
+    }
+  })
+
+  // ── DDL-version coupling guard (done criterion 1) ────────────────────────
+
+  it('DDL_HASH matches the checked-in fixture — bump SCHEMA_VERSION when DDL changes', () => {
+    // This test catches the 2026-09-04 incident pattern: DDL was added to the
+    // array without bumping SCHEMA_VERSION, so the fast path skipped the new
+    // ALTER TABLE on every already-provisioned database, leaving the new column
+    // absent and causing runtime failures on every query that touched it.
+    //
+    // How to fix a failure here:
+    //   1. echo '<new hash printed below>' > src/core/lib/pg-schema.ddl.sha
+    //   2. Bump SCHEMA_VERSION in pg-schema.ts (e.g. '0041' → '0042').
+    //   Omitting step 2 re-creates the incident.
+    const fixturePath = join(import.meta.dirname, 'pg-schema.ddl.sha')
+    const storedHash = readFileSync(fixturePath, 'utf8').trim()
+    expect(DDL_HASH, [
+      'DDL changed without updating the version-coupling fixture.',
+      `  Current DDL hash : ${DDL_HASH}`,
+      `  Stored hash      : ${storedHash}`,
+      'Fix:',
+      `  1. echo '${DDL_HASH}' > ${fixturePath}`,
+      '  2. Bump SCHEMA_VERSION in pg-schema.ts.',
+      '  Omitting step 2 re-creates the 2026-09-04 incident.',
+    ].join('\n')).toBe(storedHash)
+  })
+
+  // ── Fast-path staleness probe (done criterion 2) ─────────────────────────
+
+  it('falls back to full DDL replay when fast path would leave a declared column missing', async () => {
+    // Regression guard for the 2026-09-04 incident: commit 6c416c97f added
+    // `env_api_unreachable_attempts` via ALTER TABLE without bumping
+    // SCHEMA_VERSION. The fast path (schema_migrations already at version) then
+    // skipped the DDL batch on every already-provisioned database, and every
+    // query touching the column failed with "column does not exist".
+    //
+    // This test verifies that ensureSchema detects the missing column via a
+    // cheap SELECT probe even when the schema_migrations row matches, and falls
+    // back to the full DDL replay so the idempotent ALTER TABLE restores it.
+    const c = await freshSchemaClient()
+    try {
+      // Drop the column that triggered the original incident, leaving the
+      // schema_migrations row intact so the fast path would normally fire.
+      await c.execute(`ALTER TABLE tasks DROP COLUMN env_api_unreachable_attempts`)
+
+      // This call should detect the missing column via the fast-path probe and
+      // replay the full DDL, including the ALTER TABLE that re-adds the column.
+      await ensureSchema(c)
+
+      // Column must be present again after the fallback replay.
+      const cols = await columnsOf(c, 'tasks')
+      expect(
+        cols.has('env_api_unreachable_attempts'),
+        'env_api_unreachable_attempts still missing after fast-path probe fallback',
+      ).toBe(true)
+    } finally {
+      await c.close()
     }
   })
 })
