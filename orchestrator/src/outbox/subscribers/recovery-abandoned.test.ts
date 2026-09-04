@@ -104,6 +104,50 @@ async function insertFixTask(
   })
 }
 
+// ---------------------------------------------------------------------------
+// Contract helpers (required by consumer slices)
+// ---------------------------------------------------------------------------
+
+/**
+ * Put a task into the given status for contract testing.
+ * Consumer 1 ("Suppress recovery-abandoned item when origin is not failed")
+ * requires this to prove that items are suppressed for non-failed origins, and
+ * that existing tests which expect an item to be raised work after that guard.
+ */
+async function setTaskStatus(client: DbClient, taskId: string, status: string): Promise<void> {
+  await client.execute({
+    sql: `UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?`,
+    args: [status, new Date().toISOString(), taskId],
+  })
+}
+
+/**
+ * Set the `branch` column on a task so the subscriber can probe it for commits
+ * ahead of the integration branch.
+ * Consumer 2 ("Qualify mars restart advice with commit classification when item
+ * is raised") requires this so the git rev-list probe can find the branch.
+ */
+async function setTaskBranch(client: DbClient, taskId: string, branch: string): Promise<void> {
+  await client.execute({
+    sql: `UPDATE tasks SET branch = ?, updated_at = ? WHERE id = ?`,
+    args: [branch, new Date().toISOString(), taskId],
+  })
+}
+
+/**
+ * Create a named branch in the repo with one commit ahead of main, then switch
+ * back to main.  Consumer 2 requires this to exercise the "commits ahead" path
+ * through the subscriber's commit-count probe.
+ */
+function createBranchAhead(repo: string, branchName: string): void {
+  const safeName = branchName.replace(/\//g, '-')
+  execFileSync('git', ['checkout', '-q', '-b', branchName], { cwd: repo })
+  writeFileSync(resolve(repo, `${safeName}.txt`), 'branch work\n')
+  execFileSync('git', ['add', `${safeName}.txt`], { cwd: repo })
+  execFileSync('git', ['commit', '-q', '-m', `work on ${branchName}`], { cwd: repo })
+  execFileSync('git', ['checkout', '-q', 'main'], { cwd: repo })
+}
+
 /** Count open action-queue rows. */
 async function openRowCount(client: DbClient): Promise<number> {
   const r = await client.execute(
@@ -156,6 +200,10 @@ describe('recovery-abandoned outbox subscriber', () => {
     const fixTaskId = 'fix-task-alpha'
     await insertFixTask(client, fixTaskId, origin.id)
 
+    // The subscriber suppresses items when the origin is not 'failed' (Consumer 1
+    // guard). Put the origin into 'failed' so the item is raised as expected.
+    await setTaskStatus(client, origin.id, 'failed')
+
     // Register subscriber AFTER setup so the cursor starts past setup events.
     await ra.ensureRecoveryAbandonedSubscriber(client)
 
@@ -197,6 +245,9 @@ describe('recovery-abandoned outbox subscriber', () => {
     const fixTaskId = 'fix-task-beta'
     await insertFixTask(client, fixTaskId, origin.id)
 
+    // Must be 'failed' for the item to be raised (Consumer 1 guard).
+    await setTaskStatus(client, origin.id, 'failed')
+
     await ra.ensureRecoveryAbandonedSubscriber(client)
     await publish(pub, client, 'task.terminal', { taskId: fixTaskId, reason: 'dropped' })
     await ra.drainRecoveryAbandoned(client)
@@ -233,6 +284,9 @@ describe('recovery-abandoned outbox subscriber', () => {
     const fixTaskId = 'fix-task-delta'
     await insertFixTask(client, fixTaskId, origin.id)
 
+    // Must be 'failed' for the item to be raised (Consumer 1 guard).
+    await setTaskStatus(client, origin.id, 'failed')
+
     await ra.ensureRecoveryAbandonedSubscriber(client)
     await publish(pub, client, 'task.terminal', { taskId: fixTaskId, reason: 'dropped' })
 
@@ -243,5 +297,85 @@ describe('recovery-abandoned outbox subscriber', () => {
     // A second drain sees the cursor already advanced — no new rows.
     await ra.drainRecoveryAbandoned(client)
     expect(await openRowCount(client)).toBe(1)
+  })
+
+  // -------------------------------------------------------------------------
+  // Consumer 1 contract: "Suppress recovery-abandoned item when origin is not
+  // failed" — the subscriber must not raise an item when the origin task is in
+  // any status other than 'failed', because the resolution verbs (mars continue
+  // / mars restart) only apply to failed tasks.
+  // -------------------------------------------------------------------------
+
+  it('does not raise an action-queue item when the origin task is not in failed status', async () => {
+    const { q, ra, pub, client } = await loadModules(repo)
+
+    // Enqueued origin remains in 'queued' status — not 'failed'.
+    const origin = await q.enqueueTask('implement feature K', undefined, { skipTriage: true })
+
+    const fixTaskId = 'fix-task-kappa'
+    await insertFixTask(client, fixTaskId, origin.id)
+
+    await ra.ensureRecoveryAbandonedSubscriber(client)
+    await publish(pub, client, 'task.terminal', { taskId: fixTaskId, reason: 'dropped' })
+
+    const { processed } = await ra.drainRecoveryAbandoned(client)
+
+    // The event is a valid fix-task drop but the origin is not 'failed',
+    // so the handler returns without raising an item.
+    expect(processed).toBe(0)
+    expect(await openRowCount(client)).toBe(0)
+  })
+
+  // -------------------------------------------------------------------------
+  // Consumer 2 contract: "Qualify mars restart advice with commit classification
+  // when item is raised" — the body text must differ based on whether the origin
+  // branch has commits ahead of the integration branch.
+  // -------------------------------------------------------------------------
+
+  it('body uses plain restart advice when origin branch has no commits ahead of main', async () => {
+    const { q, ra, pub, client } = await loadModules(repo)
+
+    const origin = await q.enqueueTask('implement feature L', undefined, { skipTriage: true })
+    await setTaskStatus(client, origin.id, 'failed')
+    // No branch set on the task — subscriber treats this as zero commits ahead.
+
+    const fixTaskId = 'fix-task-lambda'
+    await insertFixTask(client, fixTaskId, origin.id)
+
+    await ra.ensureRecoveryAbandonedSubscriber(client)
+    await publish(pub, client, 'task.terminal', { taskId: fixTaskId, reason: 'dropped' })
+    await ra.drainRecoveryAbandoned(client)
+
+    const row = await openRowForOrigin(client, origin.id)
+    expect(row).not.toBeNull()
+    // Both verbs present; no commit-count warning since no branch is ahead.
+    expect(row!.body).toContain(`mars continue ${origin.id}`)
+    expect(row!.body).toContain(`mars restart ${origin.id}`)
+    expect(row!.body).not.toMatch(/commit\(s\) ahead/)
+  })
+
+  it('body warns about discarded commits when origin branch is ahead of main', async () => {
+    const { q, ra, pub, client } = await loadModules(repo)
+
+    const origin = await q.enqueueTask('implement feature M', undefined, { skipTriage: true })
+    await setTaskStatus(client, origin.id, 'failed')
+    const branchName = `task/${origin.id}`
+    createBranchAhead(repo, branchName)
+    await setTaskBranch(client, origin.id, branchName)
+
+    const fixTaskId = 'fix-task-mu'
+    await insertFixTask(client, fixTaskId, origin.id)
+
+    await ra.ensureRecoveryAbandonedSubscriber(client)
+    await publish(pub, client, 'task.terminal', { taskId: fixTaskId, reason: 'dropped' })
+    await ra.drainRecoveryAbandoned(client)
+
+    const row = await openRowForOrigin(client, origin.id)
+    expect(row).not.toBeNull()
+    // Both verbs still appear; the restart advice is now qualified with a
+    // commit-count warning so the operator knows work would be discarded.
+    expect(row!.body).toContain(`mars continue ${origin.id}`)
+    expect(row!.body).toContain(`mars restart ${origin.id}`)
+    expect(row!.body).toMatch(/commit\(s\) ahead/)
   })
 })
