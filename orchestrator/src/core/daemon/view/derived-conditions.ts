@@ -462,11 +462,16 @@ async function deriveGateBrokenConditions(
   // emit `originTaskId: null` when the task is gone — the gate's own identity
   // (scope/name) is the stable subject of this row, not the failure that
   // happened to trip it.
+  //
+  // Dropped tasks are also excluded: a task that was intentionally abandoned
+  // is not useful context for a live gate condition. Surfacing a dropped task
+  // as "last tripped by" would mislead the operator into inspecting work that
+  // no longer exists as an active concern.
   const result = await client.execute(
     `SELECT g.id, g.scope, g.name, g.required, g.quarantine_signature, g.last_failure_at,
             t.id AS origin_task_id
        FROM verify_gates g
-       LEFT JOIN tasks t ON t.id = g.last_failure_origin_id
+       LEFT JOIN tasks t ON t.id = g.last_failure_origin_id AND t.status NOT IN ('dropped')
       WHERE g.state = 'quarantined'`,
   )
   return result.rows.map((r) => {

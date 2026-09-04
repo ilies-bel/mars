@@ -52,6 +52,12 @@ const NON_TASK_FAILURE_KINDS = new Set([
   'health-check-alert',
   'phantom-merge',
   'phantom-merge-unknown',
+  // gate-broken: the row's subject is the gate itself, not the task that last
+  // tripped it. Treating it as a task-failure kind caused operatorGoal to be
+  // derived from the origin task's intent and surfaced as the primary headline —
+  // so a dropped task's title became the card headline even though the card
+  // describes a live infrastructure condition, not a task failure.
+  'gate-broken',
 ])
 
 /** Preserves the former failure-specific enrichment without changing labels. */
@@ -420,11 +426,22 @@ export const OPERATIONAL_ALERT_COPY: Record<
       typeof row.payload.gate === 'string'
         ? row.payload.gate
         : (verdict.match(/^verify:([^/]+)/)?.[1] ?? 'unknown')
+    const scope = typeof row.payload.scope === 'string' ? row.payload.scope : null
+    const name = typeof row.payload.name === 'string' ? row.payload.name : null
+    // Prefer "scope/name" over the raw UUID — matches what `mars verify-gate list` shows.
+    const identity =
+      scope && name && !(scope === gate && name === gate) ? `${scope}/${name}` : gate
     const streak = typeof row.payload.streak === 'number' ? ` (${row.payload.streak} tasks)` : ''
+    // Surface the origin task only when it is still active (dropped tasks are
+    // excluded by the deriveGateBrokenConditions JOIN). A null originTaskId means
+    // the task was purged or dropped — do not mention it.
+    const originTaskId =
+      typeof row.payload.originTaskId === 'string' ? row.payload.originTaskId : null
+    const lastTripped = originTaskId ? ` Last tripped by ${originTaskId}.` : ''
     return {
-      title: `Gate ${gate} is consistently failing${streak}`,
+      title: `The ${identity} check keeps failing${streak}`,
       body:
-        `The ${gate} check has repeatedly produced \`${verdict}\`. Recovery is suppressed while it is broken. ` +
+        `The ${identity} check has repeatedly produced \`${verdict}\`. Recovery is suppressed while it is broken.${lastTripped} ` +
         `Inspect \`.mars/watch.log\`, fix or disable the check, then restart the affected tasks.`,
     }
   },
@@ -789,6 +806,12 @@ export const getActionQueueEntityId = (row: PersistedActionQueueRow): string => 
   if (row.kind === 'workflow-draft-pending') {
     if (typeof row.payload.workflowName === 'string') return row.payload.workflowName
     return row.signature ?? row.id
+  }
+  // gate-broken: the gate is the entity, not the task that tripped it.
+  // Using originTaskId here caused operatorGoal to be derived from the tripping
+  // task's intent and rendered as the card headline — wrong subject entirely.
+  if (row.kind === 'gate-broken') {
+    return typeof row.payload.gate === 'string' ? row.payload.gate : (row.signature ?? row.id)
   }
   if (typeof row.payload.taskId === 'string') return row.payload.taskId
   if (typeof row.payload.originTaskId === 'string') return row.payload.originTaskId
