@@ -21,6 +21,7 @@ import { hasFlag } from '../args'
 import type { Command, CommandDeps } from '../command'
 import { errorMessage, readDaemonPort } from './shared'
 import type { ActionQueueRow } from '../../core/daemon/view/action-queue'
+import { groupActionQueueRows, formatGroupRowTsv } from '../action-queue-group'
 
 const LEAN_PREVIEW = 3
 
@@ -175,15 +176,16 @@ export const renderActionQueueDetail = (deps: CommandDeps, row: ActionQueueRow):
 
 const actionQueueList: Command = {
   path: 'action-queue list',
-  summary: 'list action queue items [open|all] [--lean] [--kind <csv>]',
-  usage: 'usage: mars action-queue list [open|all] [--lean] [--kind <csv>]',
+  summary: 'list action queue items [open|all] [--lean] [--kind <csv>] [--no-group]',
+  usage: 'usage: mars action-queue list [open|all] [--lean] [--kind <csv>] [--no-group]',
   run: async (args, deps) => {
     const lean = hasFlag(args, '--lean')
+    const noGroup = hasFlag(args, '--no-group')
     const rest = args.positional
     const filter = rest[0] ?? 'open'
     const allowed = new Set(['open', 'all'])
     if (!allowed.has(filter)) {
-      deps.err('usage: mars action-queue list [open|all] [--lean] [--kind <csv>]')
+      deps.err('usage: mars action-queue list [open|all] [--lean] [--kind <csv>] [--no-group]')
       return { code: 2 }
     }
     const kindRaw = args.flags['--kind']
@@ -229,19 +231,44 @@ const actionQueueList: Command = {
       deps.err('action queue empty')
       return { code: 0 }
     }
+    // Apply signature-based grouping unless the caller opted out. Singletons
+    // (groups of one) are passed through as plain items, so --no-group is
+    // redundant for low-cardinality queues but matters for pollers that must
+    // see one line per raw row.
+    const grouped = noGroup ? null : groupActionQueueRows(rows)
     if (lean) {
+      // Lean mode: count per kind, preview first LEAN_PREVIEW items.
+      // When grouping is active, count by visible rendered lines, not raw rows,
+      // so the summary stays coherent with what the operator sees.
+      const displayRows = grouped ?? rows.map((r) => ({ type: 'item' as const, row: r }))
       const counts: Record<string, number> = {}
-      for (const row of rows) counts[row.kind] = (counts[row.kind] ?? 0) + 1
+      for (const dr of displayRows) {
+        const kind = dr.type === 'group' ? dr.kind : dr.row.kind
+        counts[kind] = (counts[kind] ?? 0) + 1
+      }
       const parts = Object.entries(counts).map(([k, n]) => `${k}:${n}`)
-      deps.out(`action queue ${rows.length} (${parts.join(', ')})`)
-      for (const row of rows.slice(0, LEAN_PREVIEW))
-        deps.out(`  ${row.id}  ${row.humanSummary || row.title}`)
-      const overflow = rows.length - LEAN_PREVIEW
+      const totalVisible = displayRows.length
+      deps.out(`action queue ${totalVisible} (${parts.join(', ')})`)
+      for (const dr of displayRows.slice(0, LEAN_PREVIEW)) {
+        if (dr.type === 'group') {
+          deps.out(`  ${dr.id}  ${dr.count}× ${dr.causeLabel}`)
+        } else {
+          deps.out(`  ${dr.row.id}  ${dr.row.humanSummary || dr.row.title}`)
+        }
+      }
+      const overflow = totalVisible - LEAN_PREVIEW
       if (overflow > 0) deps.out(`  ... +${overflow} more`)
     } else {
-      for (const row of rows) {
-        const classCol = `[${(row.class ?? 'alert').toUpperCase()}]`
-        deps.out(`${row.id}\t${row.priority}\t${row.kind}\t${classCol}\t${row.humanSummary || row.title}`)
+      // Full listing: one tab-separated line per visible row.
+      const displayRows = grouped ?? rows.map((r) => ({ type: 'item' as const, row: r }))
+      for (const dr of displayRows) {
+        if (dr.type === 'group') {
+          deps.out(formatGroupRowTsv(dr))
+        } else {
+          const row = dr.row
+          const classCol = `[${(row.class ?? 'alert').toUpperCase()}]`
+          deps.out(`${row.id}\t${row.priority}\t${row.kind}\t${classCol}\t${row.humanSummary || row.title}`)
+        }
       }
     }
     return { code: 0 }
