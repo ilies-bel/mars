@@ -6,6 +6,21 @@ import { CollapsibleSection } from '@/components/CollapsibleSection'
 import { ProposalActionRow } from '@/components/ProposalActionRow'
 import { formatAbsoluteDate } from '@/shared/time'
 import { taskHash } from '@/shared/routing'
+import { patchProposalField, type ProposalField } from '@/shared/api'
+
+export type { ProposalActionRowProps } from '@/components/ProposalActionRow'
+
+/**
+ * Generic action-button state machine used across proposal action surfaces.
+ *
+ * `T` merges additional fields into the `done` variant (e.g. `{ taskId: string }`).
+ * Defaults to an empty intersection so the plain `done` variant carries only `kind`.
+ */
+export type ActionButtonState<T = Record<never, never>> =
+  | { kind: 'idle' }
+  | { kind: 'pending' }
+  | ({ kind: 'done' } & T)
+  | { kind: 'error'; message: string }
 
 interface ProposalDetailDrawerProps {
   /** Full proposal record sourced from GET /api/proposals/:id. */
@@ -71,15 +86,10 @@ const STATUS_CLI_VERBS: Record<string, string[]> = {
  * Called four times (problem / solution / outOfScope / notes), satisfying the
  * multi-caller requirement and keeping clamp logic in one place.
  *
- * Exported so consumer slice 2 ("Add inline field editing for proposal body
- * sections") can extend or compose it without redefining the clamp / collapse
- * behaviour.
- *
- * When `onSave` is supplied the section enables an inline edit mode: the user
- * can switch the read-only `<p>` to a `<textarea>`, edit in place, and confirm
- * or cancel. Consumer slice 2 implements this toggle UI; this owner slice only
- * declares the prop so both the existing call sites in this file and the
- * consumer's new sites share the same component signature from day one.
+ * When `editable` is true and `proposalId` + `field` are supplied, the section
+ * gains an inline edit mode: hovering reveals a ✎ affordance, clicking switches
+ * the `<p>` to a `<textarea>`. Ctrl+Enter or the Save button commits the change
+ * via `patchProposalField`; Escape or Cancel reverts without saving.
  */
 export const BodySection = ({
   label,
@@ -87,6 +97,10 @@ export const BodySection = ({
   testId,
   maxLines = 8,
   onSave,
+  editable,
+  field,
+  proposalId,
+  onSaved,
 }: {
   label: string
   text: string
@@ -94,49 +108,147 @@ export const BodySection = ({
   maxLines?: number
   children?: ReactNode
   /**
-   * When provided, the section supports inline editing. Consumer slice 2 adds
-   * the edit-toggle button and `<textarea>` UI; the prop is wired to a PATCH
-   * /api/proposals/:id call that persists the updated field value.
+   * Legacy prop — accepted for backwards compatibility; has no effect.
+   * Consumer slice 5 uses `editable` / `field` / `proposalId` instead.
    */
   onSave?: (newText: string) => Promise<void>
+  /** When true, a ✎ affordance appears on hover and the section is editable. */
+  editable?: boolean
+  /** The proposal field name sent to `patchProposalField` on save. */
+  field?: ProposalField
+  /** Proposal id forwarded to `patchProposalField`. */
+  proposalId?: string
+  /** Called after a successful save with the field name and new value. */
+  onSaved?: (field: string, value: string) => void
 }) => {
-  // `onSave` is declared here to establish the contract; consumer slice 2
-  // wires the edit UI. We silence the lint warning for the unused parameter
-  // until that slice lands.
   void onSave
+
+  type EditState = 'view' | 'editing' | 'saving' | 'error'
+  const [editState, setEditState] = useState<EditState>('view')
+  const [editText, setEditText] = useState('')
+  const [savedValue, setSavedValue] = useState<string | null>(null)
+  const [errorMessage, setErrorMessage] = useState('')
   const [expanded, setExpanded] = useState(false)
-  const lineCount = text.split('\n').length
+
+  const displayedText = savedValue ?? text
+  const lineCount = displayedText.split('\n').length
   const isLong = lineCount > maxLines
 
+  const isEditing = editState === 'editing' || editState === 'saving' || editState === 'error'
+
+  const handleEdit = () => {
+    if (!editable) return
+    setEditText(savedValue ?? text)
+    setEditState('editing')
+  }
+
+  const handleCancel = () => {
+    setEditState('view')
+    setErrorMessage('')
+  }
+
+  const handleSave = async () => {
+    if (editState === 'saving' || !proposalId || !field) return
+    setEditState('saving')
+    try {
+      await patchProposalField(proposalId, field, editText)
+      setSavedValue(editText)
+      setEditState('view')
+      onSaved?.(field, editText)
+    } catch (err) {
+      setEditState('error')
+      setErrorMessage((err as Error).message)
+    }
+  }
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && e.ctrlKey) {
+      e.preventDefault()
+      void handleSave()
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      handleCancel()
+    }
+  }
+
   return (
-    <section data-testid={testId} className="border-b border-primary/40 px-4 py-3">
+    <section
+      data-testid={testId}
+      className={`${editable ? 'group ' : ''}border-b border-primary/40 px-4 py-3`}
+    >
       <CollapsibleSection label={label} defaultOpen>
-        <div>
-          <p
-            className="whitespace-pre-wrap font-mono text-body text-foreground"
-            style={
-              isLong && !expanded
-                ? {
-                    display: '-webkit-box',
-                    WebkitLineClamp: maxLines,
-                    WebkitBoxOrient: 'vertical',
-                    overflow: 'hidden',
-                  }
-                : undefined
-            }
-          >
-            {text}
-          </p>
-          {isLong ? (
-            <button
-              type="button"
-              onClick={() => setExpanded((v) => !v)}
-              className="mt-1.5 font-mono text-micro text-primary underline hover:text-foreground"
+        {isEditing ? (
+          <div className="flex flex-col gap-2">
+            <textarea
+              value={editText}
+              onChange={(e) => setEditText(e.target.value)}
+              onKeyDown={handleKeyDown}
+              disabled={editState === 'saving'}
+              autoFocus
+              aria-label={`Edit ${label}`}
+              className="min-h-[80px] w-full resize-y rounded border border-primary/40 bg-background px-2 py-1 font-mono text-body text-foreground focus:outline-none focus:ring-1 focus:ring-primary/60 disabled:opacity-50"
+            />
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => { void handleSave() }}
+                disabled={editState === 'saving'}
+                className="rounded border border-primary/40 px-2 py-0.5 font-mono text-body text-primary hover:bg-primary/10 disabled:opacity-50"
+              >
+                {editState === 'saving' ? 'Saving…' : 'Save'}
+              </button>
+              <button
+                type="button"
+                onClick={handleCancel}
+                disabled={editState === 'saving'}
+                className="rounded border border-primary/40 px-2 py-0.5 font-mono text-body text-muted-foreground hover:bg-primary/5 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              {editState === 'error' && (
+                <span className="font-mono text-micro text-destructive">{errorMessage}</span>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className={editable ? 'relative' : undefined}>
+            {editable && (
+              <button
+                type="button"
+                onClick={handleEdit}
+                aria-label={`Edit ${label}`}
+                className="absolute right-0 top-0 rounded px-1 py-0.5 font-mono text-body text-primary opacity-0 transition-opacity hover:bg-primary/10 group-hover:opacity-100"
+              >
+                ✎
+              </button>
+            )}
+            <p
+              className="whitespace-pre-wrap font-mono text-body text-foreground"
+              style={
+                isLong && !expanded
+                  ? {
+                      display: '-webkit-box',
+                      WebkitLineClamp: maxLines,
+                      WebkitBoxOrient: 'vertical',
+                      overflow: 'hidden',
+                    }
+                  : undefined
+              }
             >
-              {expanded ? 'Show less' : 'Read more'}
-            </button>
-          ) : null}
-        </div>
+              {displayedText}
+            </p>
+            {isLong ? (
+              <button
+                type="button"
+                onClick={() => setExpanded((v) => !v)}
+                className="mt-1.5 font-mono text-micro text-primary underline hover:text-foreground"
+              >
+                {expanded ? 'Show less' : 'Read more'}
+              </button>
+            ) : null}
+          </div>
+        )}
       </CollapsibleSection>
     </section>
   )
@@ -399,6 +511,9 @@ export const ProposalDetailDrawer = ({
             label="Problem"
             text={proposal.problem}
             testId="proposal-detail-problem"
+            editable={isDraft}
+            field="problem"
+            proposalId={proposal.id}
           />
         ) : null}
 
@@ -407,6 +522,9 @@ export const ProposalDetailDrawer = ({
             label="Solution"
             text={proposal.solution}
             testId="proposal-detail-solution"
+            editable={isDraft}
+            field="solution"
+            proposalId={proposal.id}
           />
         ) : null}
 
@@ -433,6 +551,9 @@ export const ProposalDetailDrawer = ({
             label="Out of scope"
             text={proposal.outOfScope}
             testId="proposal-detail-out-of-scope"
+            editable={isDraft}
+            field="out-of-scope"
+            proposalId={proposal.id}
           />
         ) : null}
 
@@ -441,6 +562,9 @@ export const ProposalDetailDrawer = ({
             label="Notes"
             text={proposal.notes}
             testId="proposal-detail-notes"
+            editable={isDraft}
+            field="notes"
+            proposalId={proposal.id}
           />
         ) : null}
 

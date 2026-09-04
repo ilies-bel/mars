@@ -15,6 +15,13 @@ export interface ProposalActionRowProps {
   /** Current proposal lifecycle status; reserved for future conditional rendering. */
   status: string
   /**
+   * Whether a mockup file exists for this proposal. When true the action row
+   * may surface a "View mockup" affordance (consumer slice extensibility).
+   */
+  mockupExists?: boolean
+  /** URL of the proposal's mockup HTML file (used alongside `mockupExists`). */
+  mockupUrl?: string
+  /**
    * Called after a successful Dismiss so the parent can react (e.g. close the drawer).
    * Optional — omit when no parent-level cleanup is needed on dismiss.
    */
@@ -26,6 +33,11 @@ export interface ProposalActionRowProps {
    * close is desirable.
    */
   onClose?: () => void
+  /**
+   * Called when an action triggers a navigation so the parent can react (e.g.
+   * close an overlay before the hash change completes). Optional.
+   */
+  onNavigate?: () => void
 }
 
 /**
