@@ -323,6 +323,7 @@ export interface AppServices {
   viewTask: (id: string) => Promise<{ task: unknown } | null>
   viewProgress: () => Promise<{ tasks: ProgressTask[]; proposals: ProposalNode[]; aggregates: ProgressAggregates }>
   viewStatusCounts: () => Promise<{ running: number; recovering: number; needYou: number; failed: number; doneToday: number }>
+  viewCounts: () => Promise<import('./daemon/view/counts.js').Counts>
   viewProposals: (opts?: {
     source?: ProposalSource
     status?: string
@@ -618,6 +619,19 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
       viewActionQueue('open'),
     ])
     return { ...counts, needYou: countNeedsYou(openActionQueue) }
+  }
+
+  const viewCounts: AppServices['viewCounts'] = async () => {
+    const { createCountsStore } = await import('./daemon/view/counts.js')
+    const client = getCompositionRootClient()
+    // needsYou is sourced from the action queue feed (same as viewStatusCounts)
+    // rather than a SQL COUNT: condition kinds (failed, stale-queued,
+    // gate-broken, …) are derived on read (ADR-0057) and have no stored row.
+    const [rawCounts, openActionQueue] = await Promise.all([
+      createCountsStore(client).readCounts(),
+      viewActionQueue('open'),
+    ])
+    return { ...rawCounts, needsYou: countNeedsYou(openActionQueue) }
   }
 
   const viewStepSpans: AppServices['viewStepSpans'] = async ({ originId, taskId }) => {
@@ -2291,6 +2305,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     viewTask,
     viewProgress,
     viewStatusCounts,
+    viewCounts,
     viewProposals,
     viewProposal,
     viewStepSpans,

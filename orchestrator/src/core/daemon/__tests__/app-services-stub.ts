@@ -48,6 +48,11 @@ export const stubAppServices = (
   viewTask: async () => null,
   viewProgress: async () => ({ tasks: [], proposals: [], aggregates: { doneToday: 0, doneTotal: 0, failedOpen: 0 } }),
   viewStatusCounts: async () => ({ running: 0, recovering: 0, needYou: 0, failed: 0, doneToday: 0 }),
+  viewCounts: async () => ({
+    needsYou: 0, running: 0, verifying: 0, merging: 0,
+    queued: 0, blocked: 0, failed: 0, doneToday: 0,
+    proposals: { draft: 0, total: 0 },
+  }),
   viewProposals: async () => ({ drafts: [], staleWorktrees: [], total: 0, nextCursor: null }),
   viewProposal: async () => null,
   viewStepSpans: async () => ({ spans: [] }),

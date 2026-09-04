@@ -1004,6 +1004,20 @@ export const registerRoutes = (
       return
     }
 
+    // GET /view/counts — unified count of all task lifecycle buckets plus
+    // proposals, so every UI surface reads from one source. Extends
+    // /view/status-counts with verifying, merging, queued, blocked, and
+    // proposals.{draft,total}. needsYou is sourced from the action queue feed
+    // (same predicate as /view/status-counts) to include derived conditions.
+    // Pure read; no draining gate.
+    if (req.method === 'GET' && req.url === '/view/counts') {
+      deps.appServices
+        .viewCounts()
+        .then((body) => sendJson(res, 200, body))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
     // GET /view/status-counts — canonical operational counts in one query.
     // Returns { running, recovering, needYou, failed, doneToday } so every
     // UI surface that renders these numbers fetches from one source instead
