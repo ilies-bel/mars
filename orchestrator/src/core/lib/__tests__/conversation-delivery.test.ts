@@ -274,6 +274,69 @@ describe('conversation notice delivery', () => {
     ])
   })
 
+  it('coalesces a second notice with the same dedupKey into the existing pending row', async () => {
+    const { chat, delivery, db } = await loadStores(repo)
+
+    const first = await delivery.postConversationNotice({
+      body: 'I tightened the prompt (ledger-1).',
+      priority: 'routine',
+      hasActiveRuns: () => true,
+      dedupKey: 'steward-prompt-opt',
+    })
+    expect(first.delivered).toBe(false)
+
+    // Second firing with the same dedupKey — should update the existing pending row.
+    const second = await delivery.postConversationNotice({
+      body: 'I tightened the prompt (ledger-2).',
+      priority: 'routine',
+      hasActiveRuns: () => true,
+      dedupKey: 'steward-prompt-opt',
+    })
+    expect(second.delivered).toBe(false)
+    expect(second.id).toBe(first.id)
+
+    // Exactly one pending row should exist.
+    const rows = await db.execute(
+      `SELECT body, occurrence_count FROM conversation_pending_messages WHERE delivered_at IS NULL`,
+    )
+    expect(rows.rows).toHaveLength(1)
+    expect((rows.rows[0] as { body: unknown }).body).toContain('ledger-2')
+    expect((rows.rows[0] as { occurrence_count: unknown }).occurrence_count).toBe(2)
+
+    // When flushed, only one message lands in the chat.
+    await delivery.flushRoutineConversationNotices(() => false)
+    const feed = await conversationFeed(chat)
+    expect(feed).toHaveLength(1)
+    expect(feed[0]?.content).toContain('ledger-2')
+  })
+
+  it('updates a delivered notice in-place when dedupKey fires within the coalesce window', async () => {
+    const { chat, delivery } = await loadStores(repo)
+
+    // First urgent notice — delivered immediately.
+    await delivery.postConversationNotice({
+      body: 'I tightened the prompt (ledger-1).',
+      priority: 'urgent',
+      dedupKey: 'steward-prompt-opt',
+    })
+    let feed = await conversationFeed(chat)
+    expect(feed).toHaveLength(1)
+    expect(feed[0]?.content).toContain('ledger-1')
+
+    // Second firing with the same dedupKey — should update the delivered row.
+    const result = await delivery.postConversationNotice({
+      body: 'I tightened the prompt (ledger-2).',
+      priority: 'urgent',
+      dedupKey: 'steward-prompt-opt',
+    })
+    expect(result.delivered).toBe(true)
+
+    // Still only one chat message, now carrying the updated body.
+    feed = await conversationFeed(chat)
+    expect(feed).toHaveLength(1)
+    expect(feed[0]?.content).toContain('ledger-2')
+  })
+
   it('requests a chat invalidation once per delivered Notice', async () => {
     const { delivery } = await loadStores(repo)
     const emit = vi.fn(() => true)

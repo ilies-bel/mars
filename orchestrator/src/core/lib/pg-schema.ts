@@ -1281,16 +1281,20 @@ const DDL: readonly string[] = [
   `ALTER TABLE IF EXISTS chat_messages DROP COLUMN IF EXISTS notice_id`,
   `DROP TABLE IF EXISTS notices`,
   `CREATE TABLE IF NOT EXISTS conversation_pending_messages (
-    id           text PRIMARY KEY,
-    body         text NOT NULL,
-    segments     text,
+    id               text PRIMARY KEY,
+    body             text NOT NULL,
+    segments         text,
     backing_entity_id text,
-    priority     text NOT NULL CHECK (priority IN ('urgent', 'routine')),
-    created_at   bigint NOT NULL,
-    delivered_at bigint
+    priority         text NOT NULL CHECK (priority IN ('urgent', 'routine')),
+    created_at       bigint NOT NULL,
+    delivered_at     bigint,
+    dedup_key        text,
+    occurrence_count integer NOT NULL DEFAULT 1
   )`,
   `ALTER TABLE conversation_pending_messages ADD COLUMN IF NOT EXISTS segments text`,
   `ALTER TABLE conversation_pending_messages ADD COLUMN IF NOT EXISTS backing_entity_id text`,
+  `ALTER TABLE conversation_pending_messages ADD COLUMN IF NOT EXISTS dedup_key text`,
+  `ALTER TABLE conversation_pending_messages ADD COLUMN IF NOT EXISTS occurrence_count integer NOT NULL DEFAULT 1`,
   `CREATE INDEX IF NOT EXISTS idx_conversation_pending_messages_pending
      ON conversation_pending_messages(priority, created_at) WHERE delivered_at IS NULL`,
   `CREATE TABLE IF NOT EXISTS conversation_notice_batches (

@@ -27,6 +27,13 @@ const stateClient = resolveStateClient
 const ConversationPrioritySchema = z.enum(['urgent', 'routine'])
 export type ConversationPriority = z.infer<typeof ConversationPrioritySchema>
 
+/**
+ * One hour in milliseconds. When a delivered `chat_messages` row with the same
+ * `backing_entity_id` exists within this window, `postConversationNotice`
+ * updates that row in-place instead of inserting a new pending row.
+ */
+const COALESCE_WINDOW_MS = 3_600_000
+
 /** The delivery-side facts, shared by both ways of authoring a Notice. */
 interface ConversationNoticeDelivery {
   priority: ConversationPriority
@@ -39,6 +46,21 @@ interface ConversationNoticeDelivery {
   hasActiveRuns?: () => boolean
   /** Supplied by the daemon so a delivered Notice invalidates live UI views. */
   bus?: ViewInvalidationBus
+  /**
+   * When set, multiple firings of the same notice kind are coalesced into one
+   * pending or delivered row rather than producing separate chat messages.
+   *
+   * - If an undelivered `conversation_pending_messages` row with the same
+   *   `dedup_key` exists, its body, segments, and occurrence_count are updated
+   *   in-place and no new row is inserted.
+   * - If a delivered `chat_messages` row with `backing_entity_id = dedupKey`
+   *   exists within `COALESCE_WINDOW_MS`, that row's content and segments are
+   *   updated in-place and the call returns immediately as delivered.
+   *
+   * Also used as the `backing_entity_id` for any row created by this call,
+   * enabling the in-place update path for future firings.
+   */
+  dedupKey?: string
 }
 
 export type ConversationNoticeInput =
@@ -114,6 +136,9 @@ const deliverPendingNotice = async (
 /**
  * Queue a template-authored Notice for the durable conversation. Urgent
  * notices interrupt the visible timeline; routine notices wait for a pause.
+ *
+ * When `dedupKey` is set, duplicate firings within the same hour are folded
+ * into one row rather than producing separate chat messages.
  */
 export const postConversationNotice = async (
   input: ConversationNoticeInput,
@@ -123,7 +148,6 @@ export const postConversationNotice = async (
     ? input.body
     : renderConversationNotice(input.kind, input.payload)
   const c = stateClient()
-  const id = randomUUID()
   // An explicit Offer set always wins. Otherwise a registry-authored Notice
   // carries the chips its kind stands behind, and only a free-form Notice
   // with nothing to offer degrades to plain text.
@@ -136,11 +160,61 @@ export const postConversationNotice = async (
         }]
       : []),
   ]
-  const backingEntityId = 'body' in input ? input.backingEntityId ?? null : null
+
+  const dedupKey = input.dedupKey ?? null
+  // When a dedupKey is set it doubles as the backing_entity_id so future
+  // in-place lookups on chat_messages can find the delivered row by entity id.
+  const rawBackingEntityId = 'body' in input ? input.backingEntityId ?? null : null
+  const backingEntityId = dedupKey ?? rawBackingEntityId
+
+  // ── dedup: update an existing undelivered pending row ───────────────────
+  if (dedupKey !== null) {
+    const pendingRow = await c.execute({
+      sql: `SELECT id, occurrence_count FROM conversation_pending_messages
+             WHERE dedup_key = ? AND delivered_at IS NULL
+             LIMIT 1`,
+      args: [dedupKey],
+    })
+    const existing = pendingRow.rows[0] as { id?: unknown; occurrence_count?: unknown } | undefined
+    if (existing?.id !== undefined) {
+      const existingId = existing.id as string
+      const nextCount = ((existing.occurrence_count as number | null) ?? 1) + 1
+      await c.execute({
+        sql: `UPDATE conversation_pending_messages
+                 SET body = ?, segments = ?, occurrence_count = ?
+               WHERE id = ?`,
+        args: [body, JSON.stringify(segments), nextCount, existingId],
+      })
+      return { id: existingId, delivered: false }
+    }
+
+    // ── dedup: update a delivered chat_messages row in-place ──────────────
+    const deliveredRow = await c.execute({
+      sql: `SELECT id FROM chat_messages
+             WHERE backing_entity_id = ? AND kind = 'notice'
+               AND created_at > ?
+             LIMIT 1`,
+      args: [dedupKey, Date.now() - COALESCE_WINDOW_MS],
+    })
+    const deliveredMsg = deliveredRow.rows[0] as { id?: unknown } | undefined
+    if (deliveredMsg?.id !== undefined) {
+      const deliveredId = deliveredMsg.id as string
+      await c.execute({
+        sql: `UPDATE chat_messages SET content = ?, segments = ? WHERE id = ?`,
+        args: [body, JSON.stringify(segments), deliveredId],
+      })
+      input.bus?.emit('view.chat-invalidated')
+      return { id: deliveredId, delivered: true }
+    }
+  }
+
+  // ── normal path: insert a new pending row ────────────────────────────────
+  const id = randomUUID()
   await c.execute({
-    sql: `INSERT INTO conversation_pending_messages (id, body, segments, backing_entity_id, priority, created_at)
-          VALUES (?, ?, ?, ?, ?, ?)`,
-    args: [id, body, JSON.stringify(segments), backingEntityId, priority, Date.now()],
+    sql: `INSERT INTO conversation_pending_messages
+            (id, body, segments, backing_entity_id, priority, created_at, dedup_key, occurrence_count)
+          VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
+    args: [id, body, JSON.stringify(segments), backingEntityId, priority, Date.now(), dedupKey],
   })
 
   const hasActiveRuns = input.hasActiveRuns?.() ?? (

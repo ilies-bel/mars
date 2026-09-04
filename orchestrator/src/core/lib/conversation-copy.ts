@@ -162,6 +162,14 @@ export interface NoticeKindEntry<Kind extends AutonomousNoticeKind> {
    * Ignored when `actionable` is `true`.
    */
   collapseKey?: string
+  /**
+   * When present, multiple firings of this notice kind are coalesced into a
+   * single pending or delivered row. The function maps the payload to a stable
+   * string key; all notices sharing that key within the coalesce window are
+   * folded into one occurrence with an updated body instead of producing
+   * separate chat messages.
+   */
+  dedupKey?: (payload: AutonomousNoticePayloads[Kind]) => string
 }
 
 /** "Noted" — the operator read it; nothing changes. */
@@ -383,6 +391,7 @@ const REGISTRY: { [Kind in AutonomousNoticeKind]: NoticeKindEntry<Kind> } = {
     render: (p) => `I tightened the worker prompt because the optimizer applied a structural improvement (ledger ${p.ledgerId}).`,
     lever: undefined,
     offers: () => ackOnly(),
+    dedupKey: () => 'steward-prompt-opt',
   },
   'steward.workflow-patch': {
     act: 'announcement',
@@ -439,3 +448,18 @@ export const isActionableConversationNotice = (kind: AutonomousNoticeKind): bool
  */
 export const collapseKeyForConversationNotice = (kind: AutonomousNoticeKind): string | undefined =>
   REGISTRY[kind].actionable ? undefined : REGISTRY[kind].collapseKey
+
+/**
+ * The dedup key for a notice kind + payload, when the registry declares one.
+ *
+ * Multiple firings that resolve to the same key are coalesced into a single
+ * pending or delivered row (see `postConversationNotice`). Returns `undefined`
+ * for notice kinds that do not participate in deduplication.
+ */
+export const dedupKeyForNotice = <Kind extends AutonomousNoticeKind>(
+  kind: Kind,
+  payload: AutonomousNoticePayloads[Kind],
+): string | undefined => {
+  const entry = REGISTRY[kind] as NoticeKindEntry<Kind>
+  return entry.dedupKey?.(payload)
+}
