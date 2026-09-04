@@ -207,6 +207,10 @@ const CLAUDE_PROVIDER: ProviderDescriptor = {
     headless: {
       capabilities: {
         usageSemantics: 'per-request',
+        // Claude reports one window at a time (via response headers); upsert
+        // so N distinct window ids accumulate across the run rather than each
+        // report replacing the whole set.
+        windowMergeStrategy: 'upsert-by-id',
         quotaRejected: true,
         sessionId: true,
       },

@@ -238,6 +238,10 @@ export const readCodexOutput = (stdout: string): AgentEvent[] =>
 export const codexHeadless: HeadlessAdapter = {
   capabilities: {
     usageSemantics: 'cumulative',
+    // Codex reports a full rate-limit snapshot on each event; replace the
+    // window set wholesale so a window absent from the latest snapshot is
+    // removed rather than left as stale data.
+    windowMergeStrategy: 'replace',
     // Codex DOES surface rate/spend rejections — as an `error` / `turn.failed`
     // pair on stdout rather than a dedicated field. extractCodexQuotaRejected
     // recovers them, so this adapter populates RunAgentResult.quotaRejected.

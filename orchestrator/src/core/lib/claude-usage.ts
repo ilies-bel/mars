@@ -244,3 +244,226 @@ export const buildContextTokenSignals = (
       return {}
   }
 }
+
+// ============================================================
+// Usage blob: independent context + limits sub-structures
+// ============================================================
+
+/**
+ * How a provider's rate-limit windows should be merged when a new report
+ * arrives. Declared on the provider descriptor so the merge function never
+ * branches on a provider name — a new provider is addable by declaring its
+ * strategy here with no edit to the merge code.
+ *
+ *   'upsert-by-id' — Claude: each report carries one window at a time;
+ *                    merge by id so a run that sees N different window ids
+ *                    accumulates all N rather than replacing the set.
+ *   'replace'      — Codex: each report is a full snapshot; replace the
+ *                    existing set wholesale so a window absent from the
+ *                    latest snapshot is removed rather than left as stale.
+ *   'none'         — Gemini: no rate-limit data is emitted; leave the
+ *                    window set untouched.
+ */
+export type WindowMergeStrategy = 'upsert-by-id' | 'replace' | 'none'
+
+/** One provider rate-limit window as reported on the event stream. */
+export interface UsageLimitWindow {
+  id: string
+  label: string
+  /** Fraction of the limit consumed, in [0, 100]. */
+  usedPct: number
+  /** ISO-8601 UTC reset time, or null when the provider does not report it. */
+  resetsAt: string | null
+}
+
+export interface UsageLimitCredits {
+  unit: string
+  remaining: number
+}
+
+/**
+ * Account-level rate limits sub-structure.
+ * Refreshed only when the provider reports a change; never clobbered by a
+ * context-only update.
+ */
+export interface UsageLimits {
+  readonly windows: ReadonlyArray<UsageLimitWindow>
+  readonly credits?: UsageLimitCredits
+}
+
+/**
+ * Per-conversation context fill sub-structure.
+ * Refreshed on every assistant message; never clobbered by a limits-only
+ * update.
+ *
+ *   usedTokens — current context size (input + cache buckets).
+ *   maxTokens  — context-window ceiling reported by the provider, or null
+ *                when not reported.
+ *   costUsd    — accumulated run cost in USD as reported by the provider,
+ *                or null when not reported.
+ */
+export interface UsageContext {
+  usedTokens: number
+  maxTokens: number | null
+  costUsd: number | null
+}
+
+/** The merged usage blob that callers read. */
+export interface UsageBlob {
+  context: UsageContext
+  limits: UsageLimits
+  /** ISO-8601 UTC timestamp of the most-recent update (context OR limits). */
+  updatedAt: string
+}
+
+/**
+ * Mutable state object that holds context and limits independently.
+ *
+ * Two rules enforced by construction:
+ *   1. A context-only update never clobbers last-known limits.
+ *   2. A limits-only update never clobbers last-known context.
+ *
+ * Create one per run via {@link createUsageBlobState} with the provider's
+ * declared {@link WindowMergeStrategy}.
+ */
+export interface UsageBlobState {
+  /** Returns the merged blob, or null if nothing has been recorded yet. */
+  getBlob(): UsageBlob | null
+  /** Overwrite the context half. Does not touch the limits half. */
+  updateContext(ctx: UsageContext): void
+  /**
+   * Merge incoming limits into the limits half using the strategy declared
+   * at construction. Does not touch the context half.
+   */
+  updateLimits(incoming: UsageLimits): void
+}
+
+/**
+ * Create a {@link UsageBlobState} that enforces independent refresh of
+ * context and limits, with window merging driven by the provider's declared
+ * strategy so the merge code never branches on a provider name.
+ */
+export const createUsageBlobState = (strategy: WindowMergeStrategy): UsageBlobState => {
+  let context: UsageContext | null = null
+  let storedWindows: UsageLimitWindow[] = []
+  let storedCredits: UsageLimitCredits | undefined = undefined
+  let updatedAt: string | null = null
+
+  const touch = (): void => {
+    updatedAt = new Date().toISOString()
+  }
+
+  return {
+    getBlob(): UsageBlob | null {
+      if (context === null && storedWindows.length === 0) return null
+      return {
+        context: context ?? { usedTokens: 0, maxTokens: null, costUsd: null },
+        limits: { windows: storedWindows, credits: storedCredits },
+        updatedAt: updatedAt ?? new Date().toISOString(),
+      }
+    },
+    updateContext(ctx: UsageContext): void {
+      context = ctx
+      touch()
+    },
+    updateLimits(incoming: UsageLimits): void {
+      switch (strategy) {
+        case 'upsert-by-id': {
+          // Each Claude report carries one window; merge by id so N distinct
+          // windows accumulate rather than each report replacing the whole set.
+          const map = new Map(storedWindows.map((w) => [w.id, w]))
+          for (const w of incoming.windows) {
+            map.set(w.id, w)
+          }
+          storedWindows = [...map.values()]
+          break
+        }
+        case 'replace':
+          // Codex reports a full snapshot; replace wholesale so a vanished
+          // window is removed rather than left as stale data.
+          storedWindows = [...incoming.windows]
+          break
+        case 'none':
+          // Gemini emits no rate-limit data; leave the window set untouched.
+          break
+      }
+      if (incoming.credits !== undefined) {
+        storedCredits = incoming.credits
+      }
+      touch()
+    },
+  }
+}
+
+/**
+ * Extract a {@link UsageContext} from a single stream event (in-band,
+ * no I/O). Returns null for non-assistant events or events with no usage
+ * block. Defensive: malformed fields degrade to 0 / null, never throw.
+ *
+ * `context` is refreshed on every assistant message so a long run shows live
+ * fill rather than landing a single update when the turn completes.
+ */
+export const extractContextFromEvent = (event: AgentEvent): UsageContext | null => {
+  if (event.type !== 'assistant') return null
+  const message = event.message
+  if (!isObject(message)) return null
+  const usage = message.usage
+  if (!isObject(usage)) return null
+  const usedTokens =
+    numberOr(usage.input_tokens) +
+    numberOr(usage.cache_read_input_tokens) +
+    numberOr(usage.cache_creation_input_tokens)
+  const maxTokens =
+    typeof usage.context_window === 'number' && Number.isFinite(usage.context_window)
+      ? (usage.context_window as number)
+      : null
+  const costUsd =
+    typeof usage.cost_usd === 'number' && Number.isFinite(usage.cost_usd)
+      ? (usage.cost_usd as number)
+      : null
+  return { usedTokens, maxTokens, costUsd }
+}
+
+/**
+ * Extract {@link UsageLimits} from a `rate_limits` stream event (in-band,
+ * no I/O). Returns null for any other event type. Defensive: malformed
+ * window entries are skipped; missing fields default to 0 / null / undefined
+ * — never throws into the run loop.
+ *
+ * Expected event shape (emitted by provider adapters when they detect a
+ * rate-limit change, e.g. via a response header):
+ *   { type: 'rate_limits',
+ *     windows: [{ id, label, usedPct, resetsAt }],
+ *     credits?: { unit, remaining } }
+ *
+ * `limits` is only updated when this event type is seen, so a run that never
+ * triggers a rate-limit report leaves the previous limits intact.
+ */
+export const extractLimitsFromEvent = (event: AgentEvent): UsageLimits | null => {
+  if (event.type !== 'rate_limits') return null
+  const parsedWindows: UsageLimitWindow[] = []
+  if (Array.isArray(event.windows)) {
+    for (const w of event.windows) {
+      if (!isObject(w)) continue
+      const id = typeof w.id === 'string' ? w.id : null
+      const label = typeof w.label === 'string' ? w.label : null
+      if (id === null || label === null) continue
+      const usedPct =
+        typeof w.usedPct === 'number' && Number.isFinite(w.usedPct) ? w.usedPct : 0
+      const resetsAt = typeof w.resetsAt === 'string' ? w.resetsAt : null
+      parsedWindows.push({ id, label, usedPct, resetsAt })
+    }
+  }
+  let parsedCredits: UsageLimitCredits | undefined
+  if (isObject(event.credits)) {
+    const unit = typeof event.credits.unit === 'string' ? event.credits.unit : null
+    const remaining =
+      typeof event.credits.remaining === 'number' && Number.isFinite(event.credits.remaining)
+        ? event.credits.remaining
+        : null
+    if (unit !== null && remaining !== null) {
+      parsedCredits = { unit, remaining }
+    }
+  }
+  return { windows: parsedWindows, credits: parsedCredits }
+}

@@ -22,6 +22,7 @@ const FAKE_PROVIDER: ProviderDescriptor = {
     readOutput: () => [],
     capabilities: {
       usageSemantics: 'per-request',
+      windowMergeStrategy: 'none',
       quotaRejected: false,
       sessionId: false,
     },

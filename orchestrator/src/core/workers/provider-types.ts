@@ -8,7 +8,7 @@ import type {
   RunAgentResult,
 } from '../ports/executor/types'
 import type { AgentEvent } from '../lib/claude-stream'
-import type { ProviderUsageSemantics } from '../lib/claude-usage'
+import type { ProviderUsageSemantics, WindowMergeStrategy } from '../lib/claude-usage'
 
 /**
  * Provider identifier. Was a closed union (`'claude' | 'gemini' | 'codex'`);
@@ -155,6 +155,13 @@ export interface HeadlessAdapter {
   readOutput(stdout: string): AgentEvent[]
   readonly capabilities: {
     readonly usageSemantics: ProviderUsageSemantics
+    /**
+     * How this provider's rate-limit windows should be merged when a new
+     * report arrives. Declared here so the merge function never branches on a
+     * provider name; a third provider is addable by declaring its strategy,
+     * with no edit to the merge code. See {@link WindowMergeStrategy}.
+     */
+    readonly windowMergeStrategy: WindowMergeStrategy
     readonly quotaRejected: boolean
     readonly sessionId: boolean
   }

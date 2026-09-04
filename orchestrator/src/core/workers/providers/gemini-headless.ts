@@ -48,6 +48,9 @@ const readGeminiOutput = (stdout: string): AgentEvent[] =>
 export const geminiHeadless: HeadlessAdapter = {
   capabilities: {
     usageSemantics: 'none',
+    // Gemini CLI emits plain text — no structured usage or rate-limit events
+    // at all — so there are no windows to merge.
+    windowMergeStrategy: 'none',
     quotaRejected: false,
     sessionId: false,
   },
