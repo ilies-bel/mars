@@ -790,6 +790,36 @@ export interface VcsApplyPatchSpec {
   patch: string
 }
 
+// ---------------------------------------------------------------------------
+// Slice 7 — diff-summary (task-changes surface)
+// ---------------------------------------------------------------------------
+
+/** One file entry returned by {@link Vcs.diffSummary}. */
+export interface VcsDiffFileStat {
+  /** The file path (new path for renames). */
+  path: string
+  /** The original path before a rename; undefined for non-rename statuses. */
+  oldPath?: string
+  /**
+   * Change status: A = added, M = modified, D = deleted, R = renamed,
+   * C = copied. Other exotic statuses (T, U) are normalised to M.
+   */
+  status: 'A' | 'M' | 'D' | 'R' | 'C'
+  /** Lines added; -1 for binary files. */
+  additions: number
+  /** Lines deleted; -1 for binary files. */
+  deletions: number
+}
+
+/** Args for {@link Vcs.diffSummary}. */
+export interface VcsDiffSummarySpec {
+  cwd: string
+  /** A `git diff` range expression, e.g. `"<base>..<head>"`. */
+  range: string
+  timeoutMs?: number
+  trace?: TraceIdentity
+}
+
 /**
  * The VCS Port contract. Every method is async and every arg/result is
  * serializable — see the module doc comment above.
@@ -873,6 +903,12 @@ export interface Vcs {
   searchCommits(spec: VcsSearchCommitsSpec): Promise<VcsCommitSummary[]>
   /** Paths that differ across `spec.range` (`diff --name-only`). Returns `[]` on failure. */
   changedFiles(spec: VcsChangedFilesSpec): Promise<string[]>
+  /**
+   * Per-file diff summary for `spec.range`: status (A/M/D/R/C), additions, and
+   * deletions for every file changed. Runs `--numstat` + `--name-status`
+   * together and combines by position. Returns `[]` on any git failure.
+   */
+  diffSummary(spec: VcsDiffSummarySpec): Promise<VcsDiffFileStat[]>
   /** Fetch from a remote. Throws on failure — callers that treat the network as optional catch it themselves. */
   fetch(spec: VcsFetchSpec): Promise<void>
   /** Hard-reset `spec.cwd` onto `spec.rev` (`reset --hard`). Throws on failure. */

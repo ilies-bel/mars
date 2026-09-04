@@ -744,6 +744,30 @@ export const registerRoutes = (
       return
     }
 
+    // GET /view/task/:id/changes — per-file diff summary, patch, and commits for
+    // a task. Works for live tasks (computes merge-base to HEAD) and done tasks
+    // (reads the worktree tombstone for the landed sha). Returns the
+    // branch-gone shape with 200 when the diff cannot be computed. Pure read;
+    // no draining gate.
+    if (
+      req.method === 'GET' &&
+      req.url &&
+      req.url.startsWith('/view/task/') &&
+      req.url.endsWith('/changes')
+    ) {
+      const urlPart = req.url.slice('/view/task/'.length, -'/changes'.length)
+      const id = decodeURIComponent(urlPart)
+      if (!id) {
+        sendJson(res, 400, { error: 'id is required' })
+        return
+      }
+      deps.appServices
+        .viewTaskChanges(id)
+        .then((body) => sendJson(res, 200, body))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
     // GET /view/tasks — full task list from the daemon's DomainTaskStore.
     // The read-only UI proxies this endpoint instead of opening the DB
     // directly, so the daemon is the single reader of its own database.

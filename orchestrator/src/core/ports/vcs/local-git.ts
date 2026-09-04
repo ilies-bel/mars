@@ -94,6 +94,8 @@ import type {
   VcsStatus,
   VcsUpdateRefSpec,
   VcsWorkingTreeMatchesSpec,
+  VcsDiffFileStat,
+  VcsDiffSummarySpec,
   WorktreeResult,
   WorktreeSpec,
   WorktreeSyncOutcome,
@@ -560,6 +562,67 @@ export const localGitVcs: Vcs = {
       .split('\n')
       .map((s) => s.trim())
       .filter((s) => s.length > 0)
+  },
+
+  async diffSummary(spec: VcsDiffSummarySpec): Promise<VcsDiffFileStat[]> {
+    const { cwd, range, timeoutMs } = spec
+    const git = resolveGitBin()
+    const [nsResult, statResult] = await Promise.all([
+      execProbe(git, ['diff', '--name-status', range], { cwd, timeout: timeoutMs }),
+      execProbe(git, ['diff', '--numstat', range], { cwd, timeout: timeoutMs }),
+    ])
+    if (nsResult.exitCode !== 0 || statResult.exitCode !== 0) return []
+
+    // Parse name-status lines: "M\tpath", "R100\told\tnew", "A\tpath", etc.
+    const nameStatusEntries: Array<{
+      status: VcsDiffFileStat['status']
+      path: string
+      oldPath?: string
+    }> = []
+    for (const line of nsResult.stdout.split('\n')) {
+      const trimmed = line.trimEnd()
+      if (!trimmed) continue
+      const parts = trimmed.split('\t')
+      const code = parts[0] ?? ''
+      const firstChar = code[0]
+      if (firstChar === 'R' || firstChar === 'C') {
+        const status: VcsDiffFileStat['status'] = firstChar === 'R' ? 'R' : 'C'
+        nameStatusEntries.push({
+          status,
+          oldPath: parts[1] ?? '',
+          path: parts[2] ?? parts[1] ?? '',
+        })
+      } else if (firstChar === 'A') {
+        nameStatusEntries.push({ status: 'A', path: parts[1] ?? '' })
+      } else if (firstChar === 'D') {
+        nameStatusEntries.push({ status: 'D', path: parts[1] ?? '' })
+      } else {
+        nameStatusEntries.push({ status: 'M', path: parts[1] ?? '' })
+      }
+    }
+
+    // Parse numstat lines: "add\tdel\tpath" or "-\t-\tpath" for binary.
+    const numstatEntries: Array<{ additions: number; deletions: number }> = []
+    for (const line of statResult.stdout.split('\n')) {
+      const trimmed = line.trimEnd()
+      if (!trimmed) continue
+      const parts = trimmed.split('\t')
+      const addStr = parts[0] ?? '-'
+      const delStr = parts[1] ?? '-'
+      numstatEntries.push({
+        additions: addStr === '-' ? -1 : Number.parseInt(addStr, 10),
+        deletions: delStr === '-' ? -1 : Number.parseInt(delStr, 10),
+      })
+    }
+
+    // Combine by position — both git outputs list files in the same order.
+    return nameStatusEntries.map((ns, i) => ({
+      path: ns.path,
+      ...(ns.oldPath !== undefined ? { oldPath: ns.oldPath } : {}),
+      status: ns.status,
+      additions: numstatEntries[i]?.additions ?? 0,
+      deletions: numstatEntries[i]?.deletions ?? 0,
+    }))
   },
 
   async fetch(spec: VcsFetchSpec): Promise<void> {

@@ -34,6 +34,8 @@
 import { readFile, readdir } from 'node:fs/promises'
 import { resolve as resolvePath } from 'node:path'
 import { resolveContext, getRepoRoot } from './context'
+import { localGitVcs } from './ports/vcs/local-git'
+import { resolveGitBin, execProbe } from './lib/git/internal'
 import { readGlossaryFile, generateDefaultSurfaceForms } from './lib/glossary'
 import {
   getDefaultDomainTaskStore,
@@ -144,6 +146,53 @@ import {
 } from './verify-gates'
 
 export type { AgentToolCall, VerifyGateInput, VerifyGate }
+
+// ── Task-changes result type ──────────────────────────────────────────────────
+
+/** One file entry in a task diff summary. */
+export interface TaskChangesFileStat {
+  path: string
+  oldPath?: string
+  status: 'A' | 'M' | 'D' | 'R' | 'C'
+  additions: number
+  deletions: number
+}
+
+/** One commit entry in a task diff summary. */
+export interface TaskChangesCommit {
+  sha: string
+  subject: string
+  authoredAt: string
+}
+
+/**
+ * The result of {@link AppServices.viewTaskChanges}.
+ *
+ * When the branch and worktree are both gone and there is no tombstone,
+ * `reason` is `'branch-gone'` and all collections are empty. In all other
+ * cases at least `base` and `head` are non-null.
+ */
+export type TaskChangesResult =
+  | {
+      reason: 'branch-gone'
+      base: null
+      head: null
+      landedSha: null
+      files: []
+      patch: ''
+      truncated: false
+      commits: []
+    }
+  | {
+      reason?: undefined
+      base: string
+      head: string
+      landedSha: string | null
+      files: TaskChangesFileStat[]
+      patch: string
+      truncated: boolean
+      commits: TaskChangesCommit[]
+    }
 
 /** Operator-facing verify-gate health, projected from the registry row. */
 export type GateHealthEntry = Pick<
@@ -292,6 +341,8 @@ export interface AppServices {
    * runs stay empty.
    */
   viewAgentToolCalls: (taskId: string, sessionId: string) => Promise<{ calls: AgentToolCall[] }>
+  // ── task changes diff surface ────────────────────────────────────────────────
+  viewTaskChanges: (taskId: string) => Promise<TaskChangesResult>
   // ── primitives (facet of the Studio surface) ───────────────────────────────
   viewPrimitives: () => Promise<{ primitives: PrimitiveSummary[] }>
   viewPrimitive: (params: { name: string; limit?: number }) => Promise<PrimitiveDetail | null>
@@ -932,6 +983,127 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
   const viewAgentToolCalls: AppServices['viewAgentToolCalls'] = async (taskId, sessionId) => {
     const events = (await traceStore.readTranscriptChunks?.(taskId, sessionId)) ?? []
     return { calls: extractAgentToolCalls(events) }
+  }
+
+  // ── task changes diff surface ────────────────────────────────────────────────
+
+  const PATCH_SIZE_LIMIT = 200 * 1024 // 200 KB
+
+  const BRANCH_GONE: TaskChangesResult = {
+    reason: 'branch-gone',
+    base: null,
+    head: null,
+    landedSha: null,
+    files: [],
+    patch: '',
+    truncated: false,
+    commits: [],
+  }
+
+  const viewTaskChanges: AppServices['viewTaskChanges'] = async (taskId) => {
+    const task = await getDefaultDomainTaskStore().getTask(taskId)
+    if (!task) return BRANCH_GONE
+
+    const repoRoot = getRepoRoot()
+    const integrationBranch = process.env['INTEGRATION_BRANCH'] ?? 'main'
+
+    let base: string
+    let head: string
+    let landedSha: string | null = null
+
+    const taskStatus = task.status
+    if (taskStatus === 'done' || taskStatus === 'dropped') {
+      // Try the worktree tombstone for the landed sha.
+      const stateDir = resolveContext().stateDir
+      const tombstonePath = resolvePath(stateDir, 'worktrees', `${taskId}.removed.json`)
+      try {
+        const raw = await readFile(tombstonePath, 'utf8')
+        const parsed = JSON.parse(raw) as Record<string, unknown>
+        const sha = typeof parsed['mergeCommitSha'] === 'string' ? parsed['mergeCommitSha'] : null
+        if (!sha) return BRANCH_GONE
+        landedSha = sha
+        // diff range: parent → landed commit
+        const parentSha = await localGitVcs.revParse({ cwd: repoRoot, rev: `${sha}^` })
+        if (!parentSha) return BRANCH_GONE
+        base = parentSha
+        head = sha
+      } catch {
+        return BRANCH_GONE
+      }
+    } else {
+      // Live task — need branch + a working git ref.
+      const branch = task.branch
+      if (!branch) return BRANCH_GONE
+      const worktreePath = task.worktreePath
+      const cwd = worktreePath ?? repoRoot
+
+      // Resolve HEAD of the task branch.
+      const headSha = await localGitVcs.revParse({ cwd, rev: 'HEAD' })
+      if (!headSha) return BRANCH_GONE
+      head = headSha
+
+      // Resolve merge-base between the integration branch and this branch.
+      const mbResult = await execProbe(
+        resolveGitBin(),
+        ['merge-base', integrationBranch, branch],
+        { cwd },
+      )
+      if (mbResult.exitCode !== 0) {
+        // Branch may not yet share history with integration (e.g. fresh worktree
+        // before the first commit). Graceful empty result.
+        return BRANCH_GONE
+      }
+      const baseSha = mbResult.stdout.trim()
+      if (!baseSha) return BRANCH_GONE
+      base = baseSha
+    }
+
+    const range = `${base}..${head}`
+
+    // Gather diff data in parallel.
+    const [files, rawPatch, commits, authoredAtMap] = await Promise.all([
+      localGitVcs.diffSummary({ cwd: repoRoot, range }).catch(() => [] as import('./ports/vcs/types').VcsDiffFileStat[]),
+      localGitVcs.diffText({ cwd: repoRoot, from: base, to: head }).catch(() => null),
+      localGitVcs.commitsInRange({ cwd: repoRoot, range, abbrev: false }).catch(() => []),
+      execProbe(resolveGitBin(), ['log', '--format=%H\t%aI', range], { cwd: repoRoot }).then((r) => {
+        const m = new Map<string, string>()
+        if (r.exitCode !== 0) return m
+        for (const line of r.stdout.split('\n')) {
+          const tabIdx = line.indexOf('\t')
+          if (tabIdx === -1) continue
+          const sha = line.slice(0, tabIdx).trim()
+          const date = line.slice(tabIdx + 1).trim()
+          if (sha && date) m.set(sha, date)
+        }
+        return m
+      }).catch(() => new Map<string, string>()),
+    ])
+
+    const patch = rawPatch ?? ''
+    const truncated = Buffer.byteLength(patch, 'utf8') > PATCH_SIZE_LIMIT
+    const finalPatch = truncated
+      ? patch.slice(0, PATCH_SIZE_LIMIT)
+      : patch
+
+    return {
+      base,
+      head,
+      landedSha,
+      files: files.map((f) => ({
+        path: f.path,
+        ...(f.oldPath !== undefined ? { oldPath: f.oldPath } : {}),
+        status: f.status,
+        additions: f.additions,
+        deletions: f.deletions,
+      })),
+      patch: finalPatch,
+      truncated,
+      commits: commits.map((c) => ({
+        sha: c.sha,
+        subject: c.subject,
+        authoredAt: authoredAtMap.get(c.sha) ?? '',
+      })),
+    }
   }
 
   // ── primitives — the per-primitive facet of the Studio surface ─────────────
@@ -2125,6 +2297,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     viewRunTimeline,
     viewStepPrompt,
     viewAgentToolCalls,
+    viewTaskChanges,
     viewPrimitives,
     viewPrimitive,
     viewSessions,
