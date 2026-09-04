@@ -15,8 +15,11 @@ import {
   MERGE_ALREADY_TERMINAL_REASON,
   MERGE_ENV_UNREACHABLE_REASON,
   MERGE_IDEMPOTENT_TERMINAL_STATUSES,
+  MERGE_PHANTOM_MERGE_SIGNATURE,
   MERGE_STEP_TIMEOUT_FAILURE_REASON,
   MERGE_WEDGED_VCS_SUPERVISOR_REASON,
+  MERGE_WORK_LOST_SIGNATURE,
+  PARKED_REF_PREFIX,
   WedgedVcsSupervisorError,
   type MergeHeartbeat,
   type MergeHeartbeatFn,
@@ -215,5 +218,66 @@ describe('MERGE_ENV_UNREACHABLE_REASON', () => {
   it('is a string literal (not a dynamic value)', () => {
     expect(typeof MERGE_ENV_UNREACHABLE_REASON).toBe('string')
     expect(MERGE_ENV_UNREACHABLE_REASON.length).toBeGreaterThan(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Work-lost and phantom-merge guard constants (zero-commit branch protection)
+// ---------------------------------------------------------------------------
+
+describe('MERGE_WORK_LOST_SIGNATURE', () => {
+  it('is a string', () => {
+    expect(typeof MERGE_WORK_LOST_SIGNATURE).toBe('string')
+    expect(MERGE_WORK_LOST_SIGNATURE.length).toBeGreaterThan(0)
+  })
+
+  it('equals merge:work-lost', () => {
+    expect(MERGE_WORK_LOST_SIGNATURE).toBe('merge:work-lost')
+  })
+
+  it('starts with merge: prefix for action-queue classifier compatibility', () => {
+    expect(MERGE_WORK_LOST_SIGNATURE.startsWith('merge:')).toBe(true)
+  })
+
+  it('is distinct from MERGE_PHANTOM_MERGE_SIGNATURE', () => {
+    expect(MERGE_WORK_LOST_SIGNATURE).not.toBe(MERGE_PHANTOM_MERGE_SIGNATURE)
+  })
+})
+
+describe('MERGE_PHANTOM_MERGE_SIGNATURE', () => {
+  it('is a string', () => {
+    expect(typeof MERGE_PHANTOM_MERGE_SIGNATURE).toBe('string')
+    expect(MERGE_PHANTOM_MERGE_SIGNATURE.length).toBeGreaterThan(0)
+  })
+
+  it('equals merge:phantom-merge', () => {
+    expect(MERGE_PHANTOM_MERGE_SIGNATURE).toBe('merge:phantom-merge')
+  })
+
+  it('starts with merge: prefix for action-queue classifier compatibility', () => {
+    expect(MERGE_PHANTOM_MERGE_SIGNATURE.startsWith('merge:')).toBe(true)
+  })
+
+  it('is distinct from MERGE_WORK_LOST_SIGNATURE', () => {
+    expect(MERGE_PHANTOM_MERGE_SIGNATURE).not.toBe(MERGE_WORK_LOST_SIGNATURE)
+  })
+})
+
+describe('PARKED_REF_PREFIX', () => {
+  it('is a string', () => {
+    expect(typeof PARKED_REF_PREFIX).toBe('string')
+    expect(PARKED_REF_PREFIX.length).toBeGreaterThan(0)
+  })
+
+  it('equals refs/mars/parked', () => {
+    expect(PARKED_REF_PREFIX).toBe('refs/mars/parked')
+  })
+
+  it('starts with refs/mars/ in the Mars ref namespace', () => {
+    expect(PARKED_REF_PREFIX.startsWith('refs/mars/')).toBe(true)
+  })
+
+  it('does not end with a slash (callers append /<taskId>/<ts>)', () => {
+    expect(PARKED_REF_PREFIX.endsWith('/')).toBe(false)
   })
 })

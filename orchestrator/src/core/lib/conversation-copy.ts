@@ -333,7 +333,8 @@ const REGISTRY: { [Kind in AutonomousNoticeKind]: NoticeKindEntry<Kind> } = {
       return (
         `I committed ${files} of yours on ${sentenceValue(p.branch)} as ` +
         `${sentenceValue(p.commitSha).slice(0, 9)} because they were blocking the merge of ` +
-        `${sentenceValue(p.taskId)}.`
+        `${sentenceValue(p.taskId)}. ` +
+        `To undo: \`git revert ${p.commitSha}\``
       )
     },
     // No `lever` facet: the off-switch here is the `operatorAutoCommit`

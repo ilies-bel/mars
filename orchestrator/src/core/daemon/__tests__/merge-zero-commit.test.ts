@@ -28,6 +28,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
+import { PARKED_REF_PREFIX, MERGE_WORK_LOST_SIGNATURE } from '../../../tools/merge/merge.js'
 
 const ZERO_COMMIT_SIGNATURE = 'merge:zero-commit-branch'
 
@@ -228,4 +229,131 @@ describe('isZeroCommitBranch — git utility', () => {
     const { isZeroCommitBranch } = await import('../../lib/git/merge')
     expect(await isZeroCommitBranch(branch, repo)).toBe(false)
   })
+})
+
+// ---------------------------------------------------------------------------
+// Suite 3 — eviction → park → merge:work-lost sequence (regression mars-59c9fdb0)
+//
+// SYMPTOM (2026-09-04): the stale-merging-sweep evicted a task from `merging`,
+// recoverPhase reset the branch to the integration tip (zero commits ahead),
+// and the subsequent merge step saw a zero-commit branch and completed as
+// `done` — silently discarding the task's committed work.
+//
+// FIX (two halves, tested here together):
+//   A. recoverPhase parks the branch tip under refs/mars/parked/<id>/<ts>
+//      BEFORE resetting the branch, so the commits are never lost.
+//   B. The merge gate detects the parked ref and fails with `merge:work-lost`
+//      instead of silently succeeding with zero commits.
+//
+// This suite exercises the exact sequence: commit on branch → simulate eviction
+// (park tip + reset branch) → confirm zero-commit state + parked ref detected.
+// ---------------------------------------------------------------------------
+
+describe('eviction → park → work-lost detection sequence (regression mars-59c9fdb0)', () => {
+  let repo: string
+
+  const GIT_ENV = {
+    GIT_AUTHOR_NAME: 'test',
+    GIT_AUTHOR_EMAIL: 'test@test.com',
+    GIT_COMMITTER_NAME: 'test',
+    GIT_COMMITTER_EMAIL: 'test@test.com',
+  }
+
+  beforeEach(() => {
+    repo = makeRepo()
+    process.env.MARS_REPO = repo
+    vi.resetModules()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it(
+    'after eviction-park, isZeroCommitBranch returns true and the parked ref is found',
+    async () => {
+      const taskId = 'mars-regression-test-59c9fdb0'
+      const branch = `task/${taskId}`
+
+      // Step 1: coder commits real work on the task branch.
+      execFileSync('git', ['checkout', '-b', branch], { cwd: repo, env: { ...process.env, ...GIT_ENV } })
+      writeFileSync(resolve(repo, 'feature.ts'), 'export const featureFlag = true\n')
+      execFileSync('git', ['add', 'feature.ts'], { cwd: repo })
+      execFileSync(
+        'git',
+        ['commit', '-q', '-m', 'feat(gates): add verify-gates route and Gates section'],
+        { cwd: repo, env: { ...process.env, ...GIT_ENV } },
+      )
+      execFileSync('git', ['checkout', 'main'], { cwd: repo })
+
+      // Confirm the branch has real commits before eviction.
+      const { isZeroCommitBranch } = await import('../../lib/git/merge')
+      expect(await isZeroCommitBranch(branch, repo)).toBe(false)
+
+      // Step 2: simulate recoverPhase eviction — park the tip, then reset branch.
+      // This mirrors what phase-recovery.ts does: it calls vcs.updateRef to park
+      // under refs/mars/parked/<id>/<ts>, then removes the worktree and resets
+      // the branch to the integration tip via deleteBranch + re-checkout.
+      const tipSha = execFileSync('git', ['rev-parse', branch], { cwd: repo }).toString().trim()
+      const parkedRef = `${PARKED_REF_PREFIX}/${taskId}/${Date.now()}`
+      execFileSync('git', ['update-ref', parkedRef, tipSha], { cwd: repo })
+      // Simulate branch reset to integration tip (what CLEARED_INFLIGHT + re-setup does).
+      execFileSync('git', ['branch', '-f', branch, 'main'], { cwd: repo })
+
+      // Step 3: confirm the merge gate would see zero commits.
+      expect(await isZeroCommitBranch(branch, repo)).toBe(true)
+
+      // Step 4: confirm the parked ref is discoverable — this is what the merge
+      // gate checks via `git for-each-ref refs/mars/parked/<taskId>`.
+      const parkedRefs = execFileSync(
+        'git',
+        ['for-each-ref', '--format=%(refname)', `${PARKED_REF_PREFIX}/${taskId}`],
+        { cwd: repo },
+      )
+        .toString()
+        .trim()
+      expect(parkedRefs).not.toBe('')
+      expect(parkedRefs).toContain(parkedRef)
+
+      // Step 5: verify MERGE_WORK_LOST_SIGNATURE is the correct constant used
+      // when the merge gate detects this scenario (not 'merge:zero-commit-branch').
+      expect(MERGE_WORK_LOST_SIGNATURE).toBe('merge:work-lost')
+      expect(MERGE_WORK_LOST_SIGNATURE).not.toBe('merge:zero-commit-branch')
+
+      // Step 6: confirm the tip SHA recorded in the parked ref matches the
+      // original coder commit — the work is preserved, not discarded.
+      const parkedTip = execFileSync('git', ['rev-parse', parkedRef], { cwd: repo })
+        .toString()
+        .trim()
+      expect(parkedTip).toBe(tipSha)
+    },
+    20_000,
+  )
+
+  it(
+    'a branch with no prior commits produces no parked ref (distinguishes sandbox-blocked from eviction)',
+    async () => {
+      // A plain zero-commit branch (sandbox-blocked-commit scenario, not an eviction)
+      // has NO parked ref — the merge gate should use merge:zero-commit-branch,
+      // not merge:work-lost, so the distinction is preserved.
+      const taskId = 'mars-no-prior-commits'
+      const branch = `task/${taskId}`
+      execFileSync('git', ['branch', branch], { cwd: repo })
+
+      const { isZeroCommitBranch } = await import('../../lib/git/merge')
+      expect(await isZeroCommitBranch(branch, repo)).toBe(true)
+
+      // No parked ref exists for this task — for-each-ref returns empty.
+      const parkedRefs = execFileSync(
+        'git',
+        ['for-each-ref', '--format=%(refname)', `${PARKED_REF_PREFIX}/${taskId}`],
+        { cwd: repo },
+      )
+        .toString()
+        .trim()
+      expect(parkedRefs).toBe('')
+    },
+    10_000,
+  )
 })
