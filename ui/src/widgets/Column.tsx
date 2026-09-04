@@ -176,14 +176,17 @@ interface DenseColumnProps {
   qualifier?: string
   count: number
   children: React.ReactNode
+  /** Optional hover tooltip explaining the column's semantics (e.g. "waiting
+   *  for another task to finish"). Shown as a native title on the header row. */
+  tooltip?: string
 }
 
-export const DenseColumn = ({ label, qualifier, count, children }: DenseColumnProps) => (
+export const DenseColumn = ({ label, qualifier, count, children, tooltip }: DenseColumnProps) => (
   <section
     data-board-column={label}
     className="flex flex-col gap-2 min-w-0 min-h-0"
   >
-    <header className="flex items-center justify-between border-b border-border pb-2">
+    <header className="flex items-center justify-between border-b border-border pb-2" title={tooltip}>
       <span className="font-mono text-micro font-semibold uppercase tracking-[0.1em] text-muted-foreground">
         {qualifier === undefined ? label.toUpperCase() : `${label.toUpperCase()} (${qualifier.toUpperCase()})`}
       </span>

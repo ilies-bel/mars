@@ -287,14 +287,14 @@ export const BoardView = ({
         </DenseColumn>
 
         {/* In progress (queued + running/verifying/merging) */}
-        <DenseColumn label="In progress" count={inProgressTasks.length}>
+        <DenseColumn label="In progress" count={inProgressTasks.length} tooltip="Queued tasks are ready and waiting for a worker; running tasks are actively being coded, verified, or merged">
           {inProgressTasks.map((t) => (
             <BoardCard key={t.id} task={t} />
           ))}
         </DenseColumn>
 
         {/* Blocked */}
-        <DenseColumn label="Blocked" count={blockedTasks.length}>
+        <DenseColumn label="Blocked" count={blockedTasks.length} tooltip="Waiting for another task to finish">
           {blockedTasks.map((t) => (
             <BoardCard key={t.id} task={t} />
           ))}

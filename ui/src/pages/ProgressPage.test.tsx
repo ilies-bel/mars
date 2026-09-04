@@ -10,9 +10,10 @@
  * file has no runtime dependencies on React Query or SSE.
  */
 
-import { mock, describe, expect, it } from 'bun:test'
+import { mock, describe, expect, it, beforeEach } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { Cluster, ProgressProposalNode, ProgressTask } from '@/shared/schemas'
+import type { DispatchPauseState } from '@/shared/api'
 
 // ---------------------------------------------------------------------------
 // Stubs — declared before the dynamic imports so hoisting is satisfied
@@ -53,15 +54,37 @@ mock.module('@/entities/frameworkUpdate/useFrameworkUpdate', () => ({
   useFrameworkUpdate: () => ({ update: null, error: null, isPending: false }),
 }))
 
-// The header's health indicator reads dispatch state. Default to running so the
-// existing header assertions describe a normal system; the paused case is
-// covered directly in TopStripe.test.tsx.
+// Dispatch state — mutable so per-test overrides work. Default to running so
+// existing header assertions describe a normal system; paused cases are tested
+// directly in the banner suite below.
+let mockDispatchState: DispatchPauseState = { paused: false, reason: null, since: null, detail: null }
+
 mock.module('@/entities/operator/useDispatchState', () => ({
-  useDispatchState: () => ({ paused: false, reason: null, since: null, detail: null }),
-  pauseReasonLabel: () => 'paused',
+  useDispatchState: () => mockDispatchState,
+  pauseReasonLabel: (s: DispatchPauseState) => {
+    switch (s.reason) {
+      case 'operator': return 'paused by you'
+      case 'storm': return 'signature storm'
+      case 'quota': return 'provider quota'
+      case 'baseline': return 'broken baseline'
+      default: return 'paused'
+    }
+  },
 }))
 
+
 const { ProgressPage } = await import('./ProgressPage')
+
+// Reset both mutable stubs before each test so suites don't bleed into each other.
+beforeEach(() => {
+  mockDispatchState = { paused: false, reason: null, since: null, detail: null }
+  mockUseProgress.mockImplementation(() =>
+    baseState([
+      { id: 'p1', title: 'Feature Alpha', source: 'human', status: 'draft' },
+      { id: 'p2', title: 'Feature Beta', source: 'human', status: 'draft' },
+    ]),
+  )
+})
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -308,5 +331,95 @@ describe('ProgressPage – Topology is the landing view', () => {
     const html = renderToStaticMarkup(<ProgressPage />)
     expect(html).not.toContain('data-testid="proposal-filter"')
     expect(html).not.toContain('proposal-filter-select')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Dispatch pause banner
+//
+// When dispatch is paused the page should explain why nothing moves and offer
+// a Resume lever — without sending the operator to Control Room first.
+//
+// Assertions use data-testid markers so a styling-only rename does not break
+// them, and check text content verbatim so the reason phrasing is pinned.
+// ---------------------------------------------------------------------------
+
+describe('ProgressPage – dispatch pause banner', () => {
+  it('shows no banner when dispatch is running', () => {
+    // Default state (set by beforeEach) — dispatch running, no banner.
+    const html = renderToStaticMarkup(<ProgressPage />)
+    expect(html).not.toContain('data-testid="dispatch-pause-banner"')
+  })
+
+  it('shows the banner when dispatch is paused (operator)', () => {
+    mockDispatchState = { paused: true, reason: 'operator', since: null, detail: null }
+    const html = renderToStaticMarkup(<ProgressPage />)
+    expect(html).toContain('data-testid="dispatch-pause-banner"')
+    expect(html).toContain('paused by you')
+    expect(html).toContain('queued tasks will not start until it resumes')
+  })
+
+  it('shows the banner when dispatch is paused (storm)', () => {
+    mockDispatchState = { paused: true, reason: 'storm', since: null, detail: null }
+    const html = renderToStaticMarkup(<ProgressPage />)
+    expect(html).toContain('data-testid="dispatch-pause-banner"')
+    expect(html).toContain('signature storm')
+    expect(html).toContain('queued tasks will not start until it resumes')
+  })
+
+  it('shows the banner when dispatch is paused (quota)', () => {
+    mockDispatchState = { paused: true, reason: 'quota', since: null, detail: null }
+    const html = renderToStaticMarkup(<ProgressPage />)
+    expect(html).toContain('data-testid="dispatch-pause-banner"')
+    expect(html).toContain('provider quota')
+    expect(html).toContain('queued tasks will not start until it resumes')
+  })
+
+  it('shows the banner when dispatch is paused (baseline)', () => {
+    mockDispatchState = { paused: true, reason: 'baseline', since: null, detail: null }
+    const html = renderToStaticMarkup(<ProgressPage />)
+    expect(html).toContain('data-testid="dispatch-pause-banner"')
+    expect(html).toContain('failing a required gate')
+    expect(html).toContain('Fix the gate to resume')
+  })
+
+  it('renders a Resume button for operator reason', () => {
+    mockDispatchState = { paused: true, reason: 'operator', since: null, detail: null }
+    const html = renderToStaticMarkup(<ProgressPage />)
+    expect(html).toContain('data-testid="dispatch-pause-banner-resume"')
+    expect(html).toContain('Resume dispatch')
+  })
+
+  it('renders a Resume button for storm reason', () => {
+    mockDispatchState = { paused: true, reason: 'storm', since: null, detail: null }
+    const html = renderToStaticMarkup(<ProgressPage />)
+    expect(html).toContain('data-testid="dispatch-pause-banner-resume"')
+  })
+
+  it('renders a Resume button for quota reason', () => {
+    mockDispatchState = { paused: true, reason: 'quota', since: null, detail: null }
+    const html = renderToStaticMarkup(<ProgressPage />)
+    expect(html).toContain('data-testid="dispatch-pause-banner-resume"')
+  })
+
+  it('renders a gate link instead of Resume when reason is baseline', () => {
+    // Resuming dispatch does not fix a red integration branch — a link to Needs
+    // You (where the failing gate row lives) is offered instead.
+    mockDispatchState = { paused: true, reason: 'baseline', since: null, detail: null }
+    const html = renderToStaticMarkup(<ProgressPage />)
+    expect(html).not.toContain('data-testid="dispatch-pause-banner-resume"')
+    expect(html).toContain('data-testid="dispatch-pause-banner-gate-link"')
+    expect(html).toContain('#/triage')
+  })
+
+  it('renders only the banner as the pause indicator — no duplicate dispatch-paused-chip', () => {
+    // DispatchPausedChip lives in the Shell topbar (global). ProgressPage must
+    // not render it a second time — the banner is the page-level pause indicator.
+    mockDispatchState = { paused: true, reason: 'operator', since: null, detail: null }
+    const html = renderToStaticMarkup(<ProgressPage />)
+    // Banner present
+    expect(html).toContain('data-testid="dispatch-pause-banner"')
+    // No duplicate chip (that testid belongs to Shell's DispatchPausedChip only)
+    expect(html).not.toContain('data-testid="dispatch-paused-chip"')
   })
 })

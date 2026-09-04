@@ -8,6 +8,7 @@ import {
 } from '@/shared/progressUrlState'
 import type { Tab } from '@/shared/tabs'
 import { DEFAULT_TAB } from '@/shared/tabs'
+import { postOperatorDispatch } from '@/shared/api'
 import { BoardView } from '@/widgets/BoardView'
 import { Footer } from '@/widgets/Footer'
 import { TabStrip } from '@/widgets/TabStrip'
@@ -104,6 +105,46 @@ export const ProgressPage = () => {
           daemonDown={daemonDown}
         />
         <TabStrip active={activeTab} onSelect={setActiveTab} />
+        {/* Dispatch pause banner — shows when the queue is frozen so queued tasks
+            do not start silently. The Resume button is absent for the `baseline`
+            reason because resuming does not fix a red integration branch; a link
+            to Needs You (where the failing gate row lives) is offered instead. */}
+        {dispatch.paused && (
+          <div
+            data-testid="dispatch-pause-banner"
+            className="flex items-center justify-between gap-4 border-b border-amber-500/30 bg-amber-500/10 px-4 py-2 font-mono text-label text-amber-700 dark:text-amber-400"
+          >
+            <span>
+              {dispatch.reason === 'operator'
+                ? 'Dispatch is paused by you — queued tasks will not start until it resumes.'
+                : dispatch.reason === 'storm'
+                  ? 'Dispatch is paused after a signature storm — queued tasks will not start until it resumes.'
+                  : dispatch.reason === 'quota'
+                    ? 'Dispatch is paused due to provider quota — queued tasks will not start until it resumes.'
+                    : dispatch.reason === 'baseline'
+                      ? 'Dispatch is paused — main is failing a required gate. Fix the gate to resume.'
+                      : 'Dispatch is paused — queued tasks will not start until it resumes.'}
+            </span>
+            {dispatch.reason === 'baseline' ? (
+              <a
+                href="#/triage"
+                data-testid="dispatch-pause-banner-gate-link"
+                className="shrink-0 rounded-md border border-amber-500/40 px-3 py-1 text-amber-700 transition-colors hover:bg-amber-500/20 dark:text-amber-400"
+              >
+                View failing gate
+              </a>
+            ) : (
+              <button
+                type="button"
+                data-testid="dispatch-pause-banner-resume"
+                onClick={() => void postOperatorDispatch('on').catch(() => {})}
+                className="shrink-0 rounded-md border border-amber-500/40 px-3 py-1 text-amber-700 transition-colors hover:bg-amber-500/20 dark:text-amber-400"
+              >
+                Resume dispatch
+              </button>
+            )}
+          </div>
+        )}
         {/* Text search — always visible */}
         <div className="flex items-center border-b border-border bg-background px-4 py-1.5">
           <div className="relative min-w-0 flex-1">
