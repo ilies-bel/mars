@@ -121,6 +121,82 @@ describe('recovery dispatch', () => {
     expect((await queue.getTask(recovery.fixTaskId))?.status).toBe('running')
   })
 
+  it('marks task failed with failedPhase=setup when the setup step throws, and daemon stop does not hang', async () => {
+    repo = mkdtempSync(resolve(tmpdir(), 'mars-setup-fail-test-'))
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo })
+    writeFileSync(resolve(repo, '.gitignore'), '.mars/\n')
+    execFileSync(
+      'git',
+      ['-c', 'user.name=Mars Test', '-c', 'user.email=mars@example.test', 'add', '.gitignore'],
+      { cwd: repo },
+    )
+    execFileSync(
+      'git',
+      ['-c', 'user.name=Mars Test', '-c', 'user.email=mars@example.test', 'commit', '-qm', 'init'],
+      { cwd: repo },
+    )
+    // A workflow whose first step throws a plain Error — simulates the
+    // `git worktree add … fatal: invalid reference: main` scenario.
+    mkdirSync(resolve(repo, '.mars', 'workflows'), { recursive: true })
+    writeFileSync(
+      resolve(repo, '.mars', 'workflows', 'setup-throw-workflow.js'),
+      `export default {
+  id: 'setup-throw',
+  fn: async (ctx) => {
+    await ctx.step('setup-worktree', () => {
+      throw new Error('fatal: invalid reference: main')
+    })
+  },
+}\n`,
+    )
+
+    process.env.MARS_REPO = repo
+    process.env.MARS_DB_BACKEND = 'pglite'
+    process.env.MARS_DISABLE_DUCKDB = '1'
+    process.env.MARS_DRAIN_POLL_MS = '60000'
+    process.env.MARS_USAGE_SAMPLE_SEC = '3600'
+    process.env.MARS_WORKER_PROVIDER = 'codex'
+    process.env.MARS_CODEX_BIN = '/usr/bin/true'
+    exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never)
+
+    const queue = await import('../../queue.js')
+    await queue.migrateQueueSchema()
+    const server = await import('../server.js')
+    const daemon = await server.startDaemon()
+    // afterEach will call stop(true); in the test we call stop(false) ourselves
+    stop = async () => {}
+
+    const task = await queue.enqueueTask('test setup failure', undefined, {
+      skipTriage: true,
+      workflow: 'setup-throw',
+    })
+
+    // Wait for the task to reach 'failed'
+    let finalTask: Awaited<ReturnType<typeof queue.getTask>> | undefined
+    try {
+      await eventually(async () => {
+        finalTask = await queue.getTask(task.id)
+        return finalTask?.status === 'failed'
+      })
+    } catch (error) {
+      throw new Error(`${(error as Error).message}; task status=${finalTask?.status}`)
+    }
+
+    expect(finalTask?.status).toBe('failed')
+    expect(finalTask?.failedPhase).toBe('setup')
+
+    // daemon.stop(false) must resolve within the test timeout — it must NOT
+    // wait indefinitely on a task whose run has already ended.
+    const STOP_TIMEOUT_MS = 8_000
+    const stopResult = await Promise.race([
+      daemon.stop(false).then(() => 'stopped' as const),
+      new Promise<'timeout'>((resolve) =>
+        setTimeout(() => resolve('timeout'), STOP_TIMEOUT_MS),
+      ),
+    ])
+    expect(stopResult).toBe('stopped')
+  })
+
   it('periodically dispatches a queued task that bypassed the dispatch hint', async () => {
     repo = mkdtempSync(resolve(tmpdir(), 'mars-queued-dispatch-sweep-test-'))
     execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: repo })

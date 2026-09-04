@@ -34,6 +34,7 @@ import {
   setTaskVerifyCmd,
   unblockTask,
   updateTask,
+  TERMINAL_TASK_STATUSES,
   type DropTaskResult,
   type Task,
   type UnblockTaskResult,
@@ -2075,7 +2076,45 @@ export const startDaemon = async (
         }
       }
       log(`[implement] ${task.id} -> ${result.status}`)
-      bus.emit('task.completed', { taskId: task.id, status: result.status })
+      if (result.status === 'failed' && resultTerminal === null) {
+        // Unhandled failure: the step that threw is not a WorkflowTerminalError,
+        // so no step-level code called updateTask({ status: 'failed' }). The task
+        // row would otherwise stay 'running' indefinitely and daemon stop would
+        // wait for an in-flight entry that never self-releases.
+        //
+        // Stamp it failed now so:
+        //   - `mars list` shows the correct status immediately
+        //   - the recovery spawner can react to the task.failed event
+        //   - daemon stop's terminal-status check (below) can release the tracker
+        //     entry if it is still present when stop() is called
+        //
+        // Use the pre-dispatch worktree presence to infer which step failed:
+        //   - worktreePath === null  → worktree was never created → setup failed
+        //   - worktreePath !== null  → worktree existed; failure is in code step
+        const errorMsg = result.error instanceof Error ? result.error.message : String(result.error ?? 'unknown')
+        const failedPhase = (task.worktreePath === null || task.worktreePath === undefined) ? 'setup' : 'code'
+        const unhandledSig = computeFailureSignature(`${failedPhase}:unhandled`, errorMsg)
+        try {
+          await updateTask(task.id, {
+            status: 'failed',
+            error: errorMsg,
+            failedPhase,
+            failureReason: errorMsg,
+            failureSignature: unhandledSig,
+            failureReasonCode: unhandledSig,
+          })
+        } catch {
+          // best-effort: if the DB write fails the recovery spawner won't fire,
+          // but the finally block still releases the tracker slot
+        }
+        try {
+          bus.emit('task.failed', { taskId: task.id, error: errorMsg })
+        } catch {
+          // best-effort
+        }
+      } else {
+        bus.emit('task.completed', { taskId: task.id, status: result.status })
+      }
     } catch (err) {
       // One bad task must NEVER crash the daemon. Everything from here on is
       // defensive: the catch body itself must not throw, or the rejection
@@ -6595,12 +6634,40 @@ export const startDaemon = async (
     if (!force) {
       // No timeout: a drain stop waits as long as the in-flight tasks need.
       // `mars daemon kill` is the escape hatch for stuck work.
+      //
+      // Safety net: periodically check whether any tracker entry belongs to a
+      // task whose run has already ended (its DB status is terminal). This
+      // covers the narrow window between the last updateTask({ status: 'failed' })
+      // call inside a workflow step and the dispatchImplement finally-block's
+      // releaseTracking() — if daemon stop lands in that window the poll loop
+      // would wait forever. Force-releasing terminal tasks breaks the deadlock.
       let lastLogged = -1
+      let pollsSinceTerminalCheck = 0
+      const TERMINAL_CHECK_POLLS = 20 // check every ~5 s
       while (tracker.inFlightCount() > 0) {
         const remaining = tracker.inFlightCount()
         if (remaining !== lastLogged) {
           log(`waiting on ${remaining} in-flight task(s)`)
           lastLogged = remaining
+        }
+        // Periodically release tracker entries whose task row is already terminal.
+        if (++pollsSinceTerminalCheck >= TERMINAL_CHECK_POLLS) {
+          pollsSinceTerminalCheck = 0
+          const snapshot = tracker.inFlightSnapshot()
+          for (const entry of snapshot) {
+            // Skip non-task kinds (glossary-write, adr-add, etc.) — those ids
+            // are synthetic and will not be found in the tasks table.
+            if (
+              entry.kind !== 'implement' &&
+              entry.kind !== 'triage' &&
+              entry.kind !== 'refine'
+            ) continue
+            const t = await getTask(entry.taskId).catch(() => null)
+            if (t !== null && TERMINAL_TASK_STATUSES.has(t.status)) {
+              tracker.forceRelease(entry.taskId)
+              log(`[shutdown] force-released ${entry.taskId}: run ended, DB status is ${t.status}`)
+            }
+          }
         }
         await new Promise((r) => setTimeout(r, 250))
       }
