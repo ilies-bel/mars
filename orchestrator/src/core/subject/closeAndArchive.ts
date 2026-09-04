@@ -62,9 +62,12 @@ export async function closeAndArchive(subjectId: string, tx: DbTx): Promise<void
 
   // 4. Insert a context_line in the main thread so the outcome is visible
   //    in the operator's feed without reopening the Subject.
-  const line = facts !== null
-    ? renderContextLine(facts)
-    : `Closed subject.`
+  const { text, segments } = facts !== null
+    ? renderContextLine(facts, now)
+    : {
+        text: `Closed subject.`,
+        segments: [{ type: 'text' as const, text: `Closed subject.` }],
+      }
   await tx.execute({
     sql: `INSERT INTO chat_messages
             (id, thread_id, role, content, segments, created_at, context_scope, kind, backing_entity_id)
@@ -72,8 +75,8 @@ export async function closeAndArchive(subjectId: string, tx: DbTx): Promise<void
     args: [
       randomUUID(),
       MAIN_THREAD_ID,
-      line,
-      JSON.stringify([{ type: 'text', text: line }]),
+      text,
+      JSON.stringify(segments),
       now,
       subjectId,
     ],

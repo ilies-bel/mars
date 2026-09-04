@@ -1620,7 +1620,7 @@ export const chatConversationEntrySchema = z.object({
   content: z.string(),
   segments: z.array(z.unknown()).optional().default([]),
   createdAt: z.string(),
-  kind: z.enum(['validation', 'acknowledgment', 'situation', 'notice']),
+  kind: z.enum(['validation', 'acknowledgment', 'situation', 'notice', 'context_line']),
   backingEntityId: z.string().nullable(),
   resolution: z.enum(['resolved']).nullable(),
 })

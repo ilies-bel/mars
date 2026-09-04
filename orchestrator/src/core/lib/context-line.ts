@@ -21,24 +21,55 @@ export interface ClosedSubjectFacts {
   resolvedAlert: boolean
 }
 
+/** Structured outcome carried in the segments array of a context_line message. */
+export interface BreadcrumbSegment {
+  type: 'breadcrumb'
+  title: string
+  taskCount: number
+  alertResolved: boolean
+  closedAt: number
+}
+
+export type ContextLineTextSegment = { type: 'text'; text: string }
+
 const quantity = (count: number, singular: string, plural: string): string =>
   `${count} ${count === 1 ? singular : plural}`
 
 /**
  * Render the one line a closed Subject contributes.
  *
+ * Returns both a plain text string (for backwards-compatible `content` storage)
+ * and a segments array containing a text segment and a structured breadcrumb
+ * segment carrying the outcome facts for rich UI rendering.
+ *
  * A Subject that produced nothing says so. That is the honest outcome and the
  * useful one — it is exactly the case where the operator, weeks later, wants
  * to know whether they ever acted on something.
  */
-export const renderContextLine = (facts: ClosedSubjectFacts): string => {
+export const renderContextLine = (
+  facts: ClosedSubjectFacts,
+  closedAt: number,
+): { text: string; segments: Array<ContextLineTextSegment | BreadcrumbSegment> } => {
   const outcomes: string[] = []
   if (facts.taskIds.length > 0) {
     outcomes.push(`queued ${quantity(facts.taskIds.length, 'task', 'tasks')}`)
   }
   if (facts.resolvedAlert) outcomes.push('resolved the alert')
   const outcome = outcomes.length > 0 ? outcomes.join(' and ') : 'queued nothing'
-  return `Closed "${facts.title}" — ${outcome}.`
+  const text = `Closed "${facts.title}" — ${outcome}.`
+  return {
+    text,
+    segments: [
+      { type: 'text', text },
+      {
+        type: 'breadcrumb',
+        title: facts.title,
+        taskCount: facts.taskIds.length,
+        alertResolved: facts.resolvedAlert,
+        closedAt,
+      },
+    ],
+  }
 }
 
 /**

@@ -12,27 +12,43 @@ describe('renderContextLine', () => {
       title: 'Rework the merge gate',
       taskIds: ['mars-1', 'mars-2'],
       resolvedAlert: false,
-    })).toBe('Closed "Rework the merge gate" — queued 2 tasks.')
+    }, 0).text).toBe('Closed "Rework the merge gate" — queued 2 tasks.')
   })
 
   it('counts a single task in the singular', () => {
-    expect(renderContextLine({ title: 'Fix verify', taskIds: ['mars-1'], resolvedAlert: false }))
+    expect(renderContextLine({ title: 'Fix verify', taskIds: ['mars-1'], resolvedAlert: false }, 0).text)
       .toBe('Closed "Fix verify" — queued 1 task.')
   })
 
   it('says so plainly when a Subject produced nothing', () => {
-    expect(renderContextLine({ title: 'Think about caching', taskIds: [], resolvedAlert: false }))
+    expect(renderContextLine({ title: 'Think about caching', taskIds: [], resolvedAlert: false }, 0).text)
       .toBe('Closed "Think about caching" — queued nothing.')
   })
 
   it('reports both outcomes when an alert Subject also queued work', () => {
-    expect(renderContextLine({ title: 'Triage', taskIds: ['mars-1'], resolvedAlert: true }))
+    expect(renderContextLine({ title: 'Triage', taskIds: ['mars-1'], resolvedAlert: true }, 0).text)
       .toBe('Closed "Triage" — queued 1 task and resolved the alert.')
   })
 
   it('reports a resolved alert on its own', () => {
-    expect(renderContextLine({ title: 'Triage', taskIds: [], resolvedAlert: true }))
+    expect(renderContextLine({ title: 'Triage', taskIds: [], resolvedAlert: true }, 0).text)
       .toBe('Closed "Triage" — resolved the alert.')
+  })
+
+  it('returns a breadcrumb segment alongside the text segment', () => {
+    const closedAt = 1_700_000_000_000
+    const result = renderContextLine(
+      { title: 'Shape the roadmap', taskIds: ['mars-1', 'mars-2'], resolvedAlert: true },
+      closedAt,
+    )
+    expect(result.segments).toContainEqual({
+      type: 'breadcrumb',
+      title: 'Shape the roadmap',
+      taskCount: 2,
+      alertResolved: true,
+      closedAt,
+    })
+    expect(result.segments).toContainEqual({ type: 'text', text: result.text })
   })
 })
 

@@ -46,6 +46,15 @@ const isOfferSegment = (
   (segment as { type?: unknown }).type === 'preloaded_responses' &&
   Array.isArray((segment as { responses?: unknown }).responses)
 
+const isBreadcrumbSegment = (
+  segment: unknown,
+): segment is { type: 'breadcrumb'; title: string; taskCount: number; alertResolved: boolean; closedAt: number } =>
+  typeof segment === 'object' && segment !== null &&
+  (segment as { type?: unknown }).type === 'breadcrumb' &&
+  typeof (segment as { title?: unknown }).title === 'string' &&
+  typeof (segment as { taskCount?: unknown }).taskCount === 'number' &&
+  typeof (segment as { alertResolved?: unknown }).alertResolved === 'boolean'
+
 /**
  * One collapsed row standing in for all messages of a closed subject.
  *
@@ -218,6 +227,35 @@ export const ConversationTimeline = ({
         return subjectEntries.map((entry, index) => {
           const isFirstSubjectMessage = index === 0
           const isFinalSubjectMessage = index === subjectEntries.length - 1
+
+          // context_line entries are folded-back Subject outcomes. Render them
+          // as a compact navigable breadcrumb row so they read as a milestone
+          // in the feed rather than as an ordinary message.
+          if (entry.kind === 'context_line') {
+            const breadcrumb = entry.segments.find(isBreadcrumbSegment)
+            return (
+              <Fragment key={entry.id}>
+                <div
+                  data-testid="context-line-breadcrumb"
+                  className="rounded border border-muted px-3 py-2 font-mono text-label text-muted-foreground"
+                >
+                  <span>{breadcrumb?.title ?? entry.content}</span>
+                  {breadcrumb !== undefined && (
+                    <>
+                      <span
+                        className="ml-2 rounded bg-muted-foreground/[0.08] px-1.5 py-0.5"
+                      >
+                        {breadcrumb.alertResolved ? 'Resolved' : 'Closed'}
+                      </span>
+                      <span> · {breadcrumb.taskCount} {breadcrumb.taskCount === 1 ? 'task' : 'tasks'} queued</span>
+                    </>
+                  )}
+                </div>
+                {memoryStartsAfterSeq > 0 && entry.seq === memoryStartsAfterSeq && <MemoryBoundaryLine />}
+              </Fragment>
+            )
+          }
+
           const segmentText = entry.segments.filter(isTextSegment).map((segment) => segment.text).join('\n')
           const body = segmentText || entry.content
           // A Notice is Mars speaking unprompted. It gets a card and a reveal;
