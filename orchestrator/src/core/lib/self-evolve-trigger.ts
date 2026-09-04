@@ -237,18 +237,21 @@ export const runSelfEvolveTrigger = async (opts?: {
     }
     const notes = JSON.stringify(notesPayload, null, 2)
 
-    // A stable fingerprint per (metric, comparison window) makes the proposal
-    // raise idempotent under concurrent sweeps.  The `ON CONFLICT (source,
-    // fingerprint)` clause in createProposal's INSERT is the atomic backstop:
-    // two concurrent calls with the same fingerprint collapse to one row even
-    // when both pass the findOpenReflectionDraftForKpi read-then-write gap.
+    // A stable fingerprint per metric makes the proposal raise idempotent
+    // regardless of which snapshot pair is being compared.  The `ON CONFLICT
+    // (source, fingerprint)` clause in createProposal's INSERT is the atomic
+    // backstop: two concurrent sweeps with different snapshot pairs but the
+    // same regressing metric collapse to one row even when both pass the
+    // findOpenReflectionDraftForKpi read-then-write gap.
     //
     // Judgment on worsening drift: same finding, update in place.  If the
-    // metric worsens within the same comparison window (same snapshot pair),
-    // the ON CONFLICT appends the updated notes to the existing draft.  A new
-    // snapshot pair produces a different fingerprint and a fresh proposal, so a
-    // dismissed finding from a prior window does not block a new one.
-    const fingerprint = `kpi-drift:${finding.kpi}:${persistedCurrent.id}:${persistedPrior.id}`
+    // metric drifts further (+13% → +25%) between sweeps, the ON CONFLICT
+    // appends the updated notes to the existing draft — the operator sees one
+    // proposal with the latest reading, not two.  When the operator dismisses
+    // the proposal (or acknowledges the baseline), dismissProposal /
+    // setProposalField clears the fingerprint so a genuinely new regression
+    // files a fresh proposal rather than folding into the dismissed row.
+    const fingerprint = `kpi-drift:${finding.kpi}`
 
     const proposal = await createProposal(title, {
       source: 'reflection',

@@ -337,10 +337,11 @@ describe('runSelfEvolveTrigger — proposal dedup', () => {
     expect(result.raised).toHaveLength(1)
 
     const fingerprint = await ctx.getProposalFingerprint(result.raised[0]!)
-    // A fingerprint MUST be set so the ON CONFLICT (source, fingerprint) clause
-    // in createProposal can atomically deduplicate concurrent raises.
+    // A metric-only fingerprint MUST be set so the ON CONFLICT (source,
+    // fingerprint) clause in createProposal can atomically deduplicate
+    // concurrent raises — even when they compare different snapshot pairs.
     expect(fingerprint).not.toBeNull()
-    expect(fingerprint).toMatch(/^kpi-drift:failure_rate:snap-current:snap-prior$/)
+    expect(fingerprint).toBe('kpi-drift:failure_rate')
   })
 
   it('raising the same metric drift twice in one window yields exactly one proposal', async () => {
@@ -364,6 +365,32 @@ describe('runSelfEvolveTrigger — proposal dedup', () => {
     expect(second.skipped).toContainEqual({ kpi: 'failure_rate', reason: 'duplicate' })
 
     // Either way: exactly one draft proposal in the DB.
+    expect(await ctx.countDraftProposalsForKpi('failure_rate')).toBe(1)
+  })
+
+  it('deduplicates across different snapshot pairs for the same metric', async () => {
+    const ctx = await loadTriggerContext(repo)
+
+    // Window 1: snap-prior → snap-current, failure_rate regresses 0.10 → 0.25
+    await insertKpiSnapshot(ctx.store, 'snap-prior', '2026-01-01T00:00:00Z', 0.10)
+    await insertKpiSnapshot(ctx.store, 'snap-current', '2026-01-02T00:00:00Z', 0.25)
+
+    const first = await ctx.runSelfEvolveTrigger({ store: ctx.store })
+    expect(first.raised).toHaveLength(1)
+    expect(await ctx.countDraftProposalsForKpi('failure_rate')).toBe(1)
+
+    // Window 2: a new snapshot arrives — now the latest pair is
+    // snap-current-2 / snap-current.  The regression persists (even worsens).
+    // Before the fix, the fingerprint included snapshot ids so two different
+    // pairs produced different fingerprints and the ON CONFLICT missed the
+    // duplicate — exactly the bug observed in production.
+    await insertKpiSnapshot(ctx.store, 'snap-current-2', '2026-01-03T00:00:00Z', 0.30)
+
+    const second = await ctx.runSelfEvolveTrigger({ store: ctx.store })
+    // The sequential check (findOpenReflectionDraftForKpi) catches this when
+    // runs are serial; the metric-only fingerprint is the backstop when they
+    // race past the sequential check concurrently.
+    expect(second.skipped).toContainEqual({ kpi: 'failure_rate', reason: 'duplicate' })
     expect(await ctx.countDraftProposalsForKpi('failure_rate')).toBe(1)
   })
 });

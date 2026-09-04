@@ -883,10 +883,16 @@ export const setProposalField = async (
     }
   }
   const now = Date.now()
-  await c.execute({
-    sql: `UPDATE proposals SET ${fieldColumn[field]} = ?, updated_at = ? WHERE id = ?`,
-    args: [value, now, id],
-  })
+  // When a proposal leaves 'draft' status, clear the fingerprint so the
+  // (source, fingerprint) unique constraint no longer blocks future proposals
+  // with the same dedup key. Without this, a dismissed KPI-drift proposal
+  // would swallow new raises for the same metric via ON CONFLICT instead of
+  // letting them create a fresh row.
+  const clearFingerprint = field === 'status' && value !== 'draft'
+  const sql = clearFingerprint
+    ? `UPDATE proposals SET ${fieldColumn[field]} = ?, fingerprint = NULL, updated_at = ? WHERE id = ?`
+    : `UPDATE proposals SET ${fieldColumn[field]} = ?, updated_at = ? WHERE id = ?`
+  await c.execute({ sql, args: [value, now, id] })
   const updated = await getProposal(id)
   if (!updated) {
     throw new Error(`proposal ${id} disappeared after update`)
@@ -1160,7 +1166,7 @@ export const dismissProposal = async (
   const c = stateClient()
   const now = Date.now()
   const r = await c.execute({
-    sql: `UPDATE proposals SET status = 'dismissed', updated_at = ? WHERE id = ? AND status = 'draft'`,
+    sql: `UPDATE proposals SET status = 'dismissed', fingerprint = NULL, updated_at = ? WHERE id = ? AND status = 'draft'`,
     args: [now, id],
   })
   if (r.rowsAffected === 0) {
