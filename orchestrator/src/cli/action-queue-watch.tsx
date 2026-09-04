@@ -55,6 +55,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { getStateDir } from '../core/context'
 import type { ActionQueueRow } from '../core/daemon/view/action-queue'
+import type { ActionQueueClass } from '../core/lib/action-queue-kinds'
 
 // ─── port discovery ───────────────────────────────────────────────────────────
 
@@ -276,6 +277,75 @@ const kindColor = (kind: ActionQueueRow['kind']): string => {
   if (kind === 'failed-task') return 'red'
   if (kind === 'stale-worktree') return 'yellow'
   return 'magenta' // draft-proposal
+}
+
+/**
+ * Maps an ActionQueueRow's structural class to a terminal color for the
+ * class chip rendered beside each row.
+ *
+ * - 'alert'    → 'red'    (something is broken; operator action required)
+ * - 'decision' → 'yellow' (nothing broken, but work is gated on a human choice)
+ * - 'notice'   → 'cyan'   (informational; Mars is handling it autonomously)
+ *
+ * Consumer: "TUI renders humanSummary and class-colored chip"
+ * Exported for testing.
+ */
+export const classColor = (cls: ActionQueueClass): string => {
+  if (cls === 'alert') return 'red'
+  if (cls === 'decision') return 'yellow'
+  return 'cyan' // notice
+}
+
+/**
+ * A cluster of rows that share the same `kind` and structural `class`.
+ *
+ * Consumer: "TUI entity grouping and kind clustering"
+ *
+ * The list view uses clusters to show rows of the same kind under a single
+ * kind header, reducing visual noise when many rows of the same kind appear
+ * together (e.g. twelve `failed` rows after a provider outage). Single-row
+ * clusters are rendered without a header so the list stays compact in the
+ * common case.
+ */
+export interface KindCluster {
+  /** The action-queue kind every row in this cluster shares. */
+  kind: string
+  /**
+   * The structural class of this cluster's kind. Derived from the first row's
+   * `class` field — all rows in a cluster share the same kind, so they share
+   * the same nominal class.
+   */
+  cls: ActionQueueClass
+  /** Rows in this cluster, in the same order as the input to `clusterRowsByKind`. */
+  rows: ActionQueueRow[]
+}
+
+/**
+ * Partition `rows` into `KindCluster[]`, preserving input order.
+ *
+ * Each unique `kind` produces exactly one cluster; rows inside a cluster
+ * appear in the same order as in `rows`. Clusters themselves appear in the
+ * order of their first member row, so the caller's sort (priority then
+ * recency) is honoured at the cluster level.
+ *
+ * Consumer: "TUI entity grouping and kind clustering"
+ * Exported for testing.
+ */
+export const clusterRowsByKind = (rows: ActionQueueRow[]): KindCluster[] => {
+  const clusterMap = new Map<string, KindCluster>()
+  for (const row of rows) {
+    const existing = clusterMap.get(row.kind)
+    if (existing) {
+      existing.rows.push(row)
+    } else {
+      clusterMap.set(row.kind, {
+        kind: row.kind,
+        cls: row.class,
+        rows: [row],
+      })
+    }
+  }
+  return Array.from(clusterMap.values())
 }
 
 // ─── ActionMenu ───────────────────────────────────────────────────────────────
