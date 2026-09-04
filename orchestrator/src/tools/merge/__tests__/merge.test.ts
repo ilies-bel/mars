@@ -13,6 +13,7 @@ import {
   DEFAULT_MERGE_STEP_TIMEOUT_MS,
   DEFAULT_WEDGED_VCS_SUPERVISOR_TIMEOUT_MS,
   MERGE_ALREADY_TERMINAL_REASON,
+  MERGE_ENV_UNREACHABLE_REASON,
   MERGE_IDEMPOTENT_TERMINAL_STATUSES,
   MERGE_STEP_TIMEOUT_FAILURE_REASON,
   MERGE_WEDGED_VCS_SUPERVISOR_REASON,
@@ -175,4 +176,44 @@ it('MergeHeartbeatFn type accepts void-returning callback', () => {
 it('MergeHeartbeatFn type accepts Promise<void>-returning callback', () => {
   const fn: MergeHeartbeatFn = async (_hb) => {}
   expect(typeof fn).toBe('function')
+})
+
+// ---------------------------------------------------------------------------
+// MERGE_ENV_UNREACHABLE_REASON — post-Vega transient abort
+//
+// Stamped when Vega COMPLETED (conflictResolved: true) but a subsequent step
+// (fast-forward CAS, integration-gate, transient network error) aborted the
+// merge. The resolved rebase is already on the task branch; no fix-task is
+// spawned; `mars continue` retries just the merge step without re-invoking Vega.
+// ---------------------------------------------------------------------------
+
+describe('MERGE_ENV_UNREACHABLE_REASON', () => {
+  it('has the expected value', () => {
+    expect(MERGE_ENV_UNREACHABLE_REASON).toBe('merge:env-unreachable')
+  })
+
+  it('starts with merge: prefix for action-queue classifier compatibility', () => {
+    expect(MERGE_ENV_UNREACHABLE_REASON.startsWith('merge:')).toBe(true)
+  })
+
+  it('does NOT contain vcs-supervisor-aborted — Vega completed, so its abort is not the cause', () => {
+    expect(MERGE_ENV_UNREACHABLE_REASON).not.toContain('vcs-supervisor-aborted')
+  })
+
+  it('is distinct from MERGE_WEDGED_VCS_SUPERVISOR_REASON', () => {
+    expect(MERGE_ENV_UNREACHABLE_REASON).not.toBe(MERGE_WEDGED_VCS_SUPERVISOR_REASON)
+  })
+
+  it('is distinct from MERGE_STEP_TIMEOUT_FAILURE_REASON', () => {
+    expect(MERGE_ENV_UNREACHABLE_REASON).not.toBe(MERGE_STEP_TIMEOUT_FAILURE_REASON)
+  })
+
+  it('is distinct from MERGE_ALREADY_TERMINAL_REASON', () => {
+    expect(MERGE_ENV_UNREACHABLE_REASON).not.toBe(MERGE_ALREADY_TERMINAL_REASON)
+  })
+
+  it('is a string literal (not a dynamic value)', () => {
+    expect(typeof MERGE_ENV_UNREACHABLE_REASON).toBe('string')
+    expect(MERGE_ENV_UNREACHABLE_REASON.length).toBeGreaterThan(0)
+  })
 })

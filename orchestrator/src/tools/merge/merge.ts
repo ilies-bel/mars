@@ -827,24 +827,91 @@ export const merge = async (
             throw new Error(errorMsg)
           }
 
-          const errorMsg = `merge aborted by vcs-supervisor; worktree retained at ${worktreePath}\n${m.output.slice(0, 1000)}`
+          // ── Post-Vega abort: Vega completed but a subsequent step failed ──────
+          // `m.conflictResolved === true` means:
+          //   1. Vega ran to completion (terminal_reason: completed),
+          //   2. The post-supervisor git checks passed (branch advanced, tree clean),
+          //   3. The rebased branch tip is ALREADY persisted on `branch`.
+          // The abort happened AFTER Vega, in the fast-forward, CAS retry, or a
+          // transient env error — NOT because of Vega. Classifying this as
+          // `vcs-supervisor-aborted` is wrong and misleading; the correct
+          // classification is `merge:env-unreachable` so the operator knows the
+          // failure is transient and `mars continue` will retry cleanly.
+          //
+          // No fix-task is spawned: the resolved rebase is already on `branch`, so
+          // a fix-task that re-runs the coder would discard Vega's work. The
+          // operator runs `mars continue` to retry just the merge step.
+          if (m.conflictResolved) {
+            const envMsg = (
+              `vcs-supervisor resolved conflicts on ${branch} for task ${taskId} ` +
+              `but the fast-forward was interrupted by a transient error; ` +
+              `resolved rebase is preserved on ${branch} — run \`mars continue ${taskId}\` to retry`
+            )
+            // Store the Vega conversation in the durable trace rather than
+            // embedding raw transcript JSON in the task row (VISION DEC-18).
+            if (m.supervisorConversation.length > 0) {
+              await trace.traceStore.appendDurableTranscript?.(
+                taskId,
+                m.vegaSessionId ?? `vcs-supervisor-merge-${taskId}`,
+                'merge',
+                JSON.stringify(m.supervisorConversation),
+              ).catch(() => {})
+            }
+            await updateTask(
+              taskId,
+              {
+                status: 'failed',
+                error: envMsg,
+                failedPhase: 'merge',
+                failureReason: envMsg,
+                failureReasonCode: MERGE_ENV_UNREACHABLE_REASON,
+                failureSignature: MERGE_ENV_UNREACHABLE_REASON,
+              },
+              store,
+            )
+            // No fix-task: the resolved rebase is already on the branch.
+            throw new Error(envMsg)
+          }
+
+          // ── Genuine Vega abort: Vega could not reconcile the conflict ─────────
           // Classify from the WRAPPED message, not the raw mergeBranch output:
           // the wrapper line is what lands in `error` and what the durable
           // recovery-spawn path re-classifies. Stamping the signature here (it
           // used to be left unset) means the abort reason — e.g. the pre-rebase
           // dirty-worktree guard's `rebase-dirty-worktree` — is on the row from
           // the first write, instead of degrading to `merge/unclassified`.
+          //
+          // failure_reason is a single readable sentence: which files conflicted
+          // and why the merge was aborted. The raw transcript goes to the durable
+          // trace store, not the task row (VISION DEC-18).
+          const conflictMatch = m.output.match(/CONFLICT \([^)]+\):[^\n]*/g)
+          const conflictSummary = conflictMatch
+            ? conflictMatch.slice(0, 3).join('; ').slice(0, 200)
+            : 'merge conflict'
+          const abortErrorMsg = (
+            `vcs-supervisor could not resolve ${conflictSummary} ` +
+            `for task ${taskId}; worktree at ${worktreePath}`
+          )
+          // Store the Vega conversation in the durable trace
+          if (m.supervisorConversation.length > 0) {
+            await trace.traceStore.appendDurableTranscript?.(
+              taskId,
+              m.vegaSessionId ?? `vcs-supervisor-merge-${taskId}`,
+              'merge',
+              JSON.stringify(m.supervisorConversation),
+            ).catch(() => {})
+          }
           const abortSignature = computeFailureSignature(
             'merge:vcs-supervisor-aborted',
-            errorMsg,
+            abortErrorMsg,
           )
           await updateTask(
             taskId,
             {
               status: 'failed',
-              error: errorMsg,
+              error: abortErrorMsg,
               failedPhase: 'merge',
-              failureReason: 'merge:vcs-supervisor-aborted',
+              failureReason: abortErrorMsg,
               failureSignature: abortSignature,
               failureReasonCode: abortSignature,
             },
@@ -853,7 +920,7 @@ export const merge = async (
           await handleTaskFailureWithFixTask({
             taskId,
             failingStep: 'merge:vcs-supervisor-aborted',
-            errorOutput: m.output,
+            errorOutput: abortErrorMsg,
             branch,
             store,
           }).catch((err) => {
@@ -1330,6 +1397,24 @@ export const MERGE_IDEMPOTENT_TERMINAL_STATUSES: ReadonlySet<string> = new Set([
  * Consumer: "Idempotent short-circuit when task is already terminal"
  */
 export const MERGE_ALREADY_TERMINAL_REASON = 'merge:already-terminal' as const
+
+// ── Post-Vega transient abort ──────────────────────────────────────────────────
+
+/**
+ * Failure reason code stamped when the vcs-supervisor (Vega) COMPLETED
+ * successfully (`conflictResolved: true`) but a subsequent step —
+ * fast-forward CAS, integration-gate call, or a transient network error —
+ * aborted the merge before the ref was advanced.
+ *
+ * This is NOT a Vega failure: the resolved rebase is already persisted on the
+ * task branch. A `mars continue` retries just the merge step and succeeds
+ * cleanly without re-invoking Vega.
+ *
+ * Distinct from `merge:vcs-supervisor-aborted` (Vega could not reconcile) and
+ * `merge:vega-timeout` (Vega was killed mid-run). No fix-task is spawned for
+ * this reason; the recovery budget is not consumed.
+ */
+export const MERGE_ENV_UNREACHABLE_REASON = 'merge:env-unreachable' as const
 
 // ── Wedged vcs-supervisor ─────────────────────────────────────────────────────
 
