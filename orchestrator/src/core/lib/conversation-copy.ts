@@ -317,8 +317,7 @@ const REGISTRY: { [Kind in AutonomousNoticeKind]: NoticeKindEntry<Kind> } = {
       return (
         `I committed ${files} of yours on ${sentenceValue(p.branch)} as ` +
         `${sentenceValue(p.commitSha).slice(0, 9)} because they were blocking the merge of ` +
-        `${sentenceValue(p.taskId)}. Revert it with \`git revert ${p.commitSha}\` — ` +
-        `or reply "stop auto-committing" and I will park the queue and leave your edits alone instead.`
+        `${sentenceValue(p.taskId)}.`
       )
     },
     // No `lever` facet: the off-switch here is the `operatorAutoCommit`
