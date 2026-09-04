@@ -26,7 +26,7 @@
  */
 
 import { isAbsolute, join } from 'node:path'
-import { FALLBACK_CLAUDE_PATH_DIRS, isExecutableFile } from '../lib/git/internal'
+import { FALLBACK_CLAUDE_PATH_DIRS, isExecutableFile } from '../lib/executable-resolve'
 import type { ProviderName } from './provider-types'
 import { getProvider } from './provider-registry'
 

@@ -4,7 +4,7 @@ import { acquireLock } from './lock'
 import { type RunSubprocessResult } from '../ports/executor/types'
 import { getStateDir } from '../context'
 import { runTool, nullTraceStore, type TraceCtx } from './run-tool'
-import { execProbe } from './internal'
+import { execProbe } from './subprocess'
 import { provisionWorktreeDeps } from './worktree-deps'
 
 export const DEFAULT_INSTALL_TIMEOUT_MS = 8 * 60_000
