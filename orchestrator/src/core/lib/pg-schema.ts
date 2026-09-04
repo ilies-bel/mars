@@ -76,7 +76,7 @@ import type { DbClient, DbStatement } from './db.js'
 import { __execSchemaBatch } from './db.js'
 
 /** Bumped when the canonical DDL changes shape. */
-export const SCHEMA_VERSION = '0040'
+export const SCHEMA_VERSION = '0041'
 
 /**
  * The well-known `chat_threads` row that backs the main thread.
