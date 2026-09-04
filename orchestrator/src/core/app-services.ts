@@ -2177,6 +2177,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
         lastFailureSignature: gate.lastFailureSignature,
         lastFailureOriginId: gate.lastFailureOriginId,
         lastFailureAt: gate.lastFailureAt,
+        lastPassAt: gate.lastPassAt,
       })
       gatesByScope.set(gate.scope, entries)
     }

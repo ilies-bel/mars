@@ -95,6 +95,7 @@ describe('GET /view/task/:id/changes', () => {
       patch: '',
       truncated: false,
       commits: [],
+      gateChecks: null,
     }
 
     const { startHttpServer } = await import('../http-server')
@@ -125,6 +126,7 @@ describe('GET /view/task/:id/changes', () => {
       patch: 'diff --git a/src/foo.ts b/src/foo.ts\n--- a/src/foo.ts\n+++ b/src/foo.ts\n',
       truncated: false,
       commits: [{ sha: 'abc1234def5678', subject: 'feat: add bar', authoredAt: '2024-01-01T00:00:00Z' }],
+      gateChecks: null,
     }
 
     let receivedId: string | null = null
@@ -168,6 +170,7 @@ describe('GET /view/task/:id/changes', () => {
       patch: bigPatch,
       truncated: true,
       commits: [],
+      gateChecks: null,
     }
 
     const { startHttpServer } = await import('../http-server')

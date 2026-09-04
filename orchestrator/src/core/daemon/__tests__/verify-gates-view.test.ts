@@ -137,6 +137,7 @@ describe('GET /view/verify-gates', () => {
       lastFailureSignature: null,
       lastFailureAt: null,
       lastFailureOriginId: null,
+      lastPassAt: null,
       timeoutMin: null,
       evidence: null,
     }
@@ -157,6 +158,7 @@ describe('GET /view/verify-gates', () => {
       lastFailureSignature: 'verify:knip/unused-imports',
       lastFailureAt: 1_700_000_002_000,
       lastFailureOriginId: 'mars-abc123',
+      lastPassAt: null,
       timeoutMin: 5,
       evidence: 'detected by mars verify-gate detect',
     }

@@ -199,6 +199,8 @@ function makeFakeJobStore() {
       )
       return found ?? null
     },
+    async recordGateChecks(_id: string, _checks: import('../../core/store/merge-job-store.js').GateCheckEntry[]): Promise<void> {},
+    async getGateChecksForTask(_taskId: string) { return null },
   }
 
   return store

@@ -262,6 +262,7 @@ describe('GET /view/steward', () => {
       lastFailureSignature: null,
       lastFailureOriginId: null,
       lastFailureAt: null,
+      lastPassAt: null,
     }
 
     const { port, close } = await httpServer.startHttpServer(
@@ -303,6 +304,7 @@ describe('GET /view/steward', () => {
       lastFailureSignature: null,
       lastFailureOriginId: null,
       lastFailureAt: null,
+      lastPassAt: null,
     }
 
     const { port, close } = await httpServer.startHttpServer(

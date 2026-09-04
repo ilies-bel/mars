@@ -83,10 +83,13 @@ vi.mock('./StewardPage', async (importOriginal) => {
   }
 })
 
-const renderControlRoom = () => {
+const renderControlRoom = (preloadedGates?: import('@/shared/api').VerifyGate[]) => {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Infinity } },
   })
+  if (preloadedGates !== undefined) {
+    client.setQueryData(['verify-gates'], preloadedGates)
+  }
   return renderToStaticMarkup(
     createElement(QueryClientProvider, { client }, createElement(ControlRoomPage)),
   )
@@ -197,5 +200,100 @@ describe('ControlRoomPage — Gates section', () => {
     const gatesIdx = html.indexOf('data-testid="gates-section"')
     const liveIdx = html.indexOf('>Live<')
     expect(gatesIdx).toBeLessThan(liveIdx)
+  })
+})
+
+describe('ControlRoomPage — Gates section run status', () => {
+  beforeEach(() => {
+    mockUseDispatchState.mockReturnValue({
+      paused: false,
+      reason: null,
+      since: null,
+      detail: null,
+    })
+  })
+
+  const makeGate = (overrides: Partial<import('@/shared/api').VerifyGate> = {}): import('@/shared/api').VerifyGate => ({
+    id: 'gate-1',
+    scope: '.',
+    name: 'typecheck',
+    cmd: 'npx',
+    args: ['tsc', '--noEmit'],
+    required: true,
+    tier: 'task',
+    source: 'human',
+    createdAt: 1000,
+    state: 'active',
+    quarantinedAt: null,
+    lastFailureAt: null,
+    timeoutMin: null,
+    lastPassAt: null,
+    ...overrides,
+  })
+
+  it('renders passing status badge when lastPassAt is more recent than lastFailureAt', () => {
+    const gate = makeGate({
+      lastFailureAt: 1000,
+      lastPassAt: 2000, // more recent than last failure → currently passing
+    })
+    const html = renderControlRoom([gate])
+    expect(html).toContain('data-testid="gate-status-passing"')
+    expect(html).not.toContain('data-testid="gate-status-failing"')
+    // Last pass is shown as primary detail
+    expect(html).toContain('data-testid="gate-last-pass"')
+    // Last failure shown as secondary (muted)
+    expect(html).toContain('data-testid="gate-last-failure"')
+  })
+
+  it('renders failing status badge when lastFailureAt is more recent than lastPassAt', () => {
+    const gate = makeGate({
+      lastPassAt: 1000,
+      lastFailureAt: 2000, // more recent than last pass → currently failing
+    })
+    const html = renderControlRoom([gate])
+    expect(html).toContain('data-testid="gate-status-failing"')
+    expect(html).not.toContain('data-testid="gate-status-passing"')
+  })
+
+  it('renders failing status badge when lastFailureAt is set but lastPassAt is null', () => {
+    const gate = makeGate({
+      lastPassAt: null,
+      lastFailureAt: 5000,
+    })
+    const html = renderControlRoom([gate])
+    expect(html).toContain('data-testid="gate-status-failing"')
+  })
+
+  it('shows no run-status badge when neither lastPassAt nor lastFailureAt is recorded', () => {
+    const gate = makeGate({ lastPassAt: null, lastFailureAt: null })
+    const html = renderControlRoom([gate])
+    expect(html).not.toContain('data-testid="gate-status-passing"')
+    expect(html).not.toContain('data-testid="gate-status-failing"')
+  })
+
+  it('shows quarantine banner when a required gate is quarantined', () => {
+    const gate = makeGate({
+      state: 'quarantined',
+      required: true,
+    })
+    const html = renderControlRoom([gate])
+    expect(html).toContain('data-testid="quarantine-banner"')
+    expect(html).toContain('merges are proceeding unchecked')
+    expect(html).toContain('typecheck')
+  })
+
+  it('does not show quarantine banner when only advisory gates are quarantined', () => {
+    const gate = makeGate({
+      state: 'quarantined',
+      required: false, // advisory, not required
+    })
+    const html = renderControlRoom([gate])
+    expect(html).not.toContain('data-testid="quarantine-banner"')
+  })
+
+  it('does not show quarantine banner when all gates are active', () => {
+    const gate = makeGate({ state: 'active' })
+    const html = renderControlRoom([gate])
+    expect(html).not.toContain('data-testid="quarantine-banner"')
   })
 })

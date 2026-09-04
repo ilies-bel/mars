@@ -216,6 +216,14 @@ const makeFakeStore = (
       )
       return found ?? null
     },
+
+    async recordGateChecks(_id: string, _checks: import('../../store/merge-job-store.js').GateCheckEntry[]): Promise<void> {
+      // no-op in tests
+    },
+
+    async getGateChecksForTask(_taskId: string) {
+      return null
+    },
   }
 
   return { store, calls, jobs, enqueueJob }
@@ -460,6 +468,8 @@ describe('enqueueMergeJobAndAwait — outer watchdog', () => {
       async listActive() { return [] },
       async listByStatus() { return [] },
       async getActiveMergeJob() { return null },
+      async recordGateChecks(_id: string, _checks: import('../../store/merge-job-store.js').GateCheckEntry[]): Promise<void> {},
+      async getGateChecksForTask(_taskId: string) { return null },
     }
 
     let result: Awaited<ReturnType<typeof enqueueMergeJobAndAwait>>
@@ -538,6 +548,8 @@ describe('enqueueMergeJobAndAwait — outer watchdog', () => {
       async listActive() { return [] },
       async listByStatus() { return [] },
       async getActiveMergeJob() { return null },
+      async recordGateChecks(_id: string, _checks: import('../../store/merge-job-store.js').GateCheckEntry[]): Promise<void> {},
+      async getGateChecksForTask(_taskId: string) { return null },
     }
 
     try {
@@ -611,6 +623,8 @@ describe('enqueueMergeJobAndAwait — outer watchdog', () => {
       async listActive() { return [] },
       async listByStatus() { return [] },
       async getActiveMergeJob() { return null },
+      async recordGateChecks(_id: string, _checks: import('../../store/merge-job-store.js').GateCheckEntry[]): Promise<void> {},
+      async getGateChecksForTask(_taskId: string) { return null },
     }
 
     try {
@@ -1214,6 +1228,8 @@ describe('enqueueMergeJobAndAwait — idempotent enqueue (restart & concurrent)'
       async getByTaskId() { return null },
       async listActive() { return [] },
       async listByStatus() { return [] },
+      async recordGateChecks(_id: string, _checks: import('../../store/merge-job-store.js').GateCheckEntry[]): Promise<void> {},
+      async getGateChecksForTask(_taskId: string) { return null },
     }
 
     const resultPromise = enqueueMergeJobAndAwait({
@@ -1304,6 +1320,8 @@ describe('enqueueMergeJobAndAwait — idempotent enqueue (restart & concurrent)'
       async getByTaskId() { return null },
       async listActive() { return [] },
       async listByStatus() { return [] },
+      async recordGateChecks(_id: string, _checks: import('../../store/merge-job-store.js').GateCheckEntry[]): Promise<void> {},
+      async getGateChecksForTask(_taskId: string) { return null },
     }
 
     const bus = new EE()

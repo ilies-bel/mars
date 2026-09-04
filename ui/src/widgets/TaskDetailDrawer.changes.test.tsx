@@ -218,4 +218,45 @@ describe('TaskDetailBody – Changes section', () => {
     // But no summary line — data hasn't loaded.
     // (The skeleton renders instead, which has no data-testid="changes-summary".)
   })
+
+  it('renders gate checks summary when gateChecks are present', () => {
+    const withGateChecks: TaskChangesResponse = {
+      ...CHANGES_WITH_FILES,
+      gateChecks: [
+        { name: 'typecheck', gateId: 'gate-1', passed: true, durationMs: 5000 },
+        { name: 'knip', gateId: 'gate-2', passed: true, durationMs: 3200 },
+        { name: 'test', gateId: 'gate-3', passed: false, durationMs: 4100 },
+      ],
+    }
+    const html = renderBody(
+      <TaskDetailBody task={makeTask()} changesData={withGateChecks} />,
+    )
+    expect(html).toContain('data-testid="gate-checks-summary"')
+    expect(html).toContain('typecheck')
+    expect(html).toContain('knip')
+    expect(html).toContain('test')
+    // Passing gates show ✓, failing show ✗
+    expect(html).toContain('✓')
+    expect(html).toContain('✗')
+    // Total duration shown (5000+3200+4100 = 12300ms = 12.3s)
+    expect(html).toContain('12.3s')
+  })
+
+  it('does not render gate checks summary when gateChecks is null', () => {
+    const withoutGateChecks: TaskChangesResponse = {
+      ...CHANGES_WITH_FILES,
+      gateChecks: null,
+    }
+    const html = renderBody(
+      <TaskDetailBody task={makeTask()} changesData={withoutGateChecks} />,
+    )
+    expect(html).not.toContain('data-testid="gate-checks-summary"')
+  })
+
+  it('does not render gate checks summary for branch-gone shape', () => {
+    const html = renderBody(
+      <TaskDetailBody task={makeTask()} changesData={BRANCH_GONE} />,
+    )
+    expect(html).not.toContain('data-testid="gate-checks-summary"')
+  })
 })
