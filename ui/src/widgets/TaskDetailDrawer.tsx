@@ -22,7 +22,7 @@ import type { ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import type { AgentToolCall, ProgressProposalNode, ProgressTask, Task, TaskChangesResponse, TraceEvent } from '@/shared/schemas'
 import { taskSchema } from '@/shared/schemas'
-import { fetchAgentToolCalls, fetchRunTimeline, fetchStepSpans, fetchTaskChanges } from '@/shared/api'
+import { fetchAgentToolCalls, fetchRunTimeline, fetchStepSpans, fetchTaskChanges, invokeAction } from '@/shared/api'
 import { parseDiff } from '@/shared/diff'
 import { useFocusedProject } from '@/shared/useFocusedProject'
 import { focusSubgraph } from '@/shared/focusSubgraph'
@@ -520,44 +520,16 @@ const MetaCell = ({ label, value }: { label: string; value: ReactNode }) => (
  */
 const RECOVERY_EXHAUSTED_PREFIX = 'recovery_exhausted:'
 
-const RecoveryCommand = ({
-  cmd,
-  note,
-  tone,
-  testId,
-}: {
-  cmd: string
-  note: string
-  tone: 'primary' | 'destructive'
-  testId: string
-}) => (
-  <div className="mt-2">
-    <div className="flex items-center gap-2">
-      <code
-        data-testid={testId}
-        className={`flex-1 truncate rounded px-2 py-1 font-mono text-label ${
-          tone === 'primary'
-            ? 'bg-primary/10 text-primary'
-            : 'bg-error/10 text-error/70'
-        }`}
-      >
-        {cmd}
-      </code>
-      <CopyButton
-        text={cmd}
-        data-testid={`copy-${testId}`}
-        aria-label={`Copy: ${cmd}`}
-        className={`shrink-0 rounded border px-2 py-0.5 font-mono text-body ${
-          tone === 'primary'
-            ? 'border-primary/30 text-primary/70 hover:bg-primary/10'
-            : 'border-error/30 text-error/50 hover:bg-error/10'
-        }`}
-      />
-    </div>
-    <p className="mt-0.5 font-mono text-micro text-muted-foreground">{note}</p>
-  </div>
-)
-
+/**
+ * Recovery action buttons for a failed task.
+ *
+ * Renders a row of actionable buttons (Continue, Remerge, Supersede, Restart,
+ * Drop) that post directly to the daemon via `invokeAction`. A collapsible
+ * "Show CLI equivalent" section preserves the original CLI strings for
+ * terminal users and for tests that assert on their presence.
+ *
+ * VISION HR-2: no affordance whose only completion is a CLI paste.
+ */
 export const RecoveryCommands = ({
   taskId,
   error,
@@ -566,50 +538,273 @@ export const RecoveryCommands = ({
   error: string | null
 }) => {
   const recoveryExhausted = error?.includes(RECOVERY_EXHAUSTED_PREFIX) ?? false
+  const [confirming, setConfirming] = useState<'restart' | 'drop' | null>(null)
+  const [loading, setLoading] = useState<string | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
 
-  if (recoveryExhausted) {
-    return (
-      <div data-testid="recovery-commands">
-        <p className="mt-2 font-mono text-micro text-muted-foreground">
-          This arc has already spent its one recovery attempt, so{' '}
-          <code>mars continue</code> will refuse. Carry the work forward instead:
-        </p>
-        <RecoveryCommand
-          cmd={`mars remerge ${taskId}`}
-          note="If the branch holds real coder or human commits — merges them without re-running."
-          tone="primary"
-          testId="task-remerge-cmd"
-        />
-        <RecoveryCommand
-          cmd={`mars task add --supersede ${taskId}`}
-          note="If the branch holds only an auto-generated salvage checkpoint — inherits it onto a fresh task."
-          tone="primary"
-          testId="task-supersede-cmd"
-        />
-        <RecoveryCommand
-          cmd={`mars restart ${taskId}`}
-          note="Only when nothing on the branch is worth keeping — discards the worktree, branch and all commits."
-          tone="destructive"
-          testId="task-restart-cmd"
-        />
-      </div>
-    )
+  const invoke = async (op: string) => {
+    setLoading(op)
+    setActionError(null)
+    try {
+      await invokeAction(op, taskId)
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setLoading(null)
+      setConfirming(null)
+    }
   }
 
   return (
-    <div data-testid="recovery-commands">
-      <RecoveryCommand
-        cmd={`mars continue ${taskId}`}
-        note="Resumes on the existing worktree, keeping every commit the coder already landed."
-        tone="primary"
-        testId="task-continue-cmd"
-      />
-      <RecoveryCommand
-        cmd={`mars restart ${taskId}`}
-        note="Discards the worktree, branch and all commits, then re-runs from setup."
-        tone="destructive"
-        testId="task-restart-cmd"
-      />
+    <div data-testid="task-actions" className="mt-2">
+      {actionError ? (
+        <p className="mb-2 font-mono text-micro text-error">{actionError}</p>
+      ) : null}
+
+      {/* Restart confirm dialog */}
+      {confirming === 'restart' ? (
+        <div
+          data-testid="restart-confirm"
+          className="mb-2 rounded border border-error/40 bg-error/5 px-3 py-2"
+        >
+          <p className="font-mono text-label text-error">
+            Discards the worktree, branch, and all commits on{' '}
+            <code>task/{taskId}</code>. This cannot be undone.
+          </p>
+          <div className="mt-2 flex gap-2">
+            <button
+              data-testid="restart-confirm-yes"
+              onClick={() => void invoke('restart')}
+              disabled={loading === 'restart'}
+              className="rounded border border-error/40 bg-error/10 px-3 py-1 font-mono text-label text-error hover:bg-error/20 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {loading === 'restart' ? 'Restarting…' : 'Yes, restart'}
+            </button>
+            <button
+              data-testid="restart-confirm-cancel"
+              onClick={() => setConfirming(null)}
+              className="rounded border border-primary/30 px-3 py-1 font-mono text-label text-primary hover:bg-primary/10"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Drop confirm dialog */}
+      {confirming === 'drop' ? (
+        <div
+          data-testid="drop-confirm"
+          className="mb-2 rounded border border-error/40 bg-error/5 px-3 py-2"
+        >
+          <p className="font-mono text-label text-error">
+            Drop <code>task/{taskId}</code>? If the branch has commits ahead of
+            main the server will refuse — use the CLI with{' '}
+            <code>--force</code> to override.
+          </p>
+          <div className="mt-2 flex gap-2">
+            <button
+              data-testid="drop-confirm-yes"
+              onClick={() => void invoke('drop')}
+              disabled={loading === 'drop'}
+              className="rounded border border-error/40 bg-error/10 px-3 py-1 font-mono text-label text-error hover:bg-error/20 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {loading === 'drop' ? 'Dropping…' : 'Yes, drop'}
+            </button>
+            <button
+              data-testid="drop-confirm-cancel"
+              onClick={() => setConfirming(null)}
+              className="rounded border border-primary/30 px-3 py-1 font-mono text-label text-primary hover:bg-primary/10"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Action buttons */}
+      <div className="flex flex-wrap gap-2">
+        {!recoveryExhausted ? (
+          <button
+            data-testid="continue-btn"
+            onClick={() => void invoke('continue')}
+            disabled={loading !== null || confirming !== null}
+            className="rounded border border-highlight/60 bg-highlight/10 px-3 py-1 font-mono text-label text-highlight hover:bg-highlight/20 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {loading === 'continue' ? 'Continuing…' : 'Continue'}
+          </button>
+        ) : null}
+
+        {recoveryExhausted ? (
+          <>
+            <button
+              data-testid="remerge-btn"
+              onClick={() => void invoke('remerge')}
+              disabled={loading !== null || confirming !== null}
+              className="rounded border border-highlight/60 bg-highlight/10 px-3 py-1 font-mono text-label text-highlight hover:bg-highlight/20 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {loading === 'remerge' ? 'Remerging…' : 'Remerge'}
+            </button>
+            <button
+              data-testid="supersede-btn"
+              onClick={() => void invoke('supersede')}
+              disabled={loading !== null || confirming !== null}
+              className="rounded border border-primary/30 bg-primary/5 px-3 py-1 font-mono text-label text-primary hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {loading === 'supersede' ? 'Superseding…' : 'Supersede'}
+            </button>
+          </>
+        ) : null}
+
+        <button
+          data-testid="restart-btn"
+          onClick={() => setConfirming('restart')}
+          disabled={loading !== null || confirming !== null}
+          className="rounded border border-error/40 bg-error/10 px-3 py-1 font-mono text-label text-error hover:bg-error/20 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          Restart
+        </button>
+
+        <button
+          data-testid="drop-btn"
+          onClick={() => setConfirming('drop')}
+          disabled={loading !== null || confirming !== null}
+          className="rounded border border-error/20 px-3 py-1 font-mono text-label text-error/70 hover:bg-error/10 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          Drop
+        </button>
+      </div>
+
+      {/* CLI equivalent — keeps text strings for terminal users and tests. */}
+      <details className="mt-2">
+        <summary className="cursor-pointer select-none font-mono text-micro text-muted-foreground">
+          Show CLI equivalent
+        </summary>
+        <div className="mt-1 space-y-0.5">
+          {!recoveryExhausted ? (
+            <>
+              <p className="font-mono text-micro text-muted-foreground">
+                <code>mars continue {taskId}</code> — Resumes on the existing
+                worktree, keeping every commit the coder already landed.
+              </p>
+              <p className="font-mono text-micro text-muted-foreground">
+                <code>mars restart {taskId}</code> — Discards the worktree,
+                branch and all commits, then re-runs from setup.
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="font-mono text-micro text-muted-foreground">
+                This arc has already spent its one recovery attempt, so{' '}
+                <code>mars continue</code> will refuse. Carry the work forward
+                instead:
+              </p>
+              <p className="font-mono text-micro text-muted-foreground">
+                <code>mars remerge {taskId}</code> — If the branch holds real
+                coder or human commits — merges them without re-running.
+              </p>
+              <p className="font-mono text-micro text-muted-foreground">
+                <code>mars task add --supersede {taskId}</code> — If the branch
+                holds only an auto-generated salvage checkpoint — inherits it
+                onto a fresh task.
+              </p>
+              <p className="font-mono text-micro text-muted-foreground">
+                <code>mars restart {taskId}</code> — Only when nothing on the
+                branch is worth keeping — Discards the worktree, branch and all
+                commits.
+              </p>
+            </>
+          )}
+        </div>
+      </details>
+    </div>
+  )
+}
+
+// ── Blockers section ─────────────────────────────────────────────────────────
+
+/**
+ * Editable blockers list: shows each blocker id with an "Unblock" button and
+ * provides an add-blocker input. All mutations go through `invokeAction`
+ * (set-blockers verb) so no extra API client is needed.
+ */
+const BlockersSection = ({ taskId, blockedBy }: { taskId: string; blockedBy: string[] }) => {
+  const [addInput, setAddInput] = useState('')
+  const [loading, setLoading] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const mutateBlockers = async (
+    add: string[],
+    remove: string[],
+  ) => {
+    setError(null)
+    try {
+      await invokeAction('set-blockers', taskId, { add, remove })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setLoading(null)
+    }
+  }
+
+  const handleUnblock = (blockerId: string) => {
+    setLoading(`remove:${blockerId}`)
+    void mutateBlockers([], [blockerId])
+  }
+
+  const handleAdd = () => {
+    const trimmed = addInput.trim()
+    if (!trimmed) return
+    setLoading(`add:${trimmed}`)
+    setAddInput('')
+    void mutateBlockers([trimmed], [])
+  }
+
+  return (
+    <div data-testid="blockers-section" className="flex flex-col gap-1">
+      {error ? (
+        <p className="font-mono text-micro text-error">{error}</p>
+      ) : null}
+      {blockedBy.length > 0 ? (
+        <ul className="flex flex-col gap-0.5">
+          {blockedBy.map((bid) => (
+            <li key={bid} className="flex items-center gap-2">
+              <code className="flex-1 break-all font-mono text-label text-primary">
+                {bid}
+              </code>
+              <button
+                data-testid={`unblock-${bid}`}
+                onClick={() => handleUnblock(bid)}
+                disabled={loading !== null}
+                className="shrink-0 rounded border border-primary/30 px-2 py-0.5 font-mono text-micro text-primary hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {loading === `remove:${bid}` ? '…' : 'Unblock'}
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="font-mono text-micro text-muted-foreground">No blockers.</p>
+      )}
+      <div className="mt-1 flex gap-2">
+        <input
+          data-testid="add-blocker-input"
+          type="text"
+          value={addInput}
+          onChange={(e) => setAddInput(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') handleAdd() }}
+          placeholder="Task id to add as blocker…"
+          className="flex-1 rounded border border-primary/20 bg-transparent px-2 py-0.5 font-mono text-label text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/50"
+        />
+        <button
+          data-testid="add-blocker-btn"
+          onClick={handleAdd}
+          disabled={loading !== null || addInput.trim() === ''}
+          className="shrink-0 rounded border border-primary/30 px-2 py-0.5 font-mono text-micro text-primary hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          Add
+        </button>
+      </div>
     </div>
   )
 }
@@ -920,10 +1115,18 @@ export const TaskDetailBody = ({
               ) : null}
             </details>
           ) : null}
-          {/* Ready-made recovery commands — one click to copy, then paste into CLI. */}
+          {/* Action buttons for failed tasks. */}
           {task.status === 'failed' ? (
             <RecoveryCommands taskId={task.id} error={task.error} />
           ) : null}
+        </div>
+      ) : null}
+
+      {/* b2. Blockers editor — shown whenever the task has blocker data. */}
+      {task.blockedBy.length > 0 || isBlocked ? (
+        <div>
+          <SectionLabel>Blockers</SectionLabel>
+          <BlockersSection taskId={task.id} blockedBy={task.blockedBy} />
         </div>
       ) : null}
 
