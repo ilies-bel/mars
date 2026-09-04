@@ -1,8 +1,6 @@
 import { useState } from 'react'
 import type { ReactNode } from 'react'
-import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
-import { sortItems, buildRenderedRows, countNeedsYou } from '@/entities/actionQueue/clusterRows'
-import type { RenderedRow } from '@/entities/actionQueue/clusterRows'
+import { useCounts } from '@/entities/counts/useCounts'
 import { resolvePageRoute } from '@/shared/routing'
 import type { RouteName } from '@/shared/routing'
 import { useSseConnected } from '@/shared/sseStatus'
@@ -331,7 +329,13 @@ interface ShellProps {
 const ADVANCED_LS_KEY = 'shell-advanced-expanded'
 
 export const Shell = ({ hash, children }: ShellProps) => {
-  const { items: actionQueueItems } = useActionQueue()
+  // Badge = the canonical "needs you" count from the unified counts endpoint.
+  // This is the single source of truth shared by the sidebar badge, board
+  // header, Control Room Now-strip, and chat greeting — all read from
+  // useCounts() so no widget recomputes the number independently.
+  // Draft proposals are excluded from needsYou server-side (same predicate
+  // as viewStatusCounts.needYou and countNeedsYou).
+  const { needsYou: decisionBadge } = useCounts()
   const activeRoute = resolvePageRoute(hash)
 
   const [advancedExpanded, setAdvancedExpanded] = useState<boolean>(() => {
@@ -353,44 +357,11 @@ export const Shell = ({ hash, children }: ShellProps) => {
       return next
     })
   }
-  // Badge = the canonical "needs you" count (distinct open subjects,
-  // draft-proposals excluded) — the SAME definition the triage page badge,
-  // the chat greeting, and the chat situation card all use (see
-  // `countNeedsYou`). Draft proposals are a backlog of shaped ideas, not
-  // operational alerts that need immediate action, so they're excluded
-  // everywhere. Several condition kinds (failed, recovery-abandoned,
-  // gate-broken, …) can derive independently for the same task, so this is
-  // an entity-deduped count, NOT a raw item count — a task shown on three
-  // rows is one subject, not three.
-  const nonProposalItems = actionQueueItems.filter((item) => item.kind !== 'draft-proposal')
-  const decisionBadge = countNeedsYou(actionQueueItems)
 
-  // Composition breakdown for the badge aria-label — lets operators and the
-  // chat agent reconcile "4 decisions pending" as "3 alerts + 1 cluster of N"
-  // without opening the triage page to count manually. Clustered kinds report
-  // their real item count (not "1"), so the parts always sum to decisionBadge.
-  const renderedRows = buildRenderedRows(sortItems(nonProposalItems))
-  const clusterRowsList = renderedRows.filter(
-    (r): r is Extract<RenderedRow, { type: 'cluster' }> => r.type === 'cluster',
-  )
-  // Count the rendered rows NOT represented by a cluster row (i.e. plain
-  // `item` rows plus entity-grouped `entityGroup` rows). `renderedRows`
-  // already applies the same entity dedup `countNeedsYou` applies internally
-  // — one row per distinct subject — so this stays in lockstep with
-  // decisionBadge: alertCount + every cluster's real item count === badge,
-  // regardless of how the triage list chooses to group for display.
-  const alertCount = renderedRows.length - clusterRowsList.length
-  const badgeAriaLabel: string | undefined = (() => {
-    if (decisionBadge === 0) return undefined
-    const n = decisionBadge > 99 ? '99+' : String(decisionBadge)
-    if (clusterRowsList.length === 0) return `${n} decisions pending`
-    const parts: string[] = []
-    if (alertCount > 0) parts.push(`${alertCount} alert${alertCount !== 1 ? 's' : ''}`)
-    for (const c of clusterRowsList) {
-      parts.push(`${c.count} ${c.kind} item${c.count !== 1 ? 's' : ''}`)
-    }
-    return `${n} decisions pending (${parts.join(' + ')})`
-  })()
+  const badgeAriaLabel: string | undefined =
+    decisionBadge > 0
+      ? `${decisionBadge > 99 ? '99+' : decisionBadge} decisions pending`
+      : undefined
 
   return (
     <div className="grid min-h-0 flex-1 grid-cols-[200px_1fr] grid-rows-[40px_1fr]">

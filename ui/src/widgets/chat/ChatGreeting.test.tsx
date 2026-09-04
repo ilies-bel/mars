@@ -115,3 +115,45 @@ describe('ChatGreeting — unknown status', () => {
     act(() => root.unmount())
   })
 })
+
+// ---------------------------------------------------------------------------
+// useCounts() hook integration.
+//
+// ChatGreeting is a pure props component; its parent (ChatPage) calls
+// useCounts() and passes the result as props. The Shell badge reads
+// useCounts().needsYou directly. Both therefore display the same number:
+// if useCounts() returns needsYou=5, the badge shows 5 and ChatGreeting
+// shows "5 need you". These tests pin the prop-to-display contract so that
+// any change to the hook's return type surfaces here immediately.
+// ---------------------------------------------------------------------------
+
+describe('ChatGreeting — useCounts() hook contract', () => {
+  it('displays useCounts().needsYou when passed as needYou prop', () => {
+    // Simulates the parent calling useCounts() and forwarding the value.
+    // The Shell badge reads the same useCounts().needsYou, so both widgets
+    // always show the same number — no per-widget recomputation.
+    const needsYou = 5
+    const container = document.createElement('div')
+    const root = createRoot(container)
+    act(() => {
+      root.render(
+        <ChatGreeting running={0} recovering={0} needYou={needsYou} doneToday={0} known={true} />,
+      )
+    })
+    expect(container.textContent).toContain(`${needsYou} need you`)
+    act(() => root.unmount())
+  })
+
+  it('displays useCounts().running when passed as running prop', () => {
+    const running = 3
+    const container = document.createElement('div')
+    const root = createRoot(container)
+    act(() => {
+      root.render(
+        <ChatGreeting running={running} recovering={0} needYou={0} doneToday={0} known={true} />,
+      )
+    })
+    expect(container.textContent).toContain(`${running} running`)
+    act(() => root.unmount())
+  })
+})

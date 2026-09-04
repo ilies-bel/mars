@@ -1001,6 +1001,40 @@ export const statusCountsSchema = z.object({
 export type StatusCounts = z.infer<typeof statusCountsSchema>
 
 // ----------------------------------------------------------------------------
+// Counts (GET /api/counts). Unified count of all task lifecycle buckets plus
+// proposals, so every UI surface reads from one source instead of computing
+// per-widget. Extends StatusCounts with verifying, merging, queued, blocked,
+// and proposals.{draft,total}.
+// ----------------------------------------------------------------------------
+
+export const countsSchema = z.object({
+  /** Open action-queue items that are not draft-proposals (same predicate as statusCounts.needYou). */
+  needsYou: z.number(),
+  /** Tasks currently in an active execution state (running + verifying + merging + vega-reconciling). */
+  running: z.number(),
+  /** Tasks with status = 'verifying'. */
+  verifying: z.number(),
+  /** Tasks with status = 'merging'. */
+  merging: z.number(),
+  /** Tasks awaiting dispatch (status = 'queued'). */
+  queued: z.number(),
+  /** Tasks blocked on another task (status = 'blocked'). */
+  blocked: z.number(),
+  /** Failed tasks that are not recovery tasks. */
+  failed: z.number(),
+  /** Tasks completed in the last 24 hours (rolling window). */
+  doneToday: z.number(),
+  proposals: z.object({
+    /** Proposals with status = 'draft'. */
+    draft: z.number(),
+    /** All proposals regardless of status. */
+    total: z.number(),
+  }),
+})
+
+export type Counts = z.infer<typeof countsSchema>
+
+// ----------------------------------------------------------------------------
 // KPI arcs (GET /api/kpis/:key/arcs). Per-arc breakdown behind a KPI value.
 // Each row is one arc (or recovery sample for recovery_success_rate) with a
 // PASS/FAIL classification that mirrors the kpi-compute.ts grouping logic.

@@ -56,6 +56,27 @@ The `mars-ui` binary boots the daemon and serves `dist/` on the same port.
 | IN PROGRESS | `running`, `verifying`, `merging`       |
 | DONE        | `done`, `failed` (failed = red border)  |
 
+## Numbers
+
+Every count shown in the UI — sidebar badge, board header, Control Room Now-strip,
+chat greeting, and proposals header — comes from a single React Query hook:
+
+```ts
+import { useCounts } from '@/entities/counts/useCounts'
+
+const { needsYou, running, verifying, merging, queued, blocked, failed, doneToday, proposals } = useCounts()
+```
+
+`useCounts()` fetches from `GET /api/counts` (→ daemon `GET /view/counts`), which
+returns all task lifecycle counts plus `proposals.draft` and `proposals.total` in
+one query. `needsYou` is sourced server-side from the action queue feed (same
+predicate as `countNeedsYou`) so draft proposals are excluded and derived
+conditions are included.
+
+**Never add per-widget count calculations.** If you need a number that appears
+in more than one place, extend `countsSchema` in `ui/src/shared/schemas.ts` and
+add the field to `viewCounts` in `orchestrator/src/core/daemon/view/counts.ts`.
+
 ## Out of scope (v1)
 
 - Writes (drag/add/delete)

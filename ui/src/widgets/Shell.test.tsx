@@ -20,12 +20,26 @@ import { renderToStaticMarkup } from 'react-dom/server'
 
 // ── Module mocks — must be registered before any import of the component ─────
 
-// useActionQueue — Shell uses this for the Action Queue badge count.
-// Mutable so tests can inject items and verify badge computation.
-let mockActionQueueItems: { id: string; kind: string; priority: string; at: string }[] = []
+// useCounts — Shell reads useCounts().needsYou for the sidebar badge. This is
+// the single source of truth: the same value the board header and chat greeting
+// display (both ultimately derive from useCounts() rather than each computing
+// the count from a different endpoint). Mutable so tests can set the badge value.
+let mockNeedsYou = 0
+mock.module('@/entities/counts/useCounts', () => ({
+  useCounts: () => ({
+    needsYou: mockNeedsYou,
+    running: 0, verifying: 0, merging: 0,
+    queued: 0, blocked: 0, failed: 0, doneToday: 0,
+    proposals: { draft: 0, total: 0 },
+    known: true,
+  }),
+}))
+
+// useActionQueue — no longer used by Shell for the badge, but kept as a stub
+// for any residual imports (BellMenu, etc.) that pull it transitively.
 mock.module('@/entities/actionQueue/useActionQueue', () => ({
   useActionQueue: () => ({
-    items: mockActionQueueItems,
+    items: [],
     error: null,
     projectsError: null,
     projectsEmpty: false,
@@ -427,58 +441,52 @@ describe('Shell', () => {
 
 // ── Shell — badge computation (draft-proposal exclusion) ──────────────────────
 
-describe('Shell — Action Queue badge computation', () => {
-  const makeItem = (kind: string, id = `${kind}:1`) => ({
-    id,
-    kind,
-    priority: 'normal',
-    at: '2024-01-01T00:00:00.000Z',
-  })
+describe('Shell — badge computation from useCounts()', () => {
+  // Shell reads useCounts().needsYou for the badge — the single source of
+  // truth shared with the board header and chat greeting. Draft proposals are
+  // excluded server-side (same predicate as countNeedsYou), so they never
+  // inflate the badge regardless of the action queue state.
 
-  it('shows badge for an operational alert item', () => {
-    mockActionQueueItems = [makeItem('daemon-died')]
+  it('shows badge when useCounts returns needsYou > 0', () => {
+    mockNeedsYou = 1
     const html = renderToStaticMarkup(<Shell hash="#/chat">page</Shell>)
     expect(html).toContain('decisions pending')
-    mockActionQueueItems = []
+    mockNeedsYou = 0
   })
 
-  it('does not count a draft-proposal item toward the badge', () => {
-    mockActionQueueItems = [makeItem('draft-proposal')]
+  it('hides badge when useCounts returns needsYou = 0', () => {
+    mockNeedsYou = 0
     const html = renderToStaticMarkup(<Shell hash="#/chat">page</Shell>)
     expect(html).not.toContain('decisions pending')
-    mockActionQueueItems = []
   })
 
-  it('counts operational alerts but not draft-proposals when both present', () => {
-    mockActionQueueItems = [
-      makeItem('daemon-died', 'daemon-died:1'),
-      makeItem('reflect-recommended', 'reflect-recommended:1'),
-      makeItem('draft-proposal', 'draft-proposal:p1'),
-    ]
+  it('displays the exact needsYou count from useCounts (2 operational alerts)', () => {
+    // 2 operational alerts, draft proposals excluded server-side → badge shows 2
+    mockNeedsYou = 2
     const html = renderToStaticMarkup(<Shell hash="#/chat">page</Shell>)
-    // 2 operational + 1 draft → badge shows 2, not 3
     expect(html).toContain('>2<')
     expect(html).not.toContain('>3<')
-    mockActionQueueItems = []
+    mockNeedsYou = 0
   })
 
-  // Regression: the badge used to be the CLUSTERED rendered-row count, so a
-  // kind exceeding CLUSTER_THRESHOLD (5) collapsed to 1 row and undercounted
-  // the badge relative to the triage page's own canonical count. The badge
-  // must report the raw item count — the same `countNeedsYou` definition
-  // used by TriagePage, ChatGreeting, and the situation card. Mirrors the
-  // fixture in needsYouParity.test.tsx and
-  // orchestrator/.../situation-report.test.ts (14 = 5 failed + 9 awaiting-human).
-  it('reports the raw item count, not the clustered rendered-row count', () => {
-    mockActionQueueItems = [
-      ...Array.from({ length: 5 }, (_, i) => makeItem('failed', `failed:${i}`)),
-      ...Array.from({ length: 9 }, (_, i) => makeItem('awaiting-human', `awaiting:${i}`)),
-      ...Array.from({ length: 20 }, (_, i) => makeItem('draft-proposal', `draft:${i}`)),
-    ]
+  // Regression: the badge used to be the CLUSTERED rendered-row count computed
+  // client-side, so a kind exceeding CLUSTER_THRESHOLD collapsed to 1 row and
+  // undercounted. Now the count comes from the server (viewCounts.needsYou),
+  // which uses countNeedsYou — the same definition TriagePage and ChatGreeting
+  // use. 5 failed + 9 awaiting-human = 14 (not 7 clustered rows).
+  it('displays the server-side count without cluster-row undercounting (14 = 5+9)', () => {
+    mockNeedsYou = 14  // 5 failed + 9 awaiting-human, draft-proposals excluded server-side
     const html = renderToStaticMarkup(<Shell hash="#/chat">page</Shell>)
     expect(html).toContain('>14<')
     expect(html).not.toContain('>7<')
-    mockActionQueueItems = []
+    mockNeedsYou = 0
+  })
+
+  it('caps the displayed badge at 99+ when needsYou > 99', () => {
+    mockNeedsYou = 120
+    const html = renderToStaticMarkup(<Shell hash="#/chat">page</Shell>)
+    expect(html).toContain('>99+<')
+    mockNeedsYou = 0
   })
 })
 
