@@ -150,13 +150,14 @@ const kpiSnapshot: Command = {
         'exclude Planner/Slicer trace events from the cost_per_arc distribution',
     },
   ],
-  run: async (_args, deps) => {
+  run: async (args, deps) => {
     const { takeKpiSnapshot } = await import('../../core/lib/kpi-snapshots.js')
     const { getDefaultTaskStore } = await import('../../core/store/task-store-default.js')
     const surface = await getDefaultTaskStore()
     const snapshot = await takeKpiSnapshot({
       surface,
       now: new Date().toISOString(),
+      excludePlannerSlicer: hasFlag(args, '--exclude-planner-slicer'),
     })
     deps.out(JSON.stringify(snapshot, null, 2))
     return { code: 0 }

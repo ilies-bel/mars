@@ -74,6 +74,12 @@ interface TakeKpiSnapshotOpts {
   windowDays?: number
   /** Minimum sample count before low_confidence is set; defaults to 5 */
   sampleFloor?: number
+  /**
+   * When true, exclude Planner/Slicer origin-level (Path 3) trace events from
+   * the cost_per_arc distribution. Forwarded to computeCostPerArcDistribution.
+   * Default: false.
+   */
+  excludePlannerSlicer?: boolean
 }
 
 /**
@@ -88,7 +94,7 @@ interface TakeKpiSnapshotOpts {
 export async function takeKpiSnapshot(
   opts: TakeKpiSnapshotOpts,
 ): Promise<KpiSnapshot | null> {
-  const { surface, now, windowDays = 7, sampleFloor = 5 } = opts
+  const { surface, now, windowDays = 7, sampleFloor = 5, excludePlannerSlicer } = opts
 
   const windowEnd = now
   const windowStartMs =
@@ -101,7 +107,7 @@ export async function takeKpiSnapshot(
     window,
   )
   const { p50: costP50, p90: costP90, sampleCount: costSampleCount } =
-    await computeCostPerArcDistribution(surface, window)
+    await computeCostPerArcDistribution(surface, window, { excludePlannerSlicer })
   const { value: autonomousCompletionRate, sampleCount: acrSampleCount } =
     await computeAutonomousCompletionRate(surface, window)
   const { value: recoverySuccessRate, sampleCount: rsrSampleCount } =

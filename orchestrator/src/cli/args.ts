@@ -211,6 +211,9 @@ export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   '--list',
   // mars kpi acknowledge --clear: remove an acknowledged baseline.
   '--clear',
+  // mars kpi snapshot --exclude-planner-slicer: omit Planner/Slicer (Path 3)
+  // origin-level trace events from the cost_per_arc distribution.
+  '--exclude-planner-slicer',
 ])
 
 // Short aliases are normalised to their long form before flag lookup.
