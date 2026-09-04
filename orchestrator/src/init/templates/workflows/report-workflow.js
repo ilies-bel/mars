@@ -44,15 +44,19 @@ export default defineWorkflow({
     // code → the agent reads the codebase and produces a report.
     // The agent brief instructs it to return all findings as text in its
     // final response — file writes inside the worktree do NOT survive.
-    // Execution mode: auto. Override the model per step if needed:
+    // runAgent returns { reportText } — the agent's final output text,
+    // extracted from the conversation. Pass it to finalizeReport so the
+    // findings are persisted to the task record and survive worktree removal.
+    // Override the model per step if needed:
     //   runAgent(ctx, { model: 'claude-opus-5' })
-    await ctx.step('code', () => runAgent(ctx))
+    const { reportText } = await ctx.step('code', () => runAgent(ctx))
 
-    // finalize → reclaim the worktree and mark the task done.
+    // finalize → persist the agent's findings, reclaim the worktree, and
+    // mark the task done. reportText (from the code step above) is persisted
+    // as a task progress note readable via `mars task show <id>`.
     // No verify runs, no merge is attempted — the pipeline ends here.
-    // Pass `reportText` if your workflow captured the agent's output text:
-    //   return finalizeReport(ctx, { reportText: capturedText })
-    // Omit it for a legitimately empty audit — that is a valid outcome.
-    return await ctx.step('finalize', () => finalizeReport(ctx))
+    // Pass reportText: undefined (omit the key) only for a legitimately empty
+    // audit where the agent found nothing worth noting.
+    return await ctx.step('finalize', () => finalizeReport(ctx, { reportText }))
   },
 })

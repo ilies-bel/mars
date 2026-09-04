@@ -36,18 +36,30 @@ export interface FinalizeReportOpts {
    * normal Mars read (`mars task show <id>` / `Arc.listProgress`) and not
    * only inside the compressed transcript blob.
    *
-   * Leave `undefined` (or omit) for a legitimately empty audit ("I checked
-   * everything, all clear") — that is a valid outcome and must stay
-   * expressible without forcing a note. The pipeline provides the mechanism;
-   * the workflow decides whether to use it.
+   * **Three distinct shapes:**
+   * - `undefined` (omitted) — legitimately empty audit ("I checked everything,
+   *   all clear"). No note is written; the task reaches `done` normally. Use
+   *   only when the workflow deliberately skips text capture.
+   * - `null` or empty string — agent ran but produced no output. Treated as a
+   *   failure: the task cannot reach `done` with no findings and no explicit
+   *   empty-audit decision. This prevents silent data loss.
+   * - Non-empty string — the agent's findings. Persisted as a task progress
+   *   note before the task is marked done.
+   *
+   * The scaffolded `report-workflow.js` passes `{ reportText }` from
+   * `runAgent`'s return value. Never omit it when the agent ran — an omitted
+   * `reportText` after a real agent run silently discards the findings.
    *
    * **Why a task note?** `task_progress` rows (kind='note') are the same
    * store surface that `mars task note <id> "..."` writes to. They are
    * displayed by `mars task show`, indexed by `Arc.listProgress`, and never
    * compressed or removed with the worktree. The worktree is reclaimed by
    * this step; only content persisted to the DB survives beyond it.
+   *
+   * **Retrieving the report:** `mars task show <id>` prints the last 10
+   * journal entries, including any note written here.
    */
-  reportText?: string
+  reportText?: string | null
 }
 
 /**
@@ -55,9 +67,13 @@ export interface FinalizeReportOpts {
  *
  * This primitive:
  *   1. Removes the task's worktree directory and deletes the `task/<id>` branch.
- *   2. If `opts.reportText` is non-empty, persists it as a task progress note
- *      (kind='note') via {@link Arc.appendProgress} so it is reachable through
- *      a normal Mars read and not only inside the compressed transcript blob.
+ *   2. Validates `opts.reportText`:
+ *      - `undefined` → legitimately empty audit, skip the note.
+ *      - `null` or empty string → agent ran but produced no text; throws rather
+ *        than silently reaching `done` with nothing persisted.
+ *      - non-empty string → persisted as a task progress note (kind='note',
+ *        author='orchestrator') via {@link Arc.appendProgress}, reachable via
+ *        `mars task show <id>`.
  *   3. Transitions the task row to `status='done'`, `failedPhase=null`.
  *   4. Returns `{ taskId, success: true, message }`.
  *
@@ -95,9 +111,22 @@ export const finalizeReport = async (
 
   // Persist the agent's report text as a task progress note before marking
   // done, so it survives worktree removal and is reachable via `mars task
-  // show` / Arc.listProgress. Omitted for legitimately empty audits.
-  const reportText = opts.reportText?.trim()
-  if (reportText) {
+  // show` / Arc.listProgress.
+  //
+  // opts.reportText === undefined  → legitimately empty audit; skip the note.
+  // opts.reportText === null or '' → agent ran but produced no text; this is
+  //   a failure (a lost report is worse than a failed report), so throw rather
+  //   than silently reaching `done` with nothing persisted.
+  if (opts.reportText !== undefined) {
+    const reportText = opts.reportText?.trim() ?? ''
+    if (!reportText) {
+      throw new Error(
+        `finalizeReport: reportText was provided but is empty after trimming — ` +
+        `the report agent ran but produced no text output. ` +
+        `A report task that captures nothing is a failed report task. ` +
+        `Check the task transcript: mars task show ${taskId}`,
+      )
+    }
     await Arc.appendProgress(
       { taskId, author: 'orchestrator', kind: 'note', body: reportText },
       store,

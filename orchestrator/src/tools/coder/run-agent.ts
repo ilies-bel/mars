@@ -22,7 +22,7 @@ import {
 import { cleanWorktreeIfNoCommitsAhead, selectVerifySteps } from '../../core/ports/verifier/verify-helpers'
 import { createWorker, pickWorkerForTags, Workers, type Worker } from '../../core/workers'
 import { resolveContext } from '../../core/context'
-import { type AgentEvent } from '../../core/lib/claude-stream'
+import { type AgentEvent, extractLastStreamText } from '../../core/lib/claude-stream'
 import { isTaskTag, type TaskTag, type TaskSpec, updateTask } from '../../core/queue'
 import { computeFailureSignature } from '../../core/lib/failure-signature'
 import { resolveOriginIdForTask } from '../../core/lib/origin'
@@ -122,6 +122,14 @@ export interface RunAgentOpts {
 export interface RunAgentResult {
   /** Claude session id (transcript key), null when the run produced none. */
   sessionId: string | null
+  /**
+   * The agent's final text output, extracted from the conversation via
+   * {@link extractLastStreamText}. `null` when the conversation is empty or
+   * no text block was found. Report workflows should pass this to
+   * `finalizeReport({ reportText })` so findings are persisted to the task
+   * record before the worktree is reclaimed.
+   */
+  reportText: string | null
 }
 
 /**
@@ -213,7 +221,7 @@ export const runAgent = async (
       mode: 'auto',
       guide: null,
     })
-    return { sessionId: null }
+    return { sessionId: null, reportText: null }
   }
   // Resolve dispatch facts: explicit opts → ctx.input → hard default. Plumbing
   // (store / trace / emit / handle / worktree) is pulled off ctx.
@@ -753,7 +761,10 @@ export const runAgent = async (
       // signal capture must never fail the task
     })
 
-    return { sessionId: r.sessionId ?? null }
+    return {
+      sessionId: r.sessionId ?? null,
+      reportText: extractLastStreamText(r.conversation),
+    }
   } finally {
     // Release on every exit path — a leaked lease would refuse every later
     // dispatch onto this worktree until the daemon process itself died.
