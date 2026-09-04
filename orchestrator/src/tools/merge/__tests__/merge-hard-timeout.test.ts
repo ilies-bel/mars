@@ -192,10 +192,12 @@ describe('merge — hard step-level timeout', () => {
 
       const taskId = 'mars-hard-timeout-01'
 
-      // enqueueFn creates the lock file (simulating mergeBranch holding it)
-      // and then returns a promise that never resolves.
-      const enqueueFn = vi.fn().mockImplementation(async () => {
-        // Write the lock file so we can assert it is absent after the timeout.
+      // enqueueFn simulates the worker claiming the job (calls onClaimed so the
+      // hard timer starts), writes the lock file (simulating mergeBranch holding
+      // it), and then returns a promise that never resolves.
+      const enqueueFn = vi.fn().mockImplementation(async (args: { onClaimed?: () => void }) => {
+        args.onClaimed?.() // start the execution-only timer
+        // Write the lock file so we can assert it is still present after the timeout.
         const { writeFileSync } = await import('node:fs')
         writeFileSync(LOCK_PATH, String(process.pid))
         // Never resolve — simulates a wedged merge worker.
@@ -238,7 +240,8 @@ describe('merge — hard step-level timeout', () => {
     const taskId = 'mars-hard-timeout-02'
     const { WorkflowTerminalError } = await import('../../../core/lib/workflow-terminal-error')
 
-    const enqueueFn = vi.fn().mockImplementation(async () => {
+    const enqueueFn = vi.fn().mockImplementation(async (args: { onClaimed?: () => void }) => {
+      args.onClaimed?.()
       return new Promise<never>(() => {})
     })
 
@@ -252,7 +255,8 @@ describe('merge — hard step-level timeout', () => {
     const taskId = 'mars-hard-timeout-03'
     const { WorkflowTerminalError } = await import('../../../core/lib/workflow-terminal-error')
 
-    const enqueueFn = vi.fn().mockImplementation(async () => {
+    const enqueueFn = vi.fn().mockImplementation(async (args: { onClaimed?: () => void }) => {
+      args.onClaimed?.()
       return new Promise<never>(() => {})
     })
 
@@ -271,12 +275,13 @@ describe('merge — hard step-level timeout', () => {
   }, 1000)
 
   it(
-    'a queued waiter that times out does not unlink .merge.lock',
+    'a claimed task that times out does not unlink .merge.lock',
     async () => {
       // This is the ownership-safety test (the incident root cause, 2026-09-03).
-      // The hard timer starts BEFORE enqueueMergeJobAndAwait is called, so a
-      // task can time out while still waiting in the queue — it never held the
-      // lock. Verify that the primitive does not unlink a lock it never acquired.
+      // The hard timer starts at CLAIM time — the moment the worker picks up
+      // the job. When it fires, the task is executing inside mergeBranch but
+      // has not yet acquired (or may have already released) the lock. The
+      // primitive must never unlink a lock it does not own.
 
       const taskId = 'mars-hard-timeout-04'
       const { writeFileSync } = await import('node:fs')
@@ -284,9 +289,12 @@ describe('merge — hard step-level timeout', () => {
       // Simulate a different (healthy) merge already holding the lock.
       writeFileSync(LOCK_PATH, 'other-task-pid')
 
-      // enqueueFn never writes to the lock and never resolves — simulating
-      // this task still sitting in the queue when the timeout fires.
-      const enqueueFn = vi.fn().mockImplementation(() => new Promise<never>(() => {}))
+      // enqueueFn calls onClaimed (simulating the worker picking up the job)
+      // but never resolves — simulating a wedged execution that times out.
+      const enqueueFn = vi.fn().mockImplementation((args: { onClaimed?: () => void }) => {
+        args.onClaimed?.()
+        return new Promise<never>(() => {})
+      })
 
       const ctx = makeCtx(taskId, enqueueFn)
 
@@ -316,8 +324,9 @@ describe('merge — hard-timeout: outcome check before failing', () => {
     async () => {
       const taskId = 'mars-hard-timeout-already-merged-01'
 
-      // Merge job never resolves — simulates a slow/wedged worker.
-      const enqueueFn = vi.fn().mockImplementation(async () => {
+      // Merge job calls onClaimed (timer starts) but never resolves — simulates a slow/wedged worker.
+      const enqueueFn = vi.fn().mockImplementation(async (args: { onClaimed?: () => void }) => {
+        args.onClaimed?.()
         return new Promise<never>(() => {})
       })
 
@@ -352,7 +361,8 @@ describe('merge — hard-timeout: outcome check before failing', () => {
     async () => {
       const taskId = 'mars-hard-timeout-already-merged-02'
 
-      const enqueueFn = vi.fn().mockImplementation(async () => {
+      const enqueueFn = vi.fn().mockImplementation(async (args: { onClaimed?: () => void }) => {
+        args.onClaimed?.()
         return new Promise<never>(() => {})
       })
 
@@ -372,7 +382,8 @@ describe('merge — hard-timeout: outcome check before failing', () => {
     async () => {
       const taskId = 'mars-hard-timeout-unmerged-01'
 
-      const enqueueFn = vi.fn().mockImplementation(async () => {
+      const enqueueFn = vi.fn().mockImplementation(async (args: { onClaimed?: () => void }) => {
+        args.onClaimed?.()
         return new Promise<never>(() => {})
       })
 

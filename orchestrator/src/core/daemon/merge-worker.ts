@@ -98,10 +98,37 @@ export interface MergeWorkerHandle {
   cancelJob(jobId: string): boolean
 }
 
+// ── Gate-budget constants ─────────────────────────────────────────────────────
+
+/**
+ * Default fallback timeout (minutes) for a single task-tier gate when the gate
+ * does not declare its own `timeoutMin`. Mirrored inside `onVerifyRebasedTree`
+ * and referenced when sizing the per-job watchdog so the two values cannot
+ * drift independently.
+ */
+const DEFAULT_TASK_TIER_GATE_BUDGET_MIN = 15
+
+/**
+ * Default fallback timeout (minutes) for a single integration-tier gate when
+ * the gate does not declare its own `timeoutMin`. Mirrored inside
+ * `onAfterFastForward` and referenced when sizing the per-job watchdog so the
+ * two values cannot drift independently.
+ */
+const DEFAULT_INTEGRATION_GATE_BUDGET_MIN = 15
+
 // ── Promise-based park / resume (mirrors awaitManualDone pattern) ─────────────
 
 /** Live promise resolvers for in-flight merge jobs, keyed by taskId. */
 const pendingMergeJobs = new Map<string, (r: MergeJobResult) => void>()
+
+/**
+ * "Claimed" callbacks registered by `enqueueMergeJobAndAwait` callers that
+ * want to be notified the moment the worker picks up the job (after
+ * `markRunning`). The hard step-level wall-clock ceiling in the merge
+ * primitive starts here — not at enqueue time — so queue wait does not
+ * consume execution budget.
+ */
+const pendingClaimCallbacks = new Map<string, () => void>()
 
 /**
  * Register a pending merge job and return a promise that resolves only when
@@ -127,8 +154,25 @@ export function resolveMergeJob(taskId: string, result: MergeJobResult): boolean
   const resolve = pendingMergeJobs.get(taskId)
   if (!resolve) return false
   pendingMergeJobs.delete(taskId)
+  pendingClaimCallbacks.delete(taskId) // defensive cleanup: job finished without being claimed
   resolve(result)
   return true
+}
+
+/**
+ * Fire the "claimed" callback registered by the enqueueMergeJobAndAwait caller
+ * for `taskId`, if one was registered. Called by the worker loop immediately
+ * after `markRunning` so the step-level hard timeout starts at execution time
+ * rather than at enqueue time.
+ *
+ * No-op when no callback is registered (the caller opted out).
+ */
+function signalMergeJobClaimed(taskId: string): void {
+  const cb = pendingClaimCallbacks.get(taskId)
+  if (cb) {
+    pendingClaimCallbacks.delete(taskId)
+    cb()
+  }
 }
 
 /**
@@ -149,6 +193,15 @@ export async function enqueueMergeJobAndAwait(args: {
   worktreePath: string
   integrationBranch: string
   /**
+   * Optional callback invoked the moment the merge worker claims this job
+   * (immediately after `markRunning`). The merge primitive uses this to start
+   * its step-level hard wall-clock ceiling at claim time rather than at
+   * enqueue time — so queue wait does not consume execution budget and a task
+   * sitting behind a long-running merge is not failed for a merge that never
+   * ran.
+   */
+  onClaimed?: () => void
+  /**
    * Optional callback invoked when the outer watchdog fires. Call this to
    * directly fail the task in the DB so it exits status='merging' even if
    * the calling workflow has already exited (e.g. after a daemon restart).
@@ -163,6 +216,13 @@ export async function enqueueMergeJobAndAwait(args: {
 }): Promise<MergeJobResult> {
   // Register BEFORE enqueue so we can never miss the termination event.
   const resultPromise = awaitMergeJobDone(args.taskId)
+
+  // Register the claim callback before enqueuing so the worker can never
+  // claim and call it before we store it.
+  if (args.onClaimed) {
+    pendingClaimCallbacks.set(args.taskId, args.onClaimed)
+  }
+
   await args.store.enqueue({
     taskId: args.taskId,
     branch: args.branch,
@@ -177,10 +237,21 @@ export async function enqueueMergeJobAndAwait(args: {
   // watchdogMs + OUTER_WATCHDOG_GRACE_MS so the calling workflow never parks
   // in status='merging' forever.
   //
+  // watchdogMs is sized to cover DEFAULT_WATCHDOG_MS (vcs-supervisor +
+  // git work) PLUS the gate budgets supplied by the worker's
+  // onVerifyRebasedTree and onAfterFastForward hooks. Both hooks can run
+  // for up to their per-tier default before yielding — omitting their
+  // budgets would let the outer watchdog fire while a legitimate gate is
+  // still running. Override with MARS_MERGE_WATCHDOG_MS when needed.
+  //
   // The internal per-job watchdog (passed to mergeFn as watchdogMs) fires at
   // watchdogMs; the grace period ensures the internal one always fires first
   // under normal conditions — this outer timeout is the last resort.
-  const watchdogMs = Number(process.env.MARS_MERGE_WATCHDOG_MS ?? DEFAULT_WATCHDOG_MS)
+  const watchdogMs = Number(
+    process.env.MARS_MERGE_WATCHDOG_MS ??
+      DEFAULT_WATCHDOG_MS +
+        (DEFAULT_TASK_TIER_GATE_BUDGET_MIN + DEFAULT_INTEGRATION_GATE_BUDGET_MIN) * 60_000,
+  )
   const graceMs = Number(process.env.MARS_MERGE_OUTER_WATCHDOG_GRACE_MS ?? DEFAULT_OUTER_WATCHDOG_GRACE_MS)
   const outerMs = watchdogMs + graceMs
 
@@ -190,6 +261,7 @@ export async function enqueueMergeJobAndAwait(args: {
       // Remove the pending resolver before resolving so that if resolveMergeJob
       // is called after the timeout it is a harmless no-op (key already absent).
       pendingMergeJobs.delete(args.taskId)
+      pendingClaimCallbacks.delete(args.taskId) // defensive cleanup
       // Belt-and-suspenders: directly fail the task in the DB so it leaves
       // status='merging' even if the calling workflow has already exited (e.g.
       // the daemon restarted mid-merge and the workflow promise was abandoned).
@@ -262,15 +334,23 @@ async function runMergeJob(
     `[merge-worker] executing job ${job.id} for task ${job.taskId} branch=${job.branch}`,
   )
 
-  // Defaults to the merge primitive's own budget, which is derived from the
-  // vcs-supervisor timeout. Hardcoding a second literal here is how the two
-  // inverted: this worker capped merges at 5 minutes while a conflict-resolving
-  // merge legitimately needs the supervisor's 30.
-  const watchdogMs = Number(process.env.MARS_MERGE_WATCHDOG_MS ?? DEFAULT_WATCHDOG_MS)
+  // The watchdog must cover the full call, which includes:
+  //   - VCS supervisor session + surrounding git work (DEFAULT_WATCHDOG_MS)
+  //   - onVerifyRebasedTree: up to DEFAULT_TASK_TIER_GATE_BUDGET_MIN per gate
+  //   - onAfterFastForward: up to DEFAULT_INTEGRATION_GATE_BUDGET_MIN per gate
+  // Using the bare DEFAULT_WATCHDOG_MS let the verify gate alone consume the
+  // entire budget, leaving nothing for the supervisor and git work.
+  // Override with MARS_MERGE_WATCHDOG_MS when the actual gate suite is larger.
+  const watchdogMs = Number(
+    process.env.MARS_MERGE_WATCHDOG_MS ??
+      DEFAULT_WATCHDOG_MS +
+        (DEFAULT_TASK_TIER_GATE_BUDGET_MIN + DEFAULT_INTEGRATION_GATE_BUDGET_MIN) * 60_000,
+  )
 
-  // Default per-gate timeout for integration-tier gates when a gate does not
-  // declare its own timeoutMin. Mirrors the default in server.ts:runGate.
-  const DEFAULT_INTEGRATION_TIMEOUT_MIN = 15
+  // Per-gate fallback timeout for integration-tier gates. Uses the module-level
+  // constant so the watchdog sizing above and the per-gate AbortSignal below
+  // are derived from the same value and cannot drift.
+  const DEFAULT_INTEGRATION_TIMEOUT_MIN = DEFAULT_INTEGRATION_GATE_BUDGET_MIN
 
   // Construct the integration-gate hook that runs required integration-tier
   // gates after the fast-forward, inside the merge lock, before it releases.
@@ -383,7 +463,10 @@ async function runMergeJob(
   // Returns { passed: boolean } — a false result causes `mergeBranch` to
   // short-circuit, leaving `main` untouched, and the merge loop ends without
   // ever acquiring the lock.
-  const DEFAULT_TASK_TIER_TIMEOUT_MIN = 15
+  // Per-gate fallback timeout for task-tier gates. Uses the module-level
+  // constant so the watchdog sizing above and the per-gate AbortSignal here
+  // are derived from the same value and cannot drift.
+  const DEFAULT_TASK_TIER_TIMEOUT_MIN = DEFAULT_TASK_TIER_GATE_BUDGET_MIN
   const onVerifyRebasedTree = async (info: {
     baseSha: string
     taskSha: string
@@ -695,6 +778,10 @@ export function startMergeWorker({
 
       try {
         await store.markRunning(job.id)
+        // Signal to the waiting merge primitive that this job has been claimed
+        // and execution is beginning. The primitive uses this to start its
+        // step-level hard timeout at execution time, not at enqueue time.
+        signalMergeJobClaimed(job.taskId)
         await runMergeJob(job, store, log, mergeFn, jobAc.signal, onSupervisorEvent)
       } catch (err) {
         const msg = (err as Error).message

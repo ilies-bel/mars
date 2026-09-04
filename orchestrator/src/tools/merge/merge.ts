@@ -664,11 +664,17 @@ export const merge = async (
         currentPhase = 'waiting-for-worker'
 
         // Hard step-level wall-clock ceiling (PRD bf7bbd39, slice 2).
-        // If the merge worker is wedged and enqueueMergeJobAndAwait does not
-        // return within MERGE_HARD_TIMEOUT_MS, abort with an actionable
-        // failure so the task never parks in status='merging' forever.
+        // Fires when the merge worker has CLAIMED this job but does not
+        // resolve it within MERGE_HARD_TIMEOUT_MS — i.e. the worker itself
+        // is wedged. The clock starts in the onClaimed callback (not at
+        // enqueue time) so queue wait does not consume the execution budget.
+        // A task sitting behind a long-running merge is never failed for
+        // a merge that never actually ran.
         const hardAbortController = new AbortController()
-        const hardTimer = setTimeout(() => hardAbortController.abort(), MERGE_HARD_TIMEOUT_MS)
+        let hardTimer: ReturnType<typeof setTimeout> | undefined
+        const onClaimed = (): void => {
+          hardTimer = setTimeout(() => hardAbortController.abort(), MERGE_HARD_TIMEOUT_MS)
+        }
         let queueResult: { status: 'done'; result: MergeResult } | { status: 'failed'; error: string; errorCode: string }
         try {
           queueResult = await Promise.race([
@@ -677,6 +683,7 @@ export const merge = async (
               branch,
               worktreePath,
               integrationBranch,
+              onClaimed,
             }),
             new Promise<never>((_, reject) => {
               if (hardAbortController.signal.aborted) {
@@ -692,12 +699,11 @@ export const merge = async (
           ])
         } catch (err: unknown) {
           if (err instanceof MergeHardTimeoutError) {
-            // Do NOT unlink .merge.lock here. The timer starts before
-            // enqueueMergeJobAndAwait is called, so the timing-out task may
-            // still be queued and may never have acquired the lock at all.
-            // Blindly unlinking it would delete a mutex held by a different,
-            // healthy merge that is actively running. The lock's own finally
-            // block (inside mergeBranch) is the sole authority that releases it.
+            // Do NOT unlink .merge.lock here. The lock's own finally block
+            // (inside mergeBranch) is the sole authority that releases it.
+            // Even though the timer starts at claim time (not enqueue time),
+            // the job may not have entered mergeBranch yet — a blindly
+            // unlinking would delete the mutex of a different healthy merge.
 
             // Establish the actual merge outcome before deciding the task
             // status. The merge job was still running when the timer fired;
@@ -760,7 +766,7 @@ export const merge = async (
           }
           throw err
         } finally {
-          clearTimeout(hardTimer)
+          if (hardTimer !== undefined) clearTimeout(hardTimer)
         }
 
         if (queueResult.status === 'failed') {

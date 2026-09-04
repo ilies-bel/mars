@@ -137,6 +137,8 @@ export interface MarsServices {
     branch: string
     worktreePath: string
     integrationBranch: string
+    /** Optional callback fired the moment the worker claims the job (after markRunning). */
+    onClaimed?: () => void
   }) => Promise<{ status: 'done'; result: MergeResult } | { status: 'failed'; error: string; errorCode: string }>
   /**
    * Optional hook to spawn a long-lived preview process for the `reviewType:
