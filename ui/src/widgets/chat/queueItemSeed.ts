@@ -54,7 +54,7 @@ export const buildQueueItemSeed = (item: ActionQueueItem): string => {
   const cause = deriveCause(item.humanDetail)
   if (cause) lines.push('', `Cause: ${cause}`)
 
-  if (item.entityId) lines.push('', `This concerns \`${item.entityId}\`.`)
+  if (item.entityId) lines.push('', `This concerns ${item.entityId}.`)
 
   // The body often carries the raw signal (a verify tail, a stack). Keep it,
   // but bounded — the point is to orient, not to paste a log into the opener.

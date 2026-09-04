@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { fetchStewardLedger } from '@/shared/api'
 import type { StewardLedgerEntry } from '@/shared/schemas'
+import { smartTimestamp, formatFailureSig } from '@/shared/displayStrings'
 
 export interface StewardLedgerPanelProps {
   /** Restricts the ledger to one durable target when both fields are present. */
@@ -50,11 +51,21 @@ export const StewardLedgerPanel = ({ targetKind, targetId }: StewardLedgerPanelP
               className="rounded border border-primary/20 bg-card px-3 py-2"
             >
               <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 font-mono text-label">
-                <span className="font-semibold text-foreground">{entry.targetKind} {entry.targetId}</span>
-                <time dateTime={entry.ts} className="text-muted-foreground">{entry.ts}</time>
+                <span className="font-semibold text-foreground" title={entry.targetId}>
+                  {entry.targetKind.charAt(0).toUpperCase() + entry.targetKind.slice(1)}{' '}
+                  <span className="font-mono">{entry.targetId}</span>
+                </span>
+                <time dateTime={entry.ts} className="text-muted-foreground" title={entry.ts}>
+                  {smartTimestamp(entry.ts)}
+                </time>
               </div>
               <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-2 gap-y-1 font-mono text-micro leading-relaxed">
-                <dt className="text-muted-foreground">Recipe</dt><dd className="break-all text-foreground">{entry.recipeId}</dd>
+                <dt className="text-muted-foreground">Recipe</dt>
+                <dd className="break-all text-foreground" title={entry.recipeId}>
+                  {/[:/]/.test(entry.recipeId)
+                    ? formatFailureSig(entry.recipeId)
+                    : entry.recipeId.replace(/-/g, ' ')}
+                </dd>
                 <dt className="text-muted-foreground">Version</dt><dd className="break-all text-foreground">{entry.targetVersion}</dd>
                 <dt className="text-muted-foreground">Rationale</dt><dd className="text-foreground">{entry.rationale}</dd>
                 <dt className="text-muted-foreground">Outcome</dt><dd className="text-foreground">{entry.outcome}</dd>

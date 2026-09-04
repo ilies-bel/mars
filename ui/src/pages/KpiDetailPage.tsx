@@ -457,7 +457,7 @@ export const KpiDetailPage = ({ kpiKey }: KpiDetailPageProps) => {
                     </span>
                   )}
                   <span className="min-w-0 flex-1 truncate text-foreground">
-                    {titleFromPrompt(arc.title) || arc.arcId}
+                    {titleFromPrompt(arc.title) || <span className="text-muted-foreground italic">(untitled)</span>}
                   </span>
                 </a>
               ))}

@@ -34,6 +34,7 @@ import type { StepPrompt } from '@/entities/studio/types'
 import { primitiveForStep } from '@/entities/primitive/types'
 import { primitiveHash } from '@/shared/routing'
 import { CopyButton } from '@/components/CopyButton'
+import { formatTokensLabel } from '@/shared/displayStrings'
 
 // ── Pure model ────────────────────────────────────────────────────────────────
 
@@ -295,15 +296,14 @@ const StudioNode = ({
               {entry.failureReason ?? entry.outcome}
             </p>
           ) : null}
-          {entry.inputTokens != null || entry.outputTokens != null ? (
-            <p className="font-mono text-micro text-muted-foreground">
-              {entry.inputTokens != null ? `in:${entry.inputTokens}` : null}
-              {entry.outputTokens != null ? ` out:${entry.outputTokens}` : null}
-              {entry.cacheReadTokens != null && entry.cacheReadTokens > 0
-                ? ` cache:${entry.cacheReadTokens}`
-                : null}
-            </p>
-          ) : null}
+          {(() => {
+            const label = formatTokensLabel(entry.inputTokens, entry.outputTokens, entry.cacheReadTokens)
+            return label !== null ? (
+              <p data-testid="studio-node-tokens" className="font-mono text-micro text-muted-foreground">
+                {label}
+              </p>
+            ) : null
+          })()}
         </div>
         {durationLabel !== null ? (
           <span

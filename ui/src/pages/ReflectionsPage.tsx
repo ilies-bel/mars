@@ -40,6 +40,7 @@ import { CopyButton } from '@/components/CopyButton'
 import { parseReflectionDetailRoute, reflectionDetailHash, proposalHash } from '@/shared/routing'
 import { useHashRoute } from '@/shared/useHashRoute'
 import { formatAbsoluteDateTime } from '@/shared/time'
+import { truncateAtWord } from '@/shared/displayStrings'
 import { PageHeader, SectionLabel } from '@/widgets/primitives/DensityPrimitives'
 
 // ---------------------------------------------------------------------------
@@ -521,14 +522,14 @@ const ReflectionRow = ({ report }: ReflectionRowProps) => (
   >
     <div className="flex items-center gap-2">
       <span className="font-mono text-label text-foreground truncate flex-1">
-        {report.originId}
+        {formatAbsoluteDateTime(report.recordedAt)}
       </span>
       <span className={`font-mono text-micro uppercase ${statusClass(report.status)}`}>
         {report.status}
       </span>
     </div>
     <div className="flex items-center gap-4 font-mono text-micro text-muted-foreground">
-      <span>{formatAbsoluteDateTime(report.recordedAt)}</span>
+      <span title={report.originId}>{truncateAtWord(report.originId, 24)}</span>
       {report.dissonantCallCount > 0 && (
         <span className="text-error">{report.dissonantCallCount} dissonant</span>
       )}

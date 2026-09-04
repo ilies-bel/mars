@@ -1699,9 +1699,9 @@ describe('TaskDetailDrawer – run timeline (via runTimeline prop)', () => {
     const html = renderDrawer(
       <TaskDetailDrawer taskId="t1" onClose={() => {}} runTimeline={timeline} />,
     )
-    expect(html).toContain('in:1234')
-    expect(html).toContain('out:567')
-    expect(html).toContain('cache:890')
+    expect(html).toContain('in 1234')
+    expect(html).toContain('out 567')
+    expect(html).toContain('cached 890')
   })
 
   it('does not show token span when both inputTokens and outputTokens are null', () => {
@@ -1711,8 +1711,8 @@ describe('TaskDetailDrawer – run timeline (via runTimeline prop)', () => {
     const html = renderDrawer(
       <TaskDetailDrawer taskId="t1" onClose={() => {}} runTimeline={timeline} />,
     )
-    expect(html).not.toContain('in:')
-    expect(html).not.toContain('out:')
+    expect(html).not.toContain('in 0')
+    expect(html).not.toContain('data-testid="step-card-tokens"')
   })
 
   it('shows failure reason inline for a failed step', () => {

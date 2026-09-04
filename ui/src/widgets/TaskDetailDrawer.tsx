@@ -30,6 +30,7 @@ import { dagClusterStyle } from '@/shared/dagColors'
 import { relativeTime, formatDuration } from '@/shared/time'
 import { studioHash, taskHash } from '@/shared/routing'
 import { humanizeFailureCode } from '@/shared/actionQueueDetail'
+import { formatTokensLabel } from '@/shared/displayStrings'
 import { taskTitle } from '@/shared/promptTitle'
 import { FallbackSurface } from '@/components/FallbackSurface'
 import { CopyButton } from '@/components/CopyButton'
@@ -1652,15 +1653,14 @@ const StepCard = ({
       {/* Expanded content — always in DOM, hidden by <details> when closed */}
       <div data-testid="step-card-expanded" className="border-t border-primary/15 px-3 pb-3">
         {/* Token counts (LLM-backed steps) */}
-        {(entry.inputTokens != null || entry.outputTokens != null) ? (
-          <p className="pt-2 font-mono text-micro text-muted-foreground">
-            {entry.inputTokens != null ? `in:${entry.inputTokens}` : null}
-            {entry.outputTokens != null ? ` out:${entry.outputTokens}` : null}
-            {entry.cacheReadTokens != null && entry.cacheReadTokens > 0
-              ? ` cache:${entry.cacheReadTokens}`
-              : null}
-          </p>
-        ) : null}
+        {(() => {
+          const label = formatTokensLabel(entry.inputTokens, entry.outputTokens, entry.cacheReadTokens)
+          return label !== null ? (
+            <p data-testid="step-card-tokens" className="pt-2 font-mono text-micro text-muted-foreground">
+              {label}
+            </p>
+          ) : null
+        })()}
         {entry.claudeSessionId != null ? (
           <p
             className="pt-1 font-mono text-micro text-muted-foreground"

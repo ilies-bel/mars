@@ -221,9 +221,9 @@ describe('StudioView', () => {
 
     expect(html).toContain('data-testid="studio-output-json"')
     expect(html).toContain('&quot;ok&quot;: true')
-    expect(html).toContain('in:1000')
-    expect(html).toContain('out:500')
-    expect(html).toContain('cache:200')
+    expect(html).toContain('in 1000')
+    expect(html).toContain('out 500')
+    expect(html).toContain('cached 200')
   })
 
   it('renders the persisted prompt verbatim in the trace panel via the stepPrompts seam', () => {

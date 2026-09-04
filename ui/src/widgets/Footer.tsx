@@ -1,4 +1,5 @@
 import { useFrameworkUpdate } from '@/entities/frameworkUpdate/useFrameworkUpdate'
+import { isDevVersion } from '@/shared/displayStrings'
 
 const Hint = ({ k, label }: { k: string; label: string }) => (
   <span className="flex items-center gap-1.5">
@@ -24,7 +25,7 @@ export const Footer = () => {
         <Hint k="?" label="help" />
       </div>
       <span className="font-mono text-label text-muted-foreground/50">
-        {update === null ? '' : `mars v${update.installed}`}
+        {update === null || isDevVersion(update.installed) ? '' : `mars v${update.installed}`}
       </span>
     </footer>
   )

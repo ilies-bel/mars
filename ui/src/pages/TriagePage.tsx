@@ -597,8 +597,9 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
           href={taskHash(item.entityId, 'triage')}
           className="mb-2 block font-mono text-micro text-primary transition-colors hover:text-foreground hover:underline"
           data-testid="triage-entity-link"
+          title={item.entityId}
         >
-          {item.entityId}
+          → task
         </a>
       )}
 
