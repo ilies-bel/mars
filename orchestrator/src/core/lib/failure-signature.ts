@@ -15,7 +15,6 @@
  * the registry lookup deterministically misses, surfacing the gap rather
  * than papering over it.
  */
-import { readCustomClassifiers, type CustomClassifierPattern } from '../daemon/config'
 
 /**
  * Grammar that a valid step identifier must satisfy.
@@ -666,13 +665,20 @@ export const setCustomClassifierRules = (
 
 /**
  * Return the custom classifier metadata for the given error class, or `null`
- * when the class is unknown or was registered by a built-in rule (not a custom one).
+ * when the class is unknown or was not registered as a custom rule.
+ *
+ * Accepts `null` / `undefined` for ergonomic use in callers that extract the
+ * error-class segment conditionally (e.g. `signature.split('/').pop()`).
+ * Returns an object with `name` (equal to the matched `errorClass`) and the
+ * optional operator-written `guidance` string so callers can build a
+ * human-readable `warmTitle` and thread guidance into recovery briefs.
  */
 export const getCustomClassifierMeta = (
-  errorClass: string,
-): { guidance?: string } | null => {
+  errorClass: string | null | undefined,
+): { name: string; guidance?: string } | null => {
+  if (!errorClass) return null
   const found = _customRules.find((r) => r.errorClass === errorClass)
-  return found !== undefined ? { guidance: found.guidance } : null
+  return found !== undefined ? { name: found.errorClass, guidance: found.guidance } : null
 }
 
 export const classifyError = (errorOutput: string): string => {
@@ -1149,21 +1155,4 @@ export const causeForSignature = (
   return renderer ? renderer(taskId) : null
 }
 
-/**
- * Look up a custom classifier by the slug that becomes the error-class
- * component of a failure signature (the part after the last `/`).
- *
- * Returns the matching `CustomClassifierPattern` when the operator has
- * registered a classifier whose `name` equals `errorClass`; otherwise `null`.
- *
- * Callers use this to thread operator-written guidance into the recovery
- * agent's brief (`FixRecipeContext.customGuidance`) and to synthesise
- * human-readable `warmTitle` values for otherwise-generic action-queue rows.
- */
-export const getCustomClassifierMeta = (
-  errorClass: string | null | undefined,
-): CustomClassifierPattern | null => {
-  if (!errorClass) return null
-  const classifiers = readCustomClassifiers()
-  return classifiers.find((c) => c.name === errorClass) ?? null
-}
+
