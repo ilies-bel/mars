@@ -17,6 +17,9 @@
  *
  * Never auto-rebases. Never discards unique work. The branch is left intact on
  * any failure so the operator can resolve manually.
+ *
+ * All git operations in this module route through the Vcs port (`resolveVcs()`)
+ * — no raw `execFileP('git', ...)` subprocess calls remain (ADR-0097).
  */
 import { resolve } from 'node:path'
 import { access, constants as fsConstants } from 'node:fs/promises'
