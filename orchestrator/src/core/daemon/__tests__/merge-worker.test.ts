@@ -1756,7 +1756,7 @@ describe('reconcileMergeJobs — boot-order invariant (2026-09-04 regression)', 
     const { store, jobs } = makeFakeStore()
     let enqueueCount = 0
     // Override the enqueue stub so reconcileMergeJobs can call it without throwing.
-    ;(store as Record<string, unknown>).enqueue = async (params: {
+    ;(store as unknown as Record<string, unknown>).enqueue = async (params: {
       taskId: string
       integrationBranch: string
       worktreePath: string
