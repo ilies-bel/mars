@@ -27,6 +27,7 @@ import { invokeAction } from '@/shared/api'
 import { ErrorState } from '@/components/ErrorState'
 import { SkeletonBlock } from '@/components/Skeleton'
 import type { DraftFeature } from '@/shared/schemas'
+import { stripMarkdown } from '@/shared/stripMarkdown'
 
 // ── Source display ────────────────────────────────────────────────────────────
 
@@ -98,11 +99,12 @@ const ProposalRow = ({ draft, onDismiss }: ProposalRowProps) => {
   const sourceLabel = SOURCE_LABEL[draft.source] ?? draft.source
   const chipClass =
     SOURCE_CHIP_CLASS[draft.source] ?? 'text-muted-foreground border-border'
-  // Body preview — collapse newlines to spaces for the clamped view. Legacy
-  // (pre-split) rows may still carry a multi-paragraph `problem`; collapsing
-  // newlines keeps the preview readable instead of jamming lines together.
-  // When expanded, show the original text with whitespace preserved.
-  const preview = draft.problem.replace(/\s*\n\s*/g, ' ').trim()
+  // Body preview — strip markdown and collapse newlines to spaces for the
+  // clamped view. Legacy (pre-split) rows may still carry a multi-paragraph
+  // `problem`; collapsing newlines keeps the preview readable. When expanded,
+  // still show markdown-stripped text with whitespace preserved.
+  const strippedProblem = stripMarkdown(draft.problem)
+  const preview = strippedProblem.replace(/\s*\n\s*/g, ' ').trim()
 
   const [grillState, setGrillState] = useState<
     | { kind: 'idle' }
@@ -199,7 +201,7 @@ const ProposalRow = ({ draft, onDismiss }: ProposalRowProps) => {
               expanded ? 'whitespace-pre-wrap' : 'line-clamp-3',
             ].join(' ')}
           >
-            {expanded ? draft.problem.trim() : preview}
+            {expanded ? strippedProblem.trim() : preview}
           </p>
           {draft.problem.trim().length > 0 && (
             <button

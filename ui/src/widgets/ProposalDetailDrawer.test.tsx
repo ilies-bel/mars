@@ -879,3 +879,47 @@ describe('ProposalDetailDrawer – CLI copy-command menu', () => {
     expect(html).toContain('mars proposal show prop-cli')
   })
 })
+
+// ── Markdown stripping in proposal body sections ──────────────────────────────
+
+describe('BodySection — markdown stripping', () => {
+  it('renders body text without literal ## heading markers', () => {
+    const html = renderToStaticMarkup(
+      <BodySection
+        label="Problem"
+        text="## Cost regression\n\nThe p90 increased."
+        testId="test-md-heading"
+      />,
+    )
+    // The heading text must appear
+    expect(html).toContain('Cost regression')
+    // The literal ## must NOT appear
+    expect(html).not.toContain('##')
+  })
+
+  it('renders body text without literal backtick delimiters', () => {
+    const html = renderToStaticMarkup(
+      <BodySection
+        label="Problem"
+        text="KPI `cost_per_arc_p90` regressed by 33.0% (prior: 3399754.24, current: 4522041.42)"
+        testId="test-md-backtick"
+      />,
+    )
+    // The code identifier text must appear
+    expect(html).toContain('cost_per_arc_p90')
+    // The literal backtick characters must NOT appear
+    expect(html).not.toContain('`')
+  })
+
+  it('renders body text without literal bold markers', () => {
+    const html = renderToStaticMarkup(
+      <BodySection
+        label="Solution"
+        text="Use **shared formatters** for all KPI values."
+        testId="test-md-bold"
+      />,
+    )
+    expect(html).toContain('shared formatters')
+    expect(html).not.toContain('**')
+  })
+})

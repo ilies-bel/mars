@@ -11,6 +11,7 @@ import { formatKpiValue, KPI_DESCRIPTIONS } from '@/widgets/KpiTile'
 import { Sparkline } from '@/widgets/Sparkline'
 import { taskHash } from '@/shared/routing'
 import { PageHeader, SectionLabel } from '@/widgets/primitives/DensityPrimitives'
+import { titleFromPrompt } from '@/shared/promptTitle'
 
 const KPI_LABELS: Record<KpiKey, string> = {
   cost_per_arc: 'Cost per Arc',
@@ -145,8 +146,6 @@ function runDiagnostic(key: KpiKey, arcs: KpiArc[], currentValue: number): Diagn
 // Cost-per-merged-task detail section
 // ---------------------------------------------------------------------------
 
-const usdFormatter = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' })
-
 /**
  * Detail view for the cost-per-merged-task KPI. Renders as a child component
  * so its hook (useCostPerMergedTask) is only called when this component mounts,
@@ -201,7 +200,7 @@ const CostPerMergedTaskDetailSection = () => {
             <span className="w-32 shrink-0 text-muted-foreground">{row.day}</span>
             <span className="w-24 shrink-0 text-right text-foreground">{row.mergedCount}</span>
             <span className="min-w-0 flex-1 text-right text-foreground">
-              {row.avgCostPerMerge !== null ? usdFormatter.format(row.avgCostPerMerge) : '—'}
+              {row.avgCostPerMerge !== null ? formatKpiValue('cost-per-merged-task', row.avgCostPerMerge) : '—'}
             </span>
           </div>
         ))}
@@ -458,7 +457,7 @@ export const KpiDetailPage = ({ kpiKey }: KpiDetailPageProps) => {
                     </span>
                   )}
                   <span className="min-w-0 flex-1 truncate text-foreground">
-                    {arc.title || arc.arcId}
+                    {titleFromPrompt(arc.title) || arc.arcId}
                   </span>
                 </a>
               ))}

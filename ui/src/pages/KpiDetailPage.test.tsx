@@ -231,6 +231,34 @@ describe('KpiDetailPage — arc row clickability', () => {
     const html = renderPageWithArcs('cost_per_arc', [arc])
     expect(html).toContain('75.0k tok')
   })
+
+  it('arc title strips leading markdown heading markers', () => {
+    const arc: KpiArc = {
+      arcId: 'arc-heading-001',
+      originTaskId: 'task-h',
+      status: 'done',
+      passed: true,
+      // Raw prompt stored as first 120 chars with a markdown heading prefix
+      title: '## Fix the merge gate so arcs land on main',
+    }
+    const html = renderPageWithArcs('failure_rate', [arc])
+    // The heading text should appear
+    expect(html).toContain('Fix the merge gate so arcs land on main')
+    // The literal ## markers must NOT appear
+    expect(html).not.toContain('##')
+  })
+
+  it('arc title falls back to arcId when title is empty', () => {
+    const arc: KpiArc = {
+      arcId: 'arc-empty-title',
+      originTaskId: 'task-e',
+      status: 'failed',
+      passed: false,
+      title: '',
+    }
+    const html = renderPageWithArcs('failure_rate', [arc])
+    expect(html).toContain('arc-empty-title')
+  })
 })
 
 // ---------------------------------------------------------------------------

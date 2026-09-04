@@ -7,6 +7,8 @@ import { ProposalActionRow } from '@/components/ProposalActionRow'
 import { formatAbsoluteDate } from '@/shared/time'
 import { taskHash } from '@/shared/routing'
 import { patchProposalField, type ProposalField } from '@/shared/api'
+import { stripMarkdown } from '@/shared/stripMarkdown'
+import { taskTitle } from '@/shared/promptTitle'
 
 export type { ProposalActionRowProps } from '@/components/ProposalActionRow'
 
@@ -236,7 +238,7 @@ export const BodySection = ({
                   : undefined
               }
             >
-              {displayedText}
+              {stripMarkdown(displayedText)}
             </p>
             {isLong ? (
               <button
@@ -682,7 +684,7 @@ export const ProposalDetailDrawer = ({
                       {task.status}
                     </span>
                     <span className="min-w-0 truncate text-foreground">
-                      {task.prompt.split('\n')[0]?.slice(0, 80) ?? ''}
+                      {taskTitle(task)}
                     </span>
                   </a>
                 </li>
