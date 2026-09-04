@@ -1126,6 +1126,12 @@ const DDL: readonly string[] = [
   `CREATE UNIQUE INDEX IF NOT EXISTS uq_chat_threads_fork_idem
      ON chat_threads(parent_thread_id, fork_idempotency_key)
      WHERE fork_idempotency_key IS NOT NULL`,
+  // Lifecycle-aware Subject eviction (PRD 159a2e2e, slice 2): persisted
+  // relevance score and scoring timestamp for closed Subjects. NULL until the
+  // first scoring pass runs. REAL maps to PostgreSQL's 4-byte float, which is
+  // adequate for a [0, 1] score; epoch-ms fits in BIGINT.
+  `ALTER TABLE chat_threads ADD COLUMN IF NOT EXISTS relevance_score REAL DEFAULT NULL`,
+  `ALTER TABLE chat_threads ADD COLUMN IF NOT EXISTS relevance_scored_at BIGINT DEFAULT NULL`,
   // The main thread sentinel. Seeded here (after every chat_threads column
   // migration above, so the epoch-millisecond columns are already bigint) and
   // replayed on every boot: ON CONFLICT DO NOTHING keeps an existing row —
