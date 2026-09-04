@@ -23,7 +23,7 @@ import { detectKpiDrift, type KpiSnapshot as DriftSnapshot, type KpiEntry } from
 import { failureSignatureFamilySql } from './failure-signature.js'
 import { findOpenReflectionDraftForKpi, createProposal, appendProposalNotes } from '../proposals.js'
 import { loadDaemonConfig } from '../daemon/config.js'
-import type { KpiSnapshot as PersistedSnapshot } from './kpi-snapshots.js'
+import { readKpiWindowComparison, type KpiSnapshot as PersistedSnapshot } from './kpi-snapshots.js'
 import { type DomainTaskStore as TaskStore, getDefaultTaskStore } from '../store/task-store-default.js'
 
 type SkipReason = 'disabled' | 'low-confidence' | 'duplicate' | 'below-threshold' | 'acknowledged'
@@ -172,26 +172,20 @@ const toDetectorSnapshots = (
   }
 }
 
-/** Read the two most recently taken kpi_snapshots rows as [current, prior]. */
-const readLatestTwoSnapshots = async (
+/**
+ * Read the current and non-overlapping prior KPI window snapshots from the
+ * kpi_snapshots table. Delegates to readKpiWindowComparison so this is the
+ * single function used by both the KPI API (/kpis route via listKpis) and the
+ * self-evolve trigger. A null current or prior means there is insufficient
+ * snapshot history to compare; callers should return early in that case.
+ */
+const readSnapshotsForDrift = async (
   store: TaskStore,
-): Promise<[PersistedSnapshot, PersistedSnapshot] | null> => {
-  const result = await store.query({
-    sql: `SELECT id, taken_at, window_start, window_end,
-                 cost_per_arc_sample_count, cost_per_arc_low_confidence,
-                 failure_rate_sample_count, failure_rate_low_confidence,
-                 autonomous_completion_rate_sample_count, autonomous_completion_rate_low_confidence,
-                 recovery_success_rate_sample_count, recovery_success_rate_low_confidence,
-                 cost_per_arc_p50, cost_per_arc_p90,
-                 failure_rate, autonomous_completion_rate, recovery_success_rate
-          FROM kpi_snapshots
-          ORDER BY taken_at DESC
-          LIMIT 2`,
-    args: [],
-  })
-  if (result.rows.length < 2) return null
-  const rows = result.rows as unknown as PersistedSnapshot[]
-  return [rows[0], rows[1]] // [current (newest), prior (older)]
+): Promise<{ current: PersistedSnapshot; prior: PersistedSnapshot } | null> => {
+  const now = new Date().toISOString()
+  const { current, prior } = await readKpiWindowComparison({ now, store })
+  if (current === null || prior === null) return null
+  return { current, prior }
 }
 
 /**
@@ -206,12 +200,12 @@ export const runSelfEvolveTrigger = async (opts?: {
 }): Promise<SelfEvolveTriggerResult> => {
   const cfg = loadDaemonConfig()
   const store = opts?.store ?? (await getDefaultTaskStore())
-  const snapshots = await readLatestTwoSnapshots(store)
+  const snapshots = await readSnapshotsForDrift(store)
   if (snapshots === null) {
     return { raised: [], skipped: [] }
   }
 
-  const [persistedCurrent, persistedPrior] = snapshots
+  const { current: persistedCurrent, prior: persistedPrior } = snapshots
   const { current, prior, lowConfidenceKpis } = toDetectorSnapshots(persistedCurrent, persistedPrior)
 
   const findings = detectKpiDrift(current, prior, {
@@ -462,11 +456,12 @@ const evaluateWorthiness = async (
   const windowStartMs = Date.now() - DETECTOR_WINDOW_DAYS * 24 * 60 * 60 * 1000
   const windowStartIso = new Date(windowStartMs).toISOString()
 
-  // Detector 1: KPI drift (same logic as runSelfEvolveTrigger, but always runs)
+  // Detector 1: KPI drift (same computation as runSelfEvolveTrigger and the
+  // /kpis API route — both use readKpiWindowComparison via readSnapshotsForDrift).
   let kpiDrift: Array<{ kpi: string; deltaPct: number }> = []
-  const snapshots = await readLatestTwoSnapshots(store)
+  const snapshots = await readSnapshotsForDrift(store)
   if (snapshots !== null) {
-    const [persistedCurrent, persistedPrior] = snapshots
+    const { current: persistedCurrent, prior: persistedPrior } = snapshots
     const { current, prior } = toDetectorSnapshots(persistedCurrent, persistedPrior)
     const findings = detectKpiDrift(current, prior, {
       thresholdPct: cfg.selfEvolve.driftThresholdPct,

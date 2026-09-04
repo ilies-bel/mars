@@ -936,3 +936,108 @@ describe('takeKpiSnapshot — daemon periodic-job contract', () => {
     expect(latest!.taken_at).toBe('2026-01-07T00:00:00Z')
   })
 })
+
+// ---------------------------------------------------------------------------
+// 13. Unified surface: readKpiWindowComparison is the single source of truth
+// ---------------------------------------------------------------------------
+// Both the KPI API route (GET /kpis via listKpis → readKpiWindowComparison) and
+// the self-evolve drift trigger (runSelfEvolveTrigger → readSnapshotsForDrift →
+// readKpiWindowComparison) MUST derive from the same snapshot pair. This test
+// asserts that readKpiWindowComparison returns the correct current/prior for a
+// fixed fixture, and demonstrates why overlapping windows must NOT be compared
+// (the old readLatestTwoSnapshots approach would have produced a spurious
+// 968%-style regression from two snapshots inside the same 7-day window).
+// ---------------------------------------------------------------------------
+
+describe('readKpiWindowComparison — single computation for all KPI surfaces', () => {
+  // Two snapshots whose windows OVERLAP (both within the same rolling 7-day period).
+  // Snapshot A:  window 2026-01-01 → 2026-01-08, failure_rate = 0.0123
+  // Snapshot B:  window 2026-01-02 → 2026-01-09, failure_rate = 0.1319
+  //
+  // A naïve two-most-recent comparison (the OLD approach) would report a ~968%
+  // regression (B vs A). The correct non-overlapping comparison must find that
+  // B has no valid prior (A.window_end = 2026-01-08 > B.window_start = 2026-01-02)
+  // and return prior=null — no regression to report.
+  it('returns current=B, prior=null for two overlapping-window snapshots', async () => {
+    const store = await makeStore()
+
+    // Snapshot A — older, overlapping window
+    await insertSnapshot(store, {
+      id: 'unified-A',
+      taken_at: '2026-01-08T00:00:00Z',
+      window_start: '2026-01-01T00:00:00Z',
+      window_end: '2026-01-08T00:00:00Z',
+      failure_rate_sample_count: 10,
+      failure_rate_low_confidence: 0,
+      failure_rate: 0.0123,
+    })
+
+    // Snapshot B — newer, also overlapping window (starts after A's start but before A's end)
+    await insertSnapshot(store, {
+      id: 'unified-B',
+      taken_at: '2026-01-09T00:00:00Z',
+      window_start: '2026-01-02T00:00:00Z',
+      window_end: '2026-01-09T00:00:00Z',
+      failure_rate_sample_count: 10,
+      failure_rate_low_confidence: 0,
+      failure_rate: 0.1319,
+    })
+
+    const { current, prior } = await readKpiWindowComparison({
+      now: '2026-01-09T12:00:00Z',
+      store,
+    })
+
+    // Both surfaces (the /kpis API and the self-evolve trigger) now call
+    // readKpiWindowComparison. They must agree on the current snapshot.
+    expect(current).not.toBeNull()
+    expect(current!.id).toBe('unified-B')
+    expect(current!.failure_rate).toBeCloseTo(0.1319, 4)
+
+    // No valid non-overlapping prior: A.window_end (2026-01-08) > B.window_start (2026-01-02)
+    // so the self-evolve trigger correctly finds no regression to compare against.
+    expect(prior).toBeNull()
+  })
+
+  it('returns current=B, prior=A when windows are non-overlapping', async () => {
+    const store = await makeStore()
+
+    // Snapshot A — older, non-overlapping window ending 14 days before now
+    await insertSnapshot(store, {
+      id: 'nonoverlap-A',
+      taken_at: '2026-01-01T00:00:00Z',
+      window_start: '2025-12-25T00:00:00Z',
+      window_end: '2026-01-01T00:00:00Z',
+      failure_rate_sample_count: 10,
+      failure_rate_low_confidence: 0,
+      failure_rate: 0.05,
+    })
+
+    // Snapshot B — newer, window starts after A ends
+    await insertSnapshot(store, {
+      id: 'nonoverlap-B',
+      taken_at: '2026-01-08T00:00:00Z',
+      window_start: '2026-01-01T00:00:00Z',
+      window_end: '2026-01-08T00:00:00Z',
+      failure_rate_sample_count: 10,
+      failure_rate_low_confidence: 0,
+      failure_rate: 0.10,
+    })
+
+    const { current, prior } = await readKpiWindowComparison({
+      now: '2026-01-08T12:00:00Z',
+      store,
+    })
+
+    // Both surfaces see the same current snapshot (B) and the same prior (A).
+    // The delta (0.10 − 0.05 = +0.05) is what both the /kpis tile and the
+    // self-evolve trigger must agree on — a genuine regression.
+    expect(current).not.toBeNull()
+    expect(current!.id).toBe('nonoverlap-B')
+    expect(current!.failure_rate).toBeCloseTo(0.10, 4)
+
+    expect(prior).not.toBeNull()
+    expect(prior!.id).toBe('nonoverlap-A')
+    expect(prior!.failure_rate).toBeCloseTo(0.05, 4)
+  })
+})

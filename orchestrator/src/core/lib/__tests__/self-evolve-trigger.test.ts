@@ -177,6 +177,15 @@ const insertSnapshot = async (
   const acrConf = opts.autonomousCompletionRateLowConfidence ?? 0
   const rsrConf = opts.recoverySuccessRateLowConfidence ?? 0
 
+  // Use a proper 7-day window so readKpiWindowComparison can find non-overlapping
+  // prior/current pairs. window_start = takenAt − 7d; window_end = takenAt.
+  // Strip milliseconds (.000Z → Z) so the string format matches the fixture
+  // takenAt values — SQLite compares timestamps lexicographically and 'Z' > '.'
+  // so '2026-01-01T00:00:00Z' > '2026-01-01T00:00:00.000Z'.
+  const windowStart = new Date(
+    new Date(opts.takenAt).getTime() - 7 * 24 * 60 * 60 * 1000,
+  ).toISOString().replace(/\.\d{3}Z$/, 'Z')
+
   await store.execute({
     sql: `INSERT INTO kpi_snapshots
             (id, taken_at, window_start, window_end,
@@ -190,8 +199,8 @@ const insertSnapshot = async (
     args: [
       opts.id,
       opts.takenAt,
-      opts.takenAt, // window_start (same for test simplicity)
-      opts.takenAt, // window_end
+      windowStart, // window_start = takenAt − 7d
+      opts.takenAt, // window_end = takenAt
       costConf === 0 ? 10 : 2, // cost_per_arc_sample_count
       costConf,
       frConf === 0 ? 10 : 2,   // failure_rate_sample_count
@@ -228,7 +237,7 @@ describe('runSelfEvolveTrigger', () => {
   // With no snapshots on disk, it is a no-op.
   it('is a no-op when no KPI snapshots exist', async () => {
     const ctx = await loadContext(repo)
-    // No snapshots inserted — function returns early at readLatestTwoSnapshots.
+    // No snapshots inserted — function returns early at readSnapshotsForDrift.
     const tasksBefore = await ctx.countTasks()
     const result = await ctx.runSelfEvolveTrigger({ store: ctx.store })
     const tasksAfter = await ctx.countTasks()
@@ -251,7 +260,7 @@ describe('runSelfEvolveTrigger', () => {
     })
     await insertSnapshot(ctx.store, {
       id: 'snap-current',
-      takenAt: '2026-01-02T00:00:00Z',
+      takenAt: '2026-01-08T00:00:00Z',
       failureRate: 0.25,
     })
 
@@ -299,7 +308,7 @@ describe('runSelfEvolveTrigger', () => {
     })
     await insertSnapshot(ctx.store, {
       id: 'snap-current',
-      takenAt: '2026-01-02T00:00:00Z',
+      takenAt: '2026-01-08T00:00:00Z',
       failureRate: 0.25,
     })
 
@@ -331,7 +340,7 @@ describe('runSelfEvolveTrigger', () => {
     })
     await insertSnapshot(ctx.store, {
       id: 'snap-current',
-      takenAt: '2026-01-02T00:00:00Z',
+      takenAt: '2026-01-08T00:00:00Z',
       failureRate: 0.25, // large drift — would trigger if confident
       failureRateLowConfidence: 1, // NOT confident
     })
@@ -357,7 +366,7 @@ describe('runSelfEvolveTrigger', () => {
     })
     await insertSnapshot(ctx.store, {
       id: 'snap-current',
-      takenAt: '2026-01-02T00:00:00Z',
+      takenAt: '2026-01-08T00:00:00Z',
       failureRate: 0.25,
       // failure_rate_low_confidence: 0 (default — confident)
     })
@@ -388,7 +397,7 @@ describe('runSelfEvolveTrigger', () => {
     // Current: failure_rate regresses (+150%), cost_per_arc low-confidence
     await insertSnapshot(ctx.store, {
       id: 'snap-current',
-      takenAt: '2026-01-02T00:00:00Z',
+      takenAt: '2026-01-08T00:00:00Z',
       failureRate: 0.25,
       costPerArcP50: 1.5,
       costPerArcP90: 2.5,
@@ -452,7 +461,7 @@ describe('runSelfEvolveTrigger', () => {
     })
     await insertSnapshot(ctx.store, {
       id: 'snap-current',
-      takenAt: '2026-01-02T00:00:00Z',
+      takenAt: '2026-01-08T00:00:00Z',
       failureRate: null,
       costPerArcP50: 700,
       costPerArcP90: null,
@@ -504,7 +513,7 @@ describe('runSelfEvolveTrigger', () => {
     })
     await insertSnapshot(ctx.store, {
       id: 'snap-current',
-      takenAt: '2026-01-02T00:00:00Z',
+      takenAt: '2026-01-08T00:00:00Z',
       failureRate: 0.15,
     })
 

@@ -306,8 +306,8 @@ export const KpiDetailPage = ({ kpiKey }: KpiDetailPageProps) => {
                     </span>
                   </span>
                 )}
-                <span className="ml-auto text-body text-muted-foreground">
-                  {kpi.sampleCount} sample{kpi.sampleCount !== 1 ? 's' : ''}
+                <span className="ml-auto text-body text-muted-foreground" data-testid="kpi-population">
+                  {kpi.sampleCount} arc{kpi.sampleCount !== 1 ? 's' : ''} · last {kpi.windowDays ?? 7}d
                 </span>
               </div>
               <Sparkline points={(kpi.series ?? []).map((p) => p.value)} width={240} height={32} />
