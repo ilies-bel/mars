@@ -70,7 +70,14 @@ export interface SweepSpec {
   runOnStart?: boolean
 }
 
-const STALE_MERGING_THRESHOLD_MS = 40 * 60_000
+const STALE_MERGING_THRESHOLD_MS = (() => {
+  const envVal = process.env.MARS_STALE_MERGING_THRESHOLD_MS
+  if (envVal !== undefined && envVal !== '') {
+    const parsed = parseInt(envVal, 10)
+    if (Number.isFinite(parsed)) return parsed
+  }
+  return 40 * 60_000
+})()
 const STALE_QUEUED_COMMITTER_THRESHOLD_MS = 15 * 60_000
 /** Cadences for the sweeps below — see `../config/daemon-intervals.ts`. */
 const SWEEP_INTERVALS_MS = resolveSweepIntervalsMs()
@@ -151,12 +158,36 @@ export const SWEEPS: readonly SweepSpec[] = [
       const now = Date.now()
       const mergingTasks = await listTasksForSweep('merging')
       const vegaTasks = await listTasksForSweep('vega-reconciling')
-      const staleMerging = mergingTasks.filter(
+      const thresholdMin = Math.round(STALE_MERGING_THRESHOLD_MS / 60_000)
+
+      const staleByAge = mergingTasks.filter(
         (t) => now - new Date(t.updatedAt).getTime() > STALE_MERGING_THRESHOLD_MS,
       )
       const staleVega = vegaTasks.filter(
         (t) => now - new Date(t.updatedAt).getTime() > STALE_MERGING_THRESHOLD_MS,
       )
+      if (staleByAge.length === 0 && staleVega.length === 0) return
+
+      // Guard: a task in 'merging' with a live (queued/claimed/running) merge
+      // job is simply waiting its turn in the serialized merge queue — it is not
+      // stuck. Only tasks with NO active job at all are genuinely stale.
+      const { getDefaultMergeJobStore } = await import('../store/merge-job-store')
+      const activeJobs = await getDefaultMergeJobStore().listActive()
+      const taskIdsWithActiveJob = new Set(activeJobs.map((j) => j.taskId))
+
+      const waitingInQueue = staleByAge.filter((t) => taskIdsWithActiveJob.has(t.id))
+      const staleMerging = staleByAge.filter((t) => !taskIdsWithActiveJob.has(t.id))
+
+      if (waitingInQueue.length > 0) {
+        const oldestMs = Math.max(
+          ...waitingInQueue.map((t) => now - new Date(t.updatedAt).getTime()),
+        )
+        log(
+          `[stale-merging-sweep] ${waitingInQueue.length} task(s) waiting in merge queue` +
+            ` (oldest ${Math.round(oldestMs / 60_000)} min) — not stale, job queued`,
+        )
+      }
+
       if (staleMerging.length === 0 && staleVega.length === 0) return
 
       const { recoverPhase } = await import('./phase-recovery')
@@ -166,7 +197,8 @@ export const SWEEPS: readonly SweepSpec[] = [
       if (staleMerging.length > 0) {
         const staleIds = staleMerging.map((t) => t.id)
         log(
-          `[stale-merging-sweep] found ${staleMerging.length} stale merging task(s) (>40 min); recovering ${staleIds.join(', ')}`,
+          `[stale-merging-sweep] found ${staleMerging.length} stale merging task(s)` +
+            ` (>${thresholdMin} min, no active merge job); recovering ${staleIds.join(', ')}`,
         )
         const r = await recoverPhase('merging', { log, bus, repoRoot: repo, taskIds: staleIds })
         if (r.requeued.length > 0) {
@@ -186,7 +218,8 @@ export const SWEEPS: readonly SweepSpec[] = [
       if (staleVega.length > 0) {
         const staleVegaIds = staleVega.map((t) => t.id)
         log(
-          `[stale-merging-sweep] found ${staleVega.length} stale vega-reconciling task(s) (>40 min); recovering ${staleVegaIds.join(', ')}`,
+          `[stale-merging-sweep] found ${staleVega.length} stale vega-reconciling task(s)` +
+            ` (>${thresholdMin} min); recovering ${staleVegaIds.join(', ')}`,
         )
         const rv = await recoverPhase('vega-reconciling', {
           log,
