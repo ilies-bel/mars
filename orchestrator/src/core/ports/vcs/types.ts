@@ -633,6 +633,23 @@ export class MergeAbortedError extends Error {
   }
 }
 
+/**
+ * Hard wall-clock ceiling (milliseconds) for the merge STEP — sized to fire
+ * only when the merge job has clearly stalled past its own internal watchdog.
+ * Defaults to `DEFAULT_WATCHDOG_MS + 2 min` (≈ 17 min at standard config).
+ *
+ * Override with `MARS_MERGE_HARD_TIMEOUT_MS`. Re-declared here from
+ * `lib/git/merge.ts` so port consumers import from a single location.
+ *
+ * ⚠️  When `MARS_VCS_SUPERVISOR_TIMEOUT_MS` is changed but
+ * `MARS_MERGE_HARD_TIMEOUT_MS` is not, this constant stays at the hardcoded
+ * fallback while `lib/git/merge.ts`'s value tracks the supervisor budget. Set
+ * `MARS_MERGE_HARD_TIMEOUT_MS` explicitly in that case.
+ */
+export const MERGE_HARD_TIMEOUT_MS = Number(
+  process.env.MARS_MERGE_HARD_TIMEOUT_MS ?? 17 * 60 * 1000,
+)
+
 // ---------------------------------------------------------------------------
 // Slice 2 — Branch-query helpers (worktree-clean + worktree-prune migration)
 // ---------------------------------------------------------------------------
@@ -820,6 +837,21 @@ export interface VcsDiffSummarySpec {
   trace?: TraceIdentity
 }
 
+// ---------------------------------------------------------------------------
+// Slice 8 — hasRealCommitAboveBase (merge.ts no-progress guard migration)
+// ---------------------------------------------------------------------------
+
+/** Args for {@link Vcs.hasRealCommitAboveBase}. */
+export interface VcsHasRealCommitAboveBaseSpec {
+  /** Repository root (or any directory inside the repo). */
+  cwd: string
+  /** The merge-base SHA — commits at or below this are excluded. */
+  baseSha: string
+  /** The branch tip SHA to walk from. */
+  tipSha: string
+  trace?: TraceIdentity
+}
+
 /**
  * The VCS Port contract. Every method is async and every arg/result is
  * serializable — see the module doc comment above.
@@ -983,4 +1015,16 @@ export interface Vcs {
    * Runs `git apply --check` first; throws when either step fails.
    */
   applyPatch(spec: VcsApplyPatchSpec): Promise<void>
+
+  // --- Slice 7: no-progress guard ---
+
+  /**
+   * True when at least one commit in `baseSha..tipSha` is NOT an
+   * orchestrator-authored salvage checkpoint (i.e. lacks the
+   * `Mars-Checkpoint: salvage` trailer). False when every commit in the range
+   * is a salvage checkpoint, or when `baseSha === tipSha`. Fails open to
+   * `true` (assume progress) when the commit list cannot be resolved, so
+   * callers that act on "no real progress" are conservative.
+   */
+  hasRealCommitAboveBase(spec: VcsHasRealCommitAboveBaseSpec): Promise<boolean>
 }

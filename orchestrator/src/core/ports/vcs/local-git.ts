@@ -31,6 +31,9 @@ import {
   commitMain,
   autoCommitWorktreeIfDeterministic,
 } from '../../lib/git/commit-main'
+import {
+  hasRealCommitAboveBase as gitHasRealCommitAboveBase,
+} from '../../lib/git/checkpoint'
 import { resolveGitBin, exec, execProbe, branchExists } from '../../lib/git/internal'
 import { attributeIntegrationDirt as gitAttributeIntegrationDirt } from '../../lib/git/stale-tree-attribution'
 import { readLastSyncedSha as gitReadLastSyncedSha } from '../../lib/git/last-synced-sha'
@@ -45,6 +48,7 @@ import type {
   BranchExistsSpec,
   IntegrationDirtAttribution,
   VcsApplyPatchSpec,
+  VcsHasRealCommitAboveBaseSpec,
   VcsAttributeIntegrationDirtSpec,
   VcsAutoCommitOperatorDirtSpec,
   VcsAutoCommitOperatorDirtResult,
@@ -729,6 +733,17 @@ export const localGitVcs: Vcs = {
     } finally {
       await rm(tmpDir, { recursive: true, force: true }).catch(() => {})
     }
+  },
+
+  // --- Slice 7: no-progress guard ---
+
+  async hasRealCommitAboveBase(spec: VcsHasRealCommitAboveBaseSpec): Promise<boolean> {
+    return gitHasRealCommitAboveBase(
+      spec.cwd,
+      spec.baseSha,
+      spec.tipSha,
+      reconstructTraceCtx(spec.trace),
+    )
   },
 }
 
