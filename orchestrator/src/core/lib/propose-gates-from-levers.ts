@@ -51,15 +51,23 @@ export async function proposeGatesFromLevers(): Promise<{ proposed: number; skip
   // Build a key set for already-registered gates so we can skip them.
   const registeredGates = await listVerifyGates()
   const registeredKeys = new Set(registeredGates.map((g) => `${g.scope}:${g.name}`))
+  // Name-only index: when a lever has no explicit scope, ANY gate with that name
+  // in this repo already covers the intent — the check exists, just scoped
+  // per-package rather than at the root. Raising a proposal for a root-scoped
+  // typecheck gate when orchestrator/typecheck, ui/typecheck, etc. already exist
+  // is a false positive (the exact bug that produced open row 805e7f5d).
+  const registeredNames = new Set(registeredGates.map((g) => g.name))
 
   // Build a key set for already-open verify-uncovered items so we don't raise
   // a duplicate proposal for a gate that is already pending operator action.
   const openItems = await listActionQueueItems('open', { kind: 'verify-uncovered' })
   const alreadyProposedKeys = new Set<string>()
+  const alreadyProposedNames = new Set<string>()
   for (const item of openItems) {
     const payload = item.payload as unknown as VerifyUncoveredPayload
     if (payload.proposedGate) {
       alreadyProposedKeys.add(`${payload.proposedGate.scope}:${payload.proposedGate.name}`)
+      alreadyProposedNames.add(payload.proposedGate.name)
     }
   }
 
@@ -72,7 +80,17 @@ export async function proposeGatesFromLevers(): Promise<{ proposed: number; skip
     const scope = spec.scope ?? '.'
     const key = `${scope}:${spec.name}`
 
-    if (registeredKeys.has(key) || alreadyProposedKeys.has(key)) {
+    // When the lever declares no explicit scope, match by gate name only:
+    // a per-package `typecheck` gate at any scope satisfies the lever.
+    // When the lever declares a specific scope, require an exact scope:name match.
+    const isGateRegistered = spec.scope
+      ? registeredKeys.has(key)
+      : registeredNames.has(spec.name)
+    const isAlreadyProposed = spec.scope
+      ? alreadyProposedKeys.has(key)
+      : alreadyProposedNames.has(spec.name)
+
+    if (isGateRegistered || isAlreadyProposed) {
       skipped++
       continue
     }
@@ -91,6 +109,7 @@ export async function proposeGatesFromLevers(): Promise<{ proposed: number; skip
     proposed++
     // Guard against two levers sharing the same (scope, name) within this run.
     alreadyProposedKeys.add(key)
+    alreadyProposedNames.add(spec.name)
   }
 
   return { proposed, skipped }

@@ -160,6 +160,88 @@ describe('verify-uncovered verbs', () => {
 })
 
 // ---------------------------------------------------------------------------
+// gate-broken recipe — copy, naming, and quarantine-state accuracy
+// ---------------------------------------------------------------------------
+
+describe('gate-broken humanSummary', () => {
+  const makePayload = (overrides: Record<string, unknown> = {}) => ({
+    gate: 'aaaa-bbbb-cccc-dddd-eeee',
+    scope: 'ui',
+    name: 'test',
+    required: false,
+    verdict: 'verify:test/test-assertion-error',
+    originTaskId: null,
+    streak: null,
+    ...overrides,
+  })
+
+  it('uses scope/name instead of verdict or UUID as the gate identity', () => {
+    const result = humanSummary('gate-broken', makePayload())
+    expect(result).toContain('ui/test')
+    // Must NOT include the raw verdict (machine signature) as the identity.
+    expect(result).not.toContain('verify:test/test-assertion-error')
+    // The UUID is acceptable in the restore command but must NOT appear
+    // as the gate's human-readable identity (i.e. not preceded by "The" or "gate").
+    expect(result).not.toMatch(/\bThe aaaa-bbbb-cccc-dddd-eeee\b/)
+    expect(result).not.toMatch(/gate aaaa-bbbb-cccc-dddd-eeee\b/)
+  })
+
+  it('names the mars verify-gate restore command with the gate id', () => {
+    const result = humanSummary('gate-broken', makePayload())
+    expect(result).toContain('mars verify-gate restore aaaa-bbbb-cccc-dddd-eeee')
+  })
+
+  it('states the gate is quarantined (current state), not that it keeps failing', () => {
+    const result = humanSummary('gate-broken', makePayload())
+    expect(result).toContain('quarantined')
+    // Old wording "keeps failing" describes the past; current state language is required.
+    expect(result).not.toContain('keeps failing the same way')
+  })
+
+  it('for a required gate: states that merges proceed without this check', () => {
+    const result = humanSummary('gate-broken', makePayload({ required: true }))
+    expect(result).toContain('required gate')
+    // Must name the consequence: merges are proceeding without it.
+    expect(result).toMatch(/merge.*without|without.*check/i)
+  })
+
+  it('for a non-required gate: does not add the required-gate clause', () => {
+    const result = humanSummary('gate-broken', makePayload({ required: false }))
+    expect(result).not.toContain('required gate')
+  })
+})
+
+describe('gate-broken verbs', () => {
+  const recipe = lookupRecipe('gate-broken')
+
+  const makeCtx = (payload: Record<string, unknown>) => ({
+    kind: 'gate-broken' as const,
+    entityId: 'some-derived-id',
+    payload,
+    context: {},
+    title: 'Gate ui/test is broken',
+    body: '',
+    raisedAt: '2026-09-04T00:00:00.000Z',
+  })
+
+  it('contains gate-restore as the primary verb', () => {
+    const ctx = makeCtx({ gate: 'aaaa-1234', scope: 'ui', name: 'test', required: false, verdict: 'verify:test/fail', originTaskId: null, streak: null })
+    const verbs = typeof recipe.verbs === 'function' ? recipe.verbs(ctx as Parameters<typeof recipe.verbs>[0]) : recipe.verbs
+    expect(verbs.find((v) => v.op === 'gate-restore')).toBeDefined()
+    expect(verbs.find((v) => v.op === 'gate-restore')?.style).toBe('primary')
+  })
+
+  it('contains a copy verb with mars verify-gate restore <gate-id> as the hint', () => {
+    const gateId = 'aaaa-1234-uuid'
+    const ctx = makeCtx({ gate: gateId, scope: 'ui', name: 'test', required: false, verdict: 'verify:test/fail', originTaskId: null, streak: null })
+    const verbs = typeof recipe.verbs === 'function' ? recipe.verbs(ctx as Parameters<typeof recipe.verbs>[0]) : recipe.verbs
+    const copyVerb = verbs.find((v) => v.op === 'copy')
+    expect(copyVerb).toBeDefined()
+    expect(copyVerb?.hint).toBe(`mars verify-gate restore ${gateId}`)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // awaiting-human recipe verbs
 // ---------------------------------------------------------------------------
 

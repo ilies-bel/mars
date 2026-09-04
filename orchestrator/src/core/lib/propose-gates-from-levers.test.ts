@@ -82,6 +82,33 @@ describe('proposeGatesFromLevers', () => {
     })
   })
 
+  it('skips a scopeless lever when a gate with the same name is registered at a non-root scope', async () => {
+    // Simulates the real-world case: typecheck gate registered under 'orchestrator'
+    // (not at '.'), lint and e2e at '.', test unregistered.
+    // The typecheck lever has no scope (defaults to '.'), so the OLD code would
+    // incorrectly look for '.:typecheck' and not find 'orchestrator:typecheck'.
+    const { addVerifyGate } = await import('../verify-gates.js')
+    await addVerifyGate({ scope: 'orchestrator', name: 'typecheck', cmd: 'npm', args: ['run', 'typecheck'], evidence: 'test: unit test fixture' })
+    await addVerifyGate({ name: 'lint', cmd: 'npx', args: ['eslint', '.'], evidence: 'test: unit test fixture' })
+    await addVerifyGate({ name: 'e2e', cmd: 'npx', args: ['playwright', 'test'], evidence: 'test: unit test fixture' })
+
+    const { proposeGatesFromLevers } = await import('./propose-gates-from-levers.js')
+    const result = await proposeGatesFromLevers()
+
+    // Only the 'test' lever is unregistered; typecheck is covered by the
+    // scoped gate, so exactly 1 proposal should be raised.
+    expect(result.proposed).toBe(1)
+    expect(result.skipped).toBe(3)
+
+    // The raised item should be for test, NOT typecheck.
+    const { listActionQueueItems } = await import('./action-queue.js')
+    const items = await listActionQueueItems('open', { kind: 'verify-uncovered' })
+    expect(items).toHaveLength(1)
+    expect(items[0]!.payload.proposedGate).toMatchObject({ name: 'test' })
+    // Typecheck must NOT be proposed — the scoped gate covers it.
+    expect(items[0]!.payload.proposedGate).not.toMatchObject({ name: 'typecheck' })
+  })
+
   it('skips all levers when all gates are already registered', async () => {
     const { addVerifyGate } = await import('../verify-gates.js')
     await addVerifyGate({ name: 'typecheck', cmd: 'npx', args: ['tsc', '--noEmit'], evidence: 'test: unit test fixture' })
@@ -126,6 +153,30 @@ describe('proposeGatesFromLevers', () => {
     const { listActionQueueItems } = await import('./action-queue.js')
     const items = await listActionQueueItems('open', { kind: 'verify-uncovered' })
     expect(items).toHaveLength(1)
+  })
+
+  it('skips a scopeless lever on repeated call when open proposal name matches (idempotence by name)', async () => {
+    // Register all levers except test, so only test gets proposed on the first call.
+    // This isolates the name-based idempotence check: the open item has proposedGate.name
+    // === 'test', and the second call must recognise it by name and skip.
+    const { addVerifyGate } = await import('../verify-gates.js')
+    await addVerifyGate({ name: 'typecheck', cmd: 'npx', args: ['tsc', '--noEmit'], evidence: 'test: unit test fixture' })
+    await addVerifyGate({ name: 'lint', cmd: 'npx', args: ['eslint', '.'], evidence: 'test: unit test fixture' })
+    await addVerifyGate({ name: 'e2e', cmd: 'npx', args: ['playwright', 'test'], evidence: 'test: unit test fixture' })
+
+    const { proposeGatesFromLevers } = await import('./propose-gates-from-levers.js')
+
+    // First call: only test is unregistered — one proposal.
+    const first = await proposeGatesFromLevers()
+    expect(first.proposed).toBe(1)
+    expect(first.skipped).toBe(3)
+
+    // Second call: the open item carries proposedGate.name === 'test'.
+    // The test lever has no explicit scope (defaults to '.'), so the guard must
+    // match by name only — not require proposedGate.scope === '.' === spec.scope.
+    const second = await proposeGatesFromLevers()
+    expect(second.proposed).toBe(0)
+    expect(second.skipped).toBe(4)
   })
 
   it('each raised item carries proposedGate with lever spec and triggerPattern evidence', async () => {

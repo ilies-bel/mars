@@ -781,18 +781,43 @@ const RECIPE_DEFINITIONS = {
 
   'gate-broken': {
     humanSummary: (ctx) => {
+      const gate = str(ctx.payload['gate'])
+      const scope = str(ctx.payload['scope'])
+      const name = str(ctx.payload['name'])
+      const required = ctx.payload['required'] === true
       const verdict = str(ctx.payload['verdict'])
-      return `A verify gate keeps failing the same way${verdict ? ` ("${verdict}")` : ''} — the gate itself may be broken, not the tasks — nothing is fixing this automatically, you need to look at it.`
+      // Prefer scope/name from the payload (added to the derived row so operators
+      // never see a raw UUID in the headline). Fall back to verdict only if neither
+      // is populated (e.g. rows from before the payload was enriched).
+      const identity =
+        scope && name && !(scope === gate && name === gate)
+          ? `${scope}/${name}`
+          : verdict || gate
+      // The restore command is the exact verb needed — surface it so the operator
+      // does not have to guess that `mars verify-gate restore` even exists.
+      const restoreCmd = gate
+        ? `mars verify-gate restore ${gate}`
+        : 'mars verify-gate restore <id>'
+      // A required gate that is quarantined silently disables a mandatory check:
+      // every merge is proceeding without it. That is a headline fact, not a footnote.
+      const requiredClause = required
+        ? ` This is a required gate — while quarantined, every merge proceeds without this check.`
+        : ''
+      return (
+        `The ${identity} gate is quarantined and not enforcing.${requiredClause}` +
+        ` Run \`${restoreCmd}\` once the underlying failure is fixed.`
+      )
     },
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
       entityId: ctx.entityId,
+      gate: str(ctx.payload['gate']),
+      scope: str(ctx.payload['scope']),
+      name: str(ctx.payload['name']),
+      required: ctx.payload['required'],
+      // verdict (quarantine_signature) stays in the detail for anyone who needs
+      // the raw failure fingerprint — kept out of the headline per DEC-18.
       verdict: str(ctx.payload['verdict']),
-      // No derivation populates `affectedCount` (the `gate-broken` row's
-      // payload only ever carries gate/verdict/originTaskId/streak) — reading
-      // an unpopulated key here silently renders undefined forever. Dropped
-      // rather than left dangling; see mars-89537cf3 for the daemon-code-drift
-      // sibling of this same defect class.
     }),
     // Restoring a gate re-runs that gate's own command — a full build or test
     // suite that can take minutes. The daemon's `gate-restore` op handler
@@ -800,13 +825,28 @@ const RECIPE_DEFINITIONS = {
     // route via entityHandlers) runs it asynchronously and updates the gate's
     // health state without blocking the HTTP response. Primary style: it's the
     // row's whole reason to exist.
-    verbs: (_ctx) => [
-      {
-        op: 'gate-restore',
-        label: 'Restore gate',
-        style: 'primary',
-      },
-    ],
+    // The copy verb surfaces the exact CLI command so the operator can run it
+    // from a terminal — matching the hint text `mars verify-gate list` already
+    // prints (`restore with: mars verify-gate restore <id>`).
+    verbs: (ctx) => {
+      const gate = str(ctx.payload['gate'])
+      const restoreCmd = gate
+        ? `mars verify-gate restore ${gate}`
+        : 'mars verify-gate restore <id>'
+      return [
+        {
+          op: 'gate-restore',
+          label: 'Restore gate',
+          style: 'primary' as const,
+        },
+        {
+          op: 'copy',
+          label: 'Copy restore command',
+          style: 'default' as const,
+          hint: restoreCmd,
+        },
+      ]
+    },
   },
 
   'verify-uncovered': {

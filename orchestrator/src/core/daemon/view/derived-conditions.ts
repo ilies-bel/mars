@@ -463,7 +463,7 @@ async function deriveGateBrokenConditions(
   // (scope/name) is the stable subject of this row, not the failure that
   // happened to trip it.
   const result = await client.execute(
-    `SELECT g.id, g.scope, g.name, g.quarantine_signature, g.last_failure_at,
+    `SELECT g.id, g.scope, g.name, g.required, g.quarantine_signature, g.last_failure_at,
             t.id AS origin_task_id
        FROM verify_gates g
        LEFT JOIN tasks t ON t.id = g.last_failure_origin_id
@@ -474,13 +474,18 @@ async function deriveGateBrokenConditions(
       id: string
       scope: string | null
       name: string | null
+      required: number | boolean | null
       quarantine_signature: string | null
       last_failure_at: number | null
       origin_task_id: string | null
     }
     const verdict = row.quarantine_signature ?? row.id
     const raisedAt = row.last_failure_at ?? nowMs
-    const identity = row.name === null ? row.id : `${row.scope ?? '.'}/${row.name}`
+    const scope = row.scope ?? '.'
+    const name = row.name ?? row.id
+    const identity = row.name === null ? row.id : `${scope}/${name}`
+    // INTEGER 1/0 in SQLite, boolean in Postgres — normalise to boolean.
+    const required = row.required !== 0 && row.required !== false && row.required != null
     return {
       id: deriveId('gate-broken', row.id),
       kind: 'gate-broken',
@@ -489,6 +494,9 @@ async function deriveGateBrokenConditions(
       body: '',
       payload: {
         gate: row.id,
+        scope,
+        name,
+        required,
         verdict,
         originTaskId: row.origin_task_id,
         streak: null,
