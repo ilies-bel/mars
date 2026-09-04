@@ -4,7 +4,7 @@ import { resolveIntegrationBranch } from '../config/daemon-intervals'
 import { getTask, IN_FLIGHT_RECOVERY_STATUSES, updateTask } from '../queue'
 import { getDefaultTaskStore } from '../store/task-store-default'
 import { raiseActionQueueItem } from '../lib/action-queue'
-import { computeFailureSignature, RECOVERY_EXHAUSTED_PREFIX } from '../lib/failure-signature'
+import { computeFailureSignature, RECOVERY_DISABLED_PREFIX, RECOVERY_EXHAUSTED_PREFIX } from '../lib/failure-signature'
 import { coreRestartTask } from './restart-task'
 import { createQueueWorkflowStore } from '../../workflows/queue-workflow-store'
 import type { OrphanCommit } from '../lib/sweep'
@@ -313,6 +313,59 @@ export const coreContinueTask = async (
       `mars continue: task ${id} recovery budget is exhausted — re-queuing would be immediately re-terminated.\n` +
         `Failure reason: ${task.failureReason}\n` +
         `${recoveryList}` +
+        `${salvageNote}` +
+        `To proceed:\n` +
+        `  ${escapeVerb}\n` +
+        `Or to drop the task entirely:\n` +
+        `  mars drop ${id}`,
+    )
+  }
+
+  // Guard: refuse if recovery is disabled for this arc.
+  //
+  // A task whose failureReason starts with RECOVERY_DISABLED_PREFIX was
+  // marked terminal by the `MARS_RECOVERY_DISABLED=1` kill switch (or the
+  // operator's `mars operator set recovery off`). Re-queuing it would be
+  // immediately re-terminated by the same gate, producing a silent
+  // "success → immediate re-failure" loop. Refuse non-zero and name the
+  // same branch-aware escape verbs as the exhausted guard so the operator
+  // never sees a bare "mars restart" when commits worth keeping are ahead.
+  if (task.failureReason?.startsWith(RECOVERY_DISABLED_PREFIX)) {
+    let salvageNote = ''
+    let escapeVerb: string
+    if (task.branch) {
+      const { getRepoRoot } = await import('../context')
+      const integrationBranch = resolveIntegrationBranch()
+      const repoRoot = getRepoRoot()
+      const { realCommits, checkpointCommits } = await classifyCommitsAheadForBranch(
+        task.branch,
+        integrationBranch,
+        repoRoot,
+      )
+      if (realCommits.length > 0) {
+        salvageNote =
+          `Branch ${task.branch} has ${realCommits.length} commit(s) ahead of ${integrationBranch} ` +
+          `with committed work — 'mars restart'/'mars drop' below would discard them:\n` +
+          `${formatCommitList(realCommits)}\n`
+        escapeVerb = `mars remerge ${id}   # re-verify and merge the committed work without re-running the coder`
+      } else if (checkpointCommits.length > 0) {
+        salvageNote =
+          `Branch ${task.branch} holds ${checkpointCommits.length} salvage checkpoint commit(s) capturing ` +
+          `uncommitted work from the failed run — 'mars restart'/'mars drop' below would discard them:\n` +
+          `${formatCommitList(checkpointCommits)}\n`
+        escapeVerb =
+          `mars task add --supersede ${id} --prompt-file <path>   # inherit ${task.branch} onto a new task ` +
+          `so a fresh coder can finish the salvaged work`
+      } else {
+        escapeVerb = `mars restart ${id}   # discard the branch and re-run from setup`
+      }
+    } else {
+      escapeVerb = `mars restart ${id}   # discard and re-run from setup`
+    }
+
+    throw new Error(
+      `mars continue: task ${id} recovery is disabled — re-queuing would be immediately re-terminated.\n` +
+        `Failure reason: ${task.failureReason}\n` +
         `${salvageNote}` +
         `To proceed:\n` +
         `  ${escapeVerb}\n` +

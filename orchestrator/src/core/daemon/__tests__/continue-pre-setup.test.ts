@@ -1208,6 +1208,143 @@ describe('continue degrades to restart for pre-setup failures', () => {
     expect(after?.branch).toBe(branch)
   })
 
+  // ── Recovery-disabled guard (MARS_RECOVERY_DISABLED=1 / operator off) ───────
+  // A task whose failureReason starts with 'recovery_disabled:' was marked
+  // terminal by the kill switch. Re-queuing it would be immediately re-
+  // terminated by the same gate, producing an instant failure loop. `mars
+  // continue` must refuse non-zero, naming the correct branch-aware escape
+  // verb, without modifying the task status.
+
+  it('refuses non-zero on recovery-disabled task and names mars restart when branch has no commits', async () => {
+    const { queue, continueTask } = await loadModules(repo)
+
+    const origin = await queue.enqueueTask('disabled-recovery task', undefined, { skipTriage: true })
+    await queue.updateTask(origin.id, {
+      status: 'failed',
+      error: 'coder exited non-zero',
+      failureReason: 'recovery_disabled:code:coder-exit-nonzero/unclassified',
+      // branch remains null — no commits possible
+    })
+
+    let thrown: Error | null = null
+    try {
+      await continueTask.coreContinueTask(origin.id)
+    } catch (e) {
+      thrown = e as Error
+    }
+
+    expect(thrown).not.toBeNull()
+    // Must describe that recovery is disabled (not "budget is exhausted")
+    expect(thrown!.message).toContain('recovery is disabled')
+    // Must name the escape verb
+    expect(thrown!.message).toContain('mars restart')
+    // No branch → nothing to salvage; must not claim commits are at risk
+    expect(thrown!.message).not.toContain('commit(s) ahead')
+    // Task must remain failed — nothing was queued
+    const after = await queue.getTask(origin.id)
+    expect(after?.status).toBe('failed')
+  })
+
+  it('recovery-disabled with real commits ahead: names them and offers mars remerge', async () => {
+    const { queue, continueTask } = await loadModules(repo)
+
+    const origin = await queue.enqueueTask('disabled-recovery with real commits', undefined, {
+      skipTriage: true,
+    })
+    const branch = `task/${origin.id}`
+    const worktreePath = resolve(repo, '.mars', 'worktrees', origin.id)
+
+    execFileSync('git', ['worktree', 'add', '-qb', branch, worktreePath], { cwd: repo })
+    writeFileSync(resolve(worktreePath, 'feature.ts'), 'export const feature = true\n')
+    execFileSync('git', ['add', 'feature.ts'], { cwd: worktreePath })
+    execFileSync(
+      'git',
+      [
+        '-c', 'user.email=coder@test', '-c', 'user.name=Coder',
+        'commit', '-m', 'feat: the salvaged feature',
+      ],
+      { cwd: worktreePath },
+    )
+
+    await queue.updateTask(origin.id, {
+      status: 'failed',
+      error: 'coder exited non-zero',
+      failedPhase: 'code',
+      failureReason: 'recovery_disabled:code:coder-exit-nonzero/unclassified',
+      branch,
+      worktreePath,
+    })
+
+    let thrown: Error | null = null
+    try {
+      await continueTask.coreContinueTask(origin.id)
+    } catch (e) {
+      thrown = e as Error
+    }
+
+    expect(thrown).not.toBeNull()
+    expect(thrown!.message).toContain('recovery is disabled')
+    // Reports the salvageable commit count and names it
+    expect(thrown!.message).toContain('1 commit(s) ahead')
+    expect(thrown!.message).toContain('feat: the salvaged feature')
+    // Warns that the destructive escapes below would discard it
+    expect(thrown!.message).toContain('would discard them')
+    // Real commits → mars remerge re-verifies without re-running the coder
+    expect(thrown!.message).toContain('mars remerge')
+    const after = await queue.getTask(origin.id)
+    expect(after?.status).toBe('failed')
+  })
+
+  it('recovery-disabled with only a salvage checkpoint: names it and offers mars task add --supersede', async () => {
+    const { queue, continueTask } = await loadModules(repo)
+
+    const origin = await queue.enqueueTask('disabled-recovery checkpoint-only', undefined, {
+      skipTriage: true,
+    })
+    const branch = `task/${origin.id}`
+    const worktreePath = resolve(repo, '.mars', 'worktrees', origin.id)
+
+    execFileSync('git', ['worktree', 'add', '-qb', branch, worktreePath], { cwd: repo })
+    writeFileSync(resolve(worktreePath, 'wip.ts'), 'export const x = 1\n')
+    execFileSync('git', ['add', '-A'], { cwd: worktreePath })
+    execFileSync(
+      'git',
+      [
+        '-c', 'user.email=mars@test', '-c', 'user.name=Mars',
+        'commit', '-m', 'wip(checkpoint): coder killed (exit 1) with 1 uncommitted path(s) — do not merge as-is',
+      ],
+      { cwd: worktreePath },
+    )
+
+    await queue.updateTask(origin.id, {
+      status: 'failed',
+      error: 'coder exited non-zero',
+      failedPhase: 'code',
+      failureReason: 'recovery_disabled:code:coder-exit-nonzero/unclassified',
+      branch,
+      worktreePath,
+    })
+
+    let thrown: Error | null = null
+    try {
+      await continueTask.coreContinueTask(origin.id)
+    } catch (e) {
+      thrown = e as Error
+    }
+
+    expect(thrown).not.toBeNull()
+    expect(thrown!.message).toContain('recovery is disabled')
+    // Must name the salvage checkpoint commit count
+    expect(thrown!.message).toContain('1 salvage checkpoint commit(s)')
+    expect(thrown!.message).toContain('would discard them')
+    // No reviewed work → must NOT offer mars remerge
+    expect(thrown!.message).not.toContain('mars remerge')
+    // Must offer the branch-preserving supersede path
+    expect(thrown!.message).toContain('mars task add --supersede')
+    const after = await queue.getTask(origin.id)
+    expect(after?.status).toBe('failed')
+  })
+
   // ── Regression: settled failed recovery task must not block code-phase resume
   // Scenario: the origin task (failedPhase='code') has an arc whose recovery
   // task also failed (status='failed', fix_for_task_id=origin). The settled
