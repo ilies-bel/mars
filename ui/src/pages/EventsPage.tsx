@@ -299,6 +299,15 @@ const EventRow = memo(({ event, now, fieldsExpanded, onToggleFields }: EventRowP
           {event.phase ? ` · ${humanizePhase(event.phase)}` : ''}
         </span>
         <div className="flex min-w-0 items-baseline gap-x-1">
+          {effectiveTaskId ? (
+            <a
+              href={taskHash(effectiveTaskId, 'events')}
+              onClick={(e) => e.stopPropagation()}
+              className="shrink-0 font-mono text-micro text-muted-foreground hover:text-foreground hover:underline"
+            >
+              {truncateId(effectiveTaskId)}
+            </a>
+          ) : null}
           {logLineSource && logLineSource !== callerSource ? (
             <span
               className="shrink-0 rounded bg-primary/20 px-1 font-mono text-micro text-muted-foreground"
@@ -310,16 +319,6 @@ const EventRow = memo(({ event, now, fieldsExpanded, onToggleFields }: EventRowP
           <span className={`min-w-0 truncate ${marsToolTextClass(event)}`}>
             {summarizeTraceEvent(event)}
           </span>
-          {effectiveTaskId ? (
-            <a
-              href={taskHash(effectiveTaskId, 'events')}
-              onClick={(e) => e.stopPropagation()}
-              className="shrink-0 font-mono text-micro text-muted-foreground/60 hover:text-foreground hover:underline"
-              data-id="muted-id"
-            >
-              {truncateId(effectiveTaskId)}
-            </a>
-          ) : null}
           {hasFields ? (
             <button
               type="button"
@@ -626,8 +625,8 @@ const IncidentGroup = memo(({
           <span>▾</span>
           <span className={`uppercase font-semibold ${severityColor(worst)}`}>{worst}</span>
           <span className="rounded bg-primary/20 px-1 font-semibold">×{events.length}</span>
+          {taskId ? <span className="text-muted-foreground">{truncateId(taskId)}</span> : null}
           <span className="min-w-0 truncate">{summary}</span>
-          {taskId ? <span className="text-muted-foreground/60" data-id="muted-id">{truncateId(taskId)}</span> : null}
         </button>
         <div className="flex flex-col gap-1">
           {events.map((e) => (
@@ -654,10 +653,10 @@ const IncidentGroup = memo(({
       <span className="shrink-0 text-micro text-muted-foreground">{relativeTime(first.timestamp, now)}</span>
       <span className={`shrink-0 text-micro font-semibold uppercase ${severityColor(worst)}`}>{worst}</span>
       <span className="shrink-0 rounded bg-primary/20 px-1.5 font-mono text-micro font-semibold text-primary">×{events.length}</span>
-      <span className="min-w-0 truncate text-label text-muted-foreground">{summary}</span>
       {taskId ? (
-        <span className="shrink-0 font-mono text-micro text-muted-foreground/60" data-id="muted-id">{truncateId(taskId)}</span>
+        <span className="shrink-0 font-mono text-micro text-muted-foreground">{truncateId(taskId)}</span>
       ) : null}
+      <span className="min-w-0 truncate text-label text-muted-foreground">{summary}</span>
     </button>
   )
 })

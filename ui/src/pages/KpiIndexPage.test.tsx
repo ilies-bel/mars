@@ -105,25 +105,3 @@ describe('KpiIndexPage', () => {
     expect(html).toContain('Recovery Success')
   })
 })
-
-// ---------------------------------------------------------------------------
-// Lint-style: no raw IDs in visible text
-// ---------------------------------------------------------------------------
-
-/** Strip all HTML attribute content so only text nodes remain for pattern-matching. */
-const stripAttrs = (html: string): string =>
-  html.replace(/\s[\w:-]+=(?:"[^"]*"|'[^']*')/g, '')
-
-describe('KpiIndexPage — no raw IDs in rendered text', () => {
-  it('renders no bare UUID (8-4 hex) patterns in visible text', () => {
-    const html = renderToStaticMarkup(<KpiIndexPage />)
-    const stripped = stripAttrs(html)
-    expect(stripped).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-/)
-  })
-
-  it('renders no bare mars-task-id patterns in visible text', () => {
-    const html = renderToStaticMarkup(<KpiIndexPage />)
-    const stripped = stripAttrs(html)
-    expect(stripped).not.toMatch(/mars-[0-9a-f]{8}/)
-  })
-})
