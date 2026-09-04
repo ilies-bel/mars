@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -242,5 +242,147 @@ describe('recovery dispatch', () => {
 
     await eventually(async () => (await queue.getTask(missedTask.id))?.status === 'running')
     expect((await queue.getTask(missedTask.id))?.status).toBe('running')
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Domain-layer tests: no daemon required
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface QueueModule {
+  migrateQueueSchema: typeof import('../../queue').migrateQueueSchema
+  enqueueTask: typeof import('../../queue').enqueueTask
+  addBlockers: typeof import('../../queue').addBlockers
+  replaceBlocker: typeof import('../../queue').replaceBlocker
+  getTask: typeof import('../../queue').getTask
+  updateTask: typeof import('../../queue').updateTask
+  resolveQueueClient: typeof import('../../queue').resolveQueueClient
+}
+
+const setupRepo = (): string => {
+  const dir = mkdtempSync(resolve(tmpdir(), 'mars-blocker-domain-test-'))
+  execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: dir })
+  execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: dir })
+  execFileSync('git', ['config', 'user.name', 'Test'], { cwd: dir })
+  writeFileSync(resolve(dir, 'README.md'), 'init\n')
+  execFileSync('git', ['add', 'README.md'], { cwd: dir })
+  execFileSync('git', ['commit', '-m', 'init'], { cwd: dir })
+  return dir
+}
+
+describe('supersede re-points incoming task_blockers edges', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+    process.env.MARS_REPO = repo
+    process.env.MARS_DB_BACKEND = 'pglite'
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    delete process.env.MARS_DB_BACKEND
+    vi.resetModules()
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('re-points dependents from the superseded task to the new task in the same transaction', async () => {
+    const q = (await import('../../queue')) as unknown as QueueModule
+    await q.migrateQueueSchema()
+
+    // Create the blocker that will be superseded.
+    const blocker = await q.enqueueTask('original blocker', undefined, { skipTriage: true })
+    await q.updateTask(blocker.id, { status: 'failed', error: 'overtaken' })
+
+    // Create a dependent that is blocked by the original blocker.
+    const dependent = await q.enqueueTask('waiting dependent', undefined, { skipTriage: true })
+    await q.addBlockers(dependent.id, [blocker.id])
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'blocked' WHERE id = ?`,
+      args: [dependent.id],
+    })
+
+    // Supersede the original blocker with a new task.
+    const successor = await q.enqueueTask('successor blocker', undefined, {
+      skipTriage: true,
+      supersedes: blocker.id,
+    })
+
+    // The dependent must now be blocked by the successor, not the old blocker.
+    const edgesAfter = await q.resolveQueueClient().execute({
+      sql: `SELECT blocker_task_id FROM task_blockers WHERE task_id = ?`,
+      args: [dependent.id],
+    })
+    const blockerIds = edgesAfter.rows.map(
+      (r) => (r as unknown as { blocker_task_id: string }).blocker_task_id,
+    )
+    expect(blockerIds).toContain(successor.id)
+    expect(blockerIds).not.toContain(blocker.id)
+
+    // The dependent itself must still be blocked (not yet released by blocker resolution).
+    expect((await q.getTask(dependent.id))?.status).toBe('blocked')
+  })
+})
+
+describe('replaceBlocker swaps edges atomically', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+    process.env.MARS_REPO = repo
+    process.env.MARS_DB_BACKEND = 'pglite'
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    delete process.env.MARS_DB_BACKEND
+    vi.resetModules()
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('swaps old blocker for new blocker without the task passing through queued', async () => {
+    const q = (await import('../../queue')) as unknown as QueueModule
+    await q.migrateQueueSchema()
+
+    const oldBlocker = await q.enqueueTask('old blocker', undefined, { skipTriage: true })
+    const newBlocker = await q.enqueueTask('new blocker', undefined, { skipTriage: true })
+    const dep = await q.enqueueTask('dependent', undefined, { skipTriage: true })
+
+    // Wire dep -> old blocker, then park it as blocked.
+    await q.addBlockers(dep.id, [oldBlocker.id])
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'blocked' WHERE id = ?`,
+      args: [dep.id],
+    })
+
+    // Atomically swap: old blocker → new blocker.
+    await q.replaceBlocker(dep.id, newBlocker.id, oldBlocker.id)
+
+    // The edge must now point at newBlocker, not oldBlocker.
+    const edgesAfter = await q.resolveQueueClient().execute({
+      sql: `SELECT blocker_task_id FROM task_blockers WHERE task_id = ?`,
+      args: [dep.id],
+    })
+    const blockerIds = edgesAfter.rows.map(
+      (r) => (r as unknown as { blocker_task_id: string }).blocker_task_id,
+    )
+    expect(blockerIds).toContain(newBlocker.id)
+    expect(blockerIds).not.toContain(oldBlocker.id)
+
+    // The task must remain blocked — it never passed through queued.
+    expect((await q.getTask(dep.id))?.status).toBe('blocked')
+  })
+
+  it('refuses when the old blocker edge does not exist', async () => {
+    const q = (await import('../../queue')) as unknown as QueueModule
+    await q.migrateQueueSchema()
+
+    const dep = await q.enqueueTask('dependent', undefined, { skipTriage: true })
+    const newBlocker = await q.enqueueTask('new blocker', undefined, { skipTriage: true })
+    const phantom = await q.enqueueTask('phantom blocker', undefined, { skipTriage: true })
+
+    await expect(q.replaceBlocker(dep.id, newBlocker.id, phantom.id)).rejects.toThrow(
+      `no blocker edge: ${dep.id} -> ${phantom.id}`,
+    )
   })
 })

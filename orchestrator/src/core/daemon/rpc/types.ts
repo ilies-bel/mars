@@ -168,7 +168,18 @@ export interface DaemonDeps {
   handleRemoveBlockers(
     id: string,
     blockerIds: readonly string[],
+    keepBlocked?: boolean,
   ): Promise<{ taskId: string; removed: readonly string[] }>
+  /**
+   * Atomically swap a blocker edge: remove `oldBlockerId` and insert
+   * `newBlockerId` for task `id` in a single write batch. The task status
+   * is NOT changed so it never passes through `queued` during the swap.
+   */
+  handleReplaceBlocker(
+    id: string,
+    newBlockerId: string,
+    oldBlockerId: string,
+  ): Promise<{ taskId: string; newBlockerId: string; oldBlockerId: string }>
   handleRecover(id?: string): Promise<RecoverAllBlockedTasksResult>
   runSync(): Promise<unknown>
   handleProposalPromote(

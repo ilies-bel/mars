@@ -592,6 +592,23 @@ export class Arc {
         }
       }
       if (opts?.chatThreadId) await linkTaskToThread(opts.chatThreadId, id, tx)
+      // Re-point every incoming task_blockers row that named the superseded
+      // task as the blocker. This runs AFTER the new task INSERT so the FK
+      // constraint on blocker_task_id is satisfied — the new task row already
+      // exists at this point. ON CONFLICT DO NOTHING handles the edge case where
+      // a dependent was already blocked by both the old and the new task.
+      if (opts?.supersedes) {
+        const repointResult = await tx.execute({
+          sql: `UPDATE task_blockers SET blocker_task_id = ? WHERE blocker_task_id = ?`,
+          args: [id, opts.supersedes],
+        })
+        const repointedCount = repointResult.rowsAffected
+        if (repointedCount > 0) {
+          console.log(
+            `[supersede] re-pointed ${repointedCount} incoming blocker edge(s) from ${opts.supersedes} to ${id}`,
+          )
+        }
+      }
       }) // end resolvedStore.atomic
     } catch (atomicErr) {
       // Atomic failed: origin stays in its pre-supersede status. Remove the

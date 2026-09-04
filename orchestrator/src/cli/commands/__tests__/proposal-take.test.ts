@@ -462,6 +462,7 @@ describe('mars proposal take — command coverage', () => {
         handleUnblock: notImpl('handleUnblock') as DaemonDeps['handleUnblock'],
         handleBlock: notImpl('handleBlock') as DaemonDeps['handleBlock'],
         handleRemoveBlockers: notImpl('handleRemoveBlockers') as DaemonDeps['handleRemoveBlockers'],
+        handleReplaceBlocker: notImpl('handleReplaceBlocker') as DaemonDeps['handleReplaceBlocker'],
         handleRecover: notImpl('handleRecover') as DaemonDeps['handleRecover'],
         runSync: notImpl('runSync') as DaemonDeps['runSync'],
         handleProposalPromote: notImpl('handleProposalPromote') as DaemonDeps['handleProposalPromote'],

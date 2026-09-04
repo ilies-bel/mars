@@ -57,7 +57,18 @@ export type DaemonRequest =
   | { op: 'drop'; id: string; force?: boolean }
   | { op: 'unblock'; id: string }
   | { op: 'block'; id: string; blockerIds: readonly string[] }
-  | { op: 'remove-blockers'; id: string; blockerIds: readonly string[] }
+  | { op: 'remove-blockers'; id: string; blockerIds: readonly string[]; keepBlocked?: boolean }
+  | {
+      /**
+       * Atomically swap a blocker edge: remove `oldBlockerId` and insert
+       * `newBlockerId` for task `id` in a single write batch. The task status is
+       * NOT changed — it never passes through `queued` during the swap.
+       */
+      op: 'replace-blocker'
+      id: string
+      newBlockerId: string
+      oldBlockerId: string
+    }
   | { op: 'recover'; id?: string }
   | {
       op: 'proposal.promote'

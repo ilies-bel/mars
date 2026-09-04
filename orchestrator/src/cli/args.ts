@@ -139,6 +139,9 @@ export const FLAGS_WITH_VALUES: ReadonlySet<string> = new Set([
   // mars proposal add --title "<text>": explicit proposal title, stored
   // verbatim instead of derived from the goal's first line / heading.
   '--title',
+  // mars block <task> <new-blocker> --replace <old-blocker>: atomically swap
+  // a blocker edge without the task passing through `queued`.
+  '--replace',
 ])
 
 /**
@@ -214,6 +217,11 @@ export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   // mars kpi snapshot --exclude-planner-slicer: omit Planner/Slicer (Path 3)
   // origin-level trace events from the cost_per_arc distribution.
   '--exclude-planner-slicer',
+  // mars unblock <id> <blocker-id> --keep-blocked: remove specific blocker
+  // edges without re-evaluating whether the task should flip to `queued`.
+  // Use before immediately re-adding a replacement blocker to avoid the race
+  // where the task is dispatched between the unblock and the new block.
+  '--keep-blocked',
 ])
 
 // Short aliases are normalised to their long form before flag lookup.

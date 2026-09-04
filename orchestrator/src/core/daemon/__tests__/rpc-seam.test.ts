@@ -108,6 +108,7 @@ const makeDeps = (overrides: Partial<DaemonDeps> = {}): {
     handleUnblock: notImpl('handleUnblock') as DaemonDeps['handleUnblock'],
     handleBlock: notImpl('handleBlock') as DaemonDeps['handleBlock'],
     handleRemoveBlockers: notImpl('handleRemoveBlockers') as DaemonDeps['handleRemoveBlockers'],
+    handleReplaceBlocker: notImpl('handleReplaceBlocker') as DaemonDeps['handleReplaceBlocker'],
     handleRecover: notImpl('handleRecover') as DaemonDeps['handleRecover'],
     runSync: notImpl('runSync') as DaemonDeps['runSync'],
     handleProposalPromote: notImpl('handleProposalPromote') as DaemonDeps['handleProposalPromote'],
@@ -148,7 +149,7 @@ describe('RPC registry', () => {
     // Snapshot of the full registered surface; update this number when a new
     // op is added to the protocol. The comment lists the categories; the
     // authoritative count comes from the actual rpcRegistry at runtime.
-    expect(rpcRegistry.size).toBe(58)
+    expect(rpcRegistry.size).toBe(59)
   })
 
   it('rejects duplicate ops', () => {

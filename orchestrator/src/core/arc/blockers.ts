@@ -230,6 +230,76 @@ export const transferProposalBlockerEdges = async (
 }
 
 /**
+ * Atomically swap a blocker edge: replace `oldBlockerId` with `newBlockerId`
+ * for `taskId` in a single write batch (ADR-0052 sole-writer). The INSERT runs
+ * before the DELETE inside the batch so the task never observably has zero
+ * blockers between the two writes. The task status is NOT touched — it stays
+ * `blocked` (or whatever it currently is), so the task never passes through
+ * `queued` during the swap.
+ *
+ * Used by `mars block <task> <new-blocker> --replace <old-blocker>` to
+ * atomically move a dependency pointer without the race where `recoverBlocked`
+ * fires between the `unblock` and the new `block` call.
+ *
+ * Refuses when:
+ * - `taskId` or `newBlockerId` does not exist in `tasks`
+ * - no `task_blockers` row exists for (`taskId`, `oldBlockerId`)
+ * - either endpoint of the new edge is a recovery task (ADR-0040)
+ */
+export const replaceBlockerEdge = async (
+  store: ArcStorePort,
+  taskId: string,
+  newBlockerId: string,
+  oldBlockerId: string,
+): Promise<{ replaced: boolean }> => {
+  await ensureQueueSchema()
+
+  // Verify task exists.
+  const taskRow = await store.execute({
+    sql: `SELECT 1 FROM tasks WHERE id = ?`,
+    args: [taskId],
+  })
+  if (taskRow.rows.length === 0) throw new Error(`task ${taskId} not found`)
+
+  // Verify new blocker exists.
+  const newBlockerRow = await store.execute({
+    sql: `SELECT 1 FROM tasks WHERE id = ?`,
+    args: [newBlockerId],
+  })
+  if (newBlockerRow.rows.length === 0) throw new Error(`blocker ${newBlockerId} not found`)
+
+  // ADR-0040 leaf-node guard on the new edge.
+  await assertNotRecoveryEdge(taskId, newBlockerId, { client: store })
+
+  // Verify the old edge exists.
+  const oldEdge = await store.execute({
+    sql: `SELECT 1 FROM task_blockers WHERE task_id = ? AND blocker_task_id = ?`,
+    args: [taskId, oldBlockerId],
+  })
+  if (oldEdge.rows.length === 0) {
+    throw new Error(`no blocker edge: ${taskId} -> ${oldBlockerId}`)
+  }
+
+  // Atomically insert new edge before deleting old edge so the task is never
+  // observably at zero blockers between the two statements.
+  const now = Date.now()
+  await store.batch(
+    [
+      {
+        sql: `INSERT INTO task_blockers (task_id, blocker_task_id, state, provenance, created_at) VALUES (?, ?, 'confirmed', 'inferred', ?) ON CONFLICT DO NOTHING`,
+        args: [taskId, newBlockerId, now],
+      },
+      {
+        sql: `DELETE FROM task_blockers WHERE task_id = ? AND blocker_task_id = ?`,
+        args: [taskId, oldBlockerId],
+      },
+    ],
+    'write',
+  )
+  return { replaced: true }
+}
+
+/**
  * Manual unblock escape hatch (ADR-0052 sole-writer). Flips a
  * `blocked`-or-`queued` task to `failed`, clears its `task_blockers` rows, and
  * emits `task.failed` + `task.terminal` — all in ONE write transaction

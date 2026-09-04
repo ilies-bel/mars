@@ -30,6 +30,7 @@ import {
   isWorktreeSharedWithLiveTask,
   listTasks,
   removeBlocker,
+  replaceBlocker,
   setTaskPriority,
   setTaskVerifyCmd,
   unblockTask,
@@ -3317,6 +3318,19 @@ export const startDaemon = async (
     }
     const t = await getTask(id)
     if (!t) throw new Error(`task ${id} not found`)
+    // Refuse to add a blocker to a task that is already being dispatched.
+    // Adding a blocker to a running task is a no-op from the runner's
+    // perspective — the runner does not re-check blockers mid-flight. The
+    // correct primitive for the "re-point a blocker while a dependent is
+    // blocked" case is `replace-blocker`, which atomically swaps edges on
+    // the still-blocked row without ever passing through `queued`.
+    if (IN_FLIGHT_STATUSES.has(t.status)) {
+      throw new Error(
+        `task ${id} is ${t.status}; cannot add a blocker to an in-flight task. ` +
+          `If you need to swap a blocker on a still-blocked dependent, use ` +
+          `'mars block <dep> <new-blocker> --replace <old-blocker>' instead.`,
+      )
+    }
     await addBlockers(id, blockerIds)
     // Re-evaluate status: if the task is still in a pre-dispatch state and now
     // has at least one unmet blocker, flip it to 'blocked' so the dispatcher
@@ -3332,9 +3346,22 @@ export const startDaemon = async (
     return { taskId: id, blockerIds }
   }
 
+  const handleReplaceBlocker = async (
+    id: string,
+    newBlockerId: string,
+    oldBlockerId: string,
+  ): Promise<{ taskId: string; newBlockerId: string; oldBlockerId: string }> => {
+    if (newBlockerId === id) throw new Error(`task ${id} cannot block itself`)
+    const t = await getTask(id)
+    if (!t) throw new Error(`task ${id} not found`)
+    await replaceBlocker(id, newBlockerId, oldBlockerId)
+    return { taskId: id, newBlockerId, oldBlockerId }
+  }
+
   const handleRemoveBlockers = async (
     id: string,
     blockerIds: readonly string[],
+    keepBlocked?: boolean,
   ): Promise<{ taskId: string; removed: readonly string[] }> => {
     if (blockerIds.length === 0) {
       throw new Error('remove-blockers requires at least one blocker id')
@@ -3352,25 +3379,30 @@ export const startDaemon = async (
     // After edge removal, re-evaluate the task: if it was blocked solely on
     // the edges we just removed (all remaining blockers are done / gone),
     // flip it to 'queued' immediately so it dispatches without a restart.
-    try {
-      const recovery = await Arc.load(id).recoverBlocked()
-      if (recovery.outcome === 'queued') {
-        log(
-          `[blocker-recovery] ${id} queued after blocker edge removal (removed: ${removed.join(', ')})`,
-        )
-        // Surface the newly queued task to the dispatch loop directly.
-        // Previously this happened via the internal-bus wake-hint; now
-        // the caller is responsible because the bus no longer delivers
-        // payloads to handlers.
-        if (acceptingWork && !tracker.isInFlight(id)) {
-          tracker.enqueuePending(id, 'implement')
-          void drain()
+    // When `keepBlocked` is true the caller intends to immediately add a
+    // replacement blocker (e.g. --replace flow); skip re-evaluation so the
+    // task never passes through `queued` between the two mutations.
+    if (!keepBlocked) {
+      try {
+        const recovery = await Arc.load(id).recoverBlocked()
+        if (recovery.outcome === 'queued') {
+          log(
+            `[blocker-recovery] ${id} queued after blocker edge removal (removed: ${removed.join(', ')})`,
+          )
+          // Surface the newly queued task to the dispatch loop directly.
+          // Previously this happened via the internal-bus wake-hint; now
+          // the caller is responsible because the bus no longer delivers
+          // payloads to handlers.
+          if (acceptingWork && !tracker.isInFlight(id)) {
+            tracker.enqueuePending(id, 'implement')
+            void drain()
+          }
         }
+      } catch (err) {
+        log(
+          `[blocker-recovery] error recovering ${id} after edge removal: ${(err as Error).message}`,
+        )
       }
-    } catch (err) {
-      log(
-        `[blocker-recovery] error recovering ${id} after edge removal: ${(err as Error).message}`,
-      )
     }
     return { taskId: id, removed }
   }
@@ -5078,6 +5110,7 @@ export const startDaemon = async (
     handleUnblock,
     handleBlock,
     handleRemoveBlockers,
+    handleReplaceBlocker,
     handleRecover,
     runSync,
     handleProposalPromote,

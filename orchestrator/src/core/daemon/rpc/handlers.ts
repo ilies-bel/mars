@@ -130,7 +130,12 @@ const blockHandler = handler('block', async (req, deps) => {
 })
 
 const removeBlockersHandler = handler('remove-blockers', async (req, deps) => {
-  const result = await deps.handleRemoveBlockers(req.id, req.blockerIds ?? [])
+  const result = await deps.handleRemoveBlockers(req.id, req.blockerIds ?? [], req.keepBlocked)
+  return { ok: true, data: result }
+})
+
+const replaceBlockerHandler = handler('replace-blocker', async (req, deps) => {
+  const result = await deps.handleReplaceBlocker(req.id, req.newBlockerId, req.oldBlockerId)
   return { ok: true, data: result }
 })
 
@@ -743,6 +748,7 @@ export const allRpcHandlers: readonly RpcHandler[] = [
   unblockHandler,
   blockHandler,
   removeBlockersHandler,
+  replaceBlockerHandler,
   recoverHandler,
   syncHandler,
   proposalPromoteHandler,

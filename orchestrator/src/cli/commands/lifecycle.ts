@@ -299,12 +299,18 @@ const unblock: Command = {
       }
       return { code: 0 }
     }
+    const keepBlocked = '--keep-blocked' in args.flags
     const data = (await deps.daemon.sendRequest({
       op: 'remove-blockers',
       id,
       blockerIds: blockerArgs,
+      keepBlocked,
     })) as { taskId: string; removed: string[] }
-    deps.out(`unblocked ${data.taskId} from: ${data.removed.join(', ')}`)
+    deps.out(
+      keepBlocked
+        ? `removed blocker edge(s) from ${data.taskId}: ${data.removed.join(', ')} (kept blocked)`
+        : `unblocked ${data.taskId} from: ${data.removed.join(', ')}`,
+    )
     return { code: 0 }
   },
 }
@@ -558,15 +564,47 @@ const drop: Command = {
 
 const block: Command = {
   path: 'block',
-  summary: 'add task->task blocker edges',
-  usage: 'usage: mars block <task-id> <blocker-id> [<blocker-id> ...]',
+  summary: 'add task->task blocker edges (or atomically swap with --replace)',
+  usage:
+    'usage: mars block <task-id> <blocker-id> [<blocker-id> ...]\n' +
+    '       mars block <task-id> <new-blocker-id> --replace <old-blocker-id>',
   run: async (args, deps) => {
     const id = args.positional[0]
     const blockerArgs = args.positional.slice(1)
+    const replaceOldId = args.flags['--replace']
+
     if (!id || blockerArgs.length === 0) {
-      deps.err('usage: mars block <task-id> <blocker-id> [<blocker-id> ...]')
+      deps.err(
+        'usage: mars block <task-id> <blocker-id> [<blocker-id> ...]\n' +
+          '       mars block <task-id> <new-blocker-id> --replace <old-blocker-id>',
+      )
       return { code: 2 }
     }
+
+    // Atomic swap: replace-blocker op swaps edges in one transaction without
+    // the task ever passing through `queued`.
+    if (replaceOldId !== undefined) {
+      if (blockerArgs.length !== 1) {
+        deps.err('--replace requires exactly one new blocker id')
+        return { code: 2 }
+      }
+      const newBlockerId = blockerArgs[0]
+      if (newBlockerId === id) {
+        deps.err(`task ${id} cannot block itself`)
+        return { code: 2 }
+      }
+      const data = (await deps.daemon.sendRequest({
+        op: 'replace-blocker',
+        id,
+        newBlockerId,
+        oldBlockerId: replaceOldId,
+      })) as { taskId: string; newBlockerId: string; oldBlockerId: string }
+      deps.out(
+        `replaced blocker on ${data.taskId}: ${data.oldBlockerId} → ${data.newBlockerId}`,
+      )
+      return { code: 0 }
+    }
+
     if (blockerArgs.some((b) => b === id)) {
       deps.err(`task ${id} cannot block itself`)
       return { code: 2 }

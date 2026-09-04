@@ -11,6 +11,7 @@ import {
   clearBlockerEdges,
   failAndClearBlockerEdges,
   removeBlockerEdge,
+  replaceBlockerEdge,
   transferProposalBlockerEdges,
 } from './arc/blockers'
 // ADR-0101: value import from the leaf module (not './store/task-store'), so
@@ -553,6 +554,19 @@ export const removeBlocker = async (
 
 export const clearBlockers = async (taskId: string): Promise<void> => {
   await clearBlockerEdges(getDefaultDomainTaskStore(), taskId)
+}
+
+/**
+ * Atomically swap a blocker edge. Thin wrapper over {@link replaceBlockerEdge}
+ * (ADR-0052). The task status is NOT changed — it never passes through
+ * `queued` during the swap.
+ */
+export const replaceBlocker = async (
+  taskId: string,
+  newBlockerId: string,
+  oldBlockerId: string,
+): Promise<{ replaced: boolean }> => {
+  return replaceBlockerEdge(getDefaultDomainTaskStore(), taskId, newBlockerId, oldBlockerId)
 }
 
 /**
