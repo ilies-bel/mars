@@ -462,10 +462,7 @@ const RECIPE_DEFINITIONS = {
       entityId: ctx.entityId,
       errorExcerpt: str(ctx.payload['error']),
     }),
-    verbs: [
-      { op: 'proposal.slice', label: 'Slice again', style: 'primary' as const },
-      { op: 'snooze', label: 'Snooze', style: 'snooze' as const },
-    ],
+    verbs: [],
   },
 
   'hitl-slice-needs-operator': {
@@ -575,26 +572,7 @@ const RECIPE_DEFINITIONS = {
           : { ageMinutes: p.ageMinutes ?? 0 }),
       }
     },
-    verbs: (ctx) => {
-      // Only `lease-park` situations represent an operator actively working
-      // on the step — expired leases and escalations have different paths.
-      const situation = awaitingHumanSituation(ctx.payload)
-      if (situation !== 'lease-park') return []
-      const p = ctx.payload as Partial<LeaseParkPayload>
-      const isMergeGate = str(p.stepName) === 'merge-gate'
-      return [
-        {
-          op: 'approve-step',
-          label: isMergeGate ? 'Approve and merge' : 'Mark step done',
-          style: 'primary' as const,
-        },
-        {
-          op: 'abort-release',
-          label: 'Abort without merging',
-          style: 'destructive' as const,
-        },
-      ]
-    },
+    verbs: [],
   },
 
   // ── Verification ──────────────────────────────────────────────────────────
@@ -913,6 +891,21 @@ const RECIPE_DEFINITIONS = {
     }),
     // 'show-all' was removed: it had no registered daemon handler, and
     // derivedRowActions already provides a copy-action for 'mars operator'.
+    verbs: [],
+  },
+
+  'signature-wave': {
+    humanSummary: (ctx) => {
+      const count = typeof ctx.payload['caughtTaskCount'] === 'number' ? ctx.payload['caughtTaskCount'] : 'multiple'
+      return `${count} tasks all failed the same way — this points to a shared environmental cause, not individual task bugs. Fix the root cause to unblock all of them.`
+    },
+    humanDetail: (ctx) => ({
+      raisedAt: ctx.raisedAt,
+      entityId: ctx.entityId,
+      signature: str(ctx.payload['signature']),
+      caughtTaskCount: ctx.payload['caughtTaskCount'],
+      caughtTaskIds: ctx.payload['caughtTaskIds'],
+    }),
     verbs: [],
   },
 
@@ -1420,18 +1413,6 @@ const RECIPE_DEFINITIONS = {
       { op: 'accept', label: 'Promote to docs', style: 'primary' },
       { op: 'reject', label: 'Keep as arc artefact only', style: 'default' },
     ],
-  },
-
-  'phantom-merge': {
-    humanSummary: (ctx) =>
-      `Task ${str(ctx.payload['taskId'])}: marked done but no merge SHA recorded — commits may not have landed on main`,
-    humanDetail: (ctx) => ({
-      raisedAt: ctx.raisedAt,
-      entityId: ctx.entityId,
-      taskId: str(ctx.payload['taskId']),
-      tombstonePath: str(ctx.payload['tombstonePath']),
-    }),
-    verbs: [],
   },
 
   'worktree-hook-trust-request': {

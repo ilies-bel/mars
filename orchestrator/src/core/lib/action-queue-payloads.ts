@@ -190,6 +190,7 @@ export const ACTION_QUEUE_PAYLOAD_AUDIT = {
   'daemon-code-drift': 'derived-condition',
   'gate-broken': 'derived-condition',
   'signature-storm': 'derived-condition',
+  'signature-wave': 'derived-condition',
   'stale-queued': 'derived-condition',
   'stale-queued-summary': 'derived-condition',
   'baseline-broken': 'derived-condition',
@@ -237,7 +238,6 @@ export const ACTION_QUEUE_PAYLOAD_AUDIT = {
   'mockup-ready': 'typed',
   'qa-step-list-opt-in': 'typed',
   'qa-step-list-promote': 'typed',
-  'phantom-merge': 'derived-condition',
   'worktree-hook-trust-request': 'typed',
 } as const satisfies Record<ActionQueueKind, 'typed' | 'derived-condition'>
 

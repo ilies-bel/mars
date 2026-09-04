@@ -19,11 +19,11 @@ import { join } from 'node:path'
 import type { PersistedActionQueueRow, ConditionItemsSource } from './action-queue'
 import type { DispatchPauseState } from '../pause-state'
 import type { DbClient } from '../../lib/db'
-import { RECOVERY_EXHAUSTED_PREFIX, classifyError } from '../../lib/failure-signature'
+import { RECOVERY_EXHAUSTED_PREFIX, classifyError, isSameFailureFamily } from '../../lib/failure-signature'
 import { findBaselineCaughtTaskIds } from '../../lib/baseline-attribution'
 import { readBudgetConfig } from '../../lib/spend-meter'
 import type { BudgetArcPayload } from '../../lib/payload-contracts/spend'
-import { checkWorkflowStaleness } from '../../../init/init-manifest.js'
+import { isDiagnosticSignature, SIGNATURE_STORM_TRIP_THRESHOLD } from '../../lib/signature-storm-monitor'
 
 // ── Stable ID helper ─────────────────────────────────────────────────────────
 
@@ -153,6 +153,7 @@ async function deriveFailedConditions(
   client: DbClient,
   nowMs: number,
   baselineCaughtTaskIds: ReadonlySet<string>,
+  waveCaughtTaskIds: ReadonlySet<string>,
 ): Promise<PersistedActionQueueRow[]> {
   const result = await client.execute(
     `SELECT t.id, t.failure_signature, t.prompt, t.updated_at, t.failure_reason_code,
@@ -184,7 +185,10 @@ async function deriveFailedConditions(
       ORDER BY t.updated_at DESC`,
   )
   const rows = result.rows
-    .filter((r) => !baselineCaughtTaskIds.has((r as { id: string }).id))
+    .filter((r) => {
+      const id = (r as { id: string }).id
+      return !baselineCaughtTaskIds.has(id) && !waveCaughtTaskIds.has(id)
+    })
     .map((r) => {
     const row = r as {
       id: string
@@ -643,8 +647,8 @@ function deriveDaemonCodeDriftConditions(
     {
       id: deriveId('daemon-code-drift', `${sourceSha}:${currentSha}`),
       kind: 'daemon-code-drift',
-      priority: 'normal',
-      title: 'Mars was updated; restart the background engine to use it (mars daemon restart)',
+      priority: 'high',
+      title: `Update available for the background engine — ${shortSrc} → ${shortHead}`,
       body: dependencyDrift
         ? `daemon running ${shortSrc}, main is at ${shortHead}; dependencies changed — run your package install, then \`mars daemon restart\``
         : `daemon running ${shortSrc}, main is at ${shortHead} — run \`mars daemon restart\` to load current verify/dispatch code`,
@@ -880,129 +884,106 @@ async function deriveBudgetArcConditions(
     })
 }
 
+// ── Signature-wave condition ──────────────────────────────────────────────────
+
 /**
- * Derive a `workflow-scaffold-stale` row when any owned (init-manifest-tracked)
- * workflow in `.mars/workflows/` has content that differs from the bundled
- * template.
- *
- * Only owned workflows produce the alert — unowned (hand-edited) workflows are
- * listed in the body as informational context but never raise an alert row on
- * their own (ADR-0057: `mars update` does not touch unowned files).
- *
- * Derived on every read; no stored row.  The condition disappears automatically
- * once `mars update` refreshes the stale files.
+ * Wave threshold: same number as the storm-breaker so the operator sees a
+ * consistent model — "3 distinct failures" means systemic in both surfaces.
  */
-function deriveWorkflowScaffoldStaleConditions(
-  repoRoot: string | undefined,
-  nowMs: number,
-): PersistedActionQueueRow[] {
-  if (!repoRoot) return []
-  const marsDir = join(repoRoot, '.mars')
-  let staleness: ReturnType<typeof checkWorkflowStaleness>
-  try {
-    staleness = checkWorkflowStaleness(repoRoot, marsDir)
-  } catch {
-    return []
-  }
-  const { stale, customised } = staleness
-  if (stale.length === 0) return []
+const SIGNATURE_WAVE_THRESHOLD = SIGNATURE_STORM_TRIP_THRESHOLD
 
-  const staleLines = stale.map((f) => `  - ${f}`).join('\n')
-  const customisedBlock =
-    customised.length > 0
-      ? `\n\nCustomised (user-edited, not refreshed by mars update):\n${customised.map((f) => `  - ${f}`).join('\n')}`
-      : ''
-  const body =
-    `The following scaffolded workflows differ from their bundled templates:\n${staleLines}${customisedBlock}\n\n` +
-    `Run \`mars update\` to refresh stale workflows.`
-
-  return [
-    {
-      id: deriveId('workflow-scaffold-stale', stale.slice().sort().join(':')),
-      kind: 'workflow-scaffold-stale',
-      priority: 'normal',
-      title: 'Background workflows are out of date — run mars update',
-      body,
-      payload: { staleFiles: stale, customisedFiles: customised },
-      context: {},
-      raisedAt: nowMs,
-      lastSeenAt: nowMs,
-      signature: 'workflow-scaffold-stale',
-    },
-  ]
+interface SignatureWaveResult {
+  rows: PersistedActionQueueRow[]
+  /** Task IDs that belong to a wave group — suppressed from individual `failed` rows. */
+  caughtTaskIds: ReadonlySet<string>
 }
 
-// ── Phantom-merge condition ───────────────────────────────────────────────────
-
 /**
- * Derive `phantom-merge` rows by scanning tombstone files for done tasks where
- * `reason === 'merged'` and `mergeCommitSha` is null.
+ * Derive `signature-wave` rows from currently-failed tasks.
  *
- * A tombstone with `{reason: 'merged', mergeCommitSha: null}` means the merge
- * step called `removeWorktree` with reason='merged' but no fast-forward SHA was
- * captured — the integration branch was not actually advanced. This is the P3
- * bug (mars-59c9fdb0): stale-merging-sweep eviction reset the branch, the old
- * queued merge job ran on the reset branch (zero commits), and the merge step
- * silently marked the task done with null SHA.
+ * When N ≥ {@link SIGNATURE_WAVE_THRESHOLD} distinct failed tasks share the
+ * same failure family (same {@link isSameFailureFamily} bucket), one wave row
+ * is raised in place of the N individual `failed` rows.  The wave row states
+ * the shared-cause implication plainly; its `caughtTaskIds` payload lets the
+ * operator see which tasks are affected without having to read N identical
+ * alerts.
  *
- * The phantom-merge guard in merge.ts now catches this case inline; this
- * derived condition surfaces any pre-existing tombstones that slipped through.
+ * The result also carries `caughtTaskIds` as a set so
+ * {@link deriveFailedConditions} can suppress the individual rows — exactly the
+ * shape `baseline-broken` / `baselineCaughtTaskIds` uses.
+ *
+ * Only diagnostic signatures ({@link isDiagnosticSignature}) are eligible for
+ * grouping: generic buckets like `code/unclassified` must not accidentally fold
+ * unrelated failures.
  */
-async function derivePhantomMergeConditions(
+async function deriveSignatureWaveConditions(
   client: DbClient,
-  repoRoot: string,
   nowMs: number,
-): Promise<PersistedActionQueueRow[]> {
-  const marsWorktreesDir = join(repoRoot, '.mars', 'worktrees')
-  if (!existsSync(marsWorktreesDir)) return []
-
-  // Only check done tasks — a phantom merge only matters for tasks that the
-  // system believes succeeded. Failed tasks may also have null tombstones but
-  // they already have actionable failed alerts.
+): Promise<SignatureWaveResult> {
   const result = await client.execute(
-    `SELECT id FROM tasks WHERE status = 'done' ORDER BY updated_at DESC LIMIT 200`,
+    `SELECT id, failure_signature, updated_at
+       FROM tasks
+      WHERE status = 'failed'
+        AND failure_signature IS NOT NULL`,
   )
 
-  const rows: PersistedActionQueueRow[] = []
-  for (const r of result.rows) {
-    const taskId = (r as { id: string }).id
-    const tombstonePath = join(marsWorktreesDir, `${taskId}.removed.json`)
-    if (!existsSync(tombstonePath)) continue
-    let tombstone: { reason?: string; mergeCommitSha?: string | null; taskId?: string }
-    try {
-      tombstone = JSON.parse(readFileSync(tombstonePath, 'utf8')) as typeof tombstone
-    } catch {
-      continue
-    }
-    if (tombstone.reason !== 'merged') continue
-    // null or missing mergeCommitSha with reason='merged' is the phantom-merge symptom.
-    if (tombstone.mergeCommitSha) continue
+  // Group tasks by failure family using isSameFailureFamily semantics.
+  // A family is seeded by the first signature seen; subsequent tasks are
+  // folded in if isSameFailureFamily matches any existing family's canonical.
+  // O(n * m) where m = distinct families; acceptable because failed-task count
+  // is bounded in practice (action-queue reads are not hot paths).
+  const families: { canonical: string; taskIds: string[]; latestMs: number }[] = []
 
-    rows.push({
-      id: deriveId('phantom-merge', taskId),
-      kind: 'phantom-merge',
-      priority: 'high',
-      title: `Task ${taskId}: phantom merge — done but no merge SHA recorded`,
-      body: [
-        `Task \`${taskId}\` was marked done with tombstone \`{reason: 'merged', mergeCommitSha: null}\`.`,
-        '',
-        `A null \`mergeCommitSha\` means the fast-forward did not advance the integration branch — ` +
-          `the task is "done" but its commits may not have landed. This is the P3 bug ` +
-          `(mars-59c9fdb0): a stale-merging-sweep eviction reset the branch while an old ` +
-          `merge job was still queued; the job ran on the reset (zero-commit) branch.`,
-        '',
-        `**To investigate:** check whether the task's commits are reachable from \`main\` ` +
-          `(\`git log main --grep ${taskId}\`). If not, inspect parked refs ` +
-          `(\`git for-each-ref refs/mars/parked/${taskId}\`) and restore them manually.`,
-      ].join('\n'),
-      payload: { taskId, tombstonePath, reason: 'merged', mergeCommitSha: null },
-      context: {},
-      raisedAt: nowMs,
-      lastSeenAt: nowMs,
-      signature: `phantom-merge:${taskId}`,
-    })
+  for (const r of result.rows) {
+    const row = r as { id: string; failure_signature: string; updated_at: string | null }
+    const sig = row.failure_signature
+    if (!isDiagnosticSignature(sig)) continue
+
+    const existing = families.find((f) => isSameFailureFamily(f.canonical, sig))
+    const taskMs = row.updated_at ? Date.parse(row.updated_at) : nowMs
+    if (existing) {
+      existing.taskIds.push(row.id)
+      if (taskMs > existing.latestMs) existing.latestMs = taskMs
+    } else {
+      families.push({ canonical: sig, taskIds: [row.id], latestMs: taskMs })
+    }
   }
-  return rows
+
+  const waveGroups = families.filter((f) => f.taskIds.length >= SIGNATURE_WAVE_THRESHOLD)
+
+  const caughtTaskIds = new Set<string>(waveGroups.flatMap((g) => g.taskIds))
+
+  const rows: PersistedActionQueueRow[] = waveGroups.map((group) => {
+    const count = group.taskIds.length
+    const sortedIds = group.taskIds.slice().sort()
+    return {
+      id: deriveId('signature-wave', group.canonical),
+      kind: 'signature-wave',
+      priority: 'high',
+      // Cold-reader headline (DEC-18: signature is an internal — disclosed in body, not subject).
+      title: `${count} tasks failed for the same reason — one fix likely unblocks all`,
+      body: [
+        `${count} tasks all failed with the same failure pattern. This is the shape of an`,
+        `environmental or systemic failure, not a per-task regression.`,
+        ``,
+        `Shared failure pattern: ${group.canonical}`,
+        `Affected tasks (${count}): ${sortedIds.join(', ')}`,
+        ``,
+        `Fix the root cause, then \`mars continue\` or \`mars restart\` each affected task.`,
+      ].join('\n'),
+      payload: {
+        signature: group.canonical,
+        caughtTaskCount: count,
+        caughtTaskIds: sortedIds,
+      },
+      context: {},
+      raisedAt: group.latestMs,
+      lastSeenAt: nowMs,
+      signature: `signature-wave:${group.canonical}`,
+    }
+  })
+
+  return { rows, caughtTaskIds }
 }
 
 // ── Factory ───────────────────────────────────────────────────────────────────
@@ -1022,21 +1003,31 @@ export const createConditionItemsSource = (deps: ConditionsDeps): ConditionItems
     const nowMs = deps.nowMs ?? Date.now()
     const client = deps.getClient()
 
-    // Computed once, shared by `failed` (suppresses the rows it accounts for)
-    // and `baseline-broken` (names how many it caught) — both need the exact
-    // same answer to "which failed tasks does the poisoned baseline explain",
-    // and a separately-computed set in each spot is exactly how they'd drift.
-    const baselineCaughtTaskIds =
+    // Both baselineCaughtTaskIds and waveResult are computed before the main
+    // fan-out so that deriveFailedConditions can suppress the rows they account
+    // for. They are computed in parallel to minimise wall-clock overhead.
+    //
+    // baselineCaughtTaskIds: shared by `failed` and `baseline-broken` — both need
+    // the same answer to "which failed tasks does the poisoned baseline explain".
+    //
+    // waveResult: shared by `failed` (suppresses the individual rows the wave
+    // accounts for) and `signature-wave` (provides the pre-built wave rows).
+    // Same shape as baselineCaughtTaskIds — one query, two consumers.
+    const [baselineCaughtTaskIds, waveResult] = await Promise.all([
       wants('failed') || wants('baseline-broken')
-        ? await findBaselineCaughtTaskIds(
+        ? findBaselineCaughtTaskIds(
             client,
             deps.isBaselinePoisoned?.() ?? false,
             deps.getPauseState?.() ?? null,
           )
-        : new Set<string>()
+        : Promise.resolve(new Set<string>()),
+      wants('failed') || wants('signature-wave')
+        ? deriveSignatureWaveConditions(client, nowMs)
+        : Promise.resolve({ rows: [] as PersistedActionQueueRow[], caughtTaskIds: new Set<string>() }),
+    ])
 
     const results = await Promise.all([
-      wants('failed') ? deriveFailedConditions(client, nowMs, baselineCaughtTaskIds) : [],
+      wants('failed') ? deriveFailedConditions(client, nowMs, baselineCaughtTaskIds, waveResult.caughtTaskIds) : [],
       wants('stale-queued') ? deriveStaleQueuedConditions(client, deps) : [],
       wants('gate-broken') ? deriveGateBrokenConditions(client, nowMs) : [],
       wants('subscriber-stalled') ? deriveSubscriberStalledConditions(client, nowMs) : [],
@@ -1055,12 +1046,8 @@ export const createConditionItemsSource = (deps: ConditionsDeps): ConditionItems
         ? deriveStaleWorktreeConditions(client, deps.repoRoot, nowMs)
         : [],
       wants('budget-arc') ? deriveBudgetArcConditions(client, nowMs) : [],
-      wants('workflow-scaffold-stale')
-        ? deriveWorkflowScaffoldStaleConditions(deps.repoRoot, nowMs)
-        : [],
-      wants('phantom-merge') && deps.repoRoot
-        ? derivePhantomMergeConditions(client, deps.repoRoot, nowMs)
-        : [],
+      // waveResult.rows is already materialised — just include it when the kind is wanted.
+      wants('signature-wave') ? waveResult.rows : [],
     ])
 
     const all = results.flat()

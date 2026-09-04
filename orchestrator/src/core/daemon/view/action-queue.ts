@@ -49,7 +49,6 @@ const NON_TASK_FAILURE_KINDS = new Set([
   'hitl-slice-needs-operator',
   'daemon-outage',
   'health-check-alert',
-  'phantom-merge',
 ])
 
 /** Preserves the former failure-specific enrichment without changing labels. */
@@ -487,6 +486,28 @@ export const OPERATIONAL_ALERT_COPY: Record<
       humanSummary: `Mars detected ${streak} tasks failing with \`${signature}\` — Mars has since resumed starting new tasks, no action needed from you.`,
     }
   },
+  'signature-wave': (row, _pauseState) => {
+    const count =
+      typeof row.payload.caughtTaskCount === 'number' ? row.payload.caughtTaskCount : 'multiple'
+    const sig =
+      typeof row.payload.signature === 'string' ? row.payload.signature : 'an unknown pattern'
+    const ids =
+      Array.isArray(row.payload.caughtTaskIds)
+        ? (row.payload.caughtTaskIds as string[]).join(', ')
+        : ''
+    return {
+      title: `${count} tasks failed for the same reason — one fix likely unblocks all`,
+      body: [
+        `${count} tasks all failed with the same failure pattern. This is the shape of an`,
+        `environmental or systemic failure, not a per-task regression.`,
+        ``,
+        `Shared failure pattern: ${sig}`,
+        ...(ids ? [`Affected tasks (${count}): ${ids}`] : []),
+        ``,
+        `Fix the root cause, then \`mars continue\` or \`mars restart\` each affected task.`,
+      ].join('\n'),
+    }
+  },
   'gate-enrichment-stale': null,
   'env-incident': null,
   'stale-queued': (row, _pauseState) => {
@@ -572,7 +593,6 @@ export const OPERATIONAL_ALERT_COPY: Record<
   'mockup-ready': null,
   'qa-step-list-opt-in': null,
   'qa-step-list-promote': null,
-  'phantom-merge': null,
   'worktree-hook-trust-request': null,
 }
 
@@ -1419,13 +1439,8 @@ export const buildActionQueueView = async ({
     // Derive the operator-facing goal via the same resolution chain as arcGoal
     // but with a richer normaliser: markdown, backticks, bold markers stripped;
     // second-person rewritten to imperative; capped at 100 chars.
-    // For slice-failed rows the entityId is a proposal id (not a task id), so
-    // taskById.get(entityId) would return undefined. Derive the goal from the
-    // payload's proposalTitle field instead so the card shows the PRD title.
     let operatorGoal: string | null = null
-    if (row.kind === 'slice-failed' && typeof row.payload.proposalTitle === 'string') {
-      operatorGoal = row.payload.proposalTitle
-    } else if (isTaskFailure) {
+    if (isTaskFailure) {
       const task = taskById.get(entityId)
       if (task) {
         operatorGoal = deriveOperatorGoal(task, taskById)

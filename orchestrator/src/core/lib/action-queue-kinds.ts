@@ -40,6 +40,7 @@ export const ACTION_QUEUE_KINDS = [
   'tool-promotion',
   'arc-verification-failed',
   'signature-storm',
+  'signature-wave',
   'gate-enrichment-stale',
   'env-incident',
   'stale-queued',
@@ -59,7 +60,6 @@ export const ACTION_QUEUE_KINDS = [
   'mockup-ready',
   'qa-step-list-opt-in',
   'qa-step-list-promote',
-  'phantom-merge',
   'worktree-hook-trust-request',
 ] as const
 
@@ -89,13 +89,14 @@ export type ActionQueueClass = 'notice' | 'alert' | 'decision'
 
 /**
  * Exhaustive mapping from every action-queue kind to its operator-obligation
- * class. All 60 kinds are listed; adding a new kind to {@link ACTION_QUEUE_KINDS}
+ * class. All 61 kinds are listed; adding a new kind to {@link ACTION_QUEUE_KINDS}
  * without a corresponding entry here is a TypeScript error.
  */
 export const KIND_CLASS: Record<ActionQueueKind, ActionQueueClass> = {
   // ── notice — Mars has automated move; asks nothing of operator ──────────────
   'subscriber-stalled': 'notice',           // subscription watchdog restarts cursor
   'signature-storm': 'notice',              // circuit breaker active; auto-recovers
+  'signature-wave': 'alert',               // N tasks failed for same reason; operator must fix root cause
   'stale-worktree': 'notice',               // worktree pruner handles cleanup
   'phantom-task': 'notice',                 // phantom watchdog removes stale rows
   'requeue-warning': 'notice',              // Mars requeuing; informing
@@ -157,7 +158,6 @@ export const KIND_CLASS: Record<ActionQueueKind, ActionQueueClass> = {
   'scheduling-decision': 'decision',       // operator must choose a scheduling option
   'gate-enrichment-stale': 'decision',    // enrichment request timed out; operator picks next step
   'verify-uncovered': 'decision',         // task has no verify command; operator must decide
-  'phantom-merge': 'alert',              // done task whose merge SHA is null; real commits may not have landed
   'worktree-hook-trust-request': 'decision', // mars.json setup hooks await trust grant from operator
 }
 
@@ -185,6 +185,7 @@ export const DERIVED_KINDS: ReadonlySet<ActionQueueKind> = new Set<ActionQueueKi
   'gate-broken',
   'subscriber-stalled',
   'signature-storm',
+  'signature-wave',
   'daemon-died',
   'daemon-code-drift',
   'baseline-broken',
@@ -194,5 +195,4 @@ export const DERIVED_KINDS: ReadonlySet<ActionQueueKind> = new Set<ActionQueueKi
   'orphaned-origin',
   'steward-repeat',
   'e2e-tooling-missing',
-  'phantom-merge',
 ])
