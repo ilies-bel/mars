@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import {
@@ -213,9 +213,11 @@ describe('deriveReproCommand', () => {
       expect(resolveVerifyCwd(worktree)).toBe(worktree)
     })
 
-    it('falls back to <root>/orchestrator when the root is missing tsconfig.json', () => {
+    it('falls back to the sole qualifying subdirectory when the root lacks tsconfig.json', () => {
+      // No specific directory name ('orchestrator', etc.) is probed — the scan
+      // is generic and picks the one subdir that has both package.json and tsconfig.json.
       writeFileSync(resolve(worktree, 'package.json'), '{}')
-      const sub = resolve(worktree, 'orchestrator')
+      const sub = resolve(worktree, 'backend')
       mkdirSync(sub)
       writeFileSync(resolve(sub, 'package.json'), '{}')
       writeFileSync(resolve(sub, 'tsconfig.json'), '{}')
@@ -262,8 +264,9 @@ describe('deriveReproCommand', () => {
       expect(resolveVerifyCwd(worktree)).toBe(worktree)
     })
 
-    it('TS heuristic takes priority over manifest when the root is itself a TS project', () => {
-      // Root has package.json + tsconfig.json → TS check fires before manifest lookup.
+    it('manifest takes priority over TS heuristic even when the root is itself a TS project', () => {
+      // Root has package.json + tsconfig.json — old code returned root here.
+      // Manifest is now the primary source of truth and wins regardless.
       writeFileSync(resolve(worktree, 'package.json'), '{}')
       writeFileSync(resolve(worktree, 'tsconfig.json'), '{}')
       const marsDir = resolve(worktree, '.mars', 'supervisors')
@@ -274,15 +277,15 @@ describe('deriveReproCommand', () => {
           version: 1,
           supervisors: [
             {
-              name: 'orchestrator',
-              scope: 'orchestrator',
-              verifyCwd: 'orchestrator',
+              name: 'backend',
+              scope: 'backend',
+              verifyCwd: 'backend',
             },
           ],
           removed: [],
         }),
       )
-      expect(resolveVerifyCwd(worktree)).toBe(worktree)
+      expect(resolveVerifyCwd(worktree)).toBe(resolve(worktree, 'backend'))
     })
 
     it('ignores root-scoped supervisor (scope ".") when looking for manifest override', () => {
@@ -386,5 +389,23 @@ describe('buildVerifyReproHint', () => {
     ]
     const hint = buildVerifyReproHint(steps)
     expect(hint).toContain('cd /worktree/apps/api')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Regression: no Mars-specific path literals in resolveVerifyCwd source
+// ---------------------------------------------------------------------------
+
+describe('regression: no hardcoded Mars subdirectory name in derive-repro-command.ts', () => {
+  it('resolveVerifyCwd does not hardcode a Mars-specific subdirectory name in a resolve() call', () => {
+    const src = readFileSync(resolve(__dirname, '../derive-repro-command.ts'), 'utf8')
+    // Strip comments so explanatory prose does not trigger the check.
+    const withoutComments = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+    // resolve(x, 'orchestrator') would name Mars's own layout — forbidden in
+    // framework code that runs against the orchestrated (consumer) repo.
+    expect(
+      withoutComments,
+      "found resolve(..., 'orchestrator') — a Mars-specific path literal",
+    ).not.toMatch(/resolve\s*\([^)]*'orchestrator'/)
   })
 })

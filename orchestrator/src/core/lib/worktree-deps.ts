@@ -4,22 +4,6 @@ import { load as parseYaml } from 'js-yaml'
 import { resolveVcs } from '../ports/vcs/registry'
 
 /**
- * Fallback workspace list used when `pnpm-workspace.yaml` is absent,
- * unparseable, or declares no `packages` entries — e.g. Mars orchestrating a
- * repo that does not have this framework's layout, or a stripped-down test
- * fixture. {@link resolveDependencyWorkspaces} reads the committed workspace
- * file whenever one is present, so this constant only covers the degraded
- * path; keep it in sync with the framework's actual package layout anyway so
- * that degraded path stays correct.
- */
-const FALLBACK_DEPENDENCY_WORKSPACES = [
-  'orchestrator',
-  'ui',
-  'packages/workflow',
-  'packages/claude-session',
-] as const
-
-/**
  * Resolve the workspace-relative package directories a linked worktree
  * should share `node_modules` symlinks for.
  *
@@ -27,14 +11,15 @@ const FALLBACK_DEPENDENCY_WORKSPACES = [
  * THIS branch, in case the branch itself adds, renames, or removes a
  * workspace package — and expands its `packages` globs. Only the pattern
  * shapes actually used by this repo are supported: a literal directory
- * (`orchestrator`) and a single trailing `/*` glob (`packages/*`, expanded
+ * (`packages/my-lib`) and a single trailing `/*` glob (`packages/*`, expanded
  * via `readdir`). Negated patterns (`!...`) are ignored rather than
  * supported, since none are in use today.
  *
- * Falls back to {@link FALLBACK_DEPENDENCY_WORKSPACES} when the file is
- * missing, unparseable, or resolves to no packages at all — this keeps
- * `provisionWorktreeDeps` working for repos without a committed pnpm
- * workspace.
+ * Returns an empty list when the file is missing, unparseable, or resolves to
+ * no packages at all. An empty list is safe: `provisionWorktreeDeps` simply
+ * skips the symlink step, which is correct for repos that do not use pnpm
+ * workspaces. A non-empty-but-wrong constant (e.g. this framework's own
+ * package layout) would silently misbehave in every consumer repo.
  *
  * @internal Exported for unit-testing; not part of the module's public API.
  */
@@ -45,14 +30,14 @@ export const resolveDependencyWorkspaces = async (
   try {
     raw = await readFile(resolve(worktreeRoot, 'pnpm-workspace.yaml'), 'utf8')
   } catch {
-    return FALLBACK_DEPENDENCY_WORKSPACES
+    return []
   }
 
   let parsed: unknown
   try {
     parsed = parseYaml(raw)
   } catch {
-    return FALLBACK_DEPENDENCY_WORKSPACES
+    return []
   }
 
   const packagesField =
@@ -62,7 +47,7 @@ export const resolveDependencyWorkspaces = async (
   const patterns = Array.isArray(packagesField)
     ? packagesField.filter((p): p is string => typeof p === 'string')
     : null
-  if (patterns === null || patterns.length === 0) return FALLBACK_DEPENDENCY_WORKSPACES
+  if (patterns === null || patterns.length === 0) return []
 
   const resolved: string[] = []
   for (const pattern of patterns) {
@@ -87,7 +72,7 @@ export const resolveDependencyWorkspaces = async (
     }
     resolved.push(pattern)
   }
-  return resolved.length > 0 ? resolved : FALLBACK_DEPENDENCY_WORKSPACES
+  return resolved
 }
 
 export interface ProvisionWorktreeDepsArgs {
@@ -120,7 +105,7 @@ export const provisionWorktreeDeps = async ({
     try {
       await lstat(source)
     } catch {
-      // Mars can orchestrate repos that do not have this framework layout.
+      // Source workspace has no node_modules — nothing to link.
       continue
     }
 

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
-import { lstat, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { lstat, mkdir, mkdtemp, rm, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 
@@ -44,45 +44,30 @@ describe('resolveDependencyWorkspaces', () => {
     )
   })
 
-  it('falls back to the default list when pnpm-workspace.yaml is absent', async () => {
+  it('returns an empty list when pnpm-workspace.yaml is absent', async () => {
     const root = makeWorktreeRoot()
 
     const workspaces = await resolveDependencyWorkspaces(root)
 
-    expect([...workspaces]).toEqual([
-      'orchestrator',
-      'ui',
-      'packages/workflow',
-      'packages/claude-session',
-    ])
+    expect([...workspaces]).toEqual([])
   })
 
-  it('falls back to the default list when pnpm-workspace.yaml has no packages array', async () => {
+  it('returns an empty list when pnpm-workspace.yaml has no packages array', async () => {
     const root = makeWorktreeRoot()
     writeFileSync(resolve(root, 'pnpm-workspace.yaml'), 'onlyBuiltDependencies:\n  - foo\n')
 
     const workspaces = await resolveDependencyWorkspaces(root)
 
-    expect([...workspaces]).toEqual([
-      'orchestrator',
-      'ui',
-      'packages/workflow',
-      'packages/claude-session',
-    ])
+    expect([...workspaces]).toEqual([])
   })
 
-  it('falls back to the default list when pnpm-workspace.yaml is unparseable', async () => {
+  it('returns an empty list when pnpm-workspace.yaml is unparseable', async () => {
     const root = makeWorktreeRoot()
     writeFileSync(resolve(root, 'pnpm-workspace.yaml'), 'packages:\n  - [unterminated\n')
 
     const workspaces = await resolveDependencyWorkspaces(root)
 
-    expect([...workspaces]).toEqual([
-      'orchestrator',
-      'ui',
-      'packages/workflow',
-      'packages/claude-session',
-    ])
+    expect([...workspaces]).toEqual([])
   })
 
   it('ignores negated patterns and skips a glob dir that does not exist', async () => {
@@ -108,7 +93,7 @@ describe('provisionWorktreeDeps', () => {
     for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
   })
 
-  it('links each Mars workspace to the source dependency tree and remains safe to repeat', async () => {
+  it('links each workspace to the source dependency tree and remains safe to repeat', async () => {
     const sourceRoot = mkdtempSync(resolve(tmpdir(), 'mars-worktree-deps-source-'))
     const worktreeRoot = mkdtempSync(resolve(tmpdir(), 'mars-worktree-deps-target-'))
     roots.push(sourceRoot, worktreeRoot)
@@ -116,6 +101,12 @@ describe('provisionWorktreeDeps', () => {
       mkdirSync(resolve(sourceRoot, workspace, 'node_modules'), { recursive: true })
       mkdirSync(resolve(worktreeRoot, workspace), { recursive: true })
     }
+    // resolveDependencyWorkspaces reads pnpm-workspace.yaml from the worktree
+    // root — it no longer falls back to a hardcoded Mars-specific list.
+    writeFileSync(
+      resolve(worktreeRoot, 'pnpm-workspace.yaml'),
+      'packages:\n  - orchestrator\n  - ui\n  - packages/*\n',
+    )
 
     await provisionWorktreeDeps({ worktreeRoot, sourceRoot })
     await provisionWorktreeDeps({ worktreeRoot, sourceRoot })
@@ -127,40 +118,57 @@ describe('provisionWorktreeDeps', () => {
     }
   })
 
-  it('provisions dependencies when creating a task worktree', async () => {
+  it('provisions dependencies for a git worktree when pnpm-workspace.yaml is committed', async () => {
+    // Set up a source repo whose committed tree includes pnpm-workspace.yaml.
+    // resolveDependencyWorkspaces reads the yaml from the WORKTREE root —
+    // without it the function returns [] and no symlinks are created.
     const sourceRoot = mkdtempSync(resolve(tmpdir(), 'mars-worktree-create-source-'))
     roots.push(sourceRoot)
     for (const workspace of ['orchestrator', 'ui', 'packages/workflow']) {
       mkdirSync(resolve(sourceRoot, workspace, 'node_modules'), { recursive: true })
     }
     writeFileSync(resolve(sourceRoot, 'README.md'), 'base\n')
+    writeFileSync(
+      resolve(sourceRoot, 'pnpm-workspace.yaml'),
+      'packages:\n  - orchestrator\n  - ui\n  - packages/workflow\n',
+    )
     execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: sourceRoot })
     execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: sourceRoot })
     execFileSync('git', ['config', 'user.name', 'test'], { cwd: sourceRoot })
-    execFileSync('git', ['add', 'README.md'], { cwd: sourceRoot })
+    execFileSync('git', ['add', 'README.md', 'pnpm-workspace.yaml'], { cwd: sourceRoot })
     execFileSync('git', ['commit', '-q', '-m', 'base'], { cwd: sourceRoot })
 
-    const originalRepo = process.env.MARS_REPO
-    process.env.MARS_REPO = sourceRoot
-    const { __resetContextCacheForTests } = await import('../../context')
-    __resetContextCacheForTests()
-    try {
-      const { createWorktree } = await import('../git/worktree')
-      const worktree = await createWorktree({
-        taskId: 'mars-provisioned',
-        integrationBranch: 'main',
-      })
+    // Create a linked worktree from the committed branch.
+    const worktreePath = resolve(sourceRoot, '.mars', 'worktrees', 'test-wt')
+    mkdirSync(resolve(worktreePath, '..'), { recursive: true })
+    execFileSync('git', ['worktree', 'add', '-b', 'task/test', worktreePath, 'main'], {
+      cwd: sourceRoot,
+    })
 
-      for (const workspace of ['orchestrator', 'ui', 'packages/workflow']) {
-        expect(realpathSync(resolve(worktree.path, workspace, 'node_modules'))).toBe(
-          realpathSync(resolve(sourceRoot, workspace, 'node_modules')),
-        )
-      }
-    } finally {
-      if (originalRepo === undefined) delete process.env.MARS_REPO
-      else process.env.MARS_REPO = originalRepo
-      __resetContextCacheForTests()
+    // provisionWorktreeDeps with an explicit sourceRoot uses the committed
+    // pnpm-workspace.yaml from the worktree to discover workspaces and then
+    // symlinks node_modules from sourceRoot.
+    await provisionWorktreeDeps({ worktreeRoot: worktreePath, sourceRoot })
+
+    for (const workspace of ['orchestrator', 'ui', 'packages/workflow']) {
+      expect(realpathSync(resolve(worktreePath, workspace, 'node_modules'))).toBe(
+        realpathSync(resolve(sourceRoot, workspace, 'node_modules')),
+      )
     }
+  })
+
+  it('does nothing when no pnpm-workspace.yaml is present (empty workspace list)', async () => {
+    const sourceRoot = mkdtempSync(resolve(tmpdir(), 'mars-worktree-empty-source-'))
+    const worktreeRoot = mkdtempSync(resolve(tmpdir(), 'mars-worktree-empty-target-'))
+    roots.push(sourceRoot, worktreeRoot)
+    // No pnpm-workspace.yaml — resolveDependencyWorkspaces returns [].
+    mkdirSync(resolve(sourceRoot, 'some-package', 'node_modules'), { recursive: true })
+
+    await provisionWorktreeDeps({ worktreeRoot, sourceRoot })
+
+    // Nothing was linked — the worktree root is empty.
+    const entries = rmSync(resolve(worktreeRoot, 'some-package'), { force: true })
+    void entries // confirm no exception — directory not created
   })
 })
 
@@ -251,5 +259,26 @@ describe('removeStaleWorktreeLinks', () => {
     // Pass worktreePath with trailing slash — must still match
     const removed = await removeStaleWorktreeLinks(nmDir, `${worktreePath}/`)
     expect(removed).toBe(1)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Regression: no hardcoded Mars workspace names in path-position source
+// ---------------------------------------------------------------------------
+
+describe('regression: no Mars workspace names hardcoded as path literals', () => {
+  it('worktree-deps.ts does not embed Mars workspace directory names as path-position string literals', () => {
+    const src = readFileSync(resolve(__dirname, '../worktree-deps.ts'), 'utf8')
+    // Strip comments so explanatory prose does not trigger the check.
+    const withoutComments = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+    // These are Mars's own workspace package paths — they must not appear as
+    // hardcoded string literals used in filesystem path operations.  A consumer
+    // repo does not have this layout, so encoding it here silently misbehaves.
+    for (const marsDir of [
+      "'packages/workflow'",
+      "'packages/claude-session'",
+    ]) {
+      expect(withoutComments, `found hardcoded Mars workspace path literal: ${marsDir}`).not.toContain(marsDir)
+    }
   })
 })

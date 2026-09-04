@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, lstatSync, readdirSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 /**
@@ -99,38 +99,27 @@ export interface RanVerifyStep {
 /**
  * Mirror of `resolveVerifyCwd` in `workflows/implement-workflow.ts`. The
  * verify step doesn't always run at the worktree root: if the project
- * lives in a subdirectory (e.g. `orchestrator/` in this repo), verify
- * resolves there instead. A repro command rooted at the worktree would
- * not actually reproduce the failure — it would either fail to find the
- * test runner or run a different test set. Both call sites must use the
- * same heuristic; keeping the implementation here and importing from
- * the workflow guarantees they cannot drift.
+ * lives in a subdirectory, verify resolves there instead. A repro command
+ * rooted at the worktree would not actually reproduce the failure — it would
+ * either fail to find the test runner or run a different test set. Both call
+ * sites must use the same heuristic; keeping the implementation here and
+ * importing from the workflow guarantees they cannot drift.
  *
  * Resolution order:
  *
- * 1. TS-specific heuristic: a directory is a project if it has both
- *    `package.json` AND `tsconfig.json`. Worktree root wins; otherwise
- *    fall back to `<worktreeRoot>/orchestrator`.
- * 2. Config override from the supervisors manifest
- *    (`.mars/supervisors/manifest.json`). Activated only when the TS
- *    heuristic finds no project — covers non-JS monorepos (Kotlin,
- *    Python, Rust, …) that lack package.json/tsconfig.json. The override
- *    is used only when exactly one non-root `verifyCwd` value appears
- *    across all supervisor entries; multiple distinct values are
- *    ambiguous and fall through to the default.
+ * 1. Config from the supervisors manifest (`.mars/supervisors/manifest.json`)
+ *    — the primary, authoritative source for a repo's layout. Activated when
+ *    exactly one non-root `verifyCwd` value appears across all supervisor
+ *    entries; multiple distinct values are ambiguous and fall through.
+ * 2. TS-specific heuristic: a directory is a project if it has both
+ *    `package.json` AND `tsconfig.json`. Worktree root wins; otherwise a
+ *    generic scan of immediate subdirectories is performed — if exactly one
+ *    qualifies, it is used. No specific subdirectory name is hardcoded.
  * 3. Worktree root unchanged (safe default for single-project repos
  *    whose verify commands run from the repo root).
  */
 export const resolveVerifyCwd = (worktreeRoot: string): string => {
-  // 1. TS-specific heuristic.
-  const hasProject = (dir: string): boolean =>
-    existsSync(resolve(dir, 'package.json')) &&
-    existsSync(resolve(dir, 'tsconfig.json'))
-  if (hasProject(worktreeRoot)) return worktreeRoot
-  const orchestrator = resolve(worktreeRoot, 'orchestrator')
-  if (hasProject(orchestrator)) return orchestrator
-
-  // 2. Supervisors manifest override for non-JS monorepos.
+  // 1. Supervisors manifest — primary source of truth for the repo's layout.
   const entries = readSupervisorsManifest(worktreeRoot)
   const cwds = new Set(
     entries
@@ -138,6 +127,29 @@ export const resolveVerifyCwd = (worktreeRoot: string): string => {
       .filter((v) => v !== '.' && v !== ''),
   )
   if (cwds.size === 1) return resolve(worktreeRoot, [...cwds][0])
+
+  // 2. TS-specific heuristic: root wins when it is itself a TS project;
+  //    otherwise scan immediate subdirectories generically — no specific
+  //    directory name (e.g. 'orchestrator') is hardcoded here.
+  const hasProject = (dir: string): boolean =>
+    existsSync(resolve(dir, 'package.json')) &&
+    existsSync(resolve(dir, 'tsconfig.json'))
+  if (hasProject(worktreeRoot)) return worktreeRoot
+
+  try {
+    const subDirs: string[] = []
+    for (const entry of readdirSync(worktreeRoot)) {
+      const sub = resolve(worktreeRoot, entry)
+      try {
+        if (lstatSync(sub).isDirectory() && hasProject(sub)) subDirs.push(sub)
+      } catch {
+        // Unreadable entry — skip.
+      }
+    }
+    if (subDirs.length === 1) return subDirs[0]
+  } catch {
+    // worktreeRoot is unreadable — fall through to default.
+  }
 
   // 3. Default.
   return worktreeRoot

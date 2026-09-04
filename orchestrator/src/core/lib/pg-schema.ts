@@ -1421,23 +1421,6 @@ const DDL: readonly string[] = [
   // Added in schema 0039; required before any verify_gates SELECT that
   // projects `evidence` so a restarted daemon migrates it first.
   `ALTER TABLE verify_gates ADD COLUMN IF NOT EXISTS evidence text`,
-  // Data migration 0040: the `scope=orchestrator, name=test` gate runs
-  // `npm test` (vitest run over the full suite — 844 files, maxForks=1).
-  // Measured wall-clock: ~3 h 20 min.  The original timeout_min=20 was off by
-  // ~10×; the gate always timed out at the integration boundary and the signal
-  // was never actionable.  Drop required=1 so it no longer blocks merges.
-  // A scoped task-tier gate (fast unit subset) should be added to restore the
-  // merge-time signal at a tractable budget.
-  //
-  // Previously placed in ensureVerifyGatesSchema (only called by `mars init`),
-  // which meant it never ran on existing repos.  Moved here so it applies on
-  // every daemon start via runCompositionRootMigrations → ensureSchema.
-  `UPDATE verify_gates
-      SET required = 0
-    WHERE scope = 'orchestrator' AND name = 'test'
-      AND tier = 'integration' AND required = 1
-      AND (timeout_min IS NULL OR timeout_min <= 20)`,
-
   // ── quarantined verify-gate repair proposals ─────────────────────────────
   // The unique quarantine episode key is the durable idempotency boundary for
   // the gate-fix Steward. A replay may re-run diagnosis, but it can never
