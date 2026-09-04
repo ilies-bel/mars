@@ -6663,6 +6663,21 @@ export const startDaemon = async (
   )
   usageSamplerInterval.unref()
 
+  // ── Subject eviction sweep ────────────────────────────────────────────────
+  // Periodically re-scores all closed non-archived Subjects and archives those
+  // whose relevance score has decayed below MARS_EVICTION_THRESHOLD (default
+  // 0.1). On each pass that evicts at least one Subject a view.chat-invalidated
+  // event is emitted so the UI refreshes live. Default cadence: 1 hour
+  // (MARS_EVICTION_INTERVAL_MS to override). .unref() so the interval never
+  // prevents a clean daemon shutdown.
+  const { runEvictionSweep } = await import('../subject/eviction-sweep.js')
+  const evictionInterval = setInterval(() => {
+    void runEvictionSweep(resolveStateClient()).then((r) => {
+      if (r.evicted > 0) bus.emit('view.chat-invalidated')
+    })
+  }, parseInt(process.env.MARS_EVICTION_INTERVAL_MS ?? '3600000', 10))
+  evictionInterval.unref()
+
   // ── Shutdown ──────────────────────────────────────────────────────────────
 
   const shutdown = async (force = false): Promise<void> => {
@@ -6673,6 +6688,7 @@ export const startDaemon = async (
     drainsHandle.stop()
     clearInterval(devStalenessCheck)
     clearInterval(usageSamplerInterval)
+    clearInterval(evictionInterval)
     deferralWakeSweeper.stop()
     baselinePauseWatcher.stop()
     healthScheduler.stop()
