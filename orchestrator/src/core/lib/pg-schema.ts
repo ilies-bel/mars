@@ -2329,6 +2329,7 @@ export const SCHEMA_TABLES: readonly string[] = [
   'gate_fix_proposals',
   'kpi_snapshots',
   'kpi_counters',
+  'kpi_acknowledged_baselines',
   'promotion_ledger',
   'scorers',
   'scorer_results',
