@@ -12,7 +12,8 @@
   },
   "scripts": {
     "sync-claude-templates": "bash ./scripts/sync-claude-templates.sh",
-    "mars:bundle:refresh": "bash ./scripts/sync-claude-templates.sh",
+    "mars:gen:ui-kinds": "tsx scripts/gen-ui-kinds.ts",
+    "mars:bundle:refresh": "bash ./scripts/sync-claude-templates.sh && npm run mars:gen:ui-kinds",
     "sync-version": "node ./scripts/sync-version.mjs",
     "prebuild": "node ./scripts/sync-version.mjs",
     "build": "tsc --noEmit",

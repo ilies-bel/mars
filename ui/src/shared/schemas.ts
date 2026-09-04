@@ -1,4 +1,7 @@
 import { z } from 'zod'
+import { conditionKinds, taskFailureKinds } from './action-queue-kinds.generated'
+// Re-export so consumers that import from schemas.ts continue to work unchanged.
+export { conditionKinds, taskFailureKinds }
 
 const taskStatusSchema = z.enum([
   'draft',
@@ -473,106 +476,31 @@ const staleWorktreeDetailSchema = z.object({
   investigation: z.string().nullable(),
 })
 
-// The daemon classifies every ActionQueueKind outside NON_TASK_FAILURE_KINDS
-// (orchestrator/src/core/daemon/view/action-queue.ts) as a task failure. This
-// list is a hand-maintained mirror of that complement, so task-failure rows
-// retain their raw wire kind.
+// `taskFailureKinds` is generated from the orchestrator source of truth —
+// see action-queue-kinds.generated.ts. Regenerate with:
+//   npm --prefix orchestrator run mars:gen:ui-kinds
 //
-// `taskFailureKinds.driftGate.test.ts` recomputes the complement directly
-// from the orchestrator sources and fails if this list disagrees — that is
-// what keeps this mirror honest now. It has drifted before (eleven kinds
-// were missing as of 2026-08-24, following an earlier drift that omitted
-// `recovery-abandoned` and produced the EXTRA_GROUPABLE_CONDITION_KINDS
-// carve-out in entities/actionQueue/clusterRows.ts before that carve-out was
-// replaced by fixing the mirror directly) — if the drift gate ever starts
-// failing, fix this list, do not loosen the gate.
-//
-// Adding a kind here is not free: this list is also the `z.enum` backing
-// `taskFailureItemSchema` below, so it changes how rows parse, not just how
-// they group.
-export const taskFailureKinds = [
-  'failed',
-  'steward-repeat',
-  'cancelled-blocker-cascade',
-  'diagnose-inconclusive',
-  'daemon-killed',
-  'coder-question',
-  'daemon-died',
-  'worktree-ahead',
-  'prerequisite-failed',
-  'slices-dropped',
-  'slice-failed',
-  'behaviour-unverified',
-  'subscriber-stalled',
-  'observability-store-oversize',
-  'orphaned-origin',
-  'phantom-task',
-  'outbox-lag',
-  'recovery-abandoned',
-  'done-with-unmerged-commits',
-  'api-outage',
-  'daemon-code-drift',
-  'workflow-install-drift',
-  'provider-rate-limited',
-  'gate-broken',
-  'verify-uncovered',
-  'gate-enrichment',
-  'budget-window',
-  'budget-arc',
-  'promotion-decision',
-  'arc-verification-failed',
-  'signature-storm',
-  'gate-enrichment-stale',
-  'env-incident',
-  'stale-queued',
-  'stale-queued-summary',
-  'spend-control-notice',
-  'scheduling-decision',
-  'requeue-warning',
-  'arc-superseded-on-main',
-  'e2e-tooling-missing',
-  'low-disk-space',
-  'baseline-broken',
-  'dirty-integration',
-  'fragmented-repo-layout',
-  'mockup-ready',
-  'qa-step-list-opt-in',
-  'qa-step-list-promote',
-] as const
+// It has drifted before (eleven kinds were missing as of 2026-08-24). The
+// drift-gate test (taskFailureKinds.driftGate.test.ts) recomputes the
+// complement directly from orchestrator sources and fails on any mismatch.
+// Adding a kind is not free: `taskFailureKinds` also backs the `z.enum` in
+// `taskFailureItemSchema` below, so it changes how rows parse, not just group.
+// (imported above and re-exported at the top of this file)
 
 /** Mirrors the daemon's task-failure classification for persisted kinds. */
 export const isTaskFailureActionQueueKind = (kind: string): boolean =>
   (taskFailureKinds as readonly string[]).includes(kind)
 
-// Mirror of DERIVED_KINDS from orchestrator/src/core/lib/action-queue-kinds.ts.
+// `conditionKinds` is generated from the orchestrator source of truth —
+// see action-queue-kinds.generated.ts. Regenerate with:
+//   npm --prefix orchestrator run mars:gen:ui-kinds
 //
-// Derived kinds are derived on read from live system state — there is no
-// stored row to close. Whether a derived-kind row survives a verb depends
-// entirely on whether the underlying condition still holds after the verb, which
-// only the refetched feed knows. DO NOT optimistically hide derived-kind rows
-// on verb success; let the row disappear because the refetched feed no longer
-// contains it (or stay, because the condition persists).
-//
-// conditionKinds.driftGate.test.ts recomputes the expected set directly from
-// the orchestrator source and fails if this list disagrees — fix this list
-// when the gate fires, do not loosen the gate.
-export const conditionKinds = [
-  'failed',
-  'stale-queued',
-  'stale-queued-summary',
-  'gate-broken',
-  'subscriber-stalled',
-  'signature-storm',
-  'daemon-died',
-  'daemon-code-drift',
-  'baseline-broken',
-  'stale-worktree',
-  'phantom-task',
-  'worktree-ahead',
-  'orphaned-origin',
-  'steward-repeat',
-  'e2e-tooling-missing',
-] as const
+// Derived kinds are derived on every read from live state — no stored row to
+// close. DO NOT optimistically hide rows of these kinds on verb success; let
+// the refetched feed decide (the row vanishes when the predicate goes false).
+// The drift-gate test (conditionKinds.driftGate.test.ts) asserts this constant
+// matches DERIVED_KINDS in the orchestrator source exactly.
+// (imported above and re-exported at the top of this file)
 
 /** True when this action-queue kind is a condition derived from live state. */
 export const isConditionActionQueueKind = (kind: string): boolean =>

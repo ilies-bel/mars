@@ -32,3 +32,9 @@ jobs:
             exit 1
           fi
           echo "Bundled templates are in sync with source."
+          if ! git diff --quiet -- ../ui/src/shared/action-queue-kinds.generated.ts; then
+            echo "::error::ui/src/shared/action-queue-kinds.generated.ts is stale. Run 'npm --prefix orchestrator run mars:gen:ui-kinds' and commit the result."
+            git --no-pager diff --stat -- ../ui/src/shared/action-queue-kinds.generated.ts
+            exit 1
+          fi
+          echo "Generated UI kinds are in sync with orchestrator source."
