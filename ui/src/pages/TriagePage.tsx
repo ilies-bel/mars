@@ -144,7 +144,6 @@ const KIND_LABEL: Record<ActionQueueKind, string> = {
   'worktree-hook-trust-request': 'hook trust',
   'phantom-merge': 'phantom merge',
   'phantom-merge-unknown': 'phantom merge?',
-  'slicer-transport-outage': 'slicer outage',
 }
 
 /** Left accent bar color per kind. */
