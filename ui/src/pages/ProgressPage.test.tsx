@@ -325,13 +325,11 @@ describe('ProgressPage – search zero-state not shown on initial load', () => {
 // Landing view + removed proposal filter
 // ---------------------------------------------------------------------------
 
-describe('ProgressPage – Topology is the landing view', () => {
-  it('opens on Topology when the URL does not name a view', () => {
-    // Previously a localStorage preference could pin Board as the landing view
-    // permanently, so the declared default never applied again.
+describe('ProgressPage – Board is the landing view', () => {
+  it('opens on Board when the URL does not name a view', () => {
     const html = renderToStaticMarkup(<ProgressPage />)
-    const topologyTab = html.slice(html.indexOf('data-testid="tab-topology"') - 120)
-    expect(topologyTab.slice(0, 200)).toContain('aria-selected="true"')
+    const boardTab = html.slice(html.indexOf('data-testid="tab-board"') - 120)
+    expect(boardTab.slice(0, 200)).toContain('aria-selected="true"')
   })
 
   it('no longer renders the proposal filter', () => {
@@ -449,19 +447,19 @@ describe('ProgressPage – hot paths tab', () => {
     expect(html).toContain('Hot paths')
   })
 
-  it('hot-paths tab is not selected by default (topology is)', () => {
+  it('hot-paths tab is not selected by default (board is)', () => {
     const html = renderToStaticMarkup(<ProgressPage />)
-    // Topology tab must be the selected one
-    const topologyIdx = html.indexOf('data-testid="tab-topology"')
+    // Board tab must be the selected one
+    const boardIdx = html.indexOf('data-testid="tab-board"')
     const hotPathsIdx = html.indexOf('data-testid="tab-hot-paths"')
-    expect(topologyIdx).toBeGreaterThan(-1)
+    expect(boardIdx).toBeGreaterThan(-1)
     expect(hotPathsIdx).toBeGreaterThan(-1)
-    // aria-selected="true" appears before topology's testid (it's in the same element)
-    const topologyBtn = html.slice(topologyIdx - 200, topologyIdx + 50)
-    expect(topologyBtn).toContain('aria-selected="true"')
+    // aria-selected="true" appears before board's testid (it's in the same element)
+    const boardBtn = html.slice(boardIdx - 200, boardIdx + 50)
+    expect(boardBtn).toContain('aria-selected="true"')
   })
 
-  it('hot-paths section is not visible when topology tab is active (default)', () => {
+  it('hot-paths section is not visible when board tab is active (default)', () => {
     const html = renderToStaticMarkup(<ProgressPage />)
     expect(html).not.toContain('data-testid="hot-paths-section"')
   })
@@ -474,7 +472,7 @@ describe('ProgressPage – hot paths tab', () => {
     // checking the data-testid attributes.
     // Since the section requires the tab to be active and we cannot trigger
     // click events in static markup, we verify the tab button exists and the
-    // section is absent on default render (topology active).
+    // section is absent on default render (board active).
     const html = renderToStaticMarkup(<ProgressPage />)
     expect(html).toContain('data-testid="tab-hot-paths"')
     // Window + group controls only render when hot-paths tab is active

@@ -1,9 +1,8 @@
-import { Fragment, useRef } from 'react'
+import { Fragment } from 'react'
 import type { ChatConversationEntry, PreloadedResponse, SubjectBoundary } from '@/shared/schemas'
 import { MemoryBoundaryLine } from './MemoryBoundaryLine'
 import { PreloadedResponses } from './PreloadedResponses'
 import { SubjectBoundaryLine } from './SubjectBoundaryLine'
-import { TypedBody, markRevealed } from './TypedBody'
 
 export interface ConversationTimelineProps {
   entries: ChatConversationEntry[]
@@ -101,15 +100,6 @@ export const ConversationTimeline = ({
   const visibleEntries = entries.filter((entry) => entry.threadId !== activeThreadId)
   const boundariesBySubject = new Map(boundaries.map((boundary) => [boundary.subjectId, boundary]))
 
-  // Everything present on the first render is backlog, not arrival. Marking it
-  // during render (before any child effect runs) is what stops a page load
-  // from replaying the whole conversation as if Mars were typing it now.
-  const primed = useRef(false)
-  if (!primed.current) {
-    primed.current = true
-    markRevealed(visibleEntries.map((entry) => entry.id))
-  }
-
   // Group entries by subject, preserving chronological order of first appearance.
   // Closed subjects collapse to one breadcrumb row; open subjects render their
   // messages individually so streamed content stays live.
@@ -196,15 +186,7 @@ export const ConversationTimeline = ({
                       <span data-testid="conversation-message-resolved">Resolved</span>
                     )}
                   </header>
-                  {isNotice ? (
-                    <TypedBody
-                      id={entry.id}
-                      text={body}
-                      className="whitespace-pre-wrap font-mono text-body text-foreground"
-                    />
-                  ) : (
-                    <p className="whitespace-pre-wrap font-mono text-body text-foreground">{body}</p>
-                  )}
+                  <p className="whitespace-pre-wrap font-mono text-body text-foreground">{body}</p>
                 </article>
                 {hasMemoryCut && <MemoryBoundaryLine />}
               </Fragment>
@@ -285,15 +267,7 @@ export const ConversationTimeline = ({
                     <span data-testid="conversation-message-resolved">Resolved</span>
                   )}
                 </header>
-                {isNotice ? (
-                  <TypedBody
-                    id={entry.id}
-                    text={body}
-                    className="whitespace-pre-wrap font-mono text-body text-foreground"
-                  />
-                ) : (
-                  <p className="whitespace-pre-wrap font-mono text-body text-foreground">{body}</p>
-                )}
+                <p className="whitespace-pre-wrap font-mono text-body text-foreground">{body}</p>
                 {entry.segments.filter(isOfferSegment).map((segment) => (
                   <PreloadedResponses
                     key={`${entry.id}-preloaded-responses`}
