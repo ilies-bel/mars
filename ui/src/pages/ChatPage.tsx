@@ -2811,10 +2811,14 @@ export const ChatPage = () => {
   // behaviour unchanged.
   useEffect(() => {
     const onHashChange = () => {
-      const { thread } = readAqStateFromUrl()
+      const { thread, item } = readAqStateFromUrl()
       if (thread) {
         setSelectedThreadId(thread)
         setSelectedQueueItemId(null)
+        setWhatHappenedActive(false)
+      } else if (item) {
+        setSelectedQueueItemId(item)
+        setSelectedThreadId(null)
         setWhatHappenedActive(false)
       }
     }
@@ -2844,16 +2848,38 @@ export const ChatPage = () => {
 
   // Deep link: when the selected queue item is backed by an alert-origin
   // conversation, open the conversation instead (the merged sidebar entry).
+  // When no thread exists yet, resolve (or create) one via
+  // resolveThreadForItem — the same path the triage page used to call eagerly
+  // on click now runs lazily on arrival so the link can carry just the item id.
+  const resolvingItemRef = useRef<string | null>(null)
   useEffect(() => {
     if (selectedQueueItemId === null) return
-    const thread = (threadsData ?? []).find(
+    const existing = (threadsData ?? []).find(
       (t) => t.origin === 'alert' && t.alertItemId === selectedQueueItemId,
     )
-    if (thread) {
-      setSelectedThreadId(thread.id)
+    if (existing) {
+      setSelectedThreadId(existing.id)
       setSelectedQueueItemId(null)
+      return
     }
-  }, [selectedQueueItemId, threadsData])
+    // No existing thread — resolve one from the queue item data.
+    const queueItem = queueItems.find((i) => i.id === selectedQueueItemId)
+    if (!queueItem) return // data not loaded yet; effect re-runs when it arrives
+    if (resolvingItemRef.current === selectedQueueItemId) return // already in flight
+    resolvingItemRef.current = selectedQueueItemId
+    resolveThreadForItem(queueItem, projectId, qc)
+      .then((threadId) => {
+        void qc.invalidateQueries({ queryKey: ['chat-threads'] })
+        setSelectedThreadId(threadId)
+        setSelectedQueueItemId(null)
+      })
+      .catch(() => {
+        // resolution failed — leave the item selected so the projection view shows
+      })
+      .finally(() => {
+        resolvingItemRef.current = null
+      })
+  }, [selectedQueueItemId, threadsData, queueItems, projectId, qc])
 
   // Start a fresh inline Subthread in one gesture. The daemon commits the
   // situation report and first user message together before starting the run,
