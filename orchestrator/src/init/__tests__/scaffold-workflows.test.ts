@@ -447,6 +447,40 @@ describe('updateWorkflows — ADR-0057 ownership', () => {
   })
 })
 
+describe('remerge-workflow.js template — conflict resolution contract', () => {
+  /**
+   * The remerge workflow must pass `onConflict: 'reconcile'` to `setupWorktree`
+   * so that when main moves between the task's completion and the remerge
+   * dispatch, a setup rebase conflict dispatches Vega instead of failing the
+   * task outright.
+   *
+   * Without this option (or with the stale default `'recreate'`), setup would
+   * park the task's commits on a parked ref and reset the branch to the
+   * integration tip — after which `isZeroCommitBranch` fires and the merge is
+   * skipped with `status='done'` while the commits were never integrated
+   * (silent data loss, mars-fe86ca8f). `setupWorktree` also has a guard that
+   * auto-promotes a `workflow=remerge` task to `'reconcile'` when the template
+   * is stale, but the template must carry the explicit option so that guard is
+   * only a safety net, not the primary path.
+   */
+  it("contains onConflict: 'reconcile' so setup-rebase conflicts dispatch Vega", () => {
+    const copies = planWorkflowCopies(repoRoot)
+    const remerge = copies.find((c) => c.rel.endsWith('remerge-workflow.js'))
+    expect(remerge).toBeDefined()
+    const source = readFileSync(remerge!.src, 'utf8')
+    expect(source).toContain("onConflict: 'reconcile'")
+  })
+
+  it('exports a defineWorkflow call with id remerge', () => {
+    const copies = planWorkflowCopies(repoRoot)
+    const remerge = copies.find((c) => c.rel.endsWith('remerge-workflow.js'))
+    expect(remerge).toBeDefined()
+    const source = readFileSync(remerge!.src, 'utf8')
+    expect(source).toContain("id: 'remerge'")
+    expect(source).toContain('defineWorkflow')
+  })
+})
+
 describe('mars update — command wiring (in-process)', () => {
   const fakeCtx = (): OrchestratorContext =>
     ({
