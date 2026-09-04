@@ -280,21 +280,32 @@ const kindColor = (kind: ActionQueueRow['kind']): string => {
 }
 
 /**
+ * Terminal color for each structural action-queue class chip.
+ *
+ * - 'alert'    → 'red'    (something is broken; operator action required)
+ * - 'notice'   → 'yellow' (informational; Mars is handling it autonomously)
+ * - 'decision' → 'blue'   (nothing broken, but work is gated on a human choice)
+ *
+ * Consumer: "TUI renders humanSummary and class-colored chip"
+ */
+const CLASS_COLOR: Record<string, string> = {
+  alert: 'red',
+  notice: 'yellow',
+  decision: 'blue',
+}
+
+/**
  * Maps an ActionQueueRow's structural class to a terminal color for the
  * class chip rendered beside each row.
  *
  * - 'alert'    → 'red'    (something is broken; operator action required)
- * - 'decision' → 'yellow' (nothing broken, but work is gated on a human choice)
- * - 'notice'   → 'cyan'   (informational; Mars is handling it autonomously)
+ * - 'notice'   → 'yellow' (informational; Mars is handling it autonomously)
+ * - 'decision' → 'blue'   (nothing broken, but work is gated on a human choice)
  *
  * Consumer: "TUI renders humanSummary and class-colored chip"
  * Exported for testing.
  */
-export const classColor = (cls: ActionQueueClass): string => {
-  if (cls === 'alert') return 'red'
-  if (cls === 'decision') return 'yellow'
-  return 'cyan' // notice
-}
+export const classColor = (cls: ActionQueueClass): string => CLASS_COLOR[cls] ?? 'white'
 
 /**
  * A cluster of rows that share the same `kind` and structural `class`.
@@ -377,11 +388,13 @@ const Row: React.FC<RowProps> = ({ row, selected, now, pending }) => {
   return (
     <Box>
       <Text color={selected ? 'cyan' : undefined}>{selected ? '> ' : '  '}</Text>
+      <Text color={CLASS_COLOR[row.class]}>[{row.class.toUpperCase()}]</Text>
+      <Text> </Text>
       <Text color={kindColor(row.kind)}>{row.kind}</Text>
       <Text> </Text>
       <Text dimColor>{shortId(row.entityId)}</Text>
       <Text>  </Text>
-      <Text>{row.title}</Text>
+      <Text>{row.humanSummary || row.title}</Text>
       {pending && <Text dimColor> ⟳</Text>}
       <Text>  </Text>
       <Text dimColor>{rel}</Text>
@@ -410,8 +423,23 @@ const Detail: React.FC<DetailProps> = ({ row, now, pending, actionsBoxRef }) => 
         </Text>
       </Box>
       <Box marginTop={1}>
-        <Text bold>{row.title}</Text>
+        <Text bold>{row.humanSummary || row.title}</Text>
       </Box>
+      {row.humanSummary && row.humanSummary !== row.title && (
+        <Box>
+          <Text dimColor>{row.title}</Text>
+        </Box>
+      )}
+      {row.humanDetail && Object.keys(row.humanDetail).length > 0 && (
+        <Box marginTop={1} marginLeft={2}>
+          <Text dimColor>
+            {Object.entries(row.humanDetail)
+              .filter(([, v]) => v !== undefined && v !== null)
+              .map(([k, v]) => `${k}: ${String(v)}`)
+              .join('\n')}
+          </Text>
+        </Box>
+      )}
       {!!row.body && (
         <Box marginTop={1}>
           <Text>{row.body}</Text>
