@@ -355,4 +355,37 @@ describe('detectVerifyGates', () => {
     expect(tiers['test:integration']).toBe('integration')
     expect(tiers['arch']).toBe('integration')
   })
+
+  // ── plain-JS mocha repo fixture (HR-8 regression guard) ──────────────────
+  // Expressjs/express-style repo: plain JavaScript, mocha as the test runner.
+  // detectVerifyGates must seed the npm test gate and must NOT propose a
+  // typecheck gate (no TypeScript evidence). This is the primary bug scenario
+  // described in the task brief: mars init was enqueuing `tsc --noEmit` for
+  // every repo regardless of language.
+
+  it('detects only the test gate for a plain-JS mocha repo, with no typecheck gate', () => {
+    const repo = makeRepo()
+    writeFileSync(
+      resolve(repo, 'package.json'),
+      JSON.stringify({ scripts: { test: 'mocha' } }),
+    )
+    // No tsconfig.json, no TypeScript dependency.
+
+    const gates = detectVerifyGates(repo)
+
+    expect(gates).toEqual([
+      {
+        scope: '.',
+        name: 'test',
+        cmd: 'npm',
+        args: ['run', 'test'],
+        required: true,
+        tier: 'task',
+        source: 'detected',
+        evidence: 'package.json script "test"',
+      },
+    ])
+    // No typecheck gate must be present — a plain-JS repo has no TypeScript.
+    expect(gates.find((g) => g.name === 'typecheck')).toBeUndefined()
+  })
 })
