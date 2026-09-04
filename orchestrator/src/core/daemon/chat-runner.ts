@@ -58,7 +58,7 @@ import {
   readMainMemoryWindow,
   selectMemoryCut,
 } from './chat-memory-window'
-import { PROVIDERS, resolveProviderName } from '../workers/providers'
+import { resolveProviderName } from '../workers/providers'
 import { PROVIDER_MODELS, type ConversationMemoryFacts } from '../workers/provider-types'
 import {
   defaultModelIdFor,
