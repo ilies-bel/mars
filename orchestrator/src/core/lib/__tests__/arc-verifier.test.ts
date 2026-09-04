@@ -268,6 +268,43 @@ describe('arc-verifier', () => {
       expect(raiseSpy).not.toHaveBeenCalled()
     })
 
+    // ── getMergedDiff routes through the Vcs port ────────────────────────────
+
+    it('[vcs-port] getMergedDiff invokes vcs.diffText with from=base^, to=tip', async () => {
+      // Arrange: an arc-done arc with two landed commits so getMergedDiff is exercised.
+      const landedCommits = ['sha-base', 'sha-tip']
+      getDefaultTaskStoreMock.mockResolvedValue(
+        makeStore({ status: 'arc-done', tasks: [], landedCommits }),
+      )
+      runHeadlessProviderMock.mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: '{"ok":true,"findings":[]}',
+        stderr: '',
+        sessionId: null,
+        conversation: [],
+        quotaRejected: null,
+      })
+
+      // Provide a mock Vcs so we can assert on diffText without hitting git.
+      const diffTextMock = vi.fn(async () => 'diff --git a/foo.ts b/foo.ts\n+change')
+      const mockVcs = { diffText: diffTextMock }
+
+      await runArcVerification('origin-vcs-port', {
+        cwd: '/tmp',
+        vcs: mockVcs,
+      })
+
+      // diffText must have been called with the correct range args.
+      expect(diffTextMock).toHaveBeenCalledOnce()
+      expect(diffTextMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          from: 'sha-base^',
+          to: 'sha-tip',
+          cwd: '/tmp',
+        }),
+      )
+    })
+
     // ── failing verdict → one action-queue item ───────────────────────────────
 
     it('[verdict-fail] raises exactly one arc-verification-failed item on failing verdict', async () => {
