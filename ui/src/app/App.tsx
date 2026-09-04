@@ -15,7 +15,6 @@ import {
 } from '@/shared/progressUrlState'
 import {
   isKnownRoute,
-  pageTitle,
   parseArcQaRoute,
   parseKpiRoute,
   parseOverlayOrigin,
@@ -33,6 +32,10 @@ import {
   resolvePageRoute,
 } from '@/shared/routing'
 import type { RouteName } from '@/shared/routing'
+import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
+import { countNeedsYou } from '@/entities/actionQueue/clusterRows'
+import { useSseConnected } from '@/shared/sseStatus'
+import { useTabTitleBadge } from '@/shared/useTabTitleBadge'
 import { useProposals } from '@/entities/proposals/useProposals'
 import { useProposalDetail } from '@/entities/proposals/useProposalDetail'
 import { useProgress } from '@/hooks/useProgress'
@@ -168,12 +171,12 @@ const AppInner = () => {
     : undefined
   const route = resolvePageRoute(hash)
 
-  // Update the browser tab title whenever the route changes so multiple mars
-  // tabs are distinguishable in the tab bar and history.
-  useEffect(() => {
-    if (typeof document === 'undefined') return
-    document.title = pageTitle(route)
-  }, [route])
+  // Global tab-title badge: prepends `(N)` when there are items needing
+  // attention and the SSE stream is connected (connected=false → stale count →
+  // drop the prefix to avoid a confident-but-wrong number in the tab bar).
+  const { items: aqItems } = useActionQueue()
+  const sseConnected = useSseConnected()
+  useTabTitleBadge(countNeedsYou(aqItems), sseConnected)
 
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-background">

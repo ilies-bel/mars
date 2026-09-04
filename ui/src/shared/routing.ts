@@ -498,7 +498,7 @@ export const actionQueueCount = (payload: StaleWorktreesPayload): number =>
 export const pageTitle = (route: RouteName): string => {
   switch (route) {
     case 'triage':
-      return 'Action Queue — mars'
+      return 'Needs You — mars'
     case 'chat':
       return 'Chat — mars'
     case 'progress':
