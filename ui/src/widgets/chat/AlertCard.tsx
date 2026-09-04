@@ -76,6 +76,7 @@ const SIGNATURE_FAMILY_PHRASES: Record<string, string> = {
   'merge:hard-timeout': 'Could not be merged — the merge step timed out',
   'merge:conflict':     'Could not be merged — there were conflicts',
   'merge:dirty-main':   'Could not be merged — the integration branch was dirty',
+  'merge:crashed':      'Merge failed inside Mars (internal error)',
   merge:               'Could not be merged',
   'verify:has-diff':   'Verification failed — the branch has uncommitted changes',
   'verify:dirty-main': 'Verification failed — integration branch was dirty',
@@ -89,8 +90,13 @@ const SIGNATURE_FAMILY_PHRASES: Record<string, string> = {
 export const signatureFamilyPhrase = (sig: string | undefined): string | undefined => {
   if (!sig) return undefined
   if (SIGNATURE_FAMILY_PHRASES[sig]) return SIGNATURE_FAMILY_PHRASES[sig]
-  const family = sig.split(':')[0]
-  return SIGNATURE_FAMILY_PHRASES[family]
+  // Signatures can carry an error-class suffix after '/' (e.g. 'merge:crashed/unclassified').
+  // Strip the error-class first so 'merge:crashed' is matched before falling
+  // back to the bare gate-family prefix before ':'.
+  const step = sig.split('/')[0]!
+  if (SIGNATURE_FAMILY_PHRASES[step]) return SIGNATURE_FAMILY_PHRASES[step]
+  const gate = step.split(':')[0]!
+  return SIGNATURE_FAMILY_PHRASES[gate]
 }
 
 // ---------------------------------------------------------------------------

@@ -38,6 +38,7 @@ import { describeFeedFailure } from '@/shared/feedFailure'
 import { postDecision, snoozeActionQueueItem } from '@/shared/api'
 import { relativeTime } from '@/shared/time'
 import { dispatchAlertVerb, resolveThreadForItem } from '@/widgets/chat/alertVerbs'
+import { signatureFamilyPhrase } from '@/widgets/chat/AlertCard'
 import { CollapsibleSection } from '@/components/CollapsibleSection'
 import { useFocusedProjectId } from '@/shared/useFocusedProject'
 import { defaultAqUrlState, encodeAqState } from '@/shared/actionQueueUrlState'
@@ -513,9 +514,10 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
       )}
 
       {/* Headline — §7 hierarchy:
-           - When operatorGoal is present: goal is primary headline, item.title
-             is the subhead (daemon's plain-language cause phrase), humanSummary
-             is tertiary, raw error output hides behind "Output" disclosure.
+           - When operatorGoal is present: goal is primary headline, the subhead
+             is derived from the failure signature (plain English), falling back
+             to item.title when no mapping exists. humanSummary is tertiary, raw
+             error output hides behind "Output" disclosure.
            - Otherwise: humanSummary || title is the sole headline. */}
       {goal ? (
         <>
@@ -529,7 +531,7 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
             className="font-mono text-micro text-muted-foreground"
             data-testid="triage-title-subhead"
           >
-            {item.title}
+            {signatureFamilyPhrase(item.humanDetail?.failureSignature) ?? item.title}
           </p>
           {item.humanSummary && (
             <p className="mt-0.5 font-mono text-micro text-muted-foreground/70 line-clamp-1">

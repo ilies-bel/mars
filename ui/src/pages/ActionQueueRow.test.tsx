@@ -329,3 +329,122 @@ describe('ActionQueueRow – failed card headline and output', () => {
     expect(openTask!.textContent).toContain('Open task')
   })
 })
+
+// ---------------------------------------------------------------------------
+// Regression: two failed tasks each show their OWN title and phase (DEC-2026-09)
+// ---------------------------------------------------------------------------
+
+describe('ActionQueueRow – per-task title/phase isolation', () => {
+  // Two tasks whose IDs differ by one character — the exact scenario that
+  // produced a trust-damaging cross-task data leak in the "Needs You" view.
+  const TASK_A: ActionQueueItem = {
+    ...PROPOSAL_ITEM,
+    id: 'failed:mars-abc1',
+    kind: 'failed',
+    entityId: 'mars-abc1',
+    dag: { id: 'mars-abc1' },
+    title: 'Task mars-abc1 failed at setup: The coding environment could not be set up',
+    humanSummary: 'A task got stuck and Mars used up its automatic retry.',
+    operatorGoal: 'Regroup sidebar into Decide / Watch / Tune',
+    humanDetail: {
+      failureSignature: 'setup:worker-error/unclassified',
+      errorExcerpt: 'worker failed to start',
+      branch: 'task/mars-abc1',
+      worktree: '/tmp/worktrees/mars-abc1',
+    },
+    actions: [],
+    verbs: [{ op: 'restart', label: 'Restart', style: 'primary' }],
+  } as unknown as ActionQueueItem
+
+  const TASK_B: ActionQueueItem = {
+    ...PROPOSAL_ITEM,
+    id: 'failed:mars-abc2',
+    kind: 'failed',
+    entityId: 'mars-abc2',
+    dag: { id: 'mars-abc2' },
+    title: 'Task mars-abc2 failed at setup: The coding environment could not be set up',
+    humanSummary: 'A task got stuck and Mars used up its automatic retry.',
+    operatorGoal: 'One source of truth for counts: /view/counts + useCounts hook',
+    humanDetail: {
+      failureSignature: 'merge:crashed/unclassified',
+      errorExcerpt: 'duplicate key value violates unique constraint merge_jobs_active_task_uidx',
+      branch: 'task/mars-abc2',
+      worktree: '/tmp/worktrees/mars-abc2',
+    },
+    actions: [],
+    verbs: [{ op: 'restart', label: 'Restart', style: 'primary' }],
+  } as unknown as ActionQueueItem
+
+  it('task A shows its own operatorGoal, not task B\'s', () => {
+    const { container } = renderRow(TASK_A)
+    const goal = container.querySelector('[data-testid="alert-card-goal"]')
+    expect(goal).not.toBeNull()
+    expect(goal!.textContent).toContain('Regroup sidebar')
+    expect(goal!.textContent).not.toContain('One source of truth')
+  })
+
+  it('task B shows its own operatorGoal, not task A\'s', () => {
+    const { container } = renderRow(TASK_B)
+    const goal = container.querySelector('[data-testid="alert-card-goal"]')
+    expect(goal).not.toBeNull()
+    expect(goal!.textContent).toContain('One source of truth')
+    expect(goal!.textContent).not.toContain('Regroup sidebar')
+  })
+
+  it('task A (setup failure) shows setup cause phrase', () => {
+    const { container } = renderRow(TASK_A)
+    const summary = container.querySelector('[data-testid="alert-card-summary"]')
+    expect(summary).not.toBeNull()
+    expect(summary!.textContent).toContain('Setup step failed')
+  })
+
+  it('task B (merge:crashed) shows merge-internal-error phrase, never setup phrase', () => {
+    const { container } = renderRow(TASK_B)
+    const summary = container.querySelector('[data-testid="alert-card-summary"]')
+    expect(summary).not.toBeNull()
+    expect(summary!.textContent).toContain('Merge failed inside Mars (internal error)')
+    expect(summary!.textContent).not.toContain('coding environment could not be set up')
+    expect(summary!.textContent).not.toContain('Setup step failed')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Regression: merge:crashed/unclassified never shows a setup-phase message
+// ---------------------------------------------------------------------------
+
+describe('ActionQueueRow – merge:crashed cause phrase', () => {
+  const MERGE_CRASH_ITEM: ActionQueueItem = {
+    ...PROPOSAL_ITEM,
+    id: 'failed:mars-a6c520d3',
+    kind: 'failed',
+    entityId: 'mars-a6c520d3',
+    dag: { id: 'mars-a6c520d3' },
+    title: 'Task mars-a6c520d3 failed at setup: The coding environment could not be set up',
+    humanSummary: 'A task got stuck and Mars used up its automatic retry.',
+    operatorGoal: 'One source of truth for counts: /view/counts + useCounts hook',
+    humanDetail: {
+      failureSignature: 'merge:crashed/unclassified',
+      errorExcerpt: 'merge step crashed: duplicate key value violates unique constraint merge_jobs_active_task_uidx',
+      branch: 'task/mars-a6c520d3',
+      worktree: '/tmp/worktrees/mars-a6c520d3',
+    },
+    actions: [],
+    verbs: [{ op: 'restart', label: 'Restart', style: 'primary' }],
+  } as unknown as ActionQueueItem
+
+  it('shows "Merge failed inside Mars (internal error)", not a setup message', () => {
+    const { container } = renderRow(MERGE_CRASH_ITEM)
+    const summary = container.querySelector('[data-testid="alert-card-summary"]')
+    expect(summary).not.toBeNull()
+    expect(summary!.textContent).toContain('Merge failed inside Mars (internal error)')
+  })
+
+  it('does not contain "coding environment could not be set up"', () => {
+    const { container } = renderRow(MERGE_CRASH_ITEM)
+    // The card face (excluding the Output disclosure panel) must not show
+    // the setup-phase boilerplate that comes from item.title when the task
+    // actually failed at the merge step.
+    const card = container.querySelector('[data-testid="alert-card"]')
+    expect(card!.textContent).not.toContain('coding environment could not be set up')
+  })
+})
