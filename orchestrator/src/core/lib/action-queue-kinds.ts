@@ -60,6 +60,8 @@ export const ACTION_QUEUE_KINDS = [
   'mockup-ready',
   'qa-step-list-opt-in',
   'qa-step-list-promote',
+  'phantom-merge',
+  'phantom-merge-unknown',
   'worktree-hook-trust-request',
   'slicer-transport-outage',
 ] as const
@@ -160,6 +162,8 @@ export const KIND_CLASS: Record<ActionQueueKind, ActionQueueClass> = {
   'scheduling-decision': 'decision',       // operator must choose a scheduling option
   'gate-enrichment-stale': 'decision',    // enrichment request timed out; operator picks next step
   'verify-uncovered': 'decision',         // task has no verify command; operator must decide
+  'phantom-merge': 'alert',              // done task whose merge SHA is null; real commits may not have landed
+  'phantom-merge-unknown': 'alert',     // null merge SHA + no surviving evidence; cannot evaluate whether commits landed
   'worktree-hook-trust-request': 'decision', // mars.json setup hooks await trust grant from operator
 }
 
@@ -197,4 +201,6 @@ export const DERIVED_KINDS: ReadonlySet<ActionQueueKind> = new Set<ActionQueueKi
   'orphaned-origin',
   'steward-repeat',
   'e2e-tooling-missing',
+  'phantom-merge',
+  'phantom-merge-unknown',
 ])

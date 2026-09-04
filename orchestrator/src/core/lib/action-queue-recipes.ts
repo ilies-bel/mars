@@ -1429,6 +1429,30 @@ const RECIPE_DEFINITIONS = {
     ],
   },
 
+  'phantom-merge': {
+    humanSummary: (ctx) =>
+      `Task ${str(ctx.payload['taskId'])}: marked done but no merge SHA recorded — commits may not have landed on main`,
+    humanDetail: (ctx) => ({
+      raisedAt: ctx.raisedAt,
+      entityId: ctx.entityId,
+      taskId: str(ctx.payload['taskId']),
+      tombstonePath: str(ctx.payload['tombstonePath']),
+    }),
+    verbs: [],
+  },
+
+  'phantom-merge-unknown': {
+    humanSummary: (ctx) =>
+      `Task ${str(ctx.payload['taskId'])}: null merge SHA, no surviving evidence — operator must verify manually`,
+    humanDetail: (ctx) => ({
+      raisedAt: ctx.raisedAt,
+      entityId: ctx.entityId,
+      taskId: str(ctx.payload['taskId']),
+      tombstonePath: str(ctx.payload['tombstonePath']),
+    }),
+    verbs: [],
+  },
+
   'worktree-hook-trust-request': {
     humanSummary: (ctx) =>
       `mars.json setup hooks in ${str(ctx.payload['repoRoot'])} await operator trust grant`,

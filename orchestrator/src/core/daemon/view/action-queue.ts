@@ -50,6 +50,8 @@ const NON_TASK_FAILURE_KINDS = new Set([
   'hitl-slice-needs-operator',
   'daemon-outage',
   'health-check-alert',
+  'phantom-merge',
+  'phantom-merge-unknown',
 ])
 
 /** Preserves the former failure-specific enrichment without changing labels. */
@@ -594,6 +596,8 @@ export const OPERATIONAL_ALERT_COPY: Record<
   'mockup-ready': null,
   'qa-step-list-opt-in': null,
   'qa-step-list-promote': null,
+  'phantom-merge': null,
+  'phantom-merge-unknown': null,
   'worktree-hook-trust-request': null,
   // Transport failures during slicing: one provider-level alert instead of per-PRD.
   // The recipe humanSummary is accurate; no override needed.

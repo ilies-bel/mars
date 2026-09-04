@@ -16,6 +16,7 @@
 import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { spawnSync } from 'node:child_process'
 import type { PersistedActionQueueRow, ConditionItemsSource } from './action-queue'
 import type { DispatchPauseState } from '../pause-state'
 import type { DbClient } from '../../lib/db'
@@ -24,6 +25,7 @@ import { findBaselineCaughtTaskIds } from '../../lib/baseline-attribution'
 import { readBudgetConfig } from '../../lib/spend-meter'
 import type { BudgetArcPayload } from '../../lib/payload-contracts/spend'
 import { isDiagnosticSignature, SIGNATURE_STORM_TRIP_THRESHOLD } from '../../lib/signature-storm-monitor'
+import { integrationBranchName } from '../../lib/blocker-resolution-primitives.js'
 
 // ── Stable ID helper ─────────────────────────────────────────────────────────
 
@@ -986,6 +988,203 @@ async function deriveSignatureWaveConditions(
   return { rows, caughtTaskIds }
 }
 
+// ── Phantom-merge condition ───────────────────────────────────────────────────
+
+/**
+ * Derive `phantom-merge` rows by scanning tombstone files for done tasks where
+ * `reason === 'merged'` and `mergeCommitSha` is null.
+ *
+ * A tombstone with `{reason: 'merged', mergeCommitSha: null}` means the merge
+ * step called `removeWorktree` with reason='merged' but no fast-forward SHA was
+ * captured — the integration branch was not actually advanced. This is the P3
+ * bug (mars-59c9fdb0): stale-merging-sweep eviction reset the branch, the old
+ * queued merge job ran on the reset branch (zero commits), and the merge step
+ * silently marked the task done with null SHA.
+ *
+ * The phantom-merge guard in merge.ts now catches this case inline; this
+ * derived condition surfaces any pre-existing tombstones that slipped through.
+ *
+ * Before raising, the predicate checks whether the task's surviving evidence
+ * (its branch or checkpoint refs) is reachable from the integration branch.
+ * If the work has already landed, no alert is raised. If no evidence survives
+ * at all, a lower-priority `phantom-merge-unknown` is raised instead of
+ * asserting the work is missing when that cannot be determined.
+ *
+ * Results are cached per-taskId keyed on the current integration branch SHA so
+ * the git probes only re-run when main advances.
+ */
+
+// Cache: taskId → { mainSha: string; outcome }
+// Recomputed per task only when the integration branch SHA changes.
+const _phantomMergeOutcomeCache = new Map<
+  string,
+  { mainSha: string; outcome: 'landed' | 'missing' | 'unknown' }
+>()
+
+async function derivePhantomMergeConditions(
+  client: DbClient,
+  repoRoot: string,
+  nowMs: number,
+): Promise<PersistedActionQueueRow[]> {
+  const marsWorktreesDir = join(repoRoot, '.mars', 'worktrees')
+  if (!existsSync(marsWorktreesDir)) return []
+
+  // Only check done tasks — a phantom merge only matters for tasks that the
+  // system believes succeeded. Failed tasks may also have null tombstones but
+  // they already have actionable failed alerts.
+  const result = await client.execute(
+    `SELECT id FROM tasks WHERE status = 'done' ORDER BY updated_at DESC LIMIT 200`,
+  )
+
+  // Resolve the integration branch name and its current SHA once per derivation
+  // pass. The SHA is the cache key: outcomes are recomputed only when main moves.
+  const intBranch = integrationBranchName()
+  const intShaProbe = spawnSync('git', ['-C', repoRoot, 'rev-parse', intBranch], {
+    encoding: 'utf8',
+  })
+  const intSha =
+    intShaProbe.status === 0 && !intShaProbe.error
+      ? (intShaProbe.stdout as string).trim()
+      : ''
+
+  const rows: PersistedActionQueueRow[] = []
+  for (const r of result.rows) {
+    const taskId = (r as { id: string }).id
+    const tombstonePath = join(marsWorktreesDir, `${taskId}.removed.json`)
+    if (!existsSync(tombstonePath)) continue
+    let tombstone: { reason?: string; mergeCommitSha?: string | null; taskId?: string }
+    try {
+      tombstone = JSON.parse(readFileSync(tombstonePath, 'utf8')) as typeof tombstone
+    } catch {
+      continue
+    }
+    if (tombstone.reason !== 'merged') continue
+    // null or missing mergeCommitSha with reason='merged' is the phantom-merge symptom.
+    if (tombstone.mergeCommitSha) continue
+
+    // Check whether the work actually landed on the integration branch before
+    // raising an alert. The outcome is cached per (taskId, intSha) so the git
+    // probes only run when main advances.
+    const cached = _phantomMergeOutcomeCache.get(taskId)
+    let outcome: 'landed' | 'missing' | 'unknown'
+    if (cached && intSha !== '' && cached.mainSha === intSha) {
+      outcome = cached.outcome
+    } else {
+      // 1. Try the task branch via git cherry (patch-equivalence test).
+      const branchName = `task/${taskId}`
+      const cherryBranch = spawnSync(
+        'git',
+        ['-C', repoRoot, 'cherry', intBranch, branchName],
+        { encoding: 'utf8', timeout: 10_000 },
+      )
+      if (cherryBranch.status === 0 && !cherryBranch.error) {
+        const hasUnmerged = (cherryBranch.stdout as string)
+          .split('\n')
+          .some((l: string) => l.startsWith('+'))
+        outcome = hasUnmerged ? 'missing' : 'landed'
+      } else {
+        // Branch absent — try checkpoint refs.
+        const checkpointGlob = `refs/mars/checkpoint/${taskId}-*`
+        const refsProbe = spawnSync(
+          'git',
+          ['-C', repoRoot, 'for-each-ref', '--format=%(objectname)', checkpointGlob],
+          { encoding: 'utf8', timeout: 5_000 },
+        )
+        if (refsProbe.status !== 0 || refsProbe.error) {
+          outcome = 'unknown'
+        } else {
+          const shas = (refsProbe.stdout as string)
+            .trim()
+            .split('\n')
+            .filter((s: string) => s.length > 0)
+          if (shas.length === 0) {
+            // No branch, no checkpoint refs — cannot determine landing status.
+            outcome = 'unknown'
+          } else {
+            // All checkpoint SHAs must be patch-present on the integration branch.
+            let allLanded = true
+            for (const sha of shas) {
+              const cherryRef = spawnSync(
+                'git',
+                ['-C', repoRoot, 'cherry', intBranch, sha],
+                { encoding: 'utf8', timeout: 5_000 },
+              )
+              if (
+                cherryRef.status !== 0 ||
+                cherryRef.error ||
+                (cherryRef.stdout as string).split('\n').some((l: string) => l.startsWith('+'))
+              ) {
+                allLanded = false
+                break
+              }
+            }
+            outcome = allLanded ? 'landed' : 'missing'
+          }
+        }
+      }
+      if (intSha !== '') {
+        _phantomMergeOutcomeCache.set(taskId, { mainSha: intSha, outcome })
+      }
+    }
+
+    // Work confirmed on the integration branch — no alert needed.
+    if (outcome === 'landed') continue
+
+    if (outcome === 'unknown') {
+      // No surviving evidence: cannot assert commits are missing. Raise a
+      // lower-priority condition so the operator can verify and dismiss.
+      rows.push({
+        id: deriveId('phantom-merge-unknown', taskId),
+        kind: 'phantom-merge-unknown',
+        priority: 'normal',
+        title: `Task ${taskId}: null merge SHA — no surviving evidence to verify landing`,
+        body: [
+          `Task \`${taskId}\` was marked done with tombstone \`{reason: 'merged', mergeCommitSha: null}\`.`,
+          '',
+          `No surviving evidence found (branch \`task/${taskId}\` is absent; no \`refs/mars/checkpoint/${taskId}-*\` refs exist).`,
+          `Whether the commits landed on \`${intBranch}\` cannot be determined automatically.`,
+          '',
+          `**To verify:** \`git log ${intBranch} --grep ${taskId}\`. If nothing appears and the work`,
+          `matters, restore it from \`git for-each-ref refs/mars/parked/${taskId}\` or treat as lost.`,
+          `Dismiss this alert once you have confirmed the outcome.`,
+        ].join('\n'),
+        payload: { taskId, tombstonePath, reason: 'merged', mergeCommitSha: null },
+        context: {},
+        raisedAt: nowMs,
+        lastSeenAt: nowMs,
+        signature: `phantom-merge-unknown:${taskId}`,
+      })
+      continue
+    }
+
+    // outcome === 'missing': surviving evidence is NOT on the integration branch.
+    rows.push({
+      id: deriveId('phantom-merge', taskId),
+      kind: 'phantom-merge',
+      priority: 'high',
+      title: `Task ${taskId}: phantom merge — done but commits not on ${intBranch}`,
+      body: [
+        `Task \`${taskId}\` was marked done with tombstone \`{reason: 'merged', mergeCommitSha: null}\`,`,
+        `and its commits are NOT reachable from \`${intBranch}\` (checked branch \`task/${taskId}\` and checkpoint refs).`,
+        '',
+        `A null \`mergeCommitSha\` means the fast-forward did not advance the integration branch — ` +
+          `the task is "done" but its commits may not have landed. This is the P3 bug ` +
+          `(mars-59c9fdb0): a stale-merging-sweep eviction reset the branch while an old ` +
+          `merge job was still queued; the job ran on the reset (zero-commit) branch.`,
+        '',
+        `**To restore:** inspect parked refs (\`git for-each-ref refs/mars/parked/${taskId}\`)`,
+        `or the task branch (\`git log task/${taskId}\`) and merge manually.`,
+      ].join('\n'),
+      payload: { taskId, tombstonePath, reason: 'merged', mergeCommitSha: null },
+      context: {},
+      raisedAt: nowMs,
+      lastSeenAt: nowMs,
+      signature: `phantom-merge:${taskId}`,
+    })
+  }
+  return rows
+}
+
 // ── Factory ───────────────────────────────────────────────────────────────────
 
 /**
@@ -1048,6 +1247,9 @@ export const createConditionItemsSource = (deps: ConditionsDeps): ConditionItems
       wants('budget-arc') ? deriveBudgetArcConditions(client, nowMs) : [],
       // waveResult.rows is already materialised — just include it when the kind is wanted.
       wants('signature-wave') ? waveResult.rows : [],
+      (wants('phantom-merge') || wants('phantom-merge-unknown')) && deps.repoRoot
+        ? derivePhantomMergeConditions(client, deps.repoRoot, nowMs)
+        : [],
     ])
 
     const all = results.flat()
