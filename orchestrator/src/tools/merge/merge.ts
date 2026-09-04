@@ -10,20 +10,29 @@ import { runTool } from '../../core/lib/run-tool'
 import { resolveVcs } from '../../core/ports/vcs/registry'
 import { type WorktreeResult as WorktreeRef, type MergeResult } from '../../core/ports/vcs/types'
 import {
-  checkMergeTargetStatus,
-  isZeroCommitBranch,
-  isBranchTipInIntegration,
   MergeAbortedError,
   MERGE_HARD_TIMEOUT_MS,
   MergeHardTimeoutError,
-} from '../../core/lib/git/merge'
+} from '../../core/ports/vcs/errors'
 import {
-  checkpointRefFor,
-  restoreCheckpoint,
-  isSalvageCheckpointCommit,
-  hasRealCommitAboveBase,
-  type Checkpoint,
-} from '../../core/lib/git/checkpoint'
+  CHECKPOINT_REF_PREFIX,
+  SALVAGE_CHECKPOINT_TRAILER_KEY,
+  SALVAGE_CHECKPOINT_TRAILER_VALUE,
+} from '../../core/ports/vcs/types'
+
+// ---------------------------------------------------------------------------
+// Private helper: pure string formatter used at two sites in this module.
+// Not imported from lib/git/checkpoint to keep this file free of direct
+// lib/git/* imports (ADR-0097 / PRD aed916c8 slice 6).
+// ---------------------------------------------------------------------------
+const checkpointRefFor = (key: string): string => {
+  const safe = key
+    .replace(/[^A-Za-z0-9._-]/g, '-')
+    .replace(/^\.+/, '')
+    .replace(/\.lock$/i, '-lock')
+  if (safe.length === 0) throw new Error(`checkpoint key '${key}' has no usable characters`)
+  return `${CHECKPOINT_REF_PREFIX}/${safe}`
+}
 import { resolveContext, getStateDir } from '../../core/context'
 import { type AgentEvent } from '../../core/lib/claude-stream'
 import { IllegalTransitionError, getTask, updateTask } from '../../core/queue'
@@ -261,7 +270,7 @@ export const merge = async (
         // the task done while no work reached integration is a false-green (observed in
         // mars-eb04bbda). Fail the task and preserve the worktree for investigation.
         const { repoRoot: mergeRepoRoot } = resolveContext()
-        if (await isZeroCommitBranch(branch, mergeRepoRoot, buildPhaseCtx(trace, taskId, 'merge'))) {
+        if (await resolveVcs().isZeroCommitBranch({ branch, cwd: mergeRepoRoot })) {
           // Check for the main-committer exception before deciding the outcome.
           let isMainCommitter = false
           try {
@@ -496,11 +505,12 @@ export const merge = async (
         }
         if (
           branchTipSha !== null &&
-          (await isSalvageCheckpointCommit(
-            mergeRepoRoot,
-            branchTipSha,
-            buildPhaseCtx(trace, taskId, 'merge'),
-          ))
+          (await resolveVcs().hasCommitTrailer({
+            cwd: mergeRepoRoot,
+            sha: branchTipSha,
+            trailerKey: SALVAGE_CHECKPOINT_TRAILER_KEY,
+            trailerValue: SALVAGE_CHECKPOINT_TRAILER_VALUE,
+          }))
         ) {
           // Distinguish "some coder attempt landed real work, a later attempt
           // still died leaving a checkpoint on top" (a genuine defect worth an
@@ -535,12 +545,11 @@ export const merge = async (
           // pre-existing classification) when the merge-base is unknown.
           const hasRealProgress =
             mergeBaseSha === null ||
-            (await hasRealCommitAboveBase(
-              mergeRepoRoot,
-              mergeBaseSha,
-              branchTipSha,
-              buildPhaseCtx(trace, taskId, 'merge'),
-            ))
+            (await resolveVcs().hasRealCommitAboveBase({
+              cwd: mergeRepoRoot,
+              baseSha: mergeBaseSha,
+              tipSha: branchTipSha,
+            }))
 
           if (!hasRealProgress) {
             const NO_PROGRESS_SIGNATURE = 'code:salvage-checkpoint-tip/no-progress'
@@ -642,10 +651,9 @@ export const merge = async (
           )
         }
 
-        const targetStatus = await checkMergeTargetStatus({
+        const targetStatus = await resolveVcs().checkMergeTargetStatus({
           integrationBranch,
           taskBranch: branch,
-          traceCtx: buildPhaseCtx(trace, taskId, 'merge'),
         })
         if (targetStatus.kind === 'needs-rebase') {
           console.log(
@@ -715,7 +723,7 @@ export const merge = async (
           )
         }
         if (targetStatus.kind === 'error') {
-          const errorMsg = `merge pre-flight git status failed: ${targetStatus.error.message}`.slice(0, 1000)
+          const errorMsg = `merge pre-flight git status failed: ${targetStatus.message}`.slice(0, 1000)
           const preflightSignature = computeFailureSignature('merge:preflight', errorMsg)
           await updateTask(
             taskId,
@@ -730,7 +738,7 @@ export const merge = async (
             store,
           )
           throw new Error(
-            `task ${taskId} merge pre-flight failed: ${targetStatus.error.message}`,
+            `task ${taskId} merge pre-flight failed: ${targetStatus.message}`,
           )
         }
 
@@ -791,7 +799,7 @@ export const merge = async (
             // integration branch means the fast-forward landed.
             let branchAlreadyMerged = false
             try {
-              branchAlreadyMerged = await isBranchTipInIntegration(branch, integrationBranch)
+              branchAlreadyMerged = await resolveVcs().isAncestor({ cwd: mergeRepoRoot, ancestor: branch, descendant: integrationBranch })
             } catch {
               // Cannot determine merge status — fall through to the failure path.
             }
@@ -1114,10 +1122,11 @@ export const merge = async (
         // stamp the task `failed` with a named signature, do NOT remove the
         // branch (preserves the commits for investigation), throw to abort.
         if (m.mergePostSha !== undefined) {
-          const tipInIntegration = await isBranchTipInIntegration(
-            m.mergePostSha,
-            integrationBranch,
-          )
+          const tipInIntegration = await resolveVcs().isAncestor({
+            cwd: mergeRepoRoot,
+            ancestor: m.mergePostSha,
+            descendant: integrationBranch,
+          })
           if (!tipInIntegration) {
             const assertMsg = (
               `merge:post-merge-assertion failed: ${m.mergePostSha.slice(0, 9)} is not ` +
@@ -1195,19 +1204,18 @@ export const merge = async (
         ).catch(() => null)
         if (refProbe !== null && refProbe.exitCode === 0) {
           const preflightSha = refProbe.stdout.trim()
-          const preflightCheckpoint: Checkpoint = { ref: preflightRef, sha: preflightSha, files: [] }
-          await restoreCheckpoint({
-            cwd: mergeRepoRoot,
-            checkpoint: preflightCheckpoint,
-            traceCtx: buildPhaseCtx(trace, taskId, 'merge'),
-          }).catch((restoreErr: unknown) => {
+          const restoreResult = await resolveVcs()
+            .restoreCheckpoint({ cwd: mergeRepoRoot, sha: preflightSha })
+            .catch((restoreErr: unknown) => ({
+              ok: false as const,
+              detail: restoreErr instanceof Error ? restoreErr.message : String(restoreErr),
+            }))
+          if (!restoreResult.ok) {
             console.warn(
               `[merge] task ${taskId}: pre-flight checkpoint restore failed ` +
-                `(${preflightRef} preserved for manual recovery): ${
-                  restoreErr instanceof Error ? restoreErr.message : String(restoreErr)
-                }`,
+                `(${preflightRef} preserved for manual recovery): ${restoreResult.detail ?? 'unknown failure'}`,
             )
-          })
+          }
           await runTool(
             {
               tool: 'git',
