@@ -37,7 +37,7 @@ import { DAEMON_DOWN_MESSAGE } from '@/widgets/DaemonDownBanner'
 import { describeFeedFailure } from '@/shared/feedFailure'
 import { postDecision, snoozeActionQueueItem } from '@/shared/api'
 import { relativeTime } from '@/shared/time'
-import { dispatchAlertVerb, resolveThreadForItem } from '@/widgets/chat/alertVerbs'
+import { dispatchAlertVerb } from '@/widgets/chat/alertVerbs'
 import { signatureFamilyPhrase } from '@/widgets/chat/AlertCard'
 import { CollapsibleSection } from '@/components/CollapsibleSection'
 import { useFocusedProjectId } from '@/shared/useFocusedProject'
@@ -442,26 +442,14 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
     [pending, handleSuccess, item.id, item.entityId],
   )
 
-  // Open (or reuse) a chat thread for this row and navigate to it — mirrors
-  // ChatPage.handleOpenSubthread via the shared resolveThreadForItem helper
-  // so both entry points open the same thread for the same row.
-  const handleChat = useCallback(async () => {
-    if (pending !== null) return
-    setPending('chat')
-    setError(null)
-    try {
-      const threadId = await resolveThreadForItem(item, projectId, qc)
-      window.location.hash = `#/chat${encodeAqState({
-        ...defaultAqUrlState(),
-        thread: threadId,
-        project: projectId ?? null,
-      })}`
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setPending(null)
-    }
-  }, [pending, item, projectId, qc])
+  // Shareable href that carries this alert's identity — the ChatPage resolves
+  // (or creates) the scoped thread on arrival so each alert opens its own
+  // conversation.
+  const chatHref = `#/chat${encodeAqState({
+    ...defaultAqUrlState(),
+    item: item.id,
+    project: projectId ?? null,
+  })}`
 
   if (resolved) return null
 
@@ -699,18 +687,16 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
               {pending === 'continue' ? '…' : 'Continue'}
             </button>
 
-            {/* Chat — icon button, positioned after Continue */}
-            <button
-              type="button"
-              disabled={pending !== null}
-              onClick={() => void handleChat()}
+            {/* Chat — icon link, positioned after Continue */}
+            <a
+              href={chatHref}
               title="Open chat thread"
               aria-label="Open chat thread"
-              className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+              className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground"
               data-testid="triage-chat"
             >
-              {pending === 'chat' ? '…' : '💬'}
-            </button>
+              💬
+            </a>
 
             {/* More ⋯ — disclosure that hides Restart (and copy verbs) */}
             <div ref={moreRef} className="relative">
@@ -804,15 +790,13 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
             exhausted rows. Stays at ml-auto (right-aligned) in these cases
             where there is no Continue button to anchor it after. */}
         {(isChatOnly || !isTaskRecovery || isRecoveryExhausted) && (
-          <button
-            type="button"
-            disabled={pending !== null}
-            onClick={() => void handleChat()}
-            className="ml-auto font-mono text-micro text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+          <a
+            href={chatHref}
+            className="ml-auto font-mono text-micro text-muted-foreground transition-colors hover:text-foreground"
             data-testid="triage-chat"
           >
-            {pending === 'chat' ? '…' : 'Chat →'}
-          </button>
+            Chat →
+          </a>
         )}
       </div>
 
