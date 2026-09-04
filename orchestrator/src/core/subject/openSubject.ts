@@ -87,6 +87,7 @@ export async function openSubject(input: OpenSubjectInput): Promise<ChatThread> 
     alert_resolved: false,
     closed_at: null,
     archived_at: null,
+    relevance_score: null,
     terminal_event_type: null,
     terminal_entity_id: null,
     parent_thread_id: null,

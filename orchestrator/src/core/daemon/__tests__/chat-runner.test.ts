@@ -476,7 +476,7 @@ const threadFixture = {
   id: 't1', title: '', status: 'idle' as const, created_at: 0, updated_at: 0,
   posture: 'triage' as const,
   origin: null, alert_item_id: null, alert_resolved: false,
-  objective: null, archived_at: null, closed_at: null,
+  objective: null, archived_at: null, relevance_score: null, closed_at: null,
   parent_thread_id: null, fork_idempotency_key: null,
 }
 

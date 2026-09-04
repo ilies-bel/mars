@@ -367,6 +367,38 @@ describe('chat-store', () => {
     expect(result!.messages).toHaveLength(1)
   })
 
+  // ── relevance_score ──────────────────────────────────────────────────────────
+
+  it('listClosedSubjects returns relevance_score when the column is set', async () => {
+    const m = await loadModule(repo)
+    const thread = await m.createThread('scored subject')
+    await m.closeSubject(thread.id)
+
+    // Write the score directly — no public setter exists yet (a later slice will add one).
+    const { resolveStateClient } = await import('../store/state-client')
+    const client = resolveStateClient()
+    await client.execute({
+      sql: `UPDATE chat_threads SET relevance_score = 0.75 WHERE id = ?`,
+      args: [thread.id],
+    })
+
+    const closed = await m.listClosedSubjects()
+    const scored = closed.find((t) => t.id === thread.id)
+    expect(scored).toBeDefined()
+    expect(scored!.relevance_score).toBe(0.75)
+  })
+
+  it('listClosedSubjects returns relevance_score as null for unscored subjects', async () => {
+    const m = await loadModule(repo)
+    const thread = await m.createThread('unscored subject')
+    await m.closeSubject(thread.id)
+
+    const closed = await m.listClosedSubjects()
+    const found = closed.find((t) => t.id === thread.id)
+    expect(found).toBeDefined()
+    expect(found!.relevance_score).toBeNull()
+  })
+
   // ── idempotent init ─────────────────────────────────────────────────────────
 
   it('initChatStore is a no-op when called a second time', async () => {

@@ -80,6 +80,12 @@ export interface ChatThread {
    * Null while the Subject is listed.
    */
   archived_at: number | null
+  /**
+   * Relevance score in [0, 1] assigned by the local eviction scorer, or null
+   * when the Subject has not yet been scored. A lower score indicates lower
+   * residual utility and higher eviction priority.
+   */
+  relevance_score: number | null
   /** Domain event that closes this Subject, or null when it needs an explicit close. */
   terminal_event_type?: string | null
   /** Entity id in the terminal event payload that must match before closure. */
@@ -139,6 +145,11 @@ export interface ChatThreadApiView {
   alertResolved: boolean
   /** Set once the Subject ends; null while it remains active. */
   closedAt: string | null
+  /**
+   * Relevance score in [0, 1] from the eviction scorer, or null when unscored.
+   * Surfaces on closed Subjects so the operator can understand eviction decisions.
+   */
+  relevanceScore: number | null
   /** Declared automatic terminal event, if this Subject has one. */
   terminalEventType: string | null
   parentThreadId: string | null
@@ -246,6 +257,7 @@ export const toThreadApiView = (
   alertItemId: t.alert_item_id,
   alertResolved: t.alert_resolved,
   closedAt: t.closed_at === null ? null : new Date(t.closed_at).toISOString(),
+  relevanceScore: t.relevance_score ?? null,
   terminalEventType: t.terminal_event_type ?? null,
   parentThreadId: t.parent_thread_id,
   firstUserMessage: firstUserMessage ?? null,
@@ -563,6 +575,7 @@ const rowToThread = (row: Record<string, unknown>): ChatThread => ({
   alert_resolved: Boolean(row.alert_resolved),
   closed_at: (row.closed_at as number | null) ?? null,
   archived_at: (row.archived_at as number | null) ?? null,
+  relevance_score: typeof row.relevance_score === 'number' ? row.relevance_score : null,
   terminal_event_type: (row.terminal_event_type as string | null) ?? null,
   terminal_entity_id: (row.terminal_entity_id as string | null) ?? null,
   parent_thread_id: (row.parent_thread_id as string | null) ?? null,
@@ -644,6 +657,7 @@ export const createThread = async (
     alert_resolved: false,
     closed_at: null,
     archived_at: null,
+    relevance_score: null,
     terminal_event_type: terminalEvent ?? null,
     terminal_entity_id: terminalEntityId ?? null,
     parent_thread_id: null,
@@ -756,6 +770,7 @@ export const forkThread = async (opts: {
       alert_resolved: false,
       closed_at: null,
       archived_at: null,
+      relevance_score: null,
       terminal_event_type: null,
       terminal_entity_id: null,
       parent_thread_id: opts.sourceThreadId,
@@ -1274,6 +1289,7 @@ export const startThreadForQueueItem = async (
     alert_resolved: false,
     closed_at: null,
     archived_at: null,
+    relevance_score: null,
     terminal_event_type: null,
     terminal_entity_id: null,
     parent_thread_id: null,
@@ -1472,6 +1488,7 @@ export const startThreadFromAlert = async (
     alert_resolved: false,
     closed_at: null,
     archived_at: null,
+    relevance_score: null,
     terminal_event_type: terminal?.eventType ?? null,
     terminal_entity_id: terminal?.entityId ?? null,
     parent_thread_id: null,

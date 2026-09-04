@@ -77,7 +77,7 @@ const mockShell = runShellCommand as unknown as MockInstance<
 const makeThreadFixture = (id: string) => ({
   thread: {
     id, title: '', status: 'idle' as const, posture: 'triage' as const, created_at: 0, updated_at: 0, origin: null,
-    alert_item_id: null, alert_resolved: false, objective: null, archived_at: null,
+    alert_item_id: null, alert_resolved: false, objective: null, archived_at: null, relevance_score: null,
     closed_at: null, parent_thread_id: null,
     fork_idempotency_key: null,
   },

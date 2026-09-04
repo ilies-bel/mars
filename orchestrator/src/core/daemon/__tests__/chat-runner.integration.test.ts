@@ -123,6 +123,7 @@ const makeThreadFixture = (id: string) => ({
     alert_resolved: false,
     objective: null,
     archived_at: null,
+    relevance_score: null,
     closed_at: null,
     parent_thread_id: null,
     fork_idempotency_key: null,
