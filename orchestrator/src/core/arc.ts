@@ -3173,6 +3173,16 @@ export const updateTask = async (
        * visible in the run-timeline view rather than showing 'none recorded'.
        */
       verifyOutput?: string | null
+      /**
+       * The SHA that the integration branch was advanced to by the merge step
+       * (`mergePostSha` from the MergeResult). Used by the done-implies-merged
+       * guard as positive evidence that work actually landed: when the task branch
+       * has been deleted and `revListCount` returns null, a reachable non-empty
+       * sha is the only proof we have that the merge completed. When absent or
+       * null, a deleted-branch done transition is redirected to 'failed' with
+       * `failureReasonCode: 'done-with-unverifiable-merge'`.
+       */
+      mergeCommitSha?: string | null
     }
   >,
   store?: ArcStorePort,
@@ -3219,11 +3229,22 @@ export const updateTask = async (
   // status automatically.
   //
   // Ordering note: `git rev-list --count <integration>..<branch>` runs from the
-  // repo root against a named branch ref. Two skip conditions apply:
+  // repo root against a named branch ref. Three-way decision on the result:
+  //   – aheadCount === 0 → branch is live and at integration tip; allow done.
+  //   – aheadCount > 0  → unmerged commits remain; redirect to failed.
+  //   – aheadCount === null (branch deleted or git error) → UNKNOWN. An unknown
+  //     must never satisfy a safety invariant. Require positive evidence: the
+  //     merge commit sha (`patch.mergeCommitSha`) must be non-empty AND reachable
+  //     from the integration branch. A reachable sha proves the fast-forward
+  //     landed even though the branch ref is gone. Without it, redirect to failed
+  //     with `done-with-unverifiable-merge` — do NOT delete the branch (it may
+  //     still be resolvable). The old `?? 0` treatment of null as "already merged"
+  //     was the direct cause of 6 phantom-done tasks on 2026-08-05: the merge
+  //     step deletes the branch BEFORE writing status:'done', so null was the
+  //     common case in the exact scenario the guard exists to catch.
+  //
+  // Skip conditions (check is a no-op):
   //   – branch is NULL → task never had a worktree; nothing to check.
-  //   – git exits non-zero → the branch was deleted (normal post-merge cleanup
-  //     where the merge step deletes the branch before or alongside the status
-  //     write). Treat as 0 commits ahead and allow done.
   //
   // The guard applies only to direct done transitions via updateTask. The
   // propagateRecoveryDone path in Arc sets the ORIGIN to done after a FIX task
@@ -3232,6 +3253,7 @@ export const updateTask = async (
   // (the origin's branch was intentionally never merged — the fix task did the
   // work). That path calls Arc.setTaskStatus directly and bypasses updateTask.
   let doneWithUnmergedCommits = false
+  let doneWithUnverifiableMerge = false
   if (
     patch.status === 'done' &&
     previousStatus !== null &&
@@ -3240,21 +3262,41 @@ export const updateTask = async (
   ) {
     const integration = process.env.INTEGRATION_BRANCH ?? 'main'
     const repoRoot = resolveContext().repoRoot
-    // Branch deleted or git error — `revListCount` answers null, which we
-    // treat as already merged (0 ahead).
-    const aheadCount =
-      (await resolveVcs().revListCount({
-        cwd: repoRoot,
-        range: `${integration}..${taskBranch}`,
-      })) ?? 0
-    if (aheadCount > 0) {
+    const aheadCount = await resolveVcs().revListCount({
+      cwd: repoRoot,
+      range: `${integration}..${taskBranch}`,
+    })
+    if (aheadCount !== null && aheadCount > 0) {
+      // Branch is live but has unmerged commits — definite violation.
       doneWithUnmergedCommits = true
       patch = {
         ...patch,
         status: 'failed',
         failureReasonCode: 'done-with-unmerged-commits',
       }
+    } else if (aheadCount === null) {
+      // Branch deleted or git error — UNKNOWN. Require positive evidence.
+      const sha = patch.mergeCommitSha
+      let shaReachable = false
+      if (sha && sha.length > 0) {
+        shaReachable = await resolveVcs().isAncestor({
+          cwd: repoRoot,
+          ancestor: sha,
+          descendant: integration,
+        }).catch(() => false)
+      }
+      if (!shaReachable) {
+        doneWithUnverifiableMerge = true
+        patch = {
+          ...patch,
+          status: 'failed',
+          failureReasonCode: 'done-with-unverifiable-merge',
+        }
+      }
+      // else: sha is present and reachable → positive evidence of a real merge,
+      // allow done.
     }
+    // aheadCount === 0: branch live and at integration tip → allow done.
   }
 
   // Transitioning to 'done': clear stale failure fields from any prior failed
@@ -3544,6 +3586,28 @@ export const updateTask = async (
         context: { taskId: id },
         raisedBy: 'queue:done-implies-merged-guard',
         signature: id,
+        originTaskId: id,
+      })
+    } catch {
+      // Best-effort: raise failure must not mask the task failure itself.
+    }
+  }
+  if (doneWithUnverifiableMerge) {
+    const integration = process.env.INTEGRATION_BRANCH ?? 'main'
+    try {
+      await raiseActionQueueItem({
+        kind: 'failed',
+        category: 'daemon',
+        priority: 'urgent',
+        title: `Task ${id} failed: done-with-unverifiable-merge`,
+        body:
+          `A done transition was blocked because branch ${taskBranch} has been deleted but no ` +
+          `reachable merge commit sha was provided. Cannot confirm the merge completed. ` +
+          `Investigate and re-merge or restart the task.`,
+        payload: { taskId: id, branch: taskBranch, integration },
+        context: { taskId: id },
+        raisedBy: 'queue:done-implies-merged-guard',
+        signature: `${id}:done-with-unverifiable-merge`,
         originTaskId: id,
       })
     } catch {

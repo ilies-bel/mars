@@ -11,11 +11,15 @@
  * `failure_reason_code='done-with-unmerged-commits'` and an action-queue item
  * of the same kind is raised.
  *
+ * Three-way decision on `revListCount` result:
+ *   – 0 (branch live and at integration tip) → allow done.
+ *   – > 0 (unmerged commits remain) → fail with 'done-with-unmerged-commits'.
+ *   – null (branch deleted or git error) → require a reachable mergeCommitSha.
+ *     With a reachable sha → allow done.
+ *     Without a reachable sha → fail with 'done-with-unverifiable-merge'.
+ *
  * Skip conditions (check is a no-op):
  *   – branch column is NULL (task never had a worktree).
- *   – `git rev-list` exits non-zero (branch was deleted after the merge step;
- *     normal post-merge cleanup ordering where branch deletion precedes the
- *     status write). Treat as 0 commits ahead → allow done.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
@@ -156,7 +160,7 @@ describe('done-implies-merged guard (ADR-0052)', () => {
     expect(fetched?.status).toBe('done')
   })
 
-  it('allows done when the branch has been deleted after merge (git error → treat as 0 ahead)', async () => {
+  it('fails with done-with-unverifiable-merge when branch is deleted and no merge sha provided', async () => {
     const { q } = await loadMods(repo)
     const task = await q.enqueueTask('test task', undefined, { skipTriage: true })
 
@@ -167,10 +171,56 @@ describe('done-implies-merged guard (ADR-0052)', () => {
       args: [branch, task.id],
     })
 
-    // Branch does not exist → git rev-list fails → treat as 0 ahead → allow done.
+    // Branch deleted + no merge sha → must fail, not silently allow done.
     await q.updateTask(task.id, { status: 'done' })
 
     const fetched = await q.getTask(task.id)
+    expect(fetched?.status).toBe('failed')
+    expect(fetched?.failureReasonCode).toBe('done-with-unverifiable-merge')
+  })
+
+  it('allows done when branch is deleted but a reachable merge sha is provided', async () => {
+    const { q } = await loadMods(repo)
+    const task = await q.enqueueTask('test task', undefined, { skipTriage: true })
+
+    // The integration tip SHA is the commit that init created on main.
+    const mainSha = execFileSync('git', ['rev-parse', 'main'], {
+      cwd: repo,
+      encoding: 'utf8',
+    }).trim()
+
+    // Set the branch to a name that does NOT exist (simulates post-merge deletion).
+    const branch = `task/${task.id}`
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET branch = ?, status = 'verifying' WHERE id = ?`,
+      args: [branch, task.id],
+    })
+
+    // Branch deleted + reachable sha → positive evidence of a real merge → allow done.
+    await q.updateTask(task.id, { status: 'done', mergeCommitSha: mainSha })
+
+    const fetched = await q.getTask(task.id)
     expect(fetched?.status).toBe('done')
+  })
+
+  it('fails with done-with-unverifiable-merge when branch deleted and sha is unreachable', async () => {
+    const { q } = await loadMods(repo)
+    const task = await q.enqueueTask('test task', undefined, { skipTriage: true })
+
+    const branch = `task/${task.id}`
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET branch = ?, status = 'verifying' WHERE id = ?`,
+      args: [branch, task.id],
+    })
+
+    // Branch deleted + sha that does not exist in the repo → not reachable → fail.
+    await q.updateTask(task.id, {
+      status: 'done',
+      mergeCommitSha: 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
+    })
+
+    const fetched = await q.getTask(task.id)
+    expect(fetched?.status).toBe('failed')
+    expect(fetched?.failureReasonCode).toBe('done-with-unverifiable-merge')
   })
 })

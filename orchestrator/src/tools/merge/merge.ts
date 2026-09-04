@@ -178,6 +178,13 @@ export const merge = async (
   const branch = worktree.branch
 
   if (kind === 'diagnose') {
+    // Mark done BEFORE removing the worktree/branch so the done-implies-merged
+    // guard in updateTask can verify the branch still exists. Diagnose branches
+    // always have 0 commits ahead of integration (they are verdict-only), so
+    // the guard sees aheadCount===0 and allows the transition. If we removed the
+    // branch first the guard would see aheadCount===null with no merge sha and
+    // incorrectly redirect to failed.
+    await updateTask(taskId, { status: 'done', failedPhase: null }, store)
     if (implementStillInFlight()) {
       console.log(
         `[merge] task ${taskId}: diagnose complete; PRESERVING worktree ${worktreePath} — ` +
@@ -193,7 +200,6 @@ export const merge = async (
         trace: buildTraceIdentity(trace, taskId, 'merge'),
       })
     }
-    await updateTask(taskId, { status: 'done', failedPhase: null }, store)
     return {
       taskId,
       success: true,
@@ -292,6 +298,11 @@ export const merge = async (
             console.log(
               `[merge] task ${taskId}: branch ${branch} has zero commits ahead of ${integrationBranch} — main-committer no-op accepted`,
             )
+            // Mark done BEFORE removing the worktree/branch so the done-implies-merged
+            // guard in updateTask can verify the branch still exists and sees
+            // aheadCount===0. If we removed the branch first, the guard would see
+            // aheadCount===null with no merge sha and incorrectly redirect to failed.
+            await updateTask(taskId, { status: 'done', failedPhase: null }, store)
             if (implementStillInFlight()) {
               console.log(
                 `[merge] task ${taskId}: PRESERVING worktree ${worktreePath} — ` +
@@ -307,7 +318,6 @@ export const merge = async (
                 trace: buildTraceIdentity(trace, taskId, 'merge'),
               })
             }
-            await updateTask(taskId, { status: 'done', failedPhase: null }, store)
             return {
               taskId,
               success: true,
@@ -1277,7 +1287,15 @@ export const merge = async (
             trace: buildTraceIdentity(trace, taskId, 'merge'),
           })
         }
-        await updateTask(taskId, { status: 'done', failedPhase: null }, store)
+        await updateTask(
+          taskId,
+          {
+            status: 'done',
+            failedPhase: null,
+            mergeCommitSha: capturedMergeShas?.mergePostSha ?? null,
+          },
+          store,
+        )
 
         return {
           taskId,
