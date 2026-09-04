@@ -458,8 +458,8 @@ describe('parseReleaseNotesRoute', () => {
 // ---------------------------------------------------------------------------
 
 describe('pageTitle', () => {
-  it('returns "Action Queue — mars" for the triage route', () => {
-    expect(pageTitle('triage')).toBe('Action Queue — mars')
+  it('returns "Needs You — mars" for the triage route', () => {
+    expect(pageTitle('triage')).toBe('Needs You — mars')
   })
 
   it('returns "Chat — mars" for the chat route', () => {
