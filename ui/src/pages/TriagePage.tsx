@@ -125,6 +125,7 @@ const KIND_LABEL: Record<ActionQueueKind, string> = {
   'dirty-integration': 'dirty integration',
   'fragmented-repo-layout': 'fragmented',
   'low-disk-space': 'low disk',
+  'slicer-transport-outage': 'slicer outage',
   // ── notice kinds ─────────────────────────────────────────────────────────
   'spend-control-notice': 'spend limit',
   'scheduling-decision': 'scheduled',

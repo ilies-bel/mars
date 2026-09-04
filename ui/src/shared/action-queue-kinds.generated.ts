@@ -33,6 +33,8 @@ export const conditionKinds = [
   'orphaned-origin',
   'steward-repeat',
   'e2e-tooling-missing',
+  'phantom-merge',
+  'phantom-merge-unknown',
 ] as const
 
 /**
@@ -93,4 +95,5 @@ export const taskFailureKinds = [
   'qa-step-list-opt-in',
   'qa-step-list-promote',
   'worktree-hook-trust-request',
+  'slicer-transport-outage',
 ] as const
