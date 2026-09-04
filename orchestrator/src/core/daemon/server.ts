@@ -6526,6 +6526,22 @@ export const startDaemon = async (
   }, DEV_STALENESS_CHECK_MS)
   devStalenessCheck.unref()
 
+  // One-time boot check: log stale scaffolded workflows alongside the
+  // code-drift line so both drift surfaces appear in the same boot transcript.
+  // Non-fatal: any filesystem error is swallowed.
+  void (async () => {
+    try {
+      const { checkWorkflowStaleness } = await import('../../init/init-manifest.js')
+      const ctx = resolveContext()
+      const { stale } = checkWorkflowStaleness(ctx.repoRoot, ctx.stateDir)
+      if (stale.length > 0) {
+        log(`[workflow-scaffold] stale workflows — run mars update: ${stale.join(', ')}`)
+      }
+    } catch {
+      // Non-fatal; ignore
+    }
+  })()
+
   // Periodic reclamation sweeps, watchdogs and detectors are declared as a
   // list in ./sweeps and armed here. Adding a sweep means adding a SweepSpec,
   // not another inline setInterval block.

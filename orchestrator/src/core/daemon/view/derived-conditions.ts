@@ -23,6 +23,7 @@ import { RECOVERY_EXHAUSTED_PREFIX, classifyError } from '../../lib/failure-sign
 import { findBaselineCaughtTaskIds } from '../../lib/baseline-attribution'
 import { readBudgetConfig } from '../../lib/spend-meter'
 import type { BudgetArcPayload } from '../../lib/payload-contracts/spend'
+import { checkWorkflowStaleness } from '../../../init/init-manifest.js'
 
 // ── Stable ID helper ─────────────────────────────────────────────────────────
 
@@ -879,6 +880,58 @@ async function deriveBudgetArcConditions(
     })
 }
 
+/**
+ * Derive a `workflow-scaffold-stale` row when any owned (init-manifest-tracked)
+ * workflow in `.mars/workflows/` has content that differs from the bundled
+ * template.
+ *
+ * Only owned workflows produce the alert — unowned (hand-edited) workflows are
+ * listed in the body as informational context but never raise an alert row on
+ * their own (ADR-0057: `mars update` does not touch unowned files).
+ *
+ * Derived on every read; no stored row.  The condition disappears automatically
+ * once `mars update` refreshes the stale files.
+ */
+function deriveWorkflowScaffoldStaleConditions(
+  repoRoot: string | undefined,
+  nowMs: number,
+): PersistedActionQueueRow[] {
+  if (!repoRoot) return []
+  const marsDir = join(repoRoot, '.mars')
+  let staleness: ReturnType<typeof checkWorkflowStaleness>
+  try {
+    staleness = checkWorkflowStaleness(repoRoot, marsDir)
+  } catch {
+    return []
+  }
+  const { stale, customised } = staleness
+  if (stale.length === 0) return []
+
+  const staleLines = stale.map((f) => `  - ${f}`).join('\n')
+  const customisedBlock =
+    customised.length > 0
+      ? `\n\nCustomised (user-edited, not refreshed by mars update):\n${customised.map((f) => `  - ${f}`).join('\n')}`
+      : ''
+  const body =
+    `The following scaffolded workflows differ from their bundled templates:\n${staleLines}${customisedBlock}\n\n` +
+    `Run \`mars update\` to refresh stale workflows.`
+
+  return [
+    {
+      id: deriveId('workflow-scaffold-stale', stale.slice().sort().join(':')),
+      kind: 'workflow-scaffold-stale',
+      priority: 'normal',
+      title: 'Background workflows are out of date — run mars update',
+      body,
+      payload: { staleFiles: stale, customisedFiles: customised },
+      context: {},
+      raisedAt: nowMs,
+      lastSeenAt: nowMs,
+      signature: 'workflow-scaffold-stale',
+    },
+  ]
+}
+
 // ── Factory ───────────────────────────────────────────────────────────────────
 
 /**
@@ -929,6 +982,9 @@ export const createConditionItemsSource = (deps: ConditionsDeps): ConditionItems
         ? deriveStaleWorktreeConditions(client, deps.repoRoot, nowMs)
         : [],
       wants('budget-arc') ? deriveBudgetArcConditions(client, nowMs) : [],
+      wants('workflow-scaffold-stale')
+        ? deriveWorkflowScaffoldStaleConditions(deps.repoRoot, nowMs)
+        : [],
     ])
 
     const all = results.flat()

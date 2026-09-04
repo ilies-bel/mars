@@ -38,6 +38,7 @@ import { loadLeverRegistry } from '../../core/lib/lever-registry'
 // Import from health/index triggers daemon-reachable registration as a side effect.
 import { runChecks } from '../../core/health/index.js'
 import type { CheckContext, Prereq } from '../../core/health/index.js'
+import { checkWorkflowStaleness } from '../../init/init-manifest.js'
 
 // ---------------------------------------------------------------------------
 // Public types (exported for tests)
@@ -813,6 +814,43 @@ export const runDoctorChecks = async (
       }
     }
     // 0 sites → no row; nothing to check when no lockfiles are present.
+  }
+
+  // H10. Workflow scaffold staleness — WARN when any owned workflow in
+  // `.mars/workflows/` has content that differs from its bundled template.
+  // Unlike daemon-code-drift (which detects the orchestrator binary itself
+  // drifting), this catches the scaffolded JS files the operator is expected
+  // to refresh via `mars update`. Only owned (manifest-tracked) files are
+  // flagged; unowned (hand-edited, never scaffolded) files are listed
+  // informally so the operator can decide what to do.
+  if (repoRoot !== null) {
+    const marsDir = resolve(repoRoot, '.mars')
+    try {
+      const { stale, customised } = checkWorkflowStaleness(repoRoot, marsDir)
+      if (stale.length > 0) {
+        const fileList = stale.join(', ')
+        const customisedNote =
+          customised.length > 0
+            ? ` (${customised.length} customised file(s) not refreshed: ${customised.join(', ')})`
+            : ''
+        results.push({
+          label: 'workflow scaffold',
+          status: 'WARN',
+          section: 'health',
+          message:
+            `${stale.length} scaffolded workflow(s) are out of date: ${fileList}${customisedNote} — run 'mars update' to refresh`,
+        })
+      } else {
+        results.push({
+          label: 'workflow scaffold',
+          status: 'PASS',
+          section: 'health',
+          message: 'all scaffolded workflows are up to date',
+        })
+      }
+    } catch {
+      // Non-fatal — skip silently when templates or manifest cannot be read.
+    }
   }
 
   return results

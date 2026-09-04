@@ -12,12 +12,14 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createConditionItemsSource } from '../derived-conditions.js'
 import { humanSummary as recipeHumanSummary } from '../../../lib/action-queue-recipes.js'
 import type { DbClient, DbStatement } from '../../../lib/db.js'
+import { planWorkflowCopies, WORKFLOWS_DEST_REL } from '../../../init/scaffold-workflows.js'
+import { writeInitManifest } from '../../../init/init-manifest.js'
 
 // ── Minimal mock DbClient ─────────────────────────────────────────────────────
 // daemon-died derivation is filesystem-only; it never touches the DB.
@@ -442,3 +444,95 @@ describe(
     })
   },
 )
+
+// ── workflow-scaffold-stale derivation ────────────────────────────────────────
+
+describe('createConditionItemsSource — workflow-scaffold-stale derivation', () => {
+  let tmpDir: string
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(resolve(tmpdir(), 'mars-wf-stale-'))
+    mkdirSync(resolve(tmpDir, '.mars'), { recursive: true })
+  })
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  it('returns empty when repoRoot is not provided', async () => {
+    const source = createConditionItemsSource({ getClient: () => emptyDbClient })
+    const rows = await source.derive({ kinds: new Set(['workflow-scaffold-stale']) })
+    expect(rows).toEqual([])
+  })
+
+  it('returns empty when all deployed workflows match their templates', async () => {
+    const copies = planWorkflowCopies(tmpDir)
+    mkdirSync(resolve(tmpDir, WORKFLOWS_DEST_REL), { recursive: true })
+    for (const c of copies) copyFileSync(c.src, c.dest)
+    writeInitManifest(resolve(tmpDir, '.mars'), copies.map((c) => c.rel))
+
+    const source = createConditionItemsSource({
+      getClient: () => emptyDbClient,
+      repoRoot: tmpDir,
+      nowMs: Date.now(),
+    })
+    const rows = await source.derive({ kinds: new Set(['workflow-scaffold-stale']) })
+    expect(rows).toEqual([])
+  })
+
+  it('returns one row when an owned workflow is stale', async () => {
+    const copies = planWorkflowCopies(tmpDir)
+    const first = copies[0]!
+    mkdirSync(resolve(tmpDir, WORKFLOWS_DEST_REL), { recursive: true })
+    writeFileSync(first.dest, '// stale content\n', 'utf8')
+    writeInitManifest(resolve(tmpDir, '.mars'), [first.rel])
+
+    const source = createConditionItemsSource({
+      getClient: () => emptyDbClient,
+      repoRoot: tmpDir,
+      nowMs: Date.now(),
+    })
+    const rows = await source.derive({ kinds: new Set(['workflow-scaffold-stale']) })
+
+    expect(rows).toHaveLength(1)
+    const row = rows[0]!
+    expect(row.kind).toBe('workflow-scaffold-stale')
+    expect(row.priority).toBe('normal')
+    expect(row.title).toContain('mars update')
+    expect((row.payload['staleFiles'] as string[])).toContain(first.rel)
+  })
+
+  it('returns empty when only unowned (customised) workflows differ — no alert for user edits', async () => {
+    const copies = planWorkflowCopies(tmpDir)
+    const first = copies[0]!
+    mkdirSync(resolve(tmpDir, WORKFLOWS_DEST_REL), { recursive: true })
+    writeFileSync(first.dest, '// hand-edited\n', 'utf8')
+    // No manifest entry → unowned
+    writeInitManifest(resolve(tmpDir, '.mars'), [])
+
+    const source = createConditionItemsSource({
+      getClient: () => emptyDbClient,
+      repoRoot: tmpDir,
+      nowMs: Date.now(),
+    })
+    const rows = await source.derive({ kinds: new Set(['workflow-scaffold-stale']) })
+    expect(rows).toEqual([])
+  })
+
+  it('respects the kinds hint — returns empty when workflow-scaffold-stale is not in the requested set', async () => {
+    const copies = planWorkflowCopies(tmpDir)
+    const first = copies[0]!
+    mkdirSync(resolve(tmpDir, WORKFLOWS_DEST_REL), { recursive: true })
+    writeFileSync(first.dest, '// stale\n', 'utf8')
+    writeInitManifest(resolve(tmpDir, '.mars'), [first.rel])
+
+    const source = createConditionItemsSource({
+      getClient: () => emptyDbClient,
+      repoRoot: tmpDir,
+      nowMs: Date.now(),
+    })
+    // Request a different kind — workflow-scaffold-stale must be excluded
+    const rows = await source.derive({ kinds: new Set(['daemon-died']) })
+    expect(rows.filter((r) => r.kind === 'workflow-scaffold-stale')).toEqual([])
+  })
+})

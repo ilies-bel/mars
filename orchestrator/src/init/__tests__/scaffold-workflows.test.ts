@@ -33,6 +33,7 @@ import {
   readInitManifest,
   readOwnedWorkflowPaths,
   writeInitManifest,
+  checkWorkflowStaleness,
 } from '../init-manifest'
 import { unifiedDiff } from '../unified-diff'
 import { updateWorkflows, type LineReader } from '../update'
@@ -680,5 +681,76 @@ describe('mars update — command wiring (in-process)', () => {
     })
     expect(r.code).toBe(2)
     expect(r.err.join('\n')).toContain('mutually exclusive')
+  })
+})
+
+// ── checkWorkflowStaleness ───────────────────────────────────────────────────
+
+describe('checkWorkflowStaleness', () => {
+  it('returns empty stale and customised when no workflows are deployed', () => {
+    // tmp repoRoot has no .mars/workflows/ dir — nothing deployed, nothing stale
+    const result = checkWorkflowStaleness(repoRoot, stateDir)
+    expect(result.stale).toEqual([])
+    expect(result.customised).toEqual([])
+  })
+
+  it('returns empty when deployed workflows are byte-identical to templates', () => {
+    // Deploy all templates verbatim and mark them as owned
+    const copies = planWorkflowCopies(repoRoot)
+    mkdirSync(resolve(repoRoot, WORKFLOWS_DEST_REL), { recursive: true })
+    for (const c of copies) {
+      copyFileSync(c.src, c.dest)
+    }
+    writeInitManifest(stateDir, copies.map((c) => c.rel))
+
+    const result = checkWorkflowStaleness(repoRoot, stateDir)
+    expect(result.stale).toEqual([])
+    expect(result.customised).toEqual([])
+  })
+
+  it('lists an owned workflow in stale when its content differs from the template', () => {
+    const copies = planWorkflowCopies(repoRoot)
+    const first = copies[0]!
+    mkdirSync(resolve(repoRoot, WORKFLOWS_DEST_REL), { recursive: true })
+    // Write a modified version of the first template
+    writeFileSync(first.dest, '// modified\n', 'utf8')
+    // Mark it as owned in the manifest
+    writeInitManifest(stateDir, [first.rel])
+
+    const result = checkWorkflowStaleness(repoRoot, stateDir)
+    expect(result.stale).toContain(first.rel)
+    expect(result.customised).not.toContain(first.rel)
+  })
+
+  it('lists an unowned workflow in customised (not stale) when its content differs', () => {
+    const copies = planWorkflowCopies(repoRoot)
+    const first = copies[0]!
+    mkdirSync(resolve(repoRoot, WORKFLOWS_DEST_REL), { recursive: true })
+    // Write a modified version but do NOT add it to the manifest → unowned
+    writeFileSync(first.dest, '// hand-edited\n', 'utf8')
+    writeInitManifest(stateDir, []) // empty manifest — no owned paths
+
+    const result = checkWorkflowStaleness(repoRoot, stateDir)
+    expect(result.stale).toEqual([])
+    expect(result.customised).toContain(first.rel)
+  })
+
+  it('separates stale (owned) from customised (unowned) when both are present', () => {
+    const copies = planWorkflowCopies(repoRoot)
+    // Need at least 2 templates for this test
+    expect(copies.length).toBeGreaterThanOrEqual(2)
+    const ownedCopy = copies[0]!
+    const unownedCopy = copies[1]!
+    mkdirSync(resolve(repoRoot, WORKFLOWS_DEST_REL), { recursive: true })
+    writeFileSync(ownedCopy.dest, '// stale-owned\n', 'utf8')
+    writeFileSync(unownedCopy.dest, '// unowned-edit\n', 'utf8')
+    // Only the first is owned
+    writeInitManifest(stateDir, [ownedCopy.rel])
+
+    const result = checkWorkflowStaleness(repoRoot, stateDir)
+    expect(result.stale).toContain(ownedCopy.rel)
+    expect(result.stale).not.toContain(unownedCopy.rel)
+    expect(result.customised).toContain(unownedCopy.rel)
+    expect(result.customised).not.toContain(ownedCopy.rel)
   })
 })

@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { WORKFLOWS_DEST_REL } from './scaffold-workflows'
+import { WORKFLOWS_DEST_REL, planWorkflowCopies } from './scaffold-workflows'
 
 interface InitManifest {
   version: 1
@@ -51,6 +51,63 @@ export const readInitManifest = (marsDir: string): string[] => {
 export const readOwnedWorkflowPaths = (marsDir: string): string[] => {
   const prefix = `${toPosix(WORKFLOWS_DEST_REL)}/`
   return readInitManifest(marsDir).filter((p) => toPosix(p).startsWith(prefix))
+}
+
+// ── Workflow staleness check ──────────────────────────────────────────────────
+
+export interface WorkflowStalenessResult {
+  /**
+   * Owned (init-manifest-tracked) workflows whose on-disk content differs
+   * from the bundled template. Raised as an action-queue alert and a doctor
+   * WARN so the operator knows to run `mars update`.
+   */
+  stale: string[]
+  /**
+   * Unowned (not in the init-manifest) workflows whose content differs from
+   * the bundled template — hand-edited files left untouched by `mars update`.
+   * Reported informally (body text) but never raised as an action-queue alert.
+   */
+  customised: string[]
+}
+
+/**
+ * Compare every bundled workflow template against its deployed counterpart in
+ * `<repoRoot>/.mars/workflows/`.
+ *
+ * - `stale` — owned files (tracked by the init-manifest) that differ from the
+ *   template. `mars update` would offer to refresh these.
+ * - `customised` — files that differ from the template but are **not** owned;
+ *   `mars update` leaves them untouched (ADR-0057).
+ *
+ * Files that are absent from disk entirely are silently skipped — they are not
+ * stale, just missing, and `mars init` / `mars update` handles that separately.
+ */
+export const checkWorkflowStaleness = (
+  repoRoot: string,
+  marsDir: string,
+): WorkflowStalenessResult => {
+  const copies = planWorkflowCopies(repoRoot)
+  const ownedSet = new Set(readOwnedWorkflowPaths(marsDir))
+  const stale: string[] = []
+  const customised: string[] = []
+  for (const c of copies) {
+    if (!existsSync(c.dest)) continue
+    let templateContent: string
+    let deployedContent: string
+    try {
+      templateContent = readFileSync(c.src, 'utf8')
+      deployedContent = readFileSync(c.dest, 'utf8')
+    } catch {
+      continue
+    }
+    if (templateContent === deployedContent) continue
+    if (ownedSet.has(c.rel)) {
+      stale.push(c.rel)
+    } else {
+      customised.push(c.rel)
+    }
+  }
+  return { stale, customised }
 }
 
 /**
