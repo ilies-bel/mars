@@ -14,6 +14,7 @@ import {
   listVerifyGates,
   removeVerifyGate,
 } from '../../core/verify-gates'
+import { resolveContext } from '../../core/context'
 import {
   detectMalformedGateArgs,
   PACKAGE_RUNNER_CMDS,
@@ -36,7 +37,9 @@ const verifyList: Command = {
   path: 'verify list',
   summary: 'list all registered verify gates',
   usage: 'usage: mars verify list',
-  run: async (_args, deps) => {
+  run: async (args, deps) => {
+    // Honour --repo: update the context singleton before listVerifyGates() reads it.
+    if (args.repo) resolveContext(args.repo)
     const gates = await listVerifyGates()
     if (gates.length === 0) {
       deps.out('(no verify gates configured)')

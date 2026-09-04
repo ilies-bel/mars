@@ -44,6 +44,14 @@ export const renderTopLevelHelp = (registry: CommandRegistry): string => {
   const commands = [...registry.values()]
   return `mars — provider-agnostic orchestrator for parallel agent task workflows
 
+Getting started:
+  mars init                            # scaffold config and start the daemon
+  mars task add "describe the task"    # enqueue a task
+  mars list                            # see queued work
+  mars action-queue list               # see what needs your attention
+  mars ui                              # open the dashboard
+  mars doctor                          # check prerequisites
+
 Usage:
   mars [--repo <path>] <command> [args]
 

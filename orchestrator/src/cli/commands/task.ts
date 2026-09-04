@@ -150,10 +150,13 @@ const enqueueViaDaemon = async (
     { onSpawnNotice: spawnNoticeErr(deps.err) },
   )) as { id: string; status: string }
   const verb = task.status
-  const suffix =
-    params.blockerIds && params.blockerIds.length > 0
-      ? ` (blocked by: ${params.blockerIds.join(', ')}; author: ${formatAuthor(author)})`
-      : ` (author: ${formatAuthor(author)})`
+  const authorExplicit = flags['--author'] !== undefined
+  const hasBlockers = params.blockerIds && params.blockerIds.length > 0
+  const parts = [
+    hasBlockers ? `blocked by: ${params.blockerIds!.join(', ')}` : '',
+    authorExplicit ? `author: ${formatAuthor(author)}` : '',
+  ].filter(Boolean)
+  const suffix = parts.length > 0 ? ` (${parts.join('; ')})` : ''
   deps.out(`${verb} ${task.id}${suffix}`)
   return { code: 0 }
 }

@@ -258,7 +258,7 @@ const initWorkflow = defineWorkflow<InitInput, InitWorkflowOutput>({
     const w2b = await ctx.step('merge-mcp-json', () => {
       const appCtx = resolveContext()
       mergeMcpJson(appCtx.repoRoot)
-      return [...w2, '.mcp.json']
+      return w2.includes('.mcp.json') ? w2 : [...w2, '.mcp.json']
     })
     const w2d = await ctx.step('merge-gitignore', () => {
       const appCtx = resolveContext()

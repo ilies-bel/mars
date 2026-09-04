@@ -642,8 +642,8 @@ function deriveDaemonCodeDriftConditions(
     {
       id: deriveId('daemon-code-drift', `${sourceSha}:${currentSha}`),
       kind: 'daemon-code-drift',
-      priority: 'high',
-      title: `Update available for the background engine — ${shortSrc} → ${shortHead}`,
+      priority: 'normal',
+      title: 'Mars was updated; restart the background engine to use it (mars daemon restart)',
       body: dependencyDrift
         ? `daemon running ${shortSrc}, main is at ${shortHead}; dependencies changed — run your package install, then \`mars daemon restart\``
         : `daemon running ${shortSrc}, main is at ${shortHead} — run \`mars daemon restart\` to load current verify/dispatch code`,

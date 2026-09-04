@@ -96,7 +96,7 @@ Before starting the cut, confirm all of the following:
 
    ```sh
    cd /path/to/mars-framework
-   ./install.sh
+   ./install-dev.sh
    ```
 
 2. Confirm the installed binary is the expected version:

@@ -104,7 +104,11 @@ export const launchUi = async (opts: LaunchOptions): Promise<void> => {
   const logStartOffset = fstatSync(logFd).size
 
   const args: string[] = []
-  if (opts.repo) args.push('--repo', opts.repo)
+  // Always pass --repo explicitly so the child uses the invoking repo rather
+  // than inheriting MARS_REPO (which may point at the framework root when the
+  // CLI was installed via install-dev.sh and the user is running from a
+  // different consumer repo).
+  args.push('--repo', ctx.repoRoot)
   if (opts.port) args.push('--port', opts.port)
   if (opts.host) args.push('--host', opts.host)
   if (opts.dev) args.push('--dev')

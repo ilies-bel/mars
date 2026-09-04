@@ -144,7 +144,7 @@ export const checkAlreadyInitialized = (
 
 const init: Command = {
   path: 'init',
-  summary: 'scaffold CLAUDE.md, .claude/ config, workflow templates, and databases',
+  summary: 'scaffold CLAUDE.md, .mcp.json, workflow templates, and databases',
   usage:
     'usage: mars init [--force] [--dry-run] [--verbose] [--yes] [--wizard] [--wizard-off] [--skip-doctor] [--provider claude|gemini|codex]',
   run: async (args, deps) => {
@@ -194,6 +194,8 @@ const init: Command = {
     // short-circuiting.
     if (!force && existsSync(join(deps.ctx.repoRoot, '.mars'))) {
       deps.out('Found a partial Mars install (no init manifest) — completing it.')
+    } else if (!force) {
+      deps.out(`Setting up Mars in ${deps.ctx.repoRoot}`)
     }
 
     // ── Env-aware defaults ────────────────────────────────────────────────

@@ -137,7 +137,7 @@ export const renderActionQueueDetail = (deps: CommandDeps, row: ActionQueueRow):
   deps.out(`id:        ${row.id}`)
   deps.out(`title:     ${row.title}`)
   deps.out(`kind:      ${row.kind}`)
-  deps.out(`entity:    ${row.entityId}`)
+  if (row.kind !== 'verify-uncovered') deps.out(`entity:    ${row.entityId}`)
   deps.out(`priority:  ${row.priority}`)
   deps.out(`at:        ${row.at}`)
   deps.out(`dag:       ${JSON.stringify(row.dag)}`)

@@ -275,7 +275,7 @@ There are two install routes, for two different audiences:
   from the latest GitHub Release, verifies its sha256, and drops `mars`
   onto PATH. This is the route to point users at; it needs no clone and
   no dev toolchain.
-- **Dev consumers** run `install.sh` from a clone of this repo. It does
+- **Dev consumers** run `install-dev.sh` from a clone of this repo. It does
   *not* produce a compiled Bun binary — it writes a small tsx wrapper
   that runs the CLI from source and symlinks that tsx wrapper onto PATH,
   so source edits go live immediately. This is a dev-only flow; prod
