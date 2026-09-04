@@ -306,7 +306,7 @@ describe('recovery-abandoned outbox subscriber', () => {
   // / mars restart) only apply to failed tasks.
   // -------------------------------------------------------------------------
 
-  it('does not raise an action-queue item when the origin task is not in failed status', async () => {
+  it('suppresses the item when origin has auto-requeued (origin is not in failed status)', async () => {
     const { q, ra, pub, client } = await loadModules(repo)
 
     // Enqueued origin remains in 'queued' status — not 'failed'.
