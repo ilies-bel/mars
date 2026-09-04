@@ -15,6 +15,7 @@
  * the registry lookup deterministically misses, surfacing the gap rather
  * than papering over it.
  */
+import { readCustomClassifiers, type CustomClassifierPattern } from '../daemon/config'
 
 /**
  * Grammar that a valid step identifier must satisfy.
@@ -1146,4 +1147,23 @@ export const causeForSignature = (
 ): string | null => {
   const renderer = causeSentencesBySignature[signature]
   return renderer ? renderer(taskId) : null
+}
+
+/**
+ * Look up a custom classifier by the slug that becomes the error-class
+ * component of a failure signature (the part after the last `/`).
+ *
+ * Returns the matching `CustomClassifierPattern` when the operator has
+ * registered a classifier whose `name` equals `errorClass`; otherwise `null`.
+ *
+ * Callers use this to thread operator-written guidance into the recovery
+ * agent's brief (`FixRecipeContext.customGuidance`) and to synthesise
+ * human-readable `warmTitle` values for otherwise-generic action-queue rows.
+ */
+export const getCustomClassifierMeta = (
+  errorClass: string | null | undefined,
+): CustomClassifierPattern | null => {
+  if (!errorClass) return null
+  const classifiers = readCustomClassifiers()
+  return classifiers.find((c) => c.name === errorClass) ?? null
 }

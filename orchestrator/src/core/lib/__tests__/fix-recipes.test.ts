@@ -1130,6 +1130,50 @@ describe('genericRecoveryRecipe (first-principles fallback)', () => {
       expect(prompt).toContain(baseCtx.originalPrompt)
     })
   })
+
+  describe('customGuidance injection', () => {
+    it('includes ## Operator guidance section when customGuidance is a non-empty string (work-failure path)', () => {
+      const guidance = 'Check that the Jest config is using the correct transform pipeline.'
+      const prompt = genericRecoveryRecipe.buildPrompt({
+        ...baseCtx,
+        customGuidance: guidance,
+      })
+      expect(prompt).toContain('## Operator guidance')
+      expect(prompt).toContain(guidance)
+    })
+
+    it('includes ## Operator guidance section when customGuidance is a non-empty string (gate-failure path)', () => {
+      const guidance = 'Run `npm run typecheck` inside the orchestrator/ subdirectory.'
+      const prompt = genericRecoveryRecipe.buildPrompt({
+        ...baseCtx,
+        failureSignature: 'verify:typecheck/unclassified',
+        customGuidance: guidance,
+      })
+      expect(prompt).toContain('## Operator guidance')
+      expect(prompt).toContain(guidance)
+    })
+
+    it('omits ## Operator guidance section when customGuidance is undefined', () => {
+      const prompt = genericRecoveryRecipe.buildPrompt({ ...baseCtx })
+      expect(prompt).not.toContain('## Operator guidance')
+    })
+
+    it('omits ## Operator guidance section when customGuidance is an empty string', () => {
+      const prompt = genericRecoveryRecipe.buildPrompt({
+        ...baseCtx,
+        customGuidance: '',
+      })
+      expect(prompt).not.toContain('## Operator guidance')
+    })
+
+    it('omits ## Operator guidance in gate-failure path when customGuidance is undefined', () => {
+      const prompt = genericRecoveryRecipe.buildPrompt({
+        ...baseCtx,
+        failureSignature: 'verify:some-gate/unclassified',
+      })
+      expect(prompt).not.toContain('## Operator guidance')
+    })
+  })
 })
 
 interface QueueModule {

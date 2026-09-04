@@ -61,6 +61,15 @@ export interface FixRecipeContext {
    * display with no error.
    */
   verifyOutput?: string
+  /**
+   * Optional operator-written guidance from a custom failure classifier.
+   * When the failure signature's error class matches a registered custom
+   * classifier that carries a `guidance` string, it is injected here so
+   * `genericRecoveryRecipe.buildPrompt` surfaces it under an
+   * `## Operator guidance` heading. Omit (or leave empty) when no custom
+   * guidance applies — the section is suppressed entirely in that case.
+   */
+  customGuidance?: string
 }
 
 /**
@@ -1352,6 +1361,7 @@ export const genericRecoveryRecipe: FixRecipe = {
         original,
         '```',
         '',
+        ...(ctx.customGuidance ? ['## Operator guidance', '', ctx.customGuidance, ''] : []),
         `STEP 3 — Fix the gate failure. Based on the failure summary above, repair the defect that caused the verify gate to reject. Stay within the original scope; surface genuinely new architectural work as a follow-up task rather than expanding scope here.`,
         '',
         `STEP 4 — Verify before you exit. Run the task's verification command(s) if the original goal named any; otherwise run the project's standard typecheck/test. Do not declare success without a green run — the orchestrator re-verifies and will bounce an unverified worktree right back.`,
@@ -1390,6 +1400,7 @@ export const genericRecoveryRecipe: FixRecipe = {
       status,
       '```',
       '',
+      ...(ctx.customGuidance ? ['## Operator guidance', '', ctx.customGuidance, ''] : []),
       `STEP 4 — Finish or fix. Based on steps 1–3, either complete the remaining work or repair the defect that caused the failure. Stay within the original scope; surface genuinely new architectural work as a follow-up task rather than expanding scope here.`,
       '',
       `STEP 5 — Verify before you exit. Run the task's verification command(s) if the original goal named any; otherwise run the project's standard typecheck/test. Do not declare success without a green run — the orchestrator re-verifies and will bounce an unverified worktree right back.`,

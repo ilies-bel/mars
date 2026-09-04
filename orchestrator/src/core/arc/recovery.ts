@@ -34,6 +34,7 @@ import { randomUUID } from 'node:crypto'
 import { getTask, MAX_PRIORITY, resolveQueueClient } from '../queue'
 import type { DomainTaskStore } from '../store/task-store'
 import { getRecipeOrGeneric, type FixRecipeContext } from '../lib/fix-recipes'
+import { getCustomClassifierMeta } from '../lib/failure-signature'
 import { buildEventInsert, emitEvent } from '../lib/outbox'
 import {
   MAIN_COMMITER_RECIPE,
@@ -262,6 +263,14 @@ export const spawnRecovery = async (
   // brief. Returns null for NULL payloads and legacy rows — safe to call
   // unconditionally.
   const verifyOutputPayload = parseVerifyOutputPayload(source.recoveryPayload ?? null)
+  // Extract the error class from the failure signature (the part after the
+  // last '/') and check whether the operator registered a custom classifier
+  // for it. If so, thread any guidance into the recipe context so the generic
+  // recipe can surface it under an '## Operator guidance' heading.
+  const errorClass = input.failureSignature.includes('/')
+    ? input.failureSignature.split('/').pop()
+    : undefined
+  const customMeta = getCustomClassifierMeta(errorClass)
   const recipeContextWithSource: FixRecipeContext = {
     ...input.recipeContext,
     // Thread the failure signature into the context so the generic recipe
@@ -273,6 +282,7 @@ export const spawnRecovery = async (
         ? incomingPrompt
         : source.prompt ?? '',
     ...(verifyOutputPayload !== null ? { verifyOutput: verifyOutputPayload.output } : {}),
+    ...(customMeta?.guidance ? { customGuidance: customMeta.guidance } : {}),
   }
   const basePrompt = recipe.buildPrompt(recipeContextWithSource)
   // Append the optional QA note verbatim under a ## QA note heading so

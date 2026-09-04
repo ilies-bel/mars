@@ -33,6 +33,7 @@
 
 import {
   firstNonBlankLine,
+  getCustomClassifierMeta,
   isContextExhaustedSignature,
   stripRecoveryFailedPrefixes,
 } from './failure-signature'
@@ -1092,6 +1093,24 @@ export const resolveFailureKind = (
   if (signature !== null) {
     const hit = lookupFailureKind(signature)
     if (hit) return hit
+    // Before falling through to the generic step-family label, check whether
+    // the error class matches a custom classifier registered by the operator.
+    // When it does, synthesise a FailureKind whose warmTitle uses the
+    // classifier's human-readable name (e.g. `jest-failure` → `Jest failure`)
+    // so the action-queue row is distinguishable from the generic bucket.
+    const errorClass = signature.includes('/') ? signature.split('/').pop() : null
+    const customMeta = getCustomClassifierMeta(errorClass)
+    if (customMeta) {
+      const warmTitle =
+        customMeta.name.charAt(0).toUpperCase() +
+        customMeta.name.slice(1).replace(/-/g, ' ')
+      const step = failingStepFromSignature(signature)
+      return {
+        ...unknownFailureKind(step, capturedError),
+        signature,
+        warmTitle,
+      }
+    }
     return unknownFailureKind(failingStepFromSignature(signature), capturedError)
   }
   return unknownFailureKind('unknown', capturedError)
