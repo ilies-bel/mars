@@ -59,6 +59,7 @@ export const ACTION_QUEUE_KINDS = [
   'mockup-ready',
   'qa-step-list-opt-in',
   'qa-step-list-promote',
+  'phantom-merge',
 ] as const
 
 export type ActionQueueKind = (typeof ACTION_QUEUE_KINDS)[number]
@@ -155,6 +156,7 @@ export const KIND_CLASS: Record<ActionQueueKind, ActionQueueClass> = {
   'scheduling-decision': 'decision',       // operator must choose a scheduling option
   'gate-enrichment-stale': 'decision',    // enrichment request timed out; operator picks next step
   'verify-uncovered': 'decision',         // task has no verify command; operator must decide
+  'phantom-merge': 'alert',              // done task whose merge SHA is null; real commits may not have landed
 }
 
 /**
@@ -190,4 +192,5 @@ export const DERIVED_KINDS: ReadonlySet<ActionQueueKind> = new Set<ActionQueueKi
   'orphaned-origin',
   'steward-repeat',
   'e2e-tooling-missing',
+  'phantom-merge',
 ])

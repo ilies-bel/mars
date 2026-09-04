@@ -237,5 +237,6 @@ export const ACTION_QUEUE_PAYLOAD_AUDIT = {
   'mockup-ready': 'typed',
   'qa-step-list-opt-in': 'typed',
   'qa-step-list-promote': 'typed',
+  'phantom-merge': 'derived-condition',
 } as const satisfies Record<ActionQueueKind, 'typed' | 'derived-condition'>
 

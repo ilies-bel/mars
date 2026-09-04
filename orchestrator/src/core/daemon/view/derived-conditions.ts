@@ -932,6 +932,79 @@ function deriveWorkflowScaffoldStaleConditions(
   ]
 }
 
+// ── Phantom-merge condition ───────────────────────────────────────────────────
+
+/**
+ * Derive `phantom-merge` rows by scanning tombstone files for done tasks where
+ * `reason === 'merged'` and `mergeCommitSha` is null.
+ *
+ * A tombstone with `{reason: 'merged', mergeCommitSha: null}` means the merge
+ * step called `removeWorktree` with reason='merged' but no fast-forward SHA was
+ * captured — the integration branch was not actually advanced. This is the P3
+ * bug (mars-59c9fdb0): stale-merging-sweep eviction reset the branch, the old
+ * queued merge job ran on the reset branch (zero commits), and the merge step
+ * silently marked the task done with null SHA.
+ *
+ * The phantom-merge guard in merge.ts now catches this case inline; this
+ * derived condition surfaces any pre-existing tombstones that slipped through.
+ */
+async function derivePhantomMergeConditions(
+  client: DbClient,
+  repoRoot: string,
+  nowMs: number,
+): Promise<PersistedActionQueueRow[]> {
+  const marsWorktreesDir = join(repoRoot, '.mars', 'worktrees')
+  if (!existsSync(marsWorktreesDir)) return []
+
+  // Only check done tasks — a phantom merge only matters for tasks that the
+  // system believes succeeded. Failed tasks may also have null tombstones but
+  // they already have actionable failed alerts.
+  const result = await client.execute(
+    `SELECT id FROM tasks WHERE status = 'done' ORDER BY updated_at DESC LIMIT 200`,
+  )
+
+  const rows: PersistedActionQueueRow[] = []
+  for (const r of result.rows) {
+    const taskId = (r as { id: string }).id
+    const tombstonePath = join(marsWorktreesDir, `${taskId}.removed.json`)
+    if (!existsSync(tombstonePath)) continue
+    let tombstone: { reason?: string; mergeCommitSha?: string | null; taskId?: string }
+    try {
+      tombstone = JSON.parse(readFileSync(tombstonePath, 'utf8')) as typeof tombstone
+    } catch {
+      continue
+    }
+    if (tombstone.reason !== 'merged') continue
+    // null or missing mergeCommitSha with reason='merged' is the phantom-merge symptom.
+    if (tombstone.mergeCommitSha) continue
+
+    rows.push({
+      id: deriveId('phantom-merge', taskId),
+      kind: 'phantom-merge',
+      priority: 'high',
+      title: `Task ${taskId}: phantom merge — done but no merge SHA recorded`,
+      body: [
+        `Task \`${taskId}\` was marked done with tombstone \`{reason: 'merged', mergeCommitSha: null}\`.`,
+        '',
+        `A null \`mergeCommitSha\` means the fast-forward did not advance the integration branch — ` +
+          `the task is "done" but its commits may not have landed. This is the P3 bug ` +
+          `(mars-59c9fdb0): a stale-merging-sweep eviction reset the branch while an old ` +
+          `merge job was still queued; the job ran on the reset (zero-commit) branch.`,
+        '',
+        `**To investigate:** check whether the task's commits are reachable from \`main\` ` +
+          `(\`git log main --grep ${taskId}\`). If not, inspect parked refs ` +
+          `(\`git for-each-ref refs/mars/parked/${taskId}\`) and restore them manually.`,
+      ].join('\n'),
+      payload: { taskId, tombstonePath, reason: 'merged', mergeCommitSha: null },
+      context: {},
+      raisedAt: nowMs,
+      lastSeenAt: nowMs,
+      signature: `phantom-merge:${taskId}`,
+    })
+  }
+  return rows
+}
+
 // ── Factory ───────────────────────────────────────────────────────────────────
 
 /**
@@ -984,6 +1057,9 @@ export const createConditionItemsSource = (deps: ConditionsDeps): ConditionItems
       wants('budget-arc') ? deriveBudgetArcConditions(client, nowMs) : [],
       wants('workflow-scaffold-stale')
         ? deriveWorkflowScaffoldStaleConditions(deps.repoRoot, nowMs)
+        : [],
+      wants('phantom-merge') && deps.repoRoot
+        ? derivePhantomMergeConditions(client, deps.repoRoot, nowMs)
         : [],
     ])
 

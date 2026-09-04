@@ -306,14 +306,70 @@ export const merge = async (
             }
           }
 
-          // Non-main-committer task: zero commits is a bug. Fail the task and
-          // preserve the worktree so the operator can inspect uncommitted work.
-          const ZERO_COMMIT_SIGNATURE = 'merge:zero-commit-branch'
-          const errorMsg = (
-            `task branch ${branch} has zero commits ahead of ${integrationBranch}; ` +
-            `the pipeline produced no deliverable commits. Worktree preserved at ` +
-            `${worktreePath} for investigation.`
-          )
+          // Non-main-committer task: zero commits is a bug. Check whether prior
+          // commits existed (parked ref from phase-recovery eviction, or a
+          // checkpoint ref from the code step). If so, use merge:work-lost so
+          // the operator knows the work existed but was lost, not simply never
+          // produced. This distinguishes the stale-merging-sweep eviction path
+          // (mars-59c9fdb0: branch reset → re-queued → false-green done) from the
+          // plain sandbox-blocked-commit path (no prior refs).
+          let workLostRef: string | null = null
+          try {
+            // Check for a parked ref written by recoverPhase when it evicted this
+            // task from the merging status while preserving unmerged commits.
+            const parkedListR = await runTool(
+              {
+                tool: 'git',
+                argv: ['for-each-ref', '--format=%(refname)', `refs/mars/parked/${taskId}`],
+                cwd: mergeRepoRoot,
+                taskId,
+                originId: trace.originId,
+                phase: 'merge',
+                expectsFailure: true,
+              },
+              trace.traceStore,
+            ).catch(() => null)
+            if (parkedListR !== null && parkedListR.exitCode === 0 && parkedListR.stdout.trim()) {
+              workLostRef = parkedListR.stdout.trim().split('\n')[0] ?? null
+            }
+            // Also check for a checkpoint ref written by the code step (coder ran
+            // and was salvage-checkpointed before the eviction reset the branch).
+            if (workLostRef === null) {
+              const ckRef = checkpointRefFor(taskId)
+              const ckR = await runTool(
+                {
+                  tool: 'git',
+                  argv: ['rev-parse', '--verify', ckRef],
+                  cwd: mergeRepoRoot,
+                  taskId,
+                  originId: trace.originId,
+                  phase: 'merge',
+                  expectsFailure: true,
+                },
+                trace.traceStore,
+              ).catch(() => null)
+              if (ckR !== null && ckR.exitCode === 0) workLostRef = ckRef
+            }
+          } catch {
+            // Best-effort: if the probe fails, fall through to the default
+            // zero-commit-branch classification.
+          }
+
+          const ZERO_COMMIT_SIGNATURE = workLostRef !== null
+            ? MERGE_WORK_LOST_SIGNATURE
+            : 'merge:zero-commit-branch'
+          const errorMsg = workLostRef !== null
+            ? (
+              `task branch ${branch} has zero commits ahead of ${integrationBranch} but ` +
+              `prior work was found at ${workLostRef}. The branch was reset (e.g. by a ` +
+              `stale-merging-sweep eviction) before the commits landed in ${integrationBranch}. ` +
+              `Worktree preserved at ${worktreePath} for investigation.`
+            )
+            : (
+              `task branch ${branch} has zero commits ahead of ${integrationBranch}; ` +
+              `the pipeline produced no deliverable commits. Worktree preserved at ` +
+              `${worktreePath} for investigation.`
+            )
           console.error(
             `[merge] task ${taskId}: zero-commit branch — failing task (was: false-green done). ${errorMsg}`,
           )
@@ -329,37 +385,61 @@ export const merge = async (
             },
             store,
           )
+          const zeroCommitTitle = workLostRef !== null
+            ? `Task ${taskId}: work lost — branch reset before commits landed`
+            : `Task ${taskId}: zero-commit branch — no work delivered`
+          const zeroCommitBody = workLostRef !== null
+            ? [
+                `Task \`${taskId}\` reached the merge gate with branch \`${branch}\` at the same ` +
+                  `commit as \`${integrationBranch}\` — zero commits ahead.`,
+                '',
+                `**Work was found at:** \`${workLostRef}\``,
+                '',
+                `This means the branch was reset (likely by a stale-merging-sweep eviction) ` +
+                  `before the commits landed. The parked ref above preserves the commits.`,
+                '',
+                `**To recover:**`,
+                `1. Inspect the parked ref: \`git log ${workLostRef}\``,
+                `2. Run \`mars continue ${taskId}\` to retry the merge from the preserved commits.`,
+              ].join('\n')
+            : [
+                `Task \`${taskId}\` reached the merge gate with branch \`${branch}\` at the same ` +
+                  `commit as \`${integrationBranch}\` — zero commits ahead. No work was delivered ` +
+                  `to the integration branch.`,
+                '',
+                `**Common causes:**`,
+                `1. The coder's \`git commit\` was blocked by the codex sandbox ` +
+                  `(\`"Operation not permitted"\` writing to \`.git/worktrees/${taskId}/index.lock\`). ` +
+                  `Auto-commit salvage may also have failed.`,
+                `2. \`syncWorktreeToIntegration\` reset the branch to the integration tip ` +
+                  `(conflict-recreate policy) after the coder committed — parking real commits ` +
+                  `on a checkpoint ref.`,
+                `3. The branch's commits already landed in \`${integrationBranch}\` under ` +
+                  `different SHAs (e.g. a sibling recovery task committed and merged the same ` +
+                  `diff first) and a rebase during this run silently dropped them as ` +
+                  `already-applied. Before assuming data loss, check whether the work is ` +
+                  `already in \`${integrationBranch}\`: \`git log ${integrationBranch} --grep ${taskId}\` ` +
+                  `or diff the worktree's last known content against \`${integrationBranch}\`.`,
+                '',
+                `**To recover:** inspect the worktree at \`${worktreePath}\` for uncommitted ` +
+                  `changes or checkpoint refs, then run \`mars continue ${taskId}\` to retry — ` +
+                  `or, if cause 3 applies, no action is needed.`,
+              ].join('\n')
           await raiseActionQueueItem({
             kind: 'failed',
             category: 'orchestrator',
             priority: 'high',
-            title: `Task ${taskId}: zero-commit branch — no work delivered`,
-            body: [
-              `Task \`${taskId}\` reached the merge gate with branch \`${branch}\` at the same ` +
-                `commit as \`${integrationBranch}\` — zero commits ahead. No work was delivered ` +
-                `to the integration branch.`,
-              '',
-              `**Common causes:**`,
-              `1. The coder's \`git commit\` was blocked by the codex sandbox ` +
-                `(\`"Operation not permitted"\` writing to \`.git/worktrees/${taskId}/index.lock\`). ` +
-                `Auto-commit salvage may also have failed.`,
-              `2. \`syncWorktreeToIntegration\` reset the branch to the integration tip ` +
-                `(conflict-recreate policy) after the coder committed — parking real commits ` +
-                `on a checkpoint ref.`,
-              `3. The branch's commits already landed in \`${integrationBranch}\` under ` +
-                `different SHAs (e.g. a sibling recovery task committed and merged the same ` +
-                `diff first) and a rebase during this run silently dropped them as ` +
-                `already-applied. Before assuming data loss, check whether the work is ` +
-                `already in \`${integrationBranch}\`: \`git log ${integrationBranch} --grep ${taskId}\` ` +
-                `or diff the worktree's last known content against \`${integrationBranch}\`.`,
-              '',
-              `**To recover:** inspect the worktree at \`${worktreePath}\` for uncommitted ` +
-                `changes or checkpoint refs, then run \`mars continue ${taskId}\` to retry — ` +
-                `or, if cause 3 applies, no action is needed.`,
-            ].join('\n'),
-            payload: { taskId, branch, integrationBranch, worktreePath },
+            title: zeroCommitTitle,
+            body: zeroCommitBody,
+            payload: {
+              taskId,
+              branch,
+              integrationBranch,
+              worktreePath,
+              ...(workLostRef !== null ? { workLostRef } : {}),
+            },
             context: { repoRoot: process.env.MARS_REPO ?? null },
-            raisedBy: 'merge:zero-commit-branch',
+            raisedBy: ZERO_COMMIT_SIGNATURE,
             signature: `${taskId}:${ZERO_COMMIT_SIGNATURE}`,
             originTaskId: taskId,
             occurrence: {
@@ -369,8 +449,8 @@ export const merge = async (
             },
           })
           throw new WorkflowTerminalError(
-            'merge-zero-commit',
-            `merge:zero-commit-branch: task ${taskId} branch ${branch} has zero commits ahead of ${integrationBranch}`,
+            workLostRef !== null ? 'merge-work-lost' : 'merge-zero-commit',
+            `${ZERO_COMMIT_SIGNATURE}: task ${taskId} branch ${branch} has zero commits ahead of ${integrationBranch}`,
           )
         }
 
@@ -1061,6 +1141,36 @@ export const merge = async (
             )
             throw new Error(assertMsg)
           }
+        } else if (m.merged) {
+          // Phantom-merge guard: the merge job reported success (m.merged: true)
+          // but did not return a mergePostSha. This means the fast-forward did not
+          // actually advance the integration branch — the tombstone would be written
+          // with mergeCommitSha: null and reason: 'merged', which is the phantom-merge
+          // symptom observed on mars-59c9fdb0 (tombstone: {reason: merged,
+          // mergeCommitSha: null}). Fail instead of silently marking the task done.
+          const phantomMsg = (
+            `merge:phantom-merge — task ${taskId} branch ${branch} merge job reported ` +
+            `merged:true but returned no mergePostSha; the fast-forward may not have ` +
+            `advanced ${integrationBranch}. Branch preserved for investigation.`
+          )
+          const phantomSignature = computeFailureSignature('merge:phantom-merge', phantomMsg)
+          console.error(`[merge] task ${taskId} phantom-merge detected: ${phantomMsg}`)
+          await updateTask(
+            taskId,
+            {
+              status: 'failed',
+              error: phantomMsg,
+              failedPhase: 'merge',
+              failureReason: MERGE_PHANTOM_MERGE_SIGNATURE,
+              failureSignature: phantomSignature,
+              failureReasonCode: MERGE_PHANTOM_MERGE_SIGNATURE,
+            },
+            store,
+          )
+          throw new WorkflowTerminalError(
+            'merge-phantom-merge',
+            phantomMsg,
+          )
         }
 
         // Restore the pre-flight checkpoint if one was captured during setup.
@@ -1274,9 +1384,11 @@ export const merge = async (
             error.message.includes('merge:main-dirty') ||
             error.message.includes('merge:integration-gate') ||
             error.message.includes('merge:post-merge-assertion') ||
-            // Zero-commit branch: task already marked failed + action-queue item raised.
+            // Zero-commit / work-lost: task already marked failed + action-queue item raised.
             // Re-throw without spawning a fix task (the operator resolves via continue).
-            error.message.includes('merge:zero-commit-branch'))
+            error.message.includes('merge:zero-commit-branch') ||
+            error.message.includes(MERGE_WORK_LOST_SIGNATURE) ||
+            error.message.includes(MERGE_PHANTOM_MERGE_SIGNATURE))
         ) {
           throw error
         }
@@ -1516,3 +1628,52 @@ export const DEFAULT_WEDGED_VCS_SUPERVISOR_TIMEOUT_MS = 20 * 60_000 // 20 min
  * Consumer: "Wedged vcs-supervisor releases merge lock with actionable failure"
  */
 export const MERGE_WEDGED_VCS_SUPERVISOR_REASON = 'merge:wedged-vcs-supervisor' as const
+
+// ── Work-lost zero-commit branch ──────────────────────────────────────────────
+
+/**
+ * Failure reason code stamped when the zero-commit guard fires AND the merge
+ * step finds evidence that this task previously had commits (a parked ref
+ * written by `recoverPhase` during a stale-merging-sweep eviction, or a
+ * checkpoint ref written by the code step).
+ *
+ * Distinct from `merge:zero-commit-branch` (task never produced commits) —
+ * this indicates the commits existed but were lost before reaching the
+ * integration branch (e.g. the branch was reset by an eviction while the
+ * original merge job was still queued). The parked ref carries the lost
+ * commits; `mars continue` can restore them.
+ *
+ * Root cause: mars-59c9fdb0 (2026-09-04) — stale-merging-sweep eviction reset
+ * the branch while an old merge job was in the queue; the re-queued code step
+ * created a fresh zero-commit branch; the old merge job ran on the fresh branch
+ * and produced a false-green done with mergeCommitSha: null.
+ */
+export const MERGE_WORK_LOST_SIGNATURE = 'merge:work-lost' as const
+
+/**
+ * Ref namespace under which `recoverPhase` parks branch tips before clearing
+ * the task row's branch pointer during a stale-merging-sweep eviction.
+ *
+ * Format: `refs/mars/parked/<taskId>/<timestamp-ms>`
+ *
+ * The merge step's work-lost guard probes `refs/mars/parked/<taskId>` via
+ * `git for-each-ref` to detect prior commits on a zero-commit branch.
+ */
+export const PARKED_REF_PREFIX = 'refs/mars/parked' as const
+
+// ── Phantom-merge condition ───────────────────────────────────────────────────
+
+/**
+ * Failure reason code stamped when the merge step detects a phantom merge:
+ * the merge job reported `merged: true` but returned no `mergePostSha`.
+ *
+ * A null `mergePostSha` means the fast-forward did not produce a new SHA —
+ * the integration branch was not actually advanced. Writing a tombstone with
+ * `{reason: 'merged', mergeCommitSha: null}` and marking the task done in
+ * this state is the P3 bug (observed on mars-59c9fdb0). The phantom-merge
+ * guard catches this case and stamps the task failed instead.
+ *
+ * The corresponding derived action-queue condition (`phantom-merge`) is raised
+ * when a done-task tombstone has `reason=merged` and `mergeCommitSha=null`.
+ */
+export const MERGE_PHANTOM_MERGE_SIGNATURE = 'merge:phantom-merge' as const

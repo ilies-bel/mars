@@ -72,6 +72,20 @@ export type WorkflowTerminalKind =
    */
   | 'merge-zero-commit'
   /**
+   * The zero-commit guard found a parked ref or checkpoint ref proving the task
+   * had prior commits before the branch was reset (e.g. by a stale-merging-sweep
+   * eviction). The task is failed with `merge:work-lost`; the parked ref
+   * preserves the lost commits for investigation or `mars continue`.
+   */
+  | 'merge-work-lost'
+  /**
+   * The merge job reported `merged: true` but returned no `mergePostSha`.
+   * The integration branch was not actually advanced; the tombstone would have
+   * been written with `{reason: 'merged', mergeCommitSha: null}`. The task is
+   * failed with `merge:phantom-merge` instead of being silently marked done.
+   */
+  | 'merge-phantom-merge'
+  /**
    * The post-coder worktree classifier (`detectPostCoderState`) failed to
    * determine the worktree state after the corrective coder turn, even after
    * one retry. Carrying a stale pre-correction snapshot forward risks reporting

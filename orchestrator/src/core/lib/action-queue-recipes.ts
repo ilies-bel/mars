@@ -1421,6 +1421,18 @@ const RECIPE_DEFINITIONS = {
       { op: 'reject', label: 'Keep as arc artefact only', style: 'default' },
     ],
   },
+
+  'phantom-merge': {
+    humanSummary: (ctx) =>
+      `Task ${str(ctx.payload['taskId'])}: marked done but no merge SHA recorded — commits may not have landed on main`,
+    humanDetail: (ctx) => ({
+      raisedAt: ctx.raisedAt,
+      entityId: ctx.entityId,
+      taskId: str(ctx.payload['taskId']),
+      tombstonePath: str(ctx.payload['tombstonePath']),
+    }),
+    verbs: [],
+  },
 } satisfies { [K in ActionQueueKind]: Omit<Recipe<K>, 'preloadedResponses' | 'kindClass'> }
 
 /**

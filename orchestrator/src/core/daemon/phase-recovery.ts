@@ -415,12 +415,38 @@ export const recoverPhase = async (
       const integrationBranch = process.env.INTEGRATION_BRANCH ?? 'main'
       const commitsAhead = await listUniqueCommitsAhead(branch, integrationBranch, repoRoot)
       if (commitsAhead.length > 0) {
-        log(
-          `[reconcile] PRESERVING branch ${branch} for task ${t.id}: ` +
-            `${commitsAhead.length} unmerged commit(s) ahead of ${integrationBranch} — ` +
-            `branch NOT deleted during phase-recovery. ` +
-            `Use 'mars purge --force ${t.id}' to remove explicitly.`,
-        )
+        // Park the branch tip under refs/mars/parked/<id>/<ts> BEFORE clearing the
+        // task row's branch pointer (CLEARED_INFLIGHT sets branch: null). Without
+        // this parking, a re-queued run creates a fresh zero-commit branch and the
+        // merge step sees no prior work — producing a false-green "done" (observed
+        // on mars-59c9fdb0 via stale-merging-sweep eviction on 2026-09-04).
+        // The parked ref lets the merge step's work-lost guard detect "this task
+        // had real commits" and fail with merge:work-lost instead of silently done.
+        const parkedRef = `refs/mars/parked/${t.id}/${Date.now()}`
+        try {
+          const { execFile } = await import('node:child_process')
+          const { promisify } = await import('node:util')
+          const execFileP = promisify(execFile)
+          const { stdout: tipOut } = await execFileP('git', ['rev-parse', branch], {
+            cwd: repoRoot,
+          })
+          const tipSha = tipOut.trim()
+          await vcs.updateRef({ cwd: repoRoot, ref: parkedRef, sha: tipSha })
+          log(
+            `[reconcile] PARKED branch ${branch} tip (${tipSha.slice(0, 9)}) for task ${t.id} ` +
+              `under ${parkedRef} — ${commitsAhead.length} commit(s) ahead of ${integrationBranch}. ` +
+              `Branch preserved; use 'mars purge --force ${t.id}' to remove explicitly.`,
+          )
+        } catch {
+          // Parking failed — fall back to the original log-only preservation.
+          // The branch is still preserved; parking is belt-and-suspenders.
+          log(
+            `[reconcile] PRESERVING branch ${branch} for task ${t.id}: ` +
+              `${commitsAhead.length} unmerged commit(s) ahead of ${integrationBranch} — ` +
+              `branch NOT deleted during phase-recovery (park failed). ` +
+              `Use 'mars purge --force ${t.id}' to remove explicitly.`,
+          )
+        }
         // worktree-ahead is now a derived kind (ADR-0057) — no stored row raised.
         // The log message above already surfaces the preserved branch to the operator.
       } else {

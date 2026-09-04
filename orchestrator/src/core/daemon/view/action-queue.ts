@@ -49,6 +49,7 @@ const NON_TASK_FAILURE_KINDS = new Set([
   'hitl-slice-needs-operator',
   'daemon-outage',
   'health-check-alert',
+  'phantom-merge',
 ])
 
 /** Preserves the former failure-specific enrichment without changing labels. */
@@ -571,6 +572,7 @@ export const OPERATIONAL_ALERT_COPY: Record<
   'mockup-ready': null,
   'qa-step-list-opt-in': null,
   'qa-step-list-promote': null,
+  'phantom-merge': null,
 }
 
 const renderOperationalAlertCopy = (
