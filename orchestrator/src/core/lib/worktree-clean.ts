@@ -3,7 +3,7 @@ import { rm } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { resolveContext } from '../context'
 import { getTask, type Task, type TaskStatus } from '../queue'
-import { isBranchMergedIntoMain, isZeroCommitBranch } from './git/merge'
+import { resolveVcs } from '../ports/vcs/registry'
 import { runTool, nullTraceStore, type TraceCtx } from './run-tool'
 
 export const DEFAULT_WORKTREE_REMOVE_TIMEOUT_MS = 60_000
@@ -315,8 +315,10 @@ export const runWorktreeClean = async (
     try {
       classified = await classifyWorktree(wt, ctx.repoRoot, {
         getTask,
-        isBranchMergedIntoMain,
-        isZeroCommitBranch,
+        isBranchMergedIntoMain: (branch, repoRoot) =>
+          resolveVcs().isBranchMergedIntoMain({ branch, cwd: repoRoot }),
+        isZeroCommitBranch: (branch, repoRoot) =>
+          resolveVcs().isZeroCommitBranch({ branch, cwd: repoRoot }),
       })
     } catch (err) {
       summary.errors += 1

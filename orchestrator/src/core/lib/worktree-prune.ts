@@ -1,6 +1,6 @@
 import { resolveContext } from '../context'
 import { getTask, type Task, type TaskStatus } from '../queue'
-import { isBranchMergedIntoMain } from './git/merge'
+import { resolveVcs } from '../ports/vcs/registry'
 import { type TraceCtx } from './run-tool'
 import {
   discoverAllWorktrees,
@@ -152,7 +152,8 @@ export const runWorktreePrune = async (
     try {
       classified = await classifyWorktreeForPrune(wt, {
         getTask,
-        isBranchMergedIntoMain,
+        isBranchMergedIntoMain: (branch, repoRoot) =>
+          resolveVcs().isBranchMergedIntoMain({ branch, cwd: repoRoot }),
         repoRoot: ctx.repoRoot,
       })
     } catch (err) {
