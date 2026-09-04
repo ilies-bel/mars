@@ -1,13 +1,14 @@
 // @vitest-environment happy-dom
 /**
- * ActionQueueRow — copy-op behaviour tests.
+ * ActionQueueRow — copy-op behaviour tests, slice-failed rendering, and
+ * task-failure relabeling.
  *
- * Verifies that a verb with `op: 'copy'` is handled client-side (clipboard
- * write) and does NOT call invokeAction / make any network request.
- *
- * The fixture uses a draft-proposal row whose legacy `actions` array carries
- * `{ op: 'copy', hint: '/mars:grill <id>' }` — the exact descriptor the
- * backend emits for the "Move forward" action on proposal rows.
+ * Verifies:
+ *  - A verb with `op: 'copy'` is handled client-side (clipboard write) and
+ *    does NOT call invokeAction / make any network request.
+ *  - `slice-failed` rows render the proposal title as the primary goal heading
+ *    and a "Slice again" primary action that calls `proposal.slice`.
+ *  - Task-failure rows relabel the `restart` verb to "Continue".
  */
 
 import { vi, describe, it, expect, afterEach } from 'vitest'
@@ -173,6 +174,66 @@ describe('ActionQueueRow – task-failure rows relabel the restart verb', () => 
       btn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
     expect(mockInvokeAction).toHaveBeenCalledWith('restart', 'task-1')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// slice-failed card — proposal title + "Slice again" action
+// ---------------------------------------------------------------------------
+
+describe('ActionQueueRow – slice-failed rows', () => {
+  /**
+   * A `slice-failed` action-queue item.
+   * The backend recipe sets `operatorGoal` to the proposal title (from
+   * payload.proposalTitle) and adds a `proposal.slice` primary verb so the
+   * operator can retry without leaving the triage surface.
+   */
+  const SLICE_FAILED_ITEM: ActionQueueItem = {
+    ...PROPOSAL_ITEM,
+    id: 'slice-failed:prop-xyz',
+    kind: 'slice-failed',
+    entityId: 'prop-xyz',
+    title: 'Slicer failed for PRD prop-xyz',
+    humanSummary:
+      'Mars could not turn this PRD into tasks — inspect the failure, then explicitly slice it again when ready.',
+    operatorGoal: 'Ship the logging feature',
+    dag: null,
+    actions: [],
+    verbs: [{ op: 'proposal.slice', label: 'Slice again', style: 'primary' }],
+  } as unknown as ActionQueueItem
+
+  it('shows the proposal title as the primary goal heading', () => {
+    const { container } = renderRow(SLICE_FAILED_ITEM)
+    const goal = container.querySelector('[data-testid="alert-card-goal"]')
+    expect(goal).not.toBeNull()
+    expect(goal!.textContent).toContain('Ship the logging feature')
+  })
+
+  it('shows the generic description as the subhead, not as the primary line', () => {
+    const { container } = renderRow(SLICE_FAILED_ITEM)
+    // With operatorGoal set, alert-card-summary is the secondary line.
+    const summary = container.querySelector('[data-testid="alert-card-summary"]')
+    expect(summary).not.toBeNull()
+    expect(summary!.textContent).toContain('Mars could not turn this PRD')
+  })
+
+  it('renders a "Slice again" primary action button', () => {
+    const { container } = renderRow(SLICE_FAILED_ITEM)
+    const btn = container.querySelector('[data-testid="alert-card-verb-proposal.slice"]')
+    expect(btn).not.toBeNull()
+    expect(btn!.textContent).toContain('Slice again')
+  })
+
+  it('clicking "Slice again" calls invokeAction("proposal.slice", proposalId)', async () => {
+    const { container } = renderRow(SLICE_FAILED_ITEM)
+    const btn = container.querySelector('[data-testid="alert-card-verb-proposal.slice"]')!
+    expect(btn).not.toBeNull()
+
+    await act(async () => {
+      btn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    expect(mockInvokeAction).toHaveBeenCalledWith('proposal.slice', 'prop-xyz')
   })
 })
 

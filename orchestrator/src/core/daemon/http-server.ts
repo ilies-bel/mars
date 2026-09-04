@@ -540,6 +540,17 @@ export interface HttpServerDeps {
    */
   promoteProposal: (id: string) => Promise<{ taskIds: string[] }>
   /**
+   * Trigger a slice run for a `prd-ready` proposal that previously failed to
+   * slice. Unlike `promoteProposal` this does not require `status='draft'` and
+   * unlike the RPC `proposal.reslice` handler it does not require
+   * `status='sliced'` — it calls the slicer directly on a `prd-ready` row,
+   * which is exactly what a `slice-failed` row needs.
+   *
+   * Backs `POST /actions/proposal.slice/:id`.
+   * Optional for backwards compatibility with existing test stubs.
+   */
+  sliceProposal?: (id: string) => Promise<{ taskIds: string[] }>
+  /**
    * Enqueue a mockup task for a proposal: creates a task with `workflow:
    * 'mockup'` and `parentProposalId: id`. Returns the created task ID.
    * Any proposal status is accepted (unlike promote which requires draft).

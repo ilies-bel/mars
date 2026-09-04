@@ -3516,6 +3516,20 @@ export const registerRoutes = (
       return
     }
 
+    // proposal.slice — trigger slicing on a prd-ready proposal that previously
+    // failed. This is the "Slice again" action on slice-failed rows.
+    if (op === 'proposal.slice') {
+      if (!deps.sliceProposal) {
+        sendJson(res, 501, { ok: false, error: 'proposal.slice not implemented' })
+        return
+      }
+      deps
+        .sliceProposal(id)
+        .then(({ taskIds }) => sendJson(res, 200, { ok: true, taskIds }))
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
     // proposal.mockup enqueues a read-only mockup task and returns the task id.
     if (op === 'proposal.mockup') {
       if (!deps.mockupProposal) {

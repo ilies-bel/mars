@@ -33,6 +33,8 @@ export interface SlicesDroppedPayload extends OccurrenceTrail {
 export interface SliceFailedPayload extends OccurrenceTrail {
   /** ID of the PRD this slice run was for. */
   proposalId: string
+  /** Human-readable title of the PRD, carried so the UI can display it without a lookup. */
+  proposalTitle?: string
   /** Human-readable description of the failure (from `describeSliceFailure`). */
   error: string
 }
@@ -71,6 +73,7 @@ export const REPRESENTATIVE_PAYLOADS: Record<
   },
   'slice-failed': {
     proposalId: 'prop-abc123',
+    proposalTitle: 'Ship the feature',
     error: 'slicer process exited with code 1: model refused to slice',
   },
   'hitl-slice-needs-operator': {

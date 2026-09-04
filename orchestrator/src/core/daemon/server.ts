@@ -5647,6 +5647,15 @@ export const startDaemon = async (
       const sliceResult = await handleProposalSlice(id)
       return { taskIds: sliceResult.taskIds }
     },
+    sliceProposal: async (id) => {
+      // Directly trigger slicing on a prd-ready proposal — used by the
+      // "Slice again" action on slice-failed rows. Unlike promoteProposal this
+      // skips the draft→prd-ready status flip (the proposal is already
+      // prd-ready after a failed slice) and unlike the RPC reslice handler it
+      // does not require status='sliced'.
+      const sliceResult = await handleProposalSlice(id)
+      return { taskIds: sliceResult.taskIds }
+    },
     mockupProposal: async (id) => {
       const r = await handleProposalMockup(id)
       return { taskId: r.taskId }

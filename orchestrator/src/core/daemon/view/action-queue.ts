@@ -1416,8 +1416,13 @@ export const buildActionQueueView = async ({
     // Derive the operator-facing goal via the same resolution chain as arcGoal
     // but with a richer normaliser: markdown, backticks, bold markers stripped;
     // second-person rewritten to imperative; capped at 100 chars.
+    // For slice-failed rows the entityId is a proposal id (not a task id), so
+    // taskById.get(entityId) would return undefined. Derive the goal from the
+    // payload's proposalTitle field instead so the card shows the PRD title.
     let operatorGoal: string | null = null
-    if (isTaskFailure) {
+    if (row.kind === 'slice-failed' && typeof row.payload.proposalTitle === 'string') {
+      operatorGoal = row.payload.proposalTitle
+    } else if (isTaskFailure) {
       const task = taskById.get(entityId)
       if (task) {
         operatorGoal = deriveOperatorGoal(task, taskById)

@@ -954,7 +954,7 @@ const stalledProposalSlice: Reconciler = {
             body:
               `PRD ${proposal.id} (${proposal.title}) could not be sliced: ${proposal.lastSliceError}. ` +
               `Inspect the PRD and run \`mars proposal slice ${proposal.id}\` to retry explicitly.`,
-            payload: { proposalId: proposal.id, error: proposal.lastSliceError },
+            payload: { proposalId: proposal.id, proposalTitle: proposal.title, error: proposal.lastSliceError },
             context: {},
             raisedBy: 'startup-reconcile:stalled-proposal-slice',
             signature: proposal.id,

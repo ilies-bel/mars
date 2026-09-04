@@ -1931,7 +1931,7 @@ export const sliceWorkflow = defineWorkflow<SliceInput, SliceOutput, SliceServic
         body: isRefusal
           ? `PRD ${proposal.id} (${proposal.title}) could not be sliced because its body appears to be empty or contains no decomposable content.\n\nSlicer's reason: ${(error as SlicerRefusalError).refusalReason}\n\nAdd a Problem and Solution to the PRD and run \`mars proposal slice ${proposal.id}\` to retry, or dismiss the proposal if it is no longer needed.`
           : `PRD ${proposal.id} (${proposal.title}) could not be sliced: ${failure}. Inspect the PRD and run \`mars proposal slice ${proposal.id}\` to retry explicitly.`,
-        payload: { proposalId: proposal.id, error: isRefusal ? (error as SlicerRefusalError).refusalReason : failure },
+        payload: { proposalId: proposal.id, proposalTitle: proposal.title, error: isRefusal ? (error as SlicerRefusalError).refusalReason : failure },
         context: {},
         raisedBy: 'slicer',
         signature: proposal.id,

@@ -462,7 +462,10 @@ const RECIPE_DEFINITIONS = {
       entityId: ctx.entityId,
       errorExcerpt: str(ctx.payload['error']),
     }),
-    verbs: [],
+    verbs: [
+      { op: 'proposal.slice', label: 'Slice again', style: 'primary' as const },
+      { op: 'snooze', label: 'Snooze', style: 'snooze' as const },
+    ],
   },
 
   'hitl-slice-needs-operator': {
