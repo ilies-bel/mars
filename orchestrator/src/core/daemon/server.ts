@@ -191,7 +191,7 @@ import { createAppServices } from '../app-services'
 import { buildLiveAgentsRoster } from './live-agents-roster'
 import { startApiEndpointProbe } from '../lib/api-endpoint-probe'
 import { ChatRunner, CHAT_TIMEOUT_MS } from './chat-runner'
-import { startMergeWorker, enqueueMergeJobAndAwait, type MergeWorkerHandle } from './merge-worker'
+import { startMergeWorker, enqueueMergeJobAndAwait, getLastMergeWatchdogFireMs, type MergeWorkerHandle } from './merge-worker'
 import { getDefaultMergeJobStore } from '../store/merge-job-store'
 import { startHeartbeatWriter, type HeartbeatHandle } from './heartbeat-writer'
 import { loadSpendControl, upsertSpendControl } from './spend-control/store'
@@ -6630,6 +6630,19 @@ export const startDaemon = async (
         return initialCaps.implement
       }
     },
+    // Hold the bump lane when the merge queue is backed up — raising the cap
+    // while the single-consumer merge worker has queued jobs only deepens the
+    // verify pile. Count active (queued + claimed + running) jobs.
+    getMergeQueueDepth: async () => {
+      try {
+        const active = await getDefaultMergeJobStore().listActive()
+        return active.length
+      } catch {
+        return 0
+      }
+    },
+    // Hold the bump lane for WATCHDOG_COOLDOWN_MS after a merge watchdog fire.
+    getLastWatchdogFireMs: getLastMergeWatchdogFireMs,
   })
   // Prompt health follows the same daemon event bus as the other autonomous
   // Steward capabilities. Its own autonomy lever decides whether a degraded

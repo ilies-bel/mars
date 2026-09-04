@@ -181,6 +181,22 @@ const DEFAULT_INTEGRATION_GATE_BUDGET_MIN = 15
 const pendingMergeJobs = new Map<string, Set<(r: MergeJobResult) => void>>()
 
 /**
+ * Epoch-ms timestamp of the last merge-job watchdog fire, or null if no
+ * watchdog has fired since the process started. Updated by `runMergeJob` when
+ * it catches a `MergeAbortedError` with `reason: 'watchdog'`. Read by the
+ * Steward autotune bump lane to hold the implement cap for a cooldown window
+ * after overload evidence.
+ */
+let lastMergeWatchdogFireMs: number | null = null
+
+/**
+ * Return the epoch-ms timestamp of the last merge-job watchdog fire, or null
+ * if no watchdog has fired since the daemon started. Consumed by the Steward
+ * autotune bump lane via `StewardRuntimeTuneDeps.getLastWatchdogFireMs`.
+ */
+export const getLastMergeWatchdogFireMs = (): number | null => lastMergeWatchdogFireMs
+
+/**
  * "Claimed" callbacks registered by `enqueueMergeJobAndAwait` callers that
  * want to be notified the moment the worker picks up the job (after
  * `markRunning`). The hard step-level wall-clock ceiling in the merge
@@ -863,6 +879,11 @@ async function runMergeJob(
         : err instanceof MergeAbortedError && err.reason === 'watchdog'
           ? 'watchdog'
           : 'crash'
+    if (errorCode === 'watchdog') {
+      // Stamp the watchdog fire time so the Steward autotune bump lane can
+      // hold for WATCHDOG_COOLDOWN_MS before raising the implement cap again.
+      lastMergeWatchdogFireMs = Date.now()
+    }
     result = { status: 'failed', error: msg, errorCode }
     log(`[merge-worker] job ${job.id} failed (errorCode=${errorCode}): ${msg}`)
     await store
