@@ -1433,6 +1433,22 @@ const RECIPE_DEFINITIONS = {
     }),
     verbs: [],
   },
+
+  'worktree-hook-trust-request': {
+    humanSummary: (ctx) =>
+      `mars.json setup hooks in ${str(ctx.payload['repoRoot'])} await operator trust grant`,
+    humanDetail: (ctx) => ({
+      raisedAt: ctx.raisedAt,
+      entityId: ctx.entityId,
+      taskId: str(ctx.payload['taskId']),
+      repoRoot: str(ctx.payload['repoRoot']),
+      commands: ctx.payload['commands'],
+    }),
+    verbs: [
+      { op: 'accept', label: 'Grant trust (run hooks)', style: 'primary' },
+      { op: 'reject', label: 'Deny (skip hooks)', style: 'default' },
+    ],
+  },
 } satisfies { [K in ActionQueueKind]: Omit<Recipe<K>, 'preloadedResponses' | 'kindClass'> }
 
 /**

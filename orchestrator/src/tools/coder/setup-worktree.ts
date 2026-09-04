@@ -56,6 +56,12 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { getStateDir } from '../../core/context'
+import {
+  parseHooksConfig,
+  buildHookEnv,
+  runWorktreeHooks,
+  isRepoTrusted,
+} from '../../core/lib/worktree-hooks'
 import { RESCUE_OPERATOR_TAG } from '../../core/rescue-operator-spawn'
 import { checkWorktreeIntegrity } from '../../workflows/lib/worktree-integrity'
 import { computeDepFingerprint } from '../../workflows/lib/dep-fingerprint'
@@ -771,6 +777,11 @@ export const setupWorktree = async (
       }
       const depsSkipped = newFp !== null && newFp === oldFp
 
+      // Set to true when an in-place lockfile repair succeeds so the hook and
+      // log phases can handle it identically to a normal install (without the
+      // early-return that previously short-circuited before hooks ran).
+      let depsRepaired = false
+
       if (!depsSkipped) {
         try {
           const summary = await installWorktreeDeps({
@@ -871,11 +882,8 @@ export const setupWorktree = async (
                   mkdirSync(join(ref.path, '.mars'), { recursive: true })
                   writeFileSync(depFingerprintPath, newFp)
                 }
-                // Emit log before early return so exactly one line appears per run.
-                console.log(
-                  `[setup] task ${taskId}: ${worktreeReused ? 'setup:reused-worktree' : 'setup:fresh-install'} (deps repaired in place)`,
-                )
-                return { path: ref.path, branch: ref.branch, indexCard: setupIndexCard }
+                // Fall through so setup hooks run before the structured log and return.
+                depsRepaired = true
               }
               console.log(
                 `[setup:install] task ${taskId} in-place repair did not reconcile; escalating to fix-task`,
@@ -926,13 +934,111 @@ export const setupWorktree = async (
         }
       }
 
+      // ---------------------------------------------------------------------------
+      // Worktree lifecycle hooks (mars.json worktree.setup)
+      //
+      // Run AFTER the existing dep-install path so the user's scripts can assume
+      // node_modules (or the language runtime's equivalent) is available.
+      // Hooks are additive: a missing or empty mars.json is a no-op.
+      //
+      // Trust gate: a committed mars.json can carry arbitrary shell. A one-time,
+      // per-repo trust decision (keyed on the source repo's absolute path) is
+      // persisted in daemon-local state (.mars/worktree-trust.json). Until the
+      // operator grants trust, setup hooks do not run and a `decision`-class
+      // action queue item is raised naming the exact commands that would execute.
+      // ---------------------------------------------------------------------------
+      {
+        const { repoRoot: hooksRepoRoot } = resolveContext()
+        const hooksConfig = await parseHooksConfig(hooksRepoRoot)
+        if (hooksConfig.setup.length > 0) {
+          const hooksTrusted = await isRepoTrusted(hooksRepoRoot, getStateDir())
+          if (!hooksTrusted) {
+            console.warn(
+              `[setup] task ${taskId}: mars.json setup hooks not run — repo is not trusted. ` +
+                `Raise 'mars action-queue grant-worktree-hooks <repoRoot>' to trust it.`,
+            )
+            await raiseActionQueueItem({
+              kind: 'worktree-hook-trust-request',
+              category: 'orchestrator',
+              priority: 'normal',
+              title: `mars.json setup hooks await trust grant for ${hooksRepoRoot}`,
+              body: [
+                `Task ${taskId} found setup hooks in ${hooksRepoRoot}/mars.json but the repo has not been trusted yet.`,
+                '',
+                'Commands that would run:',
+                ...hooksConfig.setup.map((cmd) => `  ${cmd}`),
+                '',
+                `Grant trust with: mars worktree-hooks trust ${hooksRepoRoot}`,
+                'Once trusted, re-run this task to execute the hooks.',
+              ].join('\n'),
+              payload: {
+                taskId,
+                repoRoot: hooksRepoRoot,
+                commands: hooksConfig.setup,
+              },
+              context: { repoRoot: hooksRepoRoot },
+              raisedBy: 'agent:setup-worktree',
+              signature: `${hooksRepoRoot}:worktree-hook-trust-request`,
+              originTaskId: taskId,
+            }).catch((raiseErr: unknown) => {
+              console.error(
+                `[setup] task ${taskId} worktree-hook-trust-request raise errored (non-fatal):`,
+                raiseErr,
+              )
+            })
+          } else {
+            const hookEnv = buildHookEnv({
+              worktreePath: ref.path,
+              rootPath: hooksRepoRoot,
+              branchName: ref.branch,
+              taskId,
+            })
+            console.log(
+              `[setup] task ${taskId}: running ${hooksConfig.setup.length} setup hook(s)`,
+            )
+            const hookResult = await runWorktreeHooks({
+              commands: hooksConfig.setup,
+              hookEnv,
+              log: (line) => console.log(line),
+            })
+            if (!hookResult.success) {
+              const hookFailMsg =
+                `setup hook failed: ${hookResult.failedCommand ?? '(unknown)'} ` +
+                `(exit ${hookResult.exitCode ?? '?'}, ` +
+                `duration ${((hookResult.durationMs ?? 0) / 1000).toFixed(1)}s)\n` +
+                (hookResult.output ?? '')
+              const hookSignature = computeFailureSignature('setup:hook', hookFailMsg)
+              await updateTask(
+                taskId,
+                {
+                  status: 'failed',
+                  error: hookFailMsg.slice(0, 1000),
+                  failedPhase: 'code',
+                  failureReason: hookFailMsg.slice(0, 1000),
+                  failureSignature: hookSignature,
+                  failureReasonCode: hookSignature,
+                },
+                store,
+              )
+              throw new Error(hookFailMsg)
+            }
+            console.log(`[setup] task ${taskId}: setup hooks completed`)
+          }
+        }
+      }
+
       // Emit exactly one structured log line per setup run recording which
       // branch was taken. Mutually exclusive:
       //   setup:reused-deps     — worktree reused AND dep install skipped
       //   setup:reused-worktree — worktree reused, deps reinstalled
       //   setup:fresh-install   — full fresh setup (new worktree + install)
+      //   setup:*-repaired      — deps repaired in place (suffix appended)
       if (depsSkipped) {
         console.log(`[setup] task ${taskId}: setup:reused-deps (dep fingerprint matched; install skipped)`)
+      } else if (depsRepaired && worktreeReused) {
+        console.log(`[setup] task ${taskId}: setup:reused-worktree (existing worktree reused; deps repaired in place)`)
+      } else if (depsRepaired) {
+        console.log(`[setup] task ${taskId}: setup:fresh-install (worktree created; deps repaired in place)`)
       } else if (worktreeReused) {
         console.log(`[setup] task ${taskId}: setup:reused-worktree (existing worktree reused; deps reinstalled)`)
       } else {

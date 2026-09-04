@@ -238,5 +238,6 @@ export const ACTION_QUEUE_PAYLOAD_AUDIT = {
   'qa-step-list-opt-in': 'typed',
   'qa-step-list-promote': 'typed',
   'phantom-merge': 'derived-condition',
+  'worktree-hook-trust-request': 'typed',
 } as const satisfies Record<ActionQueueKind, 'typed' | 'derived-condition'>
 

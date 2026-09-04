@@ -60,6 +60,7 @@ export const ACTION_QUEUE_KINDS = [
   'qa-step-list-opt-in',
   'qa-step-list-promote',
   'phantom-merge',
+  'worktree-hook-trust-request',
 ] as const
 
 export type ActionQueueKind = (typeof ACTION_QUEUE_KINDS)[number]
@@ -88,7 +89,7 @@ export type ActionQueueClass = 'notice' | 'alert' | 'decision'
 
 /**
  * Exhaustive mapping from every action-queue kind to its operator-obligation
- * class. All 59 kinds are listed; adding a new kind to {@link ACTION_QUEUE_KINDS}
+ * class. All 60 kinds are listed; adding a new kind to {@link ACTION_QUEUE_KINDS}
  * without a corresponding entry here is a TypeScript error.
  */
 export const KIND_CLASS: Record<ActionQueueKind, ActionQueueClass> = {
@@ -157,6 +158,7 @@ export const KIND_CLASS: Record<ActionQueueKind, ActionQueueClass> = {
   'gate-enrichment-stale': 'decision',    // enrichment request timed out; operator picks next step
   'verify-uncovered': 'decision',         // task has no verify command; operator must decide
   'phantom-merge': 'alert',              // done task whose merge SHA is null; real commits may not have landed
+  'worktree-hook-trust-request': 'decision', // mars.json setup hooks await trust grant from operator
 }
 
 /**

@@ -573,6 +573,7 @@ export const OPERATIONAL_ALERT_COPY: Record<
   'qa-step-list-opt-in': null,
   'qa-step-list-promote': null,
   'phantom-merge': null,
+  'worktree-hook-trust-request': null,
 }
 
 const renderOperationalAlertCopy = (
