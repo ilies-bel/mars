@@ -212,6 +212,25 @@ export const coreContinueTask = async (
           `  mars task add --supersede ${id} --prompt-file <path>   # inherit ${task.branch} onto a new task ` +
             `so a fresh coder can finish the salvaged work`,
         )
+      } else {
+        // 0 commits ahead: check whether the branch is already on the integration
+        // branch before offering the destructive 'mars restart' verb.
+        const { resolveVcs } = await import('../ports/vcs/registry')
+        const { getRepoRoot } = await import('../context')
+        const tipOnIntegration = await resolveVcs().isAncestor({
+          cwd: getRepoRoot(),
+          ancestor: task.branch,
+          descendant: integrationBranch,
+        }).catch(() => false)
+        if (tipOnIntegration) {
+          salvageNote =
+            `Branch ${task.branch} has 0 commits ahead of ${integrationBranch} because its ` +
+            `commits were already fast-forwarded into it — 'mars restart' would destroy ` +
+            `work that is already on ${integrationBranch}.\n`
+          alternatives.push(
+            `  mars remerge ${id}   # commits are already on ${integrationBranch}; mars remerge will settle this task done`,
+          )
+        }
       }
     }
     alternatives.push(
@@ -303,7 +322,24 @@ export const coreContinueTask = async (
           `mars task add --supersede ${id} --prompt-file <path>   # inherit ${task.branch} onto a new task ` +
           `so a fresh coder can finish the salvaged work`
       } else {
-        escapeVerb = `mars restart ${id}   # discard the branch and re-run from setup`
+        // 0 commits ahead: disambiguate between (a) nothing was ever committed
+        // and (b) the branch's commits were already fast-forwarded into the
+        // integration branch.  Never offer a destructive verb for case (b).
+        const { resolveVcs } = await import('../ports/vcs/registry')
+        const tipOnIntegration = await resolveVcs().isAncestor({
+          cwd: repoRoot,
+          ancestor: task.branch,
+          descendant: integrationBranch,
+        }).catch(() => false)
+        if (tipOnIntegration) {
+          salvageNote =
+            `Branch ${task.branch} has 0 commits ahead of ${integrationBranch} because its ` +
+            `commits were already fast-forwarded into it — 'mars restart' would destroy ` +
+            `work that is already on ${integrationBranch}.\n`
+          escapeVerb = `mars remerge ${id}   # commits are already on ${integrationBranch}; mars remerge will settle this task done`
+        } else {
+          escapeVerb = `mars restart ${id}   # discard the branch and re-run from setup`
+        }
       }
     } else {
       escapeVerb = `mars restart ${id}   # discard and re-run from setup`

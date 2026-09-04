@@ -14,6 +14,7 @@ import {
   MERGE_HARD_TIMEOUT_MS,
   MergeHardTimeoutError,
 } from '../../core/ports/vcs/errors'
+import { isBranchTipInIntegration } from '../../core/lib/git/merge'
 import {
   CHECKPOINT_REF_PREFIX,
   SALVAGE_CHECKPOINT_TRAILER_KEY,
@@ -860,11 +861,11 @@ export const merge = async (
             // Establish the actual merge outcome before deciding the task
             // status. The merge job was still running when the timer fired;
             // it may have completed successfully in the background. The
-            // branch is the source of truth: zero commits ahead of the
-            // integration branch means the fast-forward landed.
+            // branch is the source of truth: if the branch tip is already an
+            // ancestor of the integration branch, the fast-forward landed.
             let branchAlreadyMerged = false
             try {
-              branchAlreadyMerged = await resolveVcs().isAncestor({ cwd: mergeRepoRoot, ancestor: branch, descendant: integrationBranch })
+              branchAlreadyMerged = await isBranchTipInIntegration(branch, integrationBranch)
             } catch {
               // Cannot determine merge status — fall through to the failure path.
             }
@@ -960,6 +961,34 @@ export const merge = async (
               )
             })
             throw new WorkflowTerminalError('verify-gate-rebased-tree', errorMsg)
+          }
+          // Outer watchdog fired: enqueueMergeJobAndAwait timed out before
+          // resolveMergeJob was called.  The fast-forward may have completed in
+          // the background (observed as three late-watchdog incidents on
+          // 2026-09-04).  Re-check reachability before failing — the branch is
+          // the source of truth.
+          if (queueResult.errorCode === 'watchdog') {
+            let outerWatchdogMergedAlready = false
+            try {
+              outerWatchdogMergedAlready = await isBranchTipInIntegration(branch, integrationBranch)
+            } catch {
+              // Cannot determine — fall through to the failure path.
+            }
+            if (outerWatchdogMergedAlready) {
+              const noticeMsg = (
+                `merge:outer-watchdog — branch ${branch} is already an ancestor of ` +
+                `${integrationBranch}; the merge succeeded before the outer watchdog expired`
+              )
+              console.log(
+                `[merge] task ${taskId}: outer-watchdog but merge already done — ${noticeMsg}`,
+              )
+              await updateTask(taskId, { status: 'done', failedPhase: null }, store)
+              return {
+                taskId,
+                success: true,
+                message: noticeMsg,
+              }
+            }
           }
           // For all other worker failures, let the outer crash-handler deal
           // with this — it marks the task failed and spawns a fix-task, same

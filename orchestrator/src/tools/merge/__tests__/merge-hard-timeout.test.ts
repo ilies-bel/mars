@@ -409,3 +409,76 @@ describe('merge — hard-timeout: outcome check before failing', () => {
     1000,
   )
 })
+
+// ---------------------------------------------------------------------------
+// Tests: outer watchdog (enqueueMergeJobAndAwait returns { status:'failed',
+// errorCode:'watchdog' }) — same reachability check as the step-level timeout.
+// ---------------------------------------------------------------------------
+
+describe('merge — outer watchdog: outcome check before failing', () => {
+  it(
+    'marks the task done when the outer watchdog fires after a successful fast-forward',
+    async () => {
+      const taskId = 'mars-outer-watchdog-already-merged-01'
+
+      // Outer watchdog: enqueueMergeJobAndAwait resolves with a watchdog failure
+      // immediately (no onClaimed call, so the step-level timer never fires).
+      const enqueueFn = vi.fn().mockResolvedValue({
+        status: 'failed',
+        error: `merge:timeout — merge job for task ${taskId} was not resolved within 45 min`,
+        errorCode: 'watchdog',
+      })
+
+      // The branch tip is already on the integration branch — fast-forward landed.
+      mockIsBranchTipInIntegration.mockResolvedValue(true)
+
+      const ctx = makeCtx(taskId, enqueueFn)
+      const result = await merge(ctx, { kind: 'task', ...worktreeOpts(taskId) })
+
+      expect(result.success).toBe(true)
+      expect(result.taskId).toBe(taskId)
+      expect(result.message).toContain('outer-watchdog')
+
+      // Task marked done, not failed.
+      const doneCalls = mockUpdateTask.mock.calls.filter(
+        (c) => (c[1] as Record<string, unknown>)?.status === 'done',
+      )
+      expect(doneCalls.length).toBeGreaterThanOrEqual(1)
+      const failedCalls = mockUpdateTask.mock.calls.filter(
+        (c) => (c[1] as Record<string, unknown>)?.status === 'failed',
+      )
+      expect(failedCalls.length).toBe(0)
+
+      // No recovery task spawned — the merge succeeded.
+      expect(mockHandleTaskFailureWithFixTask).not.toHaveBeenCalled()
+    },
+  )
+
+  it(
+    'marks the task failed when the outer watchdog fires and the merge is genuinely stuck',
+    async () => {
+      const taskId = 'mars-outer-watchdog-unmerged-01'
+
+      const enqueueFn = vi.fn().mockResolvedValue({
+        status: 'failed',
+        error: `merge:timeout — merge job for task ${taskId} was not resolved within 45 min`,
+        errorCode: 'watchdog',
+      })
+
+      // Branch NOT yet merged.
+      mockIsBranchTipInIntegration.mockResolvedValue(false)
+
+      const ctx = makeCtx(taskId, enqueueFn)
+
+      await expect(
+        merge(ctx, { kind: 'task', ...worktreeOpts(taskId) }),
+      ).rejects.toThrow()
+
+      // Task stamped failed (via the generic crash handler).
+      const failedCalls = mockUpdateTask.mock.calls.filter(
+        (c) => (c[1] as Record<string, unknown>)?.status === 'failed',
+      )
+      expect(failedCalls.length).toBeGreaterThanOrEqual(1)
+    },
+  )
+})

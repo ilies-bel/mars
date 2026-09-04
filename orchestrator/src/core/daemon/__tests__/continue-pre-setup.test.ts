@@ -1387,4 +1387,72 @@ describe('continue degrades to restart for pre-setup failures', () => {
     expect(after?.failedPhase).toBe('code')       // preserved for the coder banner
     expect(after?.branch).toBe(`task/${origin.id}`)
   })
+
+  // ── Landed-branch guard (recovery-exhausted, 0 ahead because already merged) ──
+  // When a merge watchdog fires late (after a successful fast-forward), the task
+  // ends up `failed` with `recovery_exhausted:` while its branch tip is already
+  // on the integration branch (0 commits ahead by SHA, but tip IS an ancestor
+  // of main).  `mars continue` must NOT offer `mars restart` in that case — the
+  // work is already on main and restart would be both destructive and wrong.
+  // Instead it must offer `mars remerge` which settles the task done.
+
+  it('recovery-exhausted with 0 commits ahead because already fast-forwarded: offers mars remerge, not mars restart', async () => {
+    const { queue, continueTask } = await loadModules(repo)
+
+    const origin = await queue.enqueueTask('fast-forward landed task', undefined, { skipTriage: true })
+    const branch = `task/${origin.id}`
+    const worktreePath = resolve(repo, '.mars', 'worktrees', origin.id)
+
+    // Create the task branch and commit one real change.
+    execFileSync('git', ['worktree', 'add', '-qb', branch, worktreePath], { cwd: repo })
+    writeFileSync(resolve(worktreePath, 'landed.ts'), 'export const landed = true\n')
+    execFileSync('git', ['add', 'landed.ts'], { cwd: worktreePath })
+    execFileSync(
+      'git',
+      ['-c', 'user.email=coder@test', '-c', 'user.name=Coder', 'commit', '-qm', 'feat: landed feature'],
+      { cwd: worktreePath },
+    )
+
+    // Fast-forward the commit into main (simulating a successful merge).
+    const branchTip = execFileSync('git', ['rev-parse', branch], { cwd: repo, encoding: 'utf-8' }).trim()
+    execFileSync('git', ['checkout', '-q', 'main'], { cwd: repo })
+    execFileSync('git', ['merge', '--ff-only', branch], { cwd: repo })
+
+    // Remove the worktree (it was deleted after the ff-merge, as normal).
+    execFileSync('git', ['worktree', 'remove', '--force', worktreePath], { cwd: repo })
+
+    // Stamp the task as recovery_exhausted with branch on the (now-merged) ref.
+    // The branch still exists even though the worktree is gone.
+    await queue.updateTask(origin.id, {
+      status: 'failed',
+      error: 'watchdog fired late',
+      failedPhase: 'merge',
+      failureReason: 'recovery_exhausted:merge/watchdog',
+      branch,
+      worktreePath, // points to now-deleted directory
+    })
+
+    let thrown: Error | null = null
+    try {
+      await continueTask.coreContinueTask(origin.id)
+    } catch (e) {
+      thrown = e as Error
+    }
+
+    expect(thrown).not.toBeNull()
+    expect(thrown!.message).toContain('recovery budget is exhausted')
+    // 0 commits ahead because already merged → remerge is the primary escape.
+    expect(thrown!.message).toContain('mars remerge')
+    // Must explain that commits are already on the integration branch.
+    expect(thrown!.message).toContain('already fast-forwarded')
+    // Must NOT claim the commits would be discarded (they are already safe on main).
+    expect(thrown!.message).not.toContain("'mars restart'/'mars drop' below would discard them")
+
+    // Task remains failed — coreContinueTask only raises the refusal, never
+    // modifies the task row in this path.
+    const after = await queue.getTask(origin.id)
+    expect(after?.status).toBe('failed')
+
+    void branchTip // suppress lint for unused variable
+  })
 })
