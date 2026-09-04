@@ -138,17 +138,25 @@ export const errorClassRules: readonly ErrorClassRule[] = [
   },
   {
     // API connectivity failure: the coder exited because the network was
-    // unreachable (DNS resolution, TCP connect, or socket timeout) rather
-    // than because the task code was wrong. classifyCoderExit re-queues
-    // these without consuming the fix-task recovery budget; this rule fires
-    // only when the env-api-unreachable ceiling is reached and the failure
-    // is stamped for real. Distinct from `provider-quota` (which is a
-    // successful TCP connection rejected at the API layer) and
-    // `provider-transport-dropped` (a stream severed mid-response after a
-    // successful connect).
+    // unreachable (DNS resolution or TCP connect) rather than because the
+    // task code was wrong. classifyCoderExit re-queues these without
+    // consuming the fix-task recovery budget; this rule fires only when the
+    // env-api-unreachable ceiling is reached and the failure is stamped for
+    // real. Distinct from `provider-quota` (successful TCP connection
+    // rejected at the API layer) and `provider-transport-dropped` (stream
+    // severed mid-response after a successful connect).
+    //
+    // Bare ECONNREFUSED and ETIMEDOUT are intentionally NOT matched here:
+    // ECONNREFUSED is also emitted by a test fixture that cannot reach the
+    // embedded PostgreSQL server (test-pg-connection-refused catches it),
+    // and ETIMEDOUT covers any timed-out operation (timed-out catches it).
+    // Only explicit API-layer signals — ENOTFOUND (DNS), EAI_AGAIN
+    // (transient DNS), "Unable to connect to API" (provider CLI), and
+    // "API Error:…ECONNREFUSED" (provider CLI formatting that includes the
+    // API-error prefix before the ECONNREFUSED token) — belong here.
     errorClass: 'api-unreachable',
-    match: /ENOTFOUND|ECONNREFUSED|EAI_AGAIN|ETIMEDOUT|Unable to connect to API/i,
-    matchFull: /ENOTFOUND|ECONNREFUSED|EAI_AGAIN|ETIMEDOUT|Unable to connect to API|terminal_reason.*api_error/i,
+    match: /ENOTFOUND|EAI_AGAIN|Unable to connect to API/i,
+    matchFull: /ENOTFOUND|EAI_AGAIN|Unable to connect to API|terminal_reason.*api_error|API Error[^:]*:.*(?:ConnectionRefused|ECONNREFUSED)/i,
   },
   {
     // Behaviour verification (the behaviour-verify step) reached the live
@@ -457,19 +465,6 @@ export const errorClassRules: readonly ErrorClassRule[] = [
     // the test's database before the first query.
     errorClass: 'test-pg-undefined-table',
     matchFull: /42P01|relation "[^"]+" does not exist/,
-  },
-  {
-    // code:coder-exit-nonzero/api-unreachable fires when the claude CLI dies
-    // because the Claude API was unreachable — network partition, DNS failure,
-    // or a transient outage. The CLI exits non-zero and emits text like:
-    //   "API Error: Unable to connect to API (ConnectionRefused)"
-    // Nothing was wrong with the code; the task should be re-queued, not
-    // sent to a recovery fixer that would fail for the same reason.
-    // Must come BEFORE test-pg-connection-refused so the API-level signal
-    // "Unable to connect to API" is claimed before the broader ECONNREFUSED
-    // matchFull picks it up as a test-PG failure.
-    errorClass: 'api-unreachable',
-    matchFull: /Unable to connect to API|API Error[^:]*:.*(?:ConnectionRefused|ECONNREFUSED)/i,
   },
   {
     // code:coder-exit-nonzero/provider-transport-dropped fires when the

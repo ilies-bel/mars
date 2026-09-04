@@ -81,6 +81,8 @@ describe('terminal-verdict vocabulary', () => {
     'spend_control_suppressed:',
     // blocker-resolution.ts, origin failed by its dead one-shot recovery
     'origin_recovery_failed:',
+    // queue-fix-tasks.ts, per-arc token ceiling gate
+    'budget-arc-exceeded:',
   ]
 
   it('covers every prefix the orchestrator writes for itself, and nothing else', () => {
