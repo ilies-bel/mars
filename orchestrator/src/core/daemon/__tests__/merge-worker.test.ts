@@ -1417,3 +1417,130 @@ describe('merge.operator-auto-commit Notice — DEC-3 revert action', () => {
     ).toContain(`git revert ${sha}`)
   })
 })
+
+// ---------------------------------------------------------------------------
+// Regression: task-tier gate failure during rebased-tree verify (mars-4d58c171)
+//
+// When onVerifyRebasedTree returns { passed: false }, mergeBranch returns
+// { merged: false, reason: 'rebased-verify-failed', rebasedVerifyOutput }.
+// Before this fix the worker treated that as a success (result = { status:
+// 'done' }), which either produced a false-green task or — via the server.ts
+// fallback — stamped failed_phase='setup', making `mars continue` destructive
+// (restart instead of rewind-to-coder).
+//
+// After the fix the worker detects reason='rebased-verify-failed' BEFORE the
+// success path, converts it to { status: 'failed', error: 'verify:gate/<slug>:
+// ...' }, and calls markFailed so the merge primitive can stamp
+// failedPhase:'verify', letting `mars continue` rewind to the coder with the
+// gate output.
+// ---------------------------------------------------------------------------
+
+describe('startMergeWorker — rebased-tree gate failure (regression mars-4d58c171)', () => {
+  beforeEach(() => {
+    _mockIntegrationGates = []
+    _mockVerifierRun.mockReset()
+  })
+
+  it('delivers verify:gate/<slug>: error and calls markFailed when a task-tier gate rejects the rebased tree', async () => {
+    /**
+     * REGRESSION TEST (mars-4d58c171): when onVerifyRebasedTree returns
+     * { passed: false }, the worker must deliver { status: 'failed', error:
+     * 'verify:gate/<slug>: ...' } and call markFailed — not markDone.
+     *
+     * The error prefix 'verify:gate/' is the signal merge.ts uses to stamp
+     * failedPhase:'verify' so `mars continue` rewinds to the coder.
+     */
+    _mockIntegrationGates = [
+      {
+        scope: '.',
+        steps: [
+          {
+            name: 'lint:tokens',
+            cmd: 'npx',
+            args: ['lint-tokens'],
+            required: true,
+            tier: 'task',
+            dir: '.',
+          },
+        ],
+      },
+    ]
+    _mockVerifierRun.mockResolvedValue({
+      passed: false,
+      steps: [{ name: 'lint:tokens', passed: false, output: 'token limit exceeded: 5000 > 4000' }],
+    })
+
+    // A merge function that actually invokes onVerifyRebasedTree and returns
+    // { merged: false, reason: 'rebased-verify-failed' } when the gate fails,
+    // mirroring what mergeBranch does in production.
+    const mergeFnThatCallsVerify = async (args: {
+      onVerifyRebasedTree?: (info: {
+        baseSha: string
+        taskSha: string
+        attempt: number
+      }) => Promise<{ passed: boolean; output?: string }>
+    }) => {
+      if (args.onVerifyRebasedTree) {
+        const verdict = await args.onVerifyRebasedTree({
+          baseSha: 'b'.repeat(40),
+          taskSha: 'a'.repeat(40),
+          attempt: 1,
+        })
+        if (!verdict.passed) {
+          return {
+            merged: false as const,
+            reason: 'rebased-verify-failed' as const,
+            rebasedVerifyOutput: verdict.output ?? '',
+            conflictResolved: false,
+            aborted: false,
+            output: '',
+            supervisorConversation: [],
+            vegaSessionId: null,
+            retriesAttempted: 0,
+          }
+        }
+      }
+      return {
+        merged: true as const,
+        conflictResolved: false,
+        aborted: false,
+        output: '',
+        supervisorConversation: [],
+        vegaSessionId: null,
+        retriesAttempted: 0,
+      }
+    }
+
+    const { store, calls, jobs, enqueueJob } = makeFakeStore()
+    const job = enqueueJob({ id: 'j-gate-fail', worktreePath: '/tmp' })
+    const { startMergeWorker } = await import('../merge-worker.js')
+    const ac = new AbortController()
+    const handle = startMergeWorker({
+      store,
+      log: () => {},
+      bus: new EventEmitter(),
+      signal: ac.signal,
+      pollIntervalMs: 10,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mergeFn: mergeFnThatCallsVerify as any,
+    })
+
+    // The gate fails: markFailed must be called, not markDone.
+    await waitFor(() => calls.includes(`markFailed:${job.id}`))
+    ac.abort()
+    await handle.stop()
+
+    expect(calls).toContain(`markRunning:${job.id}`)
+    expect(calls).toContain(`markFailed:${job.id}`)
+    expect(calls).not.toContain(`markDone:${job.id}`)
+
+    // The error must carry the 'verify:gate/<slug>:' prefix so the merge
+    // primitive can stamp failedPhase:'verify' — the critical detail that
+    // lets `mars continue` rewind to the coder rather than doing a
+    // destructive restart.
+    const failedJob = jobs.get(job.id)
+    expect(failedJob?.error).toMatch(/^verify:gate\/[a-z0-9-]+:/)
+    // The gate name must appear in the error for operator readability.
+    expect(failedJob?.error).toContain('lint')
+  })
+})

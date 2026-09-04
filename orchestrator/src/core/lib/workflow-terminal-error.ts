@@ -98,6 +98,15 @@ export type WorkflowTerminalKind =
    */
   | 'merge-hard-timeout'
   /**
+   * A task-tier gate failed on the rebased tree during the merge step's
+   * pre-lock verify phase. The task has been marked `failed` with
+   * `failedPhase: 'verify'` and a fix-task spawned so `mars continue`
+   * rewinds to the coder (rather than doing a destructive restart).
+   * The merge primitive throws this so the daemon dispatch loop can suppress
+   * the generic `implement:crashed` re-update.
+   */
+  | 'verify-gate-rebased-tree'
+  /**
    * The merge step found the task branch's TIP to be an orchestrator-authored
    * salvage checkpoint — the "coder killed … do not merge as-is" auto-commit
    * `coder-exit.ts` writes when a coder dies with uncommitted changes. That

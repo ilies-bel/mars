@@ -756,6 +756,51 @@ async function runMergeJob(
         }
       },
     })
+
+    // Task-tier gate failure at the rebased-tree verify step.
+    //
+    // When onVerifyRebasedTree returns { passed: false }, mergeBranch returns
+    // { merged: false, reason: 'rebased-verify-failed', rebasedVerifyOutput }.
+    // This is a CODE failure (the coder's change failed a gate), not a merge
+    // infrastructure failure. Deliver it as a { status: 'failed' } result with
+    // a 'verify:gate/<name>: ...' error prefix so the merge primitive can stamp
+    // failedPhase:'verify' — letting `mars continue` rewind to the coder with
+    // the gate output rather than doing a destructive restart (which is the
+    // behaviour triggered by failedPhase:'setup').
+    //
+    // Without this intercept, the worker would treat { merged: false } as a
+    // success (result = { status: 'done', result: mergeResult }) and the
+    // primitive would fall through to mark the task done — a false-green that
+    // silently discards the coder's branch.
+    if (!mergeResult.merged && mergeResult.reason === 'rebased-verify-failed') {
+      const gateOutput = mergeResult.rebasedVerifyOutput ?? ''
+
+      // Extract the gate name from the "=== <gate-name> (FAIL) [task] ===" header.
+      const gateNameRaw = gateOutput.match(/^=== ([^\s(]+) \(FAIL\)/m)?.[1] ?? null
+      // Sanitize to a valid step-id slug (lowercase alphanum + hyphens only).
+      const gateSlug = gateNameRaw !== null
+        ? gateNameRaw.replace(/[^a-z0-9]/gi, '-').toLowerCase().replace(/-{2,}/g, '-').replace(/^-|-$/g, '')
+        : 'unknown'
+      // First non-header output line: the human-readable violation.
+      const firstViolation = gateOutput.split('\n').find(l => l.trim() !== '' && !l.startsWith('===')) ?? ''
+      const readableReason = gateNameRaw !== null
+        ? `Gate ${gateNameRaw} rejected the change: ${firstViolation}`.slice(0, 400).trim()
+        : 'task-tier gate rejected the rebased tree'
+      const errorMsg = `verify:gate/${gateSlug}: ${readableReason}`
+
+      result = { status: 'failed', error: errorMsg, errorCode: 'crash' }
+      log(`[merge-worker] job ${job.id}: task-tier rebased-tree gate failure → ${errorMsg}`)
+      await store
+        .markFailed(job.id, { message: errorMsg, code: 'crash' })
+        .catch((e: unknown) => {
+          log(
+            `[merge-worker] job ${job.id} markFailed failed (non-fatal): ${(e as Error).message}`,
+          )
+        })
+      resolveMergeJob(job.taskId, result)
+      return
+    }
+
     result = { status: 'done', result: mergeResult }
     // Where the integration branch now points. Recorded here rather than
     // inside the merge itself so the merge logic stays untouched: this is

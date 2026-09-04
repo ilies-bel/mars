@@ -769,8 +769,48 @@ export const merge = async (
         }
 
         if (queueResult.status === 'failed') {
-          // Let the outer crash-handler deal with this — it marks the task
-          // failed and spawns a fix-task, same as a mergeBranch throw.
+          // Task-tier gate failure at the rebased-tree verify step.
+          //
+          // merge-worker delivers this as { status: 'failed', error:
+          // 'verify:gate/<slug>: Gate <name> rejected the change: ...' } so we
+          // can stamp failedPhase:'verify' here — letting `mars continue`
+          // rewind to the coder with the gate output rather than doing a
+          // destructive restart (which failedPhase:'setup' would trigger via the
+          // server.ts fallback on a task whose worktreePath is non-null but whose
+          // failed_phase was never written).
+          const verifyGateMatch = queueResult.error.match(/^(verify:gate\/[a-z][a-z0-9-]*)/)
+          if (verifyGateMatch !== null) {
+            const gateSignature = verifyGateMatch[1]!
+            const errorMsg = queueResult.error.slice(0, 2000)
+            await updateTask(
+              taskId,
+              {
+                status: 'failed',
+                error: errorMsg,
+                failedPhase: 'verify',
+                failureReason: errorMsg,
+                failureSignature: gateSignature,
+                failureReasonCode: gateSignature,
+              },
+              store,
+            )
+            await handleTaskFailureWithFixTask({
+              taskId,
+              failingStep: 'verify:gate',
+              errorOutput: queueResult.error,
+              branch,
+              store,
+            }).catch((err) => {
+              console.error(
+                `[failure-handler] task ${taskId} rebased-tree gate handling errored:`,
+                err,
+              )
+            })
+            throw new WorkflowTerminalError('verify-gate-rebased-tree', errorMsg)
+          }
+          // For all other worker failures, let the outer crash-handler deal
+          // with this — it marks the task failed and spawns a fix-task, same
+          // as a mergeBranch throw.
           throw new Error(`merge job failed (${queueResult.errorCode}): ${queueResult.error}`)
         }
         m = queueResult.result
