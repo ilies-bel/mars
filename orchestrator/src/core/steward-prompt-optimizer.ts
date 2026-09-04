@@ -22,7 +22,7 @@ import {
   workerPromptBlock,
   type WorkerPromptMeasurement,
 } from '../workflows/primitives/shared'
-import { appendMessage, createThread } from './lib/chat-store'
+import { postConversationNotice } from './lib/conversation-delivery'
 import { stewardAgent, type StewardEvent } from './agents/steward'
 
 const WORKER_PROMPT_TARGET_KIND = 'worker-prompt' as const
@@ -61,9 +61,13 @@ export interface PromptOptimizerDeps {
 const blockHash = (text: string): string =>
   createHash('sha256').update(text).digest('hex')
 
-const defaultWriteChatAck = async (text: string): Promise<void> => {
-  const thread = await createThread('Steward: prompt optimization')
-  await appendMessage(thread.id, 'assistant', text, undefined, { kind: 'acknowledgment' })
+const defaultWriteChatAck = (ledgerId: string) => async (text: string): Promise<void> => {
+  await postConversationNotice({
+    kind: 'steward.prompt-optimization',
+    payload: { ledgerId },
+    priority: 'routine',
+    segments: [{ type: 'text', text }],
+  })
 }
 
 const conciseCommitFooter = (): string =>
@@ -174,7 +178,7 @@ export const optimizeWorkerPrompt = async (
   })
   writeBlock(proposal.targetId, proposal.replacement)
   try {
-    await (deps.writeChatAck ?? defaultWriteChatAck)(
+    await (deps.writeChatAck ?? defaultWriteChatAck(ledgerId))(
       `I tightened ${proposal.targetId} because ${proposal.assessment.structuralFindings.join('; ') || 'the standing prompt is oversized for its task body'}. Ledger: ${ledgerId}.`,
     )
   } catch {

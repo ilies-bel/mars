@@ -37,6 +37,7 @@ export const AutonomousNoticeKindSchema = z.enum([
   'gate.main-broken',
   'merge.operator-auto-commit',
   'steward.prompt-optimizer-ack',
+  'steward.prompt-optimization',
   'steward.workflow-patch',
 ])
 
@@ -98,6 +99,14 @@ export interface AutonomousNoticePayloads {
     workerId: string
     reason: string
     entryId: string
+  }
+  /**
+   * A routine confirmation that the steward prompt optimizer autonomously applied
+   * a prompt edit. Carries no action chips — purely informational. `ledgerId` is
+   * the steward-ledger row that records the change and enables reverting it.
+   */
+  'steward.prompt-optimization': {
+    ledgerId: string
   }
   /**
    * The steward has drafted a patch to a workflow file and is asking the
@@ -368,6 +377,13 @@ const REGISTRY: { [Kind in AutonomousNoticeKind]: NoticeKindEntry<Kind> } = {
       ack(),
       silence(STEWARD_PROMPT_OPTIMIZER_LEVER, 'Stop optimizing prompts', 'stop'),
     ],
+  },
+  'steward.prompt-optimization': {
+    act: 'announcement',
+    actionable: false,
+    render: (p) => `I tightened the worker prompt because the optimizer applied a structural improvement (ledger ${p.ledgerId}).`,
+    lever: undefined,
+    offers: () => ackOnly(),
   },
   'steward.workflow-patch': {
     act: 'offer',

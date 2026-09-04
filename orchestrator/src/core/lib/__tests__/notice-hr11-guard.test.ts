@@ -67,6 +67,9 @@ const REPRESENTATIVE_PAYLOADS: { [K in AutonomousNoticeKind]: AutonomousNoticePa
     reason: 'the depth ratio showed excess boilerplate',
     entryId: 'entry-abc123',
   },
+  'steward.prompt-optimization': {
+    ledgerId: 'ledger-abc123',
+  },
   'steward.workflow-patch': {
     proposalId: 'prop-xyz789',
     workflowPath: '.mars/workflows/implement.md',
