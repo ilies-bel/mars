@@ -1,7 +1,5 @@
 import { existsSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
-import { dirname, join, relative, resolve } from 'node:path'
-import { homedir } from 'node:os'
+import { resolve } from 'node:path'
 import { defineWorkflow, runWorkflow, type WorkflowCtx } from '@mars/workflow'
 import { z } from 'zod'
 import { createQueueWorkflowStore } from './queue-workflow-store'
@@ -12,18 +10,13 @@ import { VerifyGateInputSchema } from '../core/verify-gates'
 import type { VerifyGateInput } from '../core/verify-gates'
 import { proposeOnboardingVerifyGates } from '../init/seed-verify-gates'
 import { computeMissingGates } from '../init/compute-missing-gates'
-import { buildGateTaskPrompt } from '../init/build-gate-task-prompt'
-import { enqueueTask } from '../core/queue'
 import {
   applyGitignoreScaffold,
-  mergeMcpJson,
   planClaudeConflicts,
-  scaffoldClaudeConfig,
 } from '../init/scaffold'
-import { planWorkflowCopies, scaffoldWorkflows } from '../init/scaffold-workflows'
 import { writeSlimInit } from '../init/writer'
-import { readInitManifest, writeInitManifest } from '../init/init-manifest'
-import { writeRecipesSeed } from '../init/recipes-seed'
+import { writeInitManifest } from '../init/init-manifest'
+import { queueScaffoldProposals } from '../init/queue-scaffold-proposals'
 import { activatePlugin, realDeps, type ClaudePluginDeps } from '../commands/claude-plugin.js'
 import { ensureProjectRegistered } from '../registry/projects.js'
 import { detectCurrentBranch } from '../init/detect-branch.js'
@@ -55,55 +48,6 @@ interface InitWorkflowOutput {
  * `scaffoldClaudeConfig` with `force: true` and treat any residual conflict
  * (e.g. a file that appeared between pre-flight and now) as a hard error.
  */
-const runScaffoldClaude = async (written: string[]): Promise<string[]> => {
-  const ctx = resolveContext()
-  const result = scaffoldClaudeConfig({ repoRoot: ctx.repoRoot, force: true })
-  if (result.status === 'conflict') {
-    throw new Error(
-      `scaffold-claude: unexpected conflict after pre-flight: ${result.conflicts.join(', ')}`,
-    )
-  }
-  return [...written, ...result.written]
-}
-
-/**
- * Scaffold the user-owned workflow templates into `.mars/workflows/*.js`
- * (ADR-0056) and record the written paths in the init manifest (ADR-0057's
- * ownership ledger). Runs AFTER scaffold-claude and BEFORE init-databases.
- *
- * `mars init` never clobbers a pre-existing workflow file: `scaffoldWorkflows`
- * runs with `force: false`, so on a fresh repo every template lands, and on a
- * repo whose workflows the consumer has edited nothing is overwritten. Only the
- * files actually written this run are appended to the manifest; previously
- * scaffolded (and possibly hand-edited) workflows already in the manifest are
- * preserved so `mars update` can still recognise them as owned.
- */
-const runScaffoldWorkflows = async (written: string[]): Promise<string[]> => {
-  const ctx = resolveContext()
-  const result = scaffoldWorkflows({ repoRoot: ctx.repoRoot, force: false })
-  // `scaffoldWorkflows` with force:false never reports a conflict (user-owned
-  // files are silently skipped, not treated as errors); narrow defensively.
-  const justWritten = result.status === 'ok' ? result.written : []
-
-  // Owned-workflow ledger: union the manifest with every workflow path we know
-  // about this run — the ones just written plus any already on disk that match
-  // a bundled template (so a re-init does not drop an existing entry just
-  // because the file was skipped as pre-existing).
-  const onDiskOwned = planWorkflowCopies(ctx.repoRoot)
-    .filter((c) => existsSync(c.dest))
-    .map((c) => c.rel)
-  const manifestAdds = Array.from(new Set([...justWritten, ...onDiskOwned]))
-  if (manifestAdds.length > 0) {
-    const existing = readInitManifest(ctx.stateDir)
-    const existingSet = new Set(existing)
-    const toAdd = manifestAdds.filter((p) => !existingSet.has(p))
-    if (toAdd.length > 0) {
-      writeInitManifest(ctx.stateDir, [...existing, ...toAdd])
-    }
-  }
-
-  return [...written, ...justWritten]
-}
 
 /**
  * Materialise the canonical Mars schema (tasks, proposals, actionQueue, …) in
@@ -129,44 +73,7 @@ const runInitDatabases = async (written: string[]): Promise<string[]> => {
       '[mars init] database not provisioned yet (daemon not running) — schema will be applied on first daemon start\n',
     )
   }
-
-  // Merge any root-level CLAUDE.md (written by scaffold) into the init
-  // manifest so it is listed alongside the per-folder CLAUDE.md files that
-  // writeSlimInit already recorded. Here we only extend it with paths that
-  // scaffold produced (i.e. those ending in 'CLAUDE.md' and not already
-  // present in the manifest).
-  const rootClaudePaths = written.filter((p) => p.endsWith('CLAUDE.md'))
-  if (rootClaudePaths.length > 0) {
-    const existing = readInitManifest(ctx.stateDir)
-    const existingSet = new Set(existing)
-    const toAdd = rootClaudePaths.filter((p) => !existingSet.has(p))
-    if (toAdd.length > 0) {
-      writeInitManifest(ctx.stateDir, [...existing, ...toAdd])
-    }
-  }
-
   return written
-}
-
-/**
- * Seed `.mars/recipes/<name>.md` overrides for every shipped built-in
- * recovery recipe. Same no-overwrite rule as failure-reasons: once the
- * consumer owns the file, the binary leaves it alone. A future binary
- * adding new recipes lands only the missing files. Silent unless
- * something was written.
- */
-const runSeedRecipes = async (written: string[]): Promise<string[]> => {
-  const ctx = resolveContext()
-  const result = writeRecipesSeed(ctx.stateDir)
-  if (result.written.length > 0) {
-    process.stdout.write(
-      `[mars init] wrote ${result.written.length} recipe seeds to ${relative(ctx.repoRoot, result.dir)}/\n`,
-    )
-  }
-  return [
-    ...written,
-    ...result.written.map((f) => relative(ctx.repoRoot, resolve(result.dir, f))),
-  ]
 }
 
 /**
@@ -205,26 +112,21 @@ export function tryActivatePlugin(
   }
 }
 
-const runActivatePlugin = (): void => {
-  // init-workflow.ts lives at <frameworkRoot>/orchestrator/src/workflows/
-  // walking up three directories reaches <frameworkRoot>.
-  // The plugin root is .claude/ — the directory containing both
-  // .claude-plugin/ (manifests) and skills/ (skill implementations).
-  const thisFile = fileURLToPath(import.meta.url)
-  const frameworkClaudeDir = join(dirname(dirname(dirname(thisFile))), '.claude')
-  const userSettingsPath = join(homedir(), '.claude', 'settings.json')
-  tryActivatePlugin(frameworkClaudeDir, userSettingsPath, realDeps)
-}
-
-// Linear steps, threaded by native control flow. The step NAMES
-// ('slim-init', 'scaffold-claude', 'merge-mcp-json', 'merge-gitignore',
-// 'scaffold-workflows', 'init-databases', 'seed-verify-gates', 'seed-recipes',
-// 'activate-plugin')
-// are load-bearing trace-view labels. Disk side effects (root CLAUDE.md, the
-// .mars/workflows/*.js scaffold, the init manifest, and the recipe override
-// seeds) and DB side effects (schema + legacy import) are preserved verbatim.
-// Failures THROW; the engine records the step failed. 'activate-plugin' is
-// best-effort: it never throws regardless of outcome.
+// ---------------------------------------------------------------------------
+// Slim init workflow (progressive — writes minimum then offers the rest via
+// the action queue as draft-proposals).
+//
+// Step names are load-bearing trace-view labels:
+//   'slim-init'          — CONTEXT.md skeleton + docs/knowledge/decisions/
+//   'merge-gitignore'    — .gitignore blocks (.mars/, node_modules/, JVM)
+//   'init-databases'     — embedded PostgreSQL schema + legacy SQLite import
+//   'seed-verify-gates'  — propose onboarding verify gates
+//   'queue-setup-suggestions' — draft-proposals for deferred scaffold items
+//
+// Removed from default path (now offered as action-queue proposals):
+//   scaffold-claude, merge-mcp-json, scaffold-workflows, seed-recipes,
+//   activate-plugin, dispatch-first-gate (auto-dispatch of a coding task)
+// ---------------------------------------------------------------------------
 const initWorkflow = defineWorkflow<InitInput, InitWorkflowOutput>({
   id: 'init',
   inputSchema: initInputSchema,
@@ -245,6 +147,7 @@ const initWorkflow = defineWorkflow<InitInput, InitWorkflowOutput>({
       }
     })
 
+    // 1. Write the minimum viable Mars scaffold: CONTEXT.md skeleton + ADR dir.
     const w1 = await ctx.step('slim-init', () => {
       const appCtx = resolveContext()
       const slimResult = writeSlimInit({
@@ -254,62 +157,67 @@ const initWorkflow = defineWorkflow<InitInput, InitWorkflowOutput>({
       })
       return slimResult.written
     })
-    const w2 = await ctx.step('scaffold-claude', () => runScaffoldClaude(w1))
-    const w2b = await ctx.step('merge-mcp-json', () => {
-      const appCtx = resolveContext()
-      mergeMcpJson(appCtx.repoRoot)
-      return w2.includes('.mcp.json') ? w2 : [...w2, '.mcp.json']
-    })
-    const w2d = await ctx.step('merge-gitignore', () => {
+
+    // 2. Apply .gitignore blocks (.mars/, node_modules/, JVM crash dumps).
+    const w2 = await ctx.step('merge-gitignore', () => {
       const appCtx = resolveContext()
       applyGitignoreScaffold(appCtx.repoRoot)
-      return [...w2b, '.gitignore']
+      return [...w1, '.gitignore']
     })
-    const w2c = await ctx.step('scaffold-workflows', () => runScaffoldWorkflows(w2d))
-    const w3 = await ctx.step('init-databases', () => runInitDatabases(w2c))
-    const w4 = await ctx.step('seed-verify-gates', async () => {
+
+    // 3. Initialise the embedded DB schema.
+    const w3 = await ctx.step('init-databases', () => runInitDatabases(w2))
+
+    // 4. Record the minimal written paths in the init manifest so subsequent
+    //    `mars init` runs can detect a prior successful run.
+    await ctx.step('write-init-manifest', () => {
+      const appCtx = resolveContext()
+      writeInitManifest(appCtx.stateDir, w3)
+    })
+
+    // 5. Propose onboarding verify gates (DB must be initialised first).
+    await ctx.step('seed-verify-gates', async () => {
       const detected = input.wizardChoices?.verifyGates ?? WIZARD_DEFAULTS.verifyGates
       const appCtx = resolveContext()
-      const { entries: missingEntries, isFallback } = computeMissingGates(detected, appCtx.repoRoot)
-      const firstMissing = missingEntries[0] ?? null
+      const { entries: missingEntries } = computeMissingGates(detected, appCtx.repoRoot)
 
       let gatesToInstall: VerifyGateInput[] = [...detected]
+      const firstMissing = missingEntries[0] ?? null
       if (firstMissing?.recipe?.verifyGate) {
         const vg = firstMissing.recipe.verifyGate
-        const missingGateInput: VerifyGateInput = {
-          name: vg.name,
-          cmd: vg.cmd,
-          args: vg.args,
-          scope: vg.scope,
-          source: 'onboarding',
-          required: true,
-          tier: 'task',
-        }
-        gatesToInstall = [...detected, missingGateInput]
+        gatesToInstall = [
+          ...detected,
+          {
+            name: vg.name,
+            cmd: vg.cmd,
+            args: vg.args,
+            scope: vg.scope,
+            source: 'onboarding',
+            required: true,
+            tier: 'task',
+          },
+        ]
       }
 
       await proposeOnboardingVerifyGates(gatesToInstall)
-      return { firstMissing, isFallback }
     })
 
-    const w5 = await ctx.step('dispatch-first-gate', async () => {
-      if (w4.firstMissing === null) return null
-      const entry = w4.firstMissing
-      const gateName = entry.recipe!.verifyGate!.name
-      const { prompt, spec } = buildGateTaskPrompt(entry, { isFallback: w4.isFallback })
-      const task = await enqueueTask(prompt, undefined, {
-        skipTriage: true,
-        priority: 2,
-        tags: ['coder'],
-        spec,
-        intent: `Add missing ${gateName} verify gate`,
-      })
-      return { taskId: task.id, gateName }
+    // 6. Queue action-queue draft-proposals for every deferred scaffold item
+    //    (CLAUDE.md, .mcp.json, workflow templates, plugin, project registry).
+    //    Each shows up as a separate row in `mars action-queue list` so the
+    //    operator can accept them one at a time. Non-fatal: a proposal error
+    //    never aborts init.
+    await ctx.step('queue-setup-suggestions', async () => {
+      const appCtx = resolveContext()
+      const { raised } = await queueScaffoldProposals(appCtx.repoRoot)
+      if (raised.length > 0) {
+        process.stdout.write(
+          `[mars init] ${raised.length} setup suggestion(s) added to action queue — run \`mars action-queue list\` to review\n`,
+        )
+      }
     })
 
-    const written = await ctx.step('seed-recipes', () => runSeedRecipes(w3))
-    await ctx.step('activate-plugin', runActivatePlugin)
-    return { written, dispatched: w5 }
+    return { written: w3, dispatched: null }
   },
 })
 

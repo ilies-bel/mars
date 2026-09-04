@@ -172,6 +172,16 @@ const init: Command = {
     }
     const provider: ProviderName = (providerRaw as ProviderName | undefined) ?? 'codex'
 
+    // ── Dry-run: short-circuit before the daemon is spawned ──────────────
+    // Spawning the daemon creates `.mars/` as a side effect (pg state dir,
+    // socket file, http.port, etc.) even when runInit returns early. To
+    // honour "dry-run writes nothing at all, including .mars/", bail out
+    // here before sendRequest → autoSpawn has a chance to run.
+    if (dryRun) {
+      deps.out('dry run: no files written')
+      return { code: 0 }
+    }
+
     // ── Already-initialized idempotent check ─────────────────────────────
     // Gate on the init manifest — the authoritative record that a successful
     // `mars init` run wrote all scaffold files. --force bypasses this so
@@ -262,8 +272,9 @@ const init: Command = {
     if (runQuickstartPath) {
       deps.out('')
       deps.out('Mars quickstart — ready to initialize with sensible defaults:')
-      deps.out('  Scaffold mode: full  (CLAUDE.md, .mcp.json, workflow templates)')
-      deps.out('  Register:      yes')
+      deps.out('  Writes now:    .mars/ state dir, .gitignore additions, CONTEXT.md skeleton')
+      deps.out('  Offered after: CLAUDE.md, .mcp.json, workflow templates, plugin activation')
+      deps.out('                 (each as an action-queue suggestion you can apply individually)')
       deps.out('')
 
       // Show per-provider probe results so users see what's available and
