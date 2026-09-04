@@ -60,6 +60,13 @@ export interface KpiDriftProposalNotes {
    * per-phase metric deltas for the primary regressing KPI.
    */
   phaseBreakdown?: Record<string, { prior: number; current: number }>
+  /**
+   * Median weighted tokens per phase across arcs in the current window.
+   * Keys are step/phase names (e.g. 'code', 'verify', 'setup'); values are
+   * the median cache-weighted token cost for that phase across all arcs.
+   * Only populated for cost_per_arc_p50 regressions.
+   */
+  phaseMedians?: Record<string, number>
 }
 
 /**
@@ -254,6 +261,40 @@ export const runSelfEvolveTrigger = async (opts?: {
       currentValue: finding.currentValue,
       vector: finding.vector,
     }
+
+    // Enrich cost_per_arc_p50 findings with per-phase median token breakdown.
+    // This lets the operator see which phase drove the regression without running
+    // a separate drill command.
+    if (finding.kpi === 'cost_per_arc_p50') {
+      const { listCostPerArcArcs } = await import('./kpi-compute.js')
+      const currentWindow = {
+        windowStart: persistedCurrent.window_start,
+        windowEnd: persistedCurrent.window_end,
+      }
+      const arcs = await listCostPerArcArcs(store, currentWindow)
+      // Group per-arc phase costs by phase name
+      const phaseGroups: Record<string, number[]> = {}
+      for (const arc of arcs) {
+        if (arc.phaseBreakdown) {
+          for (const [phase, cost] of Object.entries(arc.phaseBreakdown)) {
+            if (!phaseGroups[phase]) phaseGroups[phase] = []
+            phaseGroups[phase]!.push(cost)
+          }
+        }
+      }
+      // Compute median for each phase (linear-interpolation on sorted array)
+      const phaseMedians: Record<string, number> = {}
+      for (const [phase, costs] of Object.entries(phaseGroups)) {
+        const sorted = [...costs].sort((a, b) => a - b)
+        const mid = Math.floor(sorted.length / 2)
+        phaseMedians[phase] =
+          sorted.length % 2 === 0
+            ? (sorted[mid - 1]! + sorted[mid]!) / 2
+            : sorted[mid]!
+      }
+      notesPayload.phaseMedians = phaseMedians
+    }
+
     const notes = JSON.stringify(notesPayload, null, 2)
 
     // A stable fingerprint per metric makes the proposal raise idempotent

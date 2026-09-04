@@ -387,6 +387,97 @@ describe('runSelfEvolveTrigger', () => {
     expect(proposals[0].title).toContain('failure_rate')
   })
 
+  // Phase-enrichment: cost_per_arc_p50 proposals include a phaseMedians breakdown.
+  // listCostPerArcArcs is mocked (it uses PG-specific SQL) so this is a pure
+  // unit test of the median-computation and note-serialisation logic.
+  it('enriches cost_per_arc_p50 proposal notes with phaseMedians', async () => {
+    // Must mock BEFORE importing self-evolve-trigger (vi.resetModules is called
+    // below, then the mock is registered, then the module is imported fresh).
+    vi.resetModules()
+    process.env.MARS_REPO = repo
+
+    // Provide three arcs with distinct per-phase costs so we can verify the
+    // median computation independently.  Arc costs per phase:
+    //   code:   [300, 400, 600]  → sorted median = 400
+    //   verify: [150, 200, 200]  → sorted median = 200
+    //   setup:  [ 50, 100, 100]  → sorted median = 100
+    vi.doMock('../kpi-compute.js', () => ({
+      listCostPerArcArcs: vi.fn().mockResolvedValue([
+        {
+          arcId: 'arc1', originTaskId: 'arc1', title: '', status: 'done', passed: true,
+          costTokens: 900, phaseBreakdown: { code: 600, verify: 200, setup: 100 },
+        },
+        {
+          arcId: 'arc2', originTaskId: 'arc2', title: '', status: 'done', passed: true,
+          costTokens: 700, phaseBreakdown: { code: 400, verify: 200, setup: 100 },
+        },
+        {
+          arcId: 'arc3', originTaskId: 'arc3', title: '', status: 'done', passed: true,
+          costTokens: 500, phaseBreakdown: { code: 300, verify: 150, setup: 50 },
+        },
+      ]),
+    }))
+
+    const dbPath = resolve(repo, '.mars', 'mars.db')
+    const client = openLibsql({ url: `file:${dbPath}` })
+    await client.execute(KPI_SNAPSHOTS_DDL)
+    await client.execute(`
+      CREATE TABLE IF NOT EXISTS tasks (
+        id TEXT PRIMARY KEY,
+        prompt TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'queued',
+        priority INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )
+    `)
+
+    const { initProposals, listProposals: listProposalsFn } = await import('../../proposals.js')
+    await initProposals()
+
+    const store = createTaskStore(client)
+
+    // cost_per_arc_p50: 500 → 700, +40% regression (lower-is-better).
+    // failure_rate is null in both snapshots so it is excluded from drift detection.
+    await insertSnapshot(store, {
+      id: 'snap-prior',
+      takenAt: '2026-01-01T00:00:00Z',
+      failureRate: null,
+      costPerArcP50: 500,
+      costPerArcP90: 600,
+    })
+    await insertSnapshot(store, {
+      id: 'snap-current',
+      takenAt: '2026-01-02T00:00:00Z',
+      failureRate: null,
+      costPerArcP50: 700,
+      costPerArcP90: 900,
+    })
+
+    const { runSelfEvolveTrigger } = await import('../self-evolve-trigger.js')
+    const result = await runSelfEvolveTrigger({ store })
+
+    // At least the cost_per_arc_p50 proposal must have been raised
+    expect(result.raised.length).toBeGreaterThanOrEqual(1)
+
+    const proposals = await listProposalsFn({ source: 'reflection' })
+    const p50Proposal = proposals.find(p => p.kpiTag === 'cost_per_arc_p50')
+    expect(p50Proposal).toBeDefined()
+
+    // The notes JSON must carry a phaseMedians block with the computed medians
+    const notes = JSON.parse(p50Proposal!.notes) as {
+      kpi: string
+      vector: unknown
+      phaseMedians?: Record<string, number>
+    }
+    expect(notes).toHaveProperty('phaseMedians')
+    expect(notes.phaseMedians).toEqual({ code: 400, verify: 200, setup: 100 })
+
+    // Non-cost proposals (e.g. failure_rate) are not raised in this scenario
+    const failureProposal = proposals.find(p => p.kpiTag === 'failure_rate')
+    expect(failureProposal).toBeUndefined()
+  })
+
   // driftThresholdPct: prove the value changes what gets raised.
   // With a threshold of 200% only a >200% drift fires; with 10% (default) a 50% drift fires.
   it('respects driftThresholdPct — a drift below the threshold is not raised', async () => {
