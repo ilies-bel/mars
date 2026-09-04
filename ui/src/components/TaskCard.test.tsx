@@ -242,7 +242,7 @@ describe('TaskCard – blocker id encoding', () => {
       status: 'blocked',
       blockerTaskId: 'fix/my-task',
     })
-    const html = renderToStaticMarkup(<TaskCard task={task} index={0} />)
+    const html = renderCard(<TaskCard task={task} index={0} />)
     // A raw #/task/fix/my-task would be mis-parsed (the second / cuts the id).
     // After encoding it must be #/task/fix%2Fmy-task.
     expect(html).toContain('href="#/task/fix%2Fmy-task"')
@@ -254,7 +254,7 @@ describe('TaskCard – blocker id encoding', () => {
       status: 'blocked',
       blockerTaskId: 'task with spaces',
     })
-    const html = renderToStaticMarkup(<TaskCard task={task} index={0} />)
+    const html = renderCard(<TaskCard task={task} index={0} />)
     expect(html).toContain('href="#/task/task%20with%20spaces"')
   })
 })
