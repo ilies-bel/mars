@@ -635,6 +635,23 @@ const scorerSuggestedItemSchema = actionQueueBaseSchema.extend({
   kind: z.literal('scorer-suggested'),
 })
 
+/**
+ * A task was marked done but no merge SHA was recorded — commits may not have
+ * landed on main. Derived from live state (no stored row). The operator should
+ * remerge the branch or supersede the task to carry the work forward.
+ */
+const phantomMergeItemSchema = actionQueueBaseSchema.extend({
+  kind: z.literal('phantom-merge'),
+})
+
+/**
+ * A task was marked done with a null merge SHA and no surviving branch/checkpoint
+ * evidence — operator must verify manually. Derived from live state (no stored row).
+ */
+const phantomMergeUnknownItemSchema = actionQueueBaseSchema.extend({
+  kind: z.literal('phantom-merge-unknown'),
+})
+
 export const actionQueueItemSchema = z.union([
   staleWorktreeItemSchema,
   draftProposalItemSchema,
@@ -643,6 +660,8 @@ export const actionQueueItemSchema = z.union([
   awaitingHumanItemSchema,
   reflectRecommendedItemSchema,
   scorerSuggestedItemSchema,
+  phantomMergeItemSchema,
+  phantomMergeUnknownItemSchema,
   // noticeItemSchema must come before taskFailureItemSchema: notice kinds are
   // also in taskFailureKinds (the daemon's complement includes them), so without
   // this ordering a notice row would parse via taskFailureItemSchema and lose

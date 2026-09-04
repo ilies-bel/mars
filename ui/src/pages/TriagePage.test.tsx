@@ -1126,3 +1126,104 @@ describe('TriagePage – kind chip never renders a raw machine slug', () => {
     expect(html).not.toMatch(/>\s*gate-broken\s*</)
   })
 })
+
+// ---------------------------------------------------------------------------
+// Verb-status correctness: no card offers a verb refused for its task status
+// ---------------------------------------------------------------------------
+
+describe('TriageRow – phantom-merge does NOT offer Continue (task is done, not failed)', () => {
+  it('phantom-merge has no Continue button', () => {
+    mockItems.mockReturnValue([makeItem('phantom-merge')])
+    const { container } = renderPage()
+    expect(container.querySelector('[data-testid="triage-continue"]')).toBeNull()
+  })
+
+  it('phantom-merge has no Restart button', () => {
+    mockItems.mockReturnValue([makeItem('phantom-merge')])
+    const { container } = renderPage()
+    expect(container.querySelector('[data-testid="triage-restart"]')).toBeNull()
+  })
+
+  it('phantom-merge shows the carry-forward panel', () => {
+    mockItems.mockReturnValue([makeItem('phantom-merge')])
+    const { container } = renderPage()
+    expect(
+      container.querySelector('[data-testid="triage-phantom-merge-panel"]'),
+    ).not.toBeNull()
+  })
+
+  it('phantom-merge shows a Remerge button (branch still has commits)', () => {
+    mockItems.mockReturnValue([makeItem('phantom-merge')])
+    const { container } = renderPage()
+    expect(container.querySelector('[data-testid="triage-remerge"]')).not.toBeNull()
+  })
+
+  it('phantom-merge shows a Supersede button (carry forward from checkpoint)', () => {
+    mockItems.mockReturnValue([makeItem('phantom-merge')])
+    const { container } = renderPage()
+    expect(container.querySelector('[data-testid="triage-supersede"]')).not.toBeNull()
+  })
+})
+
+describe('TriageRow – phantom-merge-unknown does NOT offer Continue', () => {
+  it('phantom-merge-unknown has no Continue button', () => {
+    mockItems.mockReturnValue([makeItem('phantom-merge-unknown')])
+    const { container } = renderPage()
+    expect(container.querySelector('[data-testid="triage-continue"]')).toBeNull()
+  })
+
+  it('phantom-merge-unknown has no Restart button', () => {
+    mockItems.mockReturnValue([makeItem('phantom-merge-unknown')])
+    const { container } = renderPage()
+    expect(container.querySelector('[data-testid="triage-restart"]')).toBeNull()
+  })
+
+  it('phantom-merge-unknown shows the carry-forward panel', () => {
+    mockItems.mockReturnValue([makeItem('phantom-merge-unknown')])
+    const { container } = renderPage()
+    expect(
+      container.querySelector('[data-testid="triage-phantom-merge-panel"]'),
+    ).not.toBeNull()
+  })
+
+  it('phantom-merge-unknown has no Remerge button (no surviving branch)', () => {
+    mockItems.mockReturnValue([makeItem('phantom-merge-unknown')])
+    const { container } = renderPage()
+    // Remerge is only offered for phantom-merge (branch may still exist);
+    // phantom-merge-unknown has no surviving evidence, so only Supersede applies.
+    expect(container.querySelector('[data-testid="triage-remerge"]')).toBeNull()
+  })
+
+  it('phantom-merge-unknown shows a Supersede button', () => {
+    mockItems.mockReturnValue([makeItem('phantom-merge-unknown')])
+    const { container } = renderPage()
+    expect(container.querySelector('[data-testid="triage-supersede"]')).not.toBeNull()
+  })
+})
+
+describe('TriageRow – done-with-unmerged-commits does NOT offer Continue (task is done)', () => {
+  it('done-with-unmerged-commits has no Continue button', () => {
+    mockItems.mockReturnValue([makeItem('done-with-unmerged-commits')])
+    const { container } = renderPage()
+    // mars continue is refused for non-failed tasks. The recipe's restart verb
+    // (Re-attempt merge) is the correct CTA and is rendered via mainVerbs.
+    expect(container.querySelector('[data-testid="triage-continue"]')).toBeNull()
+  })
+
+  it('done-with-unmerged-commits has no guarded Restart control (recipe provides one)', () => {
+    mockItems.mockReturnValue([makeItem('done-with-unmerged-commits')])
+    const { container } = renderPage()
+    expect(container.querySelector('[data-testid="triage-restart"]')).toBeNull()
+  })
+
+  it('done-with-unmerged-commits renders the server Re-attempt merge verb', () => {
+    mockItems.mockReturnValue([
+      makeItem('done-with-unmerged-commits', {
+        verbs: [{ op: 'restart', label: 'Re-attempt merge', style: 'primary' }],
+      }),
+    ])
+    const { container } = renderPage()
+    // The restart verb is NOT filtered for this kind (it is not in TASK_RECOVERY_KINDS)
+    expect(container.querySelector('[data-testid="triage-verb-restart"]')).not.toBeNull()
+  })
+})
