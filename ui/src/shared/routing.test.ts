@@ -21,6 +21,7 @@ import {
   studioHash,
   taskHash,
   proposalHash,
+  safeDecode,
 } from './routing'
 import { PRIMITIVE_NAMES } from '@/entities/primitive/types'
 import type { StaleWorktreesPayload } from './schemas'
@@ -704,5 +705,85 @@ describe('resolvePageRoute – overlay hashes keep the underlying page active', 
 
   it('honours the recorded origin page when the overlay carries one', () => {
     expect(resolvePageRoute('#/task/mars-78858e6a?from=chat')).toBe('chat')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// safeDecode — URIError guard
+// ---------------------------------------------------------------------------
+
+describe('safeDecode', () => {
+  it('decodes a valid percent-encoded string', () => {
+    expect(safeDecode('hello%20world')).toBe('hello world')
+  })
+
+  it('returns the input unchanged when there is nothing to decode', () => {
+    expect(safeDecode('mars-abc123')).toBe('mars-abc123')
+  })
+
+  it('returns null for a bare percent sign (malformed encoding)', () => {
+    expect(safeDecode('%')).toBeNull()
+  })
+
+  it('returns null for %ZZ (non-hex digits after %)', () => {
+    expect(safeDecode('%ZZ')).toBeNull()
+  })
+
+  it('returns null for a truncated sequence like %2', () => {
+    expect(safeDecode('%2')).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// malformed hash resilience — no throws on stray %
+// ---------------------------------------------------------------------------
+
+describe('malformed hash resilience', () => {
+  it('detectRoute does not throw on #/task/%', () => {
+    expect(() => detectRoute('#/task/%')).not.toThrow()
+  })
+
+  it('parseTaskRoute returns null for #/task/% (malformed encoding)', () => {
+    expect(parseTaskRoute('#/task/%')).toBeNull()
+  })
+
+  it('detectRoute does not throw on #/chat?q=100%', () => {
+    // A stray % in a query param must not propagate the URIError
+    expect(() => detectRoute('#/chat?q=100%')).not.toThrow()
+  })
+
+  it('parseProposalRoute returns null for #/proposal/% (malformed encoding)', () => {
+    expect(parseProposalRoute('#/proposal/%')).toBeNull()
+  })
+
+  it('resolvePageRoute returns a valid route for #/task/% (falls back to chat)', () => {
+    // parseTaskRoute returns null → falls through to detectRoute → 'chat'
+    const result = resolvePageRoute('#/task/%')
+    expect(result).toBe('chat')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// taskHash round-trip — ids with special characters
+// ---------------------------------------------------------------------------
+
+describe('taskHash round-trip with special characters', () => {
+  it('encodes a slash in the task id so parseTaskRoute round-trips it', () => {
+    const id = 'fix/abc 1'
+    const hash = taskHash(id)
+    expect(hash).toBe('#/task/fix%2Fabc%201')
+    expect(parseTaskRoute(hash)).toBe(id)
+  })
+
+  it('encodes a hash character so parseTaskRoute round-trips it', () => {
+    const id = 'task#1'
+    const hash = taskHash(id)
+    expect(parseTaskRoute(hash)).toBe(id)
+  })
+
+  it('encodes a question mark so parseTaskRoute round-trips it', () => {
+    const id = 'task?foo'
+    const hash = taskHash(id)
+    expect(parseTaskRoute(hash)).toBe(id)
   })
 })

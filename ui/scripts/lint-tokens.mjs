@@ -48,19 +48,27 @@ const BANNED_SCALE = new RegExp(
 // prefixes:  text-[10px]  text-[10.5px]  sm:text-[9px]  hover:text-[11px]
 const BANNED_PX_TEXT = /\b(?:[a-z-]+:)*text-\[\d+(?:\.\d+)?px\]/g
 
-const walk = (dir) =>
+// Rule 4 — raw task/proposal URL templates outside routing.ts.
+// Every hash link must go through taskHash() / proposalHash() so encoding
+// is always applied.  Building the template by hand (e.g. `#/task/${id}`)
+// silently skips encoding and breaks navigation for ids that contain `/`,
+// `?`, `#`, or spaces.  routing.ts itself is the single allowed exception.
+const BANNED_RAW_HASH_TEMPLATE = /`#\/(?:task|proposal)\/\$\{/
+
+const walk = (dir, { extensions = ['.tsx'], excludeTests = true } = {}) =>
   readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
     const p = join(dir, e.name)
-    if (e.isDirectory()) return walk(p)
-    // Exclude test files — they legitimately reference palette / old type-scale
-    // class names in assertion strings (e.g.
-    // expect(html).not.toContain('text-red-400')).
-    if (e.name.endsWith('.test.tsx') || e.name.endsWith('.spec.tsx')) return []
-    return e.name.endsWith('.tsx') ? [p] : []
+    if (e.isDirectory()) return walk(p, { extensions, excludeTests })
+    if (excludeTests && (e.name.endsWith('.test.tsx') || e.name.endsWith('.spec.tsx') || e.name.endsWith('.test.ts') || e.name.endsWith('.spec.ts'))) return []
+    return extensions.some((ext) => e.name.endsWith(ext)) ? [p] : []
   })
 
+// Files that may legitimately contain raw hash templates (the routing helpers
+// themselves are the single allowed exception).
+const ROUTING_FILE = join(ROOT, 'shared', 'routing.ts')
+
 const violations = []
-for (const file of walk(ROOT)) {
+for (const file of walk(ROOT, { extensions: ['.tsx'] })) {
   const lines = readFileSync(file, 'utf8').split('\n')
   lines.forEach((line, i) => {
     const marsHits = line.match(BANNED_MARS)
@@ -76,6 +84,18 @@ for (const file of walk(ROOT)) {
   })
 }
 
+// Rule 4 — check .ts and .tsx source files (excluding test files and routing.ts)
+for (const file of walk(ROOT, { extensions: ['.tsx', '.ts'], excludeTests: true })) {
+  if (file === ROUTING_FILE) continue
+  const lines = readFileSync(file, 'utf8').split('\n')
+  lines.forEach((line, i) => {
+    if (BANNED_RAW_HASH_TEMPLATE.test(line))
+      violations.push(
+        `${relative(process.cwd(), file)}:${i + 1}  [raw-hash-template] raw \`#/task/\${\` or \`#/proposal/\${\` — use taskHash()/proposalHash() from routing.ts`,
+      )
+  })
+}
+
 if (violations.length > 0) {
   console.error(`lint:tokens — ${violations.length} violation(s) in component code:`)
   for (const v of violations) console.error(`  ${v}`)
@@ -84,4 +104,4 @@ if (violations.length > 0) {
   )
   process.exit(1)
 }
-console.error('lint:tokens — OK (no raw palette classes or arbitrary px text sizes in src/**/*.tsx)')
+console.error('lint:tokens — OK (no raw palette classes, arbitrary px text sizes, or raw hash templates in src/**)')

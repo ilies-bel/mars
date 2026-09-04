@@ -2,6 +2,23 @@ import type { KpiKey } from './schemas'
 import type { StaleWorktreesPayload } from './schemas'
 import { PRIMITIVE_NAMES, type PrimitiveName } from '@/entities/primitive/types'
 
+/**
+ * Thin wrapper around `decodeURIComponent` that catches `URIError` and
+ * returns `null` instead of throwing.
+ *
+ * Use this at every client-side decode site.  A `null` return means the
+ * segment was malformed (e.g. a bare `%` with no following hex digits), and
+ * the calling parser must treat the hash as "no match" so the unknown-route
+ * redirect in App kicks in rather than blanking the app.
+ */
+export const safeDecode = (value: string): string | null => {
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return null
+  }
+}
+
 export type RouteName = 'progress' | 'events' | 'kpi' | 'studio' | 'chat' | 'steward' | 'reflections' | 'control' | 'triage' | 'proposals' | 'arc-qa'
 
 /**
@@ -83,7 +100,8 @@ export const isKnownRoute = (hash: string): boolean => {
 export const parseKpiRoute = (hash: string): KpiKey | null => {
   const m = /^#\/kpi\/([^/?#]+)/.exec(hash)
   if (!m) return null
-  const key = decodeURIComponent(m[1]) as KpiKey
+  const key = safeDecode(m[1]) as KpiKey | null
+  if (key === null) return null
   const valid: KpiKey[] = [
     'cost_per_arc',
     'failure_rate',
@@ -110,7 +128,8 @@ export const kpiHash = (key: KpiKey): string => `#/kpi/${encodeURIComponent(key)
 export const parseStudioRoute = (hash: string): string | null => {
   const m = /^#\/studio\/([^/?#]+)/.exec(hash)
   if (!m) return null
-  const id = decodeURIComponent(m[1])
+  const id = safeDecode(m[1])
+  if (id === null) return null
   return id.length > 0 ? id : null
 }
 
@@ -130,7 +149,8 @@ export const studioHash = (taskId: string): string =>
 export const parseArcQaRoute = (hash: string): string | null => {
   const m = /^#\/arc\/([^/?#]+)\/qa/.exec(hash)
   if (!m) return null
-  const id = decodeURIComponent(m[1])
+  const id = safeDecode(m[1])
+  if (id === null) return null
   return id.length > 0 ? id : null
 }
 
@@ -152,7 +172,8 @@ export const arcQaHash = (originId: string): string =>
 export const parseTaskRoute = (hash: string): string | null => {
   const m = /^#\/task\/([^/?#]+)/.exec(hash)
   if (!m) return null
-  const id = decodeURIComponent(m[1])
+  const id = safeDecode(m[1])
+  if (id === null) return null
   return id.length > 0 ? id : null
 }
 
@@ -193,7 +214,8 @@ export const parseTaskOrigin = (hash: string): RouteName | null => {
     const eq = pair.indexOf('=')
     if (eq === -1) continue
     if (pair.slice(0, eq) !== 'from') continue
-    const value = decodeURIComponent(pair.slice(eq + 1))
+    const value = safeDecode(pair.slice(eq + 1))
+    if (value === null) return null
     return isRouteName(value) ? value : null
   }
   return null
@@ -244,7 +266,8 @@ export const parseTaskKpiKey = (hash: string): KpiKey | null => {
     const eq = pair.indexOf('=')
     if (eq === -1) continue
     if (pair.slice(0, eq) !== 'kpiKey') continue
-    const value = decodeURIComponent(pair.slice(eq + 1))
+    const value = safeDecode(pair.slice(eq + 1))
+    if (value === null) return null
     if (value.length === 0) return null
     const valid: KpiKey[] = [
       'cost_per_arc',
@@ -274,7 +297,8 @@ export const parseTaskStep = (hash: string): string | null => {
     const eq = pair.indexOf('=')
     if (eq === -1) continue
     if (pair.slice(0, eq) !== 'step') continue
-    const value = decodeURIComponent(pair.slice(eq + 1))
+    const value = safeDecode(pair.slice(eq + 1))
+    if (value === null) return null
     return value.length > 0 ? value : null
   }
   return null
@@ -312,7 +336,8 @@ export const parseProposalOrigin = (hash: string): RouteName | null => {
     const eq = pair.indexOf('=')
     if (eq === -1) continue
     if (pair.slice(0, eq) !== 'from') continue
-    const value = decodeURIComponent(pair.slice(eq + 1))
+    const value = safeDecode(pair.slice(eq + 1))
+    if (value === null) return null
     return isRouteName(value) ? value : null
   }
   return null
@@ -328,7 +353,8 @@ export const parseProposalOrigin = (hash: string): RouteName | null => {
 export const parseProposalRoute = (hash: string): string | null => {
   const m = /^#\/proposal\/([^/?#]+)/.exec(hash)
   if (!m) return null
-  const id = decodeURIComponent(m[1])
+  const id = safeDecode(m[1])
+  if (id === null) return null
   return id.length > 0 ? id : null
 }
 
@@ -342,7 +368,8 @@ export const parseProposalRoute = (hash: string): string | null => {
 export const parseProposalNodeRoute = (hash: string): string | null => {
   const m = /^#\/proposal-node\/([^/?#]+)/.exec(hash)
   if (!m) return null
-  const id = decodeURIComponent(m[1])
+  const id = safeDecode(m[1])
+  if (id === null) return null
   return id.length > 0 ? id : null
 }
 
@@ -359,7 +386,8 @@ export const parseProposalNodeRoute = (hash: string): string | null => {
 export const parsePrimitiveRoute = (hash: string): PrimitiveName | null => {
   const m = /^#\/primitive\/([^/?#]+)/.exec(hash)
   if (!m) return null
-  const name = decodeURIComponent(m[1])
+  const name = safeDecode(m[1])
+  if (name === null) return null
   return (PRIMITIVE_NAMES as readonly string[]).includes(name)
     ? (name as PrimitiveName)
     : null
@@ -385,7 +413,8 @@ export const parseOverlayOrigin = (hash: string): RouteName | null => {
     const eq = pair.indexOf('=')
     if (eq === -1) continue
     if (pair.slice(0, eq) !== 'from') continue
-    const value = decodeURIComponent(pair.slice(eq + 1))
+    const value = safeDecode(pair.slice(eq + 1))
+    if (value === null) return null
     return isRouteName(value) ? value : null
   }
   return null
@@ -441,8 +470,9 @@ export interface ReflectionDetailRoute {
 export const parseReflectionDetailRoute = (hash: string): ReflectionDetailRoute | null => {
   const m = /^#\/reflections\/([^/?#]+)\/([^/?#]+)/.exec(hash)
   if (!m) return null
-  const originId = decodeURIComponent(m[1])
-  const recordedAt = decodeURIComponent(m[2])
+  const originId = safeDecode(m[1])
+  const recordedAt = safeDecode(m[2])
+  if (originId === null || recordedAt === null) return null
   return originId.length > 0 && recordedAt.length > 0 ? { originId, recordedAt } : null
 }
 

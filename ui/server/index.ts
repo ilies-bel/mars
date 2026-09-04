@@ -415,6 +415,10 @@ export const startServer = async (
       hostname: args.host,
       idleTimeout: 0,
       async fetch(req): Promise<Response> {
+      // Outer guard: a malformed percent-encoded segment (e.g. GET /api/tasks/%)
+      // would propagate the URIError from decodeURIComponent as an unhandled
+      // rejection.  Catch it here and return a plain 400 instead.
+      try {
       const url = new URL(req.url)
       const path = url.pathname
 
@@ -1768,10 +1772,17 @@ export const startServer = async (
         path.startsWith('/mockups/') &&
         path.endsWith('.html')
       ) {
-        const fileName = path.slice('/mockups/'.length)
+        let fileName: string
+        try {
+          fileName = decodeURIComponent(path.slice('/mockups/'.length))
+        } catch {
+          return jsonResponse(400, { error: 'invalid URL encoding in mockup path' })
+        }
         const mockupsDir = resolve(defaultCtx.stateDir, 'mockups')
         const mockupPath = resolve(mockupsDir, fileName)
         // Safety: prevent path-traversal outside stateDir/mockups/.
+        // Guard runs on the decoded path so percent-encoded traversal sequences
+        // (e.g. %2F..%2F) are resolved before the check.
         if (!mockupPath.startsWith(mockupsDir + '/') && mockupPath !== mockupsDir) {
           return jsonResponse(400, { error: 'invalid mockup path' })
         }
@@ -1823,6 +1834,12 @@ export const startServer = async (
         status: 404,
         headers: { 'Content-Type': 'text/plain' },
       })
+      } catch (err) {
+        if (err instanceof URIError) {
+          return jsonResponse(400, { error: 'malformed URL encoding in request path' })
+        }
+        throw err
+      }
     },
   })
   } catch (err: unknown) {

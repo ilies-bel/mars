@@ -29,6 +29,7 @@
 
 import type { Tab } from './tabs'
 import { DEFAULT_TAB } from './tabs'
+import { safeDecode } from './routing'
 
 export type ProgressUrlState = {
   view: Tab
@@ -92,7 +93,9 @@ export const decodeProgressState = (hash: string): ProgressUrlState => {
     const eqIdx = pair.indexOf('=')
     if (eqIdx === -1) continue
     const key = pair.slice(0, eqIdx)
-    const value = decodeURIComponent(pair.slice(eqIdx + 1))
+    const value = safeDecode(pair.slice(eqIdx + 1))
+    // Skip pairs whose value is malformed percent-encoding — treat as absent.
+    if (value === null) continue
     params.set(key, value)
   }
 
@@ -154,7 +157,10 @@ export const decodeProgressStateFromTaskHash = (hash: string): ProgressUrlState 
   for (const pair of queryStr.split('&')) {
     const eqIdx = pair.indexOf('=')
     if (eqIdx === -1) continue
-    params.set(pair.slice(0, eqIdx), decodeURIComponent(pair.slice(eqIdx + 1)))
+    const decoded = safeDecode(pair.slice(eqIdx + 1))
+    // Skip pairs whose value is malformed percent-encoding — treat as absent.
+    if (decoded === null) continue
+    params.set(pair.slice(0, eqIdx), decoded)
   }
 
   const rawView = params.get('pView')
@@ -234,7 +240,8 @@ export const readExplicitViewFromUrl = (): Tab | null => {
     const eqIdx = pair.indexOf('=')
     if (eqIdx === -1) continue
     const key = pair.slice(0, eqIdx)
-    const val = decodeURIComponent(pair.slice(eqIdx + 1))
+    const val = safeDecode(pair.slice(eqIdx + 1))
+    if (val === null) continue
     if (key === 'view') {
       return val === 'board' || val === 'topology' ? (val as Tab) : null
     }

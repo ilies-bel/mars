@@ -273,6 +273,36 @@ describe('readExplicitViewFromUrl', () => {
 // col=proposals — sidebar shortcut param round-trip
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// malformed percent-encoding resilience
+// ---------------------------------------------------------------------------
+
+describe('decodeProgressState — malformed percent-encoding', () => {
+  it('does not throw on a bare % in the q param', () => {
+    expect(() => decodeProgressState('#/progress?q=100%')).not.toThrow()
+  })
+
+  it('returns default query when q param has malformed percent-encoding', () => {
+    const state = decodeProgressState('#/progress?q=100%')
+    expect(state.query).toBe('')
+  })
+
+  it('does not throw on a bare % in the proposal param', () => {
+    expect(() => decodeProgressState('#/progress?proposal=%invalid')).not.toThrow()
+  })
+
+  it('returns null proposal when proposal param has malformed percent-encoding', () => {
+    const state = decodeProgressState('#/progress?proposal=%invalid')
+    expect(state.proposal).toBeNull()
+  })
+
+  it('keeps valid params when a different param has malformed encoding', () => {
+    const state = decodeProgressState('#/progress?view=board&q=%')
+    expect(state.view).toBe('board')
+    expect(state.query).toBe('')
+  })
+})
+
 describe('col=proposals — sidebar shortcut param', () => {
   it('decodes col=proposals from hash', () => {
     const state = decodeProgressState('#/progress?col=proposals')

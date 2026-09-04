@@ -23,6 +23,7 @@
  */
 
 import type { KindFilter } from '../widgets/chat/queueThreads'
+import { safeDecode } from './routing'
 
 export type AqUrlState = {
   item: string | null
@@ -82,7 +83,9 @@ export const decodeAqState = (hash: string): AqUrlState => {
     const eqIdx = pair.indexOf('=')
     if (eqIdx === -1) continue
     const key = pair.slice(0, eqIdx)
-    const value = decodeURIComponent(pair.slice(eqIdx + 1))
+    const value = safeDecode(pair.slice(eqIdx + 1))
+    // Skip pairs whose value is malformed percent-encoding — treat as absent.
+    if (value === null) continue
     params.set(key, value)
   }
 

@@ -21,7 +21,7 @@
 
 import { useState, useRef } from 'react'
 import { useProposals } from '@/entities/proposals/useProposals'
-import { proposalHash } from '@/shared/routing'
+import { proposalHash, taskHash } from '@/shared/routing'
 import { relativeTime } from '@/shared/time'
 import { invokeAction } from '@/shared/api'
 import { ErrorState } from '@/components/ErrorState'
@@ -240,7 +240,7 @@ const ProposalRow = ({ draft, onDismiss }: ProposalRowProps) => {
         </button>
         {promoteState.kind === 'done' && promoteState.taskId ? (
           <a
-            href={`#/task/${promoteState.taskId}`}
+            href={taskHash(promoteState.taskId)}
             className="text-label text-success hover:underline"
           >
             ✓ Task {promoteState.taskId}

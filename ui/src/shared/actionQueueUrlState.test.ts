@@ -220,3 +220,35 @@ describe('defaultAqUrlState', () => {
     expect(defaultAqUrlState()).not.toBe(defaultAqUrlState())
   })
 })
+
+// ---------------------------------------------------------------------------
+// malformed percent-encoding resilience
+// ---------------------------------------------------------------------------
+
+describe('decodeAqState — malformed percent-encoding', () => {
+  it('does not throw on a bare % in the q param', () => {
+    expect(() => decodeAqState('#/chat?q=100%')).not.toThrow()
+  })
+
+  it('returns default q when q param has malformed percent-encoding', () => {
+    // A stray % that cannot be decoded is treated as absent — fall back to ''
+    const state = decodeAqState('#/chat?q=100%')
+    expect(state.q).toBe('')
+  })
+
+  it('does not throw on a bare % in the item param', () => {
+    expect(() => decodeAqState('#/chat?item=%invalid')).not.toThrow()
+  })
+
+  it('returns null item when item param has malformed percent-encoding', () => {
+    const state = decodeAqState('#/chat?item=%invalid')
+    expect(state.item).toBeNull()
+  })
+
+  it('keeps valid params when a different param has malformed encoding', () => {
+    // kind=alerts is well-formed; item=% is not → kind should still decode
+    const state = decodeAqState('#/chat?kind=alerts&item=%')
+    expect(state.kind).toBe('alerts')
+    expect(state.item).toBeNull()
+  })
+})

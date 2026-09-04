@@ -3,6 +3,7 @@ import type { UITask } from '@/shared/types'
 import { relativeTime } from '@/shared/time'
 import { isLiveStatus, substepLabel } from '@/shared/substep'
 import { humanizeFailureCode } from '@/shared/actionQueueDetail'
+import { taskHash } from '@/shared/routing'
 import { RoleTag } from './RoleTag'
 import { StatusChip } from './StatusChip'
 
@@ -132,7 +133,7 @@ export const TaskCard = memo(({ task, index }: Props) => {
         <div className="relative z-10 font-mono text-label text-status-blocked">
           {task.blockerTaskId ? (
             <a
-              href={`#/task/${task.blockerTaskId}`}
+              href={taskHash(task.blockerTaskId)}
               className="break-all underline decoration-dotted underline-offset-2"
             >
               Blocked by · {task.blockerTaskId}

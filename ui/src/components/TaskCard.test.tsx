@@ -224,6 +224,29 @@ describe('TaskCard – activity detail label', () => {
   })
 })
 
+describe('TaskCard – blocker id encoding', () => {
+  it('URL-encodes a slash in blockerTaskId so the drawer link is not truncated', () => {
+    const task = minTask('t-blocker', {
+      status: 'blocked',
+      blockerTaskId: 'fix/my-task',
+    })
+    const html = renderToStaticMarkup(<TaskCard task={task} index={0} />)
+    // A raw #/task/fix/my-task would be mis-parsed (the second / cuts the id).
+    // After encoding it must be #/task/fix%2Fmy-task.
+    expect(html).toContain('href="#/task/fix%2Fmy-task"')
+    expect(html).not.toContain('href="#/task/fix/my-task"')
+  })
+
+  it('URL-encodes a space in blockerTaskId', () => {
+    const task = minTask('t-blocker-space', {
+      status: 'blocked',
+      blockerTaskId: 'task with spaces',
+    })
+    const html = renderToStaticMarkup(<TaskCard task={task} index={0} />)
+    expect(html).toContain('href="#/task/task%20with%20spaces"')
+  })
+})
+
 describe('TaskCard – type scale', () => {
   it('uses text-title scale class for the task title', () => {
     const html = renderToStaticMarkup(<TaskCard task={minTask('t-scale-1')} index={0} />)
