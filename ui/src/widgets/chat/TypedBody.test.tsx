@@ -123,6 +123,31 @@ describe('TypedBody', () => {
     expect(host.textContent).toBe(NOTICE)
     act(() => { root.unmount() })
   })
+
+  it('shows the full body when text updates after the animation settled on a shorter earlier value', () => {
+    // Regression: when a notice first renders with a short body (e.g. only the
+    // first stream chunk) the animation completes quickly and marks the id as
+    // revealed. If the full body then arrives as a prop update, the effect was
+    // previously returning early without calling setShown(text), leaving the
+    // truncated value on screen permanently.
+    vi.useFakeTimers()
+    const FULL = 'I am flagging token spend because it rose 149% over the last ten minutes — the cap is 50% per window.'
+    const SHORT = FULL.slice(0, 6) // 'I am f' — simulates a first stream chunk arriving early
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const root = createRoot(host)
+
+    // Short text arrives first; animation settles on it and marks the id revealed.
+    act(() => { root.render(<TypedBody id="notice-x" text={SHORT} />) })
+    act(() => { vi.advanceTimersByTime(5_000) })
+    expect(host.textContent).toBe(SHORT) // sanity: animation completed on the short text
+
+    // Full body arrives (e.g. REST re-fetch returns complete segments).
+    act(() => { root.render(<TypedBody id="notice-x" text={FULL} />) })
+    expect(host.textContent).toBe(FULL) // must show full text, not the earlier 6-char truncation
+
+    act(() => { root.unmount() })
+  })
 })
 
 describe('ConversationTimeline reveal', () => {

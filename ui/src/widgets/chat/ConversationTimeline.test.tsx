@@ -220,6 +220,29 @@ describe('ConversationTimeline', () => {
     expect(html).toContain('data-testid="notice-card-notice-1"')
   })
 
+  it('renders the full body of a notice with a long body (regression: body must not be truncated)', () => {
+    // A notice body is stored in full in chat_messages.content and chat_messages.segments.
+    // The rendered card must expose every character; truncation to the first stream chunk
+    // (as few as 6 chars) is the bug this test guards against.
+    const body = 'I am flagging token spend because it rose 149% over the last ten minutes — the cap is 50% per window.'
+    expect(body.length).toBeGreaterThan(90) // self-check so future edits don't silently shorten
+
+    const html = renderToStaticMarkup(
+      <ConversationTimeline
+        entries={[{
+          id: 'notice-spend', seq: 1, threadId: 'main', subjectId: 'main',
+          subjectTitle: 'Main', subjectClosed: false, role: 'assistant',
+          content: body, segments: [{ type: 'text', text: body }],
+          createdAt: '2026-01-01T00:00:00.000Z', kind: 'notice',
+          backingEntityId: null, resolution: null,
+        }]}
+      />,
+    )
+
+    expect(html).toContain(body)
+    expect(html).toContain('data-testid="notice-card-notice-spend"')
+  })
+
   it('renders an error state instead of a blank pane when loadError is set and entries are empty', () => {
     const error = new Error('GET /api/chat/conversation → response failed schema validation')
     const html = renderToStaticMarkup(

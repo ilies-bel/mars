@@ -54,7 +54,13 @@ export const TypedBody = ({ id, text, className }: TypedBodyProps) => {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useLayoutEffect(() => {
-    if (revealed.has(id)) return
+    if (revealed.has(id)) {
+      // Keep `shown` current if the text prop changed after the animation settled.
+      // Without this, a message whose body updated (e.g. full segments arriving
+      // after a short first chunk) stays stuck at the truncated value.
+      setShown(text)
+      return
+    }
     if (prefersReducedMotion()) {
       revealed.add(id)
       return
