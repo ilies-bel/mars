@@ -88,6 +88,7 @@ const KIND_LABEL: Record<ActionQueueKind, string> = {
   'gate-broken': 'gate broken',
   'subscriber-stalled': 'stalled',
   'signature-storm': 'storm',
+  'signature-wave': 'sig wave',
   'daemon-died': 'daemon died',
   'daemon-code-drift': 'daemon drift',
   'baseline-broken': 'baseline broken',
@@ -139,6 +140,7 @@ const KIND_LABEL: Record<ActionQueueKind, string> = {
   'awaiting-human': 'awaiting',
   'reflect-recommended': 'reflect',
   'scorer-suggested': 'scorer',
+  'worktree-hook-trust-request': 'hook trust',
 }
 
 /** Left accent bar color per kind. */
