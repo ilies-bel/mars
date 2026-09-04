@@ -30,8 +30,6 @@
  */
 
 import type { EventEmitter } from 'node:events'
-import type { MergeArgs, MergeResult, MergeGateOutcome } from '../lib/git/merge.js'
-import { mergeBranch, MergeAbortedError, DEFAULT_WATCHDOG_MS } from '../lib/git/merge.js'
 import type { MergeJob, MergeJobStore, EnqueueMergeJobInput } from '../store/merge-job-store.js'
 import type { AgentEvent } from '../lib/claude-stream.js'
 import { isOperatorAutoCommitDisabled, resolveControlLevers } from '../config/levers.js'
@@ -39,8 +37,60 @@ import {
   raiseBrokenAutoCommitAlert,
   speakOperatorAutoCommitNotice,
 } from '../lib/notices/operator-auto-commit.js'
+// Deliberate non-port dependency: probeMainTypecheck is a build-health probe
+// (tsc invocation), not a VCS operation, and has no equivalent in the Vcs port.
 import { PROBE_TIMEOUT_MS, probeMainTypecheck } from '../lib/git/operator-auto-commit.js'
-import { repoRoot } from '../lib/git/internal.js'
+import { resolveVcs } from '../ports/vcs/registry.js'
+import type { MergeResult, MergeSpec } from '../ports/vcs/types.js'
+import { MergeAbortedError, DEFAULT_WATCHDOG_MS } from '../ports/vcs/errors.js'
+
+// ---------------------------------------------------------------------------
+// Local type aliases (formerly imported from lib/git/merge)
+// ---------------------------------------------------------------------------
+
+/**
+ * Gate check outcome — mirrors `MergeGateOutcome` in `lib/git/merge.ts`.
+ * Defined locally so this module has zero imports from `lib/git/merge`.
+ */
+type MergeGateOutcome = { passed: true } | { passed: false; output: string }
+
+/**
+ * Operator auto-commit callback payload — mirrors `OperatorAutoCommitInfo`
+ * in `lib/git/merge.ts`. Defined locally for the same reason.
+ */
+interface MergeOperatorAutoCommitInfo {
+  commitSha: string
+  files: string[]
+  probe: MergeGateOutcome | null
+}
+
+/**
+ * Full merge invocation args passed to the `mergeFn` injectable. Extends the
+ * serializable {@link MergeSpec} with non-serializable fields (AbortSignal and
+ * callbacks). The default implementation routes through `resolveVcs().merge()`
+ * which accepts only the `MergeSpec` fields; the callback parameters are
+ * preserved here for tests and for future port-aware callers that may wire
+ * them through the Vcs interface (PRD aed916c8 slice 7 tracer bullet —
+ * wiring callbacks through the port is deferred to a later slice).
+ */
+interface MergeFnArgs extends MergeSpec {
+  signal?: AbortSignal
+  onVerifyRebasedTree?: (info: {
+    baseSha: string
+    taskSha: string
+    attempt: number
+  }) => Promise<MergeGateOutcome>
+  onAfterFastForward?: (info: {
+    finalTaskSha: string
+    finalIntegrationSha: string
+  }) => Promise<void>
+  onSupervisorEvent?: (event: AgentEvent) => void
+  autoCommitOperatorDirt?: boolean
+  onProbeIntegrationAfterAutoCommit?: (info: {
+    commitSha: string
+  }) => Promise<MergeGateOutcome>
+  onOperatorAutoCommit?: (info: MergeOperatorAutoCommitInfo) => Promise<void>
+}
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -65,10 +115,10 @@ export interface MergeWorkerDeps {
    */
   pollIntervalMs?: number
   /**
-   * Merge function to invoke for each job. Defaults to the real `mergeBranch`.
-   * Override in tests to avoid real git operations.
+   * Merge function to invoke for each job. Defaults to a wrapper around
+   * `resolveVcs().merge()`. Override in tests to avoid real git operations.
    */
-  mergeFn?: (args: MergeArgs) => Promise<MergeResult>
+  mergeFn?: (args: MergeFnArgs) => Promise<MergeResult>
   /**
    * Optional callback fired for each streaming event emitted by the
    * vcs-supervisor (Vega) while it resolves a merge conflict. Receives the
@@ -390,7 +440,7 @@ async function runMergeJob(
   job: MergeJob,
   store: MergeJobStore,
   log: (msg: string) => void,
-  mergeFn: (args: MergeArgs) => Promise<MergeResult>,
+  mergeFn: (args: MergeFnArgs) => Promise<MergeResult>,
   signal: AbortSignal,
   onSupervisorEvent?: (taskId: string, event: AgentEvent) => void,
 ): Promise<void> {
@@ -668,8 +718,9 @@ async function runMergeJob(
       // broken" is worse than a missed detection the scheduled baseline health
       // check will catch anyway.
       onProbeIntegrationAfterAutoCommit: async ({ commitSha }) => {
+        const root = (await resolveVcs().repoRoot({ cwd: job.worktreePath })) ?? job.worktreePath
         const probe = await probeMainTypecheck({
-          repoRoot: repoRoot(),
+          repoRoot: root,
           timeoutMs: PROBE_TIMEOUT_MS,
         })
         if (probe.ok === false) return { passed: false, output: probe.output }
@@ -785,7 +836,7 @@ export function startMergeWorker({
   bus,
   signal,
   pollIntervalMs = 500,
-  mergeFn = mergeBranch,
+  mergeFn = (args: MergeFnArgs): Promise<MergeResult> => resolveVcs().merge(args),
   onSupervisorEvent,
 }: MergeWorkerDeps): MergeWorkerHandle {
   const ac = new AbortController()

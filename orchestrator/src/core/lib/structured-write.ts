@@ -1,10 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { resolveVcs } from '../ports/vcs/registry'
-import {
-  checkMergeTargetStatus,
-  type MergeResult,
-} from './git/merge'
+import { checkMergeTargetStatus } from './git/merge'
+import type { MergeResult } from '../ports/vcs/types'
 import { runTool, nullTraceStore, type TraceCtx } from './run-tool'
 import { getRepoRoot } from '../context'
 

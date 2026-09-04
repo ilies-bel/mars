@@ -13,13 +13,14 @@ export {
 } from '../../lib/git/worktree'
 
 /**
- * Re-exports of merge error classes and timeout constants from `lib/git/merge`
- * so port consumers can `instanceof`-check merge errors and reference the
- * canonical timeout budgets without importing `lib/git/merge` directly.
+ * Merge error classes and constants re-exported here so port consumers can
+ * import them from a single, stable location (PRD aed916c8 slice 7).
+ *
+ * `MergeAbortedError`, `MergeHardTimeoutError`, and `MERGE_HARD_TIMEOUT_MS`
+ * are declared in `./types` (alongside `MergeResult`) to keep the Vcs
+ * contract self-contained. `DEFAULT_WATCHDOG_MS` originates in `lib/git/merge`
+ * and is re-exported here for the same reason: all merge-related port symbols
+ * come from `core/ports/vcs/`.
  */
-export {
-  MergeAbortedError,
-  MergeHardTimeoutError,
-  DEFAULT_WATCHDOG_MS,
-  MERGE_HARD_TIMEOUT_MS,
-} from '../../lib/git/merge'
+export { MergeAbortedError, MergeHardTimeoutError, MERGE_HARD_TIMEOUT_MS } from './types'
+export { DEFAULT_WATCHDOG_MS } from '../../lib/git/merge'

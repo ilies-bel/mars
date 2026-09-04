@@ -638,7 +638,6 @@ describe('enqueueMergeJobAndAwait — outer watchdog', () => {
         conflictResolved: false,
         aborted: false,
         output: '',
-        supervisorConversation: [],
         vegaSessionId: null,
         retriesAttempted: 0,
       },
