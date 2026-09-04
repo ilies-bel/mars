@@ -27,7 +27,7 @@ import { useFocusedProject } from '@/shared/useFocusedProject'
 import { focusSubgraph } from '@/shared/focusSubgraph'
 import { dagClusterStyle } from '@/shared/dagColors'
 import { relativeTime, formatDuration } from '@/shared/time'
-import { studioHash } from '@/shared/routing'
+import { studioHash, taskHash } from '@/shared/routing'
 import { humanizeFailureCode } from '@/shared/actionQueueDetail'
 import { FallbackSurface } from '@/components/FallbackSurface'
 import { CopyButton } from '@/components/CopyButton'
@@ -1580,7 +1580,7 @@ export const TaskDetailDrawer = ({
   const navigate = useCallback((id: string) => {
     setTrail((prev) => applyNavigate(prev, id))
     if (typeof window !== 'undefined') {
-      window.location.hash = `#/task/${encodeURIComponent(id)}`
+      window.location.hash = taskHash(id)
     }
   }, [])
 
@@ -1950,7 +1950,7 @@ export const TaskDetailDrawer = ({
               return (
                 <a
                   key={node.id}
-                  href={`#/task/${encodeURIComponent(node.id)}`}
+                  href={taskHash(node.id)}
                   style={{ cursor: 'pointer' }}
                   onClick={(e) => {
                     e.preventDefault()

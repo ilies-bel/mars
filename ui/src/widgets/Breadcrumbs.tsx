@@ -6,6 +6,7 @@ import {
   parseStudioRoute,
   parseTaskRoute,
   parseTaskStep,
+  taskHash,
 } from '@/shared/routing'
 import type { KpiKey } from '@/shared/schemas'
 
@@ -49,7 +50,7 @@ export function deriveBreadcrumbs(hash: string): Crumb[] {
       { label: 'Task ' + truncateId(taskId), href: null },
     ]
     if (step) {
-      crumbs[0] = { ...crumbs[0], href: `#/task/${encodeURIComponent(taskId)}` }
+      crumbs[0] = { ...crumbs[0], href: taskHash(taskId) }
       crumbs.push({ label: `Step: ${step}`, href: null })
     }
     return crumbs

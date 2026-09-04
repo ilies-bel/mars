@@ -21,6 +21,7 @@ import { buildActivityFeed } from './activityFeed'
 import { dispatchAlertVerb, verbButtonClass } from './alertVerbs'
 import { priorityBadgeClass } from './QueueThreadRow'
 import type { OpenWorkItem } from './openWork'
+import { taskHash } from '@/shared/routing'
 
 import type { GlossaryTerm, ChatSegmentAttachment, ChatThreadDetail, ProgressTask, ActionQueueItem, AdrEntry, DraftFeature } from '@/shared/schemas'
 import type { ThreadFocusResult } from './useThreadFocus'
@@ -568,7 +569,7 @@ export const ArtifactsRail = ({ tasks, files, meta, projectId }: ArtifactsRailPr
             {tasks.map((id) => (
               <li key={id}>
                 <a
-                  href={`#/task/${encodeURIComponent(id)}?from=chat`}
+                  href={taskHash(id, 'chat')}
                   className="font-mono text-micro text-foreground/80 hover:text-foreground hover:underline"
                   data-testid="context-rail-task-row"
                 >

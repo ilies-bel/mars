@@ -14,6 +14,7 @@ import type { DraftFeature, ProgressProposalNode, ProgressTask } from '@/shared/
 import { dagClusterStyle, DAG_EDGE_PROVENANCE } from '@/shared/dagColors'
 import { CopyButton } from '@/components/CopyButton'
 import { ProposalActionRow } from '@/components/ProposalActionRow'
+import { taskHash } from '@/shared/routing'
 
 // ── Mini-subgraph SVG constants ───────────────────────────────────────────────
 // Match TaskDetailDrawer's mini-canvas sizing so both panels feel consistent.
@@ -385,7 +386,7 @@ export const ProposalNodeDrawer = ({
                     return (
                       <a
                         key={node.id}
-                        href={`#/task/${encodeURIComponent(node.id)}`}
+                        href={taskHash(node.id)}
                         style={{ cursor: 'pointer' }}
                       >
                         {g}

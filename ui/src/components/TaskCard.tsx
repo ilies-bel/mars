@@ -55,7 +55,7 @@ export const TaskCard = memo(({ task, index }: Props) => {
     : null
 
   const openDrawer = () => {
-    window.location.hash = `#/task/${encodeURIComponent(task.id)}`
+    window.location.hash = taskHash(task.id)
   }
 
   return (
@@ -74,7 +74,7 @@ export const TaskCard = memo(({ task, index }: Props) => {
           so the anchor receives its own pointer events independently. */}
       <div className="relative z-10 flex min-w-0 items-start justify-between gap-2">
         <a
-          href={`#/task/${encodeURIComponent(task.id)}`}
+          href={taskHash(task.id)}
           className="block min-w-0 truncate font-mono text-label text-muted-foreground hover:text-foreground hover:underline"
         >
           {task.id}

@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react'
 import { postAction, startThreadFromProposal } from '@/shared/api'
+import { taskHash } from '@/shared/routing'
 
 /**
  * Props for the `ProposalActionRow` component.
@@ -146,7 +147,7 @@ export const ProposalActionRow = ({
               <>
                 Promoted →{' '}
                 <a
-                  href={`#/task/${encodeURIComponent(promoteState.taskId)}`}
+                  href={taskHash(promoteState.taskId)}
                   className="underline"
                 >
                   {promoteState.taskId}
@@ -190,7 +191,7 @@ export const ProposalActionRow = ({
       {mockupState.kind === 'done' ? (
         <span className="font-mono text-micro text-primary">
           Mockup queued →{' '}
-          <a href={`#/task/${encodeURIComponent(mockupState.taskId)}`} className="underline">
+          <a href={taskHash(mockupState.taskId)} className="underline">
             {mockupState.taskId}
           </a>
         </span>
@@ -214,7 +215,7 @@ export const ProposalActionRow = ({
         <span className="font-mono text-micro text-primary">
           Live task →{' '}
           <a
-            href={`#/task/${encodeURIComponent(implementLiveState.taskId)}`}
+            href={taskHash(implementLiveState.taskId)}
             className="underline"
           >
             {implementLiveState.taskId}

@@ -15,7 +15,7 @@
 
 import type { DagContext, Cluster } from '@/shared/schemas'
 import { dagClusterStyle } from '@/shared/dagColors'
-import { arcQaHash } from '@/shared/routing'
+import { arcQaHash, taskHash } from '@/shared/routing'
 
 // ---------------------------------------------------------------------------
 // Status → Cluster mapping (dag nodes carry a raw status string)
@@ -180,7 +180,7 @@ export const ArcTree = ({ dag, entityId, entityStatus, onOpenTask }: ArcTreeProp
                 if (onOpenTask) {
                   onOpenTask(row.id)
                 } else {
-                  window.location.hash = `#/task/${encodeURIComponent(row.id)}`
+                  window.location.hash = taskHash(row.id)
                 }
               }}
               className={[

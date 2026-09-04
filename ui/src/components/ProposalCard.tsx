@@ -1,5 +1,6 @@
 import { memo, useEffect, useState } from 'react'
 import type { DraftFeature } from '@/shared/schemas'
+import { proposalHash } from '@/shared/routing'
 
 interface Props {
   proposal: DraftFeature
@@ -7,7 +8,7 @@ interface Props {
 
 export const ProposalCard = memo(({ proposal }: Props) => {
   const openDrawer = () => {
-    window.location.hash = `#/proposal/${encodeURIComponent(proposal.id)}`
+    window.location.hash = proposalHash(proposal.id)
   }
 
   // Probe for a generated mockup file so the card can show a chip when one exists.
@@ -40,7 +41,7 @@ export const ProposalCard = memo(({ proposal }: Props) => {
     >
       <div className="flex items-start justify-between gap-2">
         <a
-          href={`#/proposal/${encodeURIComponent(proposal.id)}`}
+          href={proposalHash(proposal.id)}
           className="break-all font-mono text-label text-muted-foreground hover:text-foreground hover:underline"
         >
           {proposal.id}

@@ -5,6 +5,7 @@ import { CopyButton } from '@/components/CopyButton'
 import { CollapsibleSection } from '@/components/CollapsibleSection'
 import { ProposalActionRow } from '@/components/ProposalActionRow'
 import { formatAbsoluteDate } from '@/shared/time'
+import { taskHash } from '@/shared/routing'
 
 interface ProposalDetailDrawerProps {
   /** Full proposal record sourced from GET /api/proposals/:id. */
@@ -455,7 +456,7 @@ export const ProposalDetailDrawer = ({
               {childTasks.map((task) => (
                 <li key={task.id}>
                   <a
-                    href={`#/task/${encodeURIComponent(task.id)}`}
+                    href={taskHash(task.id)}
                     className="flex items-center gap-2 rounded border border-primary/20 px-2 py-1.5 font-mono text-body transition-colors hover:bg-primary/5"
                   >
                     <span className="shrink-0 text-primary">{task.id}</span>

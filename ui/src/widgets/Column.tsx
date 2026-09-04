@@ -6,6 +6,7 @@ import { humanizeFailureCode } from '@/shared/actionQueueDetail'
 import { GhostArc } from '@/widgets/GhostArc'
 import type { Cluster } from '@/shared/schemas'
 import { taskTitle } from '@/shared/promptTitle'
+import { taskHash } from '@/shared/routing'
 
 export interface BoardArc {
   /** The origin task id. Legacy tasks use their own id as the arc id. */
@@ -113,13 +114,13 @@ export const BoardCard = ({ task }: { task: ProgressTask }) => {
       data-task-status={task.status}
       className={`mars-card rounded-lg bg-card p-2.5 flex flex-col gap-1.5 cursor-pointer hover:bg-secondary${isLive ? ' mars-card-live' : ''}`}
       onClick={() => {
-        window.location.hash = `#/task/${encodeURIComponent(task.id)}`
+        window.location.hash = taskHash(task.id)
       }}
     >
       {/* Row 1: id + live dot */}
       <div className="flex items-center justify-between gap-1 min-w-0">
         <a
-          href={`#/task/${encodeURIComponent(task.id)}`}
+          href={taskHash(task.id)}
           onClick={(e) => e.stopPropagation()}
           className="card-id block truncate font-mono text-label text-muted-foreground hover:text-foreground hover:underline"
         >
