@@ -448,17 +448,53 @@ async function runMergeJob(
     `[merge-worker] executing job ${job.id} for task ${job.taskId} branch=${job.branch}`,
   )
 
-  // The watchdog must cover the full call, which includes:
+  // Preload verify gates once so both callbacks (onVerifyRebasedTree and
+  // onAfterFastForward) share the same snapshot and the watchdog can be sized
+  // from the gates' own declared timeoutMin values rather than a static
+  // constant that is unrelated to how many gates are registered.
+  const { loadVerifyGates } = await import('../../core/verify-gates.js')
+  const { resolveStateClient } = await import('../store/state-client.js')
+  const preloadedGateScopes = await loadVerifyGates(resolveStateClient())
+
+  // Derive the gate-tier budget from the declared timeoutMin of every step.
+  // Fall back to the module-level constant for each gate that has no declared
+  // timeout so the watchdog never shrinks below what the defaults already
+  // promised. The minimum overall gate budget is the static fallback so that
+  // an empty gate registry does not silently shrink the watchdog below the
+  // historical baseline.
+  const taskTierBudgetMs = preloadedGateScopes
+    .flatMap((sc) => sc.steps.filter((s) => s.tier !== 'integration'))
+    .reduce(
+      (sum, s) => sum + (s.timeoutMin ?? DEFAULT_TASK_TIER_GATE_BUDGET_MIN) * 60_000,
+      0,
+    )
+  const integrationTierBudgetMs = preloadedGateScopes
+    .flatMap((sc) => sc.steps.filter((s) => s.tier === 'integration' && s.required))
+    .reduce(
+      (sum, s) => sum + (s.timeoutMin ?? DEFAULT_INTEGRATION_GATE_BUDGET_MIN) * 60_000,
+      0,
+    )
+  const gateBudgetMs = Math.max(
+    taskTierBudgetMs + integrationTierBudgetMs,
+    (DEFAULT_TASK_TIER_GATE_BUDGET_MIN + DEFAULT_INTEGRATION_GATE_BUDGET_MIN) * 60_000,
+  )
+
+  // The watchdog must cover the full call:
   //   - VCS supervisor session + surrounding git work (DEFAULT_WATCHDOG_MS)
-  //   - onVerifyRebasedTree: up to DEFAULT_TASK_TIER_GATE_BUDGET_MIN per gate
-  //   - onAfterFastForward: up to DEFAULT_INTEGRATION_GATE_BUDGET_MIN per gate
-  // Using the bare DEFAULT_WATCHDOG_MS let the verify gate alone consume the
-  // entire budget, leaving nothing for the supervisor and git work.
-  // Override with MARS_MERGE_WATCHDOG_MS when the actual gate suite is larger.
+  //   - onVerifyRebasedTree: sum of task-tier gate timeoutMin values
+  //   - onAfterFastForward: sum of required integration-tier gate timeoutMin values
+  // gateBudgetMs is derived above from the gates' own declared timeoutMin so
+  // the watchdog scales with the actual gate suite rather than a static
+  // constant that was unrelated to gate count (production incident: 15 min
+  // constant fired while a 10-gate suite was still running).
+  // MARS_MERGE_WATCHDOG_MS overrides the computed value entirely.
   const watchdogMs = Number(
-    process.env.MARS_MERGE_WATCHDOG_MS ??
-      DEFAULT_WATCHDOG_MS +
-        (DEFAULT_TASK_TIER_GATE_BUDGET_MIN + DEFAULT_INTEGRATION_GATE_BUDGET_MIN) * 60_000,
+    process.env.MARS_MERGE_WATCHDOG_MS ?? DEFAULT_WATCHDOG_MS + gateBudgetMs,
+  )
+  log(
+    `[merge-worker] task ${job.taskId}: watchdog ${Math.round(watchdogMs / 60_000)}min ` +
+      `(base ${Math.round(DEFAULT_WATCHDOG_MS / 60_000)}min + gates ${Math.round(gateBudgetMs / 60_000)}min; ` +
+      `${preloadedGateScopes.flatMap((s) => s.steps).length} gate step(s))`,
   )
 
   // Per-gate fallback timeout for integration-tier gates. Uses the module-level
@@ -484,11 +520,11 @@ async function runMergeJob(
     finalTaskSha: string
     finalIntegrationSha: string
   }): Promise<void> => {
-    const { loadVerifyGates } = await import('../../core/verify-gates.js')
-    const { resolveStateClient } = await import('../store/state-client.js')
     const { resolveVerifier } = await import('../ports/verifier/registry.js')
 
-    const gateScopes = await loadVerifyGates(resolveStateClient())
+    // Uses preloadedGateScopes captured above — avoids a second DB round-trip
+    // and guarantees the watchdog budget and the callback see the same gates.
+    const gateScopes = preloadedGateScopes
 
     // Only required, active integration-tier steps. `loadVerifyGates` already
     // applies the `state='active'` filter in its SQL query; `required` is an
@@ -586,11 +622,11 @@ async function runMergeJob(
     taskSha: string
     attempt: number
   }): Promise<MergeGateOutcome> => {
-    const { loadVerifyGates } = await import('../../core/verify-gates.js')
-    const { resolveStateClient } = await import('../store/state-client.js')
     const { resolveVerifier } = await import('../ports/verifier/registry.js')
 
-    const gateScopes = await loadVerifyGates(resolveStateClient())
+    // Uses preloadedGateScopes captured above — avoids a second DB round-trip
+    // and guarantees the watchdog budget and the callback see the same gates.
+    const gateScopes = preloadedGateScopes
 
     // All non-integration steps. Integration-tier steps are handled by
     // `onAfterFastForward` (inside the merge lock, after the fast-forward).

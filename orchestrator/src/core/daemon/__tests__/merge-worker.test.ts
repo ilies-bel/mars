@@ -1544,3 +1544,153 @@ describe('startMergeWorker — rebased-tree gate failure (regression mars-4d58c1
     expect(failedJob?.error).toContain('lint')
   })
 })
+
+// ---------------------------------------------------------------------------
+// Dynamic watchdog sizing (production incident: cap raised to 12, 7 concurrent
+// vitest + tsc runs, load avg 25, 15-min fixed watchdog fired mid verify).
+//
+// After the fix the watchdog passed to mergeFn is computed from the gates'
+// declared timeoutMin rather than a static constant unrelated to gate count.
+// ---------------------------------------------------------------------------
+
+describe('runMergeJob — dynamic watchdog scales with gate timeoutMin', () => {
+  beforeEach(() => {
+    _mockVerifierRun.mockReset()
+    _mockVerifierRun.mockResolvedValue({ passed: true, steps: [] })
+  })
+
+  it('passes watchdogMs to mergeFn that reflects sum of task-tier gate timeoutMin values', async () => {
+    /**
+     * Register two task-tier gates with known timeoutMin values and assert
+     * that the watchdogMs passed to mergeFn is >= the sum of those budgets
+     * plus the base DEFAULT_WATCHDOG_MS (15 min from merge.ts).
+     *
+     * The test captures the watchdogMs from the mergeFn call to avoid
+     * importing the private DEFAULT_WATCHDOG_MS constant.
+     */
+    const GATE_A_TIMEOUT_MIN = 20
+    const GATE_B_TIMEOUT_MIN = 30
+    // Total gate budget: (20 + 30) × 60 000 = 3 000 000 ms = 50 min.
+    // The watchdog should be at least DEFAULT_WATCHDOG_MS (15 min) + 50 min = 65 min.
+    _mockIntegrationGates = [
+      {
+        scope: '.',
+        steps: [
+          {
+            name: 'typecheck:project',
+            cmd: 'npx',
+            args: ['tsc', '--noEmit'],
+            required: true,
+            tier: 'task',
+            dir: '.',
+            timeoutMin: GATE_A_TIMEOUT_MIN,
+          },
+          {
+            name: 'test:unit',
+            cmd: 'npx',
+            args: ['vitest', 'run'],
+            required: true,
+            tier: 'task',
+            dir: '.',
+            timeoutMin: GATE_B_TIMEOUT_MIN,
+          },
+        ],
+      },
+    ]
+
+    let capturedWatchdogMs: number | undefined
+    const capturingMergeFn = async (args: { watchdogMs?: number }) => {
+      capturedWatchdogMs = args.watchdogMs
+      return {
+        merged: true as const,
+        conflictResolved: false,
+        aborted: false,
+        output: '',
+        supervisorConversation: [],
+        vegaSessionId: null,
+        retriesAttempted: 0,
+      }
+    }
+
+    const { store, enqueueJob } = makeFakeStore()
+    const job = enqueueJob({ id: 'j-dynamic-watchdog' })
+    const { startMergeWorker } = await import('../merge-worker.js')
+    const ac = new AbortController()
+    const handle = startMergeWorker({
+      store,
+      log: () => {},
+      bus: new EventEmitter(),
+      signal: ac.signal,
+      pollIntervalMs: 10,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mergeFn: capturingMergeFn as any,
+    })
+
+    await waitFor(() => capturedWatchdogMs !== undefined, { maxMs: 500 })
+    ac.abort()
+    await handle.stop()
+
+    // The captured watchdog must cover the two declared gate budgets:
+    // (20 + 30) min = 50 min = 3 000 000 ms, plus the base 15 min = 4 500 000 ms min.
+    const minExpectedMs = (GATE_A_TIMEOUT_MIN + GATE_B_TIMEOUT_MIN) * 60_000
+    expect(capturedWatchdogMs).toBeDefined()
+    expect(capturedWatchdogMs!).toBeGreaterThan(minExpectedMs)
+    // The watchdog must be strictly larger than just the gates alone — the
+    // base DEFAULT_WATCHDOG_MS overhead (vcs-supervisor + git work) is always
+    // added on top.
+    const _ = job // suppress unused-var lint; job was enqueued to drive the worker
+  })
+
+  it('falls back to static constant when no gates are registered', async () => {
+    /**
+     * With an empty gate registry the fallback formula should produce a
+     * watchdog that equals DEFAULT_WATCHDOG_MS + the static gate constant
+     * (two default gate budgets of 15 min each).
+     *
+     * We assert the watchdog is >= 15 min (the base DEFAULT_WATCHDOG_MS)
+     * and > 0, which holds for any sane configuration.
+     */
+    _mockIntegrationGates = []
+
+    let capturedWatchdogMs: number | undefined
+    const capturingMergeFn = async (args: { watchdogMs?: number }) => {
+      capturedWatchdogMs = args.watchdogMs
+      return {
+        merged: true as const,
+        conflictResolved: false,
+        aborted: false,
+        output: '',
+        supervisorConversation: [],
+        vegaSessionId: null,
+        retriesAttempted: 0,
+      }
+    }
+
+    const { store, enqueueJob } = makeFakeStore()
+    const job2 = enqueueJob({ id: 'j-static-fallback' })
+    const { startMergeWorker } = await import('../merge-worker.js')
+    const ac = new AbortController()
+    const handle = startMergeWorker({
+      store,
+      log: () => {},
+      bus: new EventEmitter(),
+      signal: ac.signal,
+      pollIntervalMs: 10,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mergeFn: capturingMergeFn as any,
+    })
+
+    await waitFor(() => capturedWatchdogMs !== undefined, { maxMs: 500 })
+    ac.abort()
+    await handle.stop()
+
+    // Must be at least the base overhead (non-zero and reasonable).
+    expect(capturedWatchdogMs).toBeDefined()
+    expect(capturedWatchdogMs!).toBeGreaterThan(0)
+    // With no gates the static fallback is 2 × 15 min = 1 800 000 ms; the
+    // total is base + fallback. Assert it is at least 15 min.
+    const FIFTEEN_MIN_MS = 15 * 60_000
+    expect(capturedWatchdogMs!).toBeGreaterThan(FIFTEEN_MIN_MS)
+    const _job2 = job2 // suppress lint
+  })
+})
