@@ -30,8 +30,8 @@ import {
   SALVAGE_CHECKPOINT_SUBJECT_PREFIX,
   SALVAGE_CHECKPOINT_TRAILER_KEY,
   SALVAGE_CHECKPOINT_TRAILER_VALUE,
-} from '../../core/lib/git/checkpoint'
-import { autoCommitWorktreeIfDeterministic } from '../../core/lib/git/commit-main'
+} from '../../core/ports/vcs/types'
+import { resolveVcs } from '../../core/ports/vcs/registry'
 import { type Worker } from '../../core/workers'
 import { extractLastStreamText, type AgentEvent } from '../../core/lib/claude-stream'
 import { type TaskTag, getTask, updateTask } from '../../core/queue'
@@ -972,13 +972,12 @@ export const enforceCoderCommitContract = async (args: {
       parseMainCommiterPayload(fullTask?.recoveryPayload ?? null)?.recipe === MAIN_COMMITER_RECIPE
         ? 'committer-salvage'
         : 'coder-left-dirty'
-    const autoResult = await autoCommitWorktreeIfDeterministic({
+    const autoResult = await resolveVcs().autoCommitWorktree({
       taskId,
       provenance,
       integrationBranch,
       worktreePath,
       dirtyFiles: postState.dirtyFiles,
-      traceCtx: buildPhaseCtx(trace, taskId, 'code'),
     })
 
     if (autoResult.committed) {
