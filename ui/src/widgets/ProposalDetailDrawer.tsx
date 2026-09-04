@@ -576,7 +576,7 @@ export const ProposalDetailDrawer = ({
               {isDraft ? (
                 <div className="mt-2">
                   {storyOpState === 'error' && storyOpError ? (
-                    <p className="mb-1.5 font-mono text-micro text-red-500">{storyOpError}</p>
+                    <p className="mb-1.5 font-mono text-micro text-error">{storyOpError}</p>
                   ) : null}
                   {!addingStory ? (
                     <button
