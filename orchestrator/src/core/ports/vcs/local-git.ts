@@ -276,9 +276,10 @@ export const localGitVcs: Vcs = {
   },
 
   async status(spec: StatusSpec): Promise<VcsStatus> {
+    const tc = reconstructTraceCtx(spec.trace)
     const args = ['status', '--porcelain']
     if (spec.untrackedFiles === 'all') args.push('--untracked-files=all')
-    const r = await execProbe(resolveGitBin(), args, { cwd: spec.cwd })
+    const r = await execProbe(resolveGitBin(), args, { cwd: spec.cwd }, tc)
     const lines = r.stdout.split('\n').filter((l) => l.length > 0)
     const { orchestratorOwned, userOwned } = classifyPorcelainLines(lines)
     return { clean: r.stdout.trim().length === 0, statusOutput: r.stdout, orchestratorOwned, userOwned }
@@ -369,20 +370,23 @@ export const localGitVcs: Vcs = {
   async discardWorkingTreeChanges(spec: VcsDiscardChangesSpec): Promise<void> {
     const { cwd } = spec
     const git = resolveGitBin()
-    await exec(git, ['reset', '--hard', 'HEAD'], { cwd })
-    await exec(git, ['clean', '-fd'], { cwd })
+    const tc = reconstructTraceCtx(spec.trace)
+    await exec(git, ['reset', '--hard', 'HEAD'], { cwd }, tc)
+    await exec(git, ['clean', '-fd'], { cwd }, tc)
   },
 
   async revParse(spec: VcsRevParseSpec): Promise<string | null> {
     const { cwd, rev, timeoutMs } = spec
-    const r = await execProbe(resolveGitBin(), ['rev-parse', rev], { cwd, timeout: timeoutMs })
+    const tc = reconstructTraceCtx(spec.trace)
+    const r = await execProbe(resolveGitBin(), ['rev-parse', rev], { cwd, timeout: timeoutMs }, tc)
     if (r.exitCode !== 0) return null
     const sha = r.stdout.trim()
     return sha.length === 0 ? null : sha
   },
 
   async repoRoot(spec: VcsRepoRootSpec): Promise<string | null> {
-    const r = await execProbe(resolveGitBin(), ['rev-parse', '--show-toplevel'], { cwd: spec.cwd })
+    const tc = reconstructTraceCtx(spec.trace)
+    const r = await execProbe(resolveGitBin(), ['rev-parse', '--show-toplevel'], { cwd: spec.cwd }, tc)
     if (r.exitCode !== 0) return null
     const root = r.stdout.trim()
     return root.length === 0 ? null : root
@@ -390,17 +394,20 @@ export const localGitVcs: Vcs = {
 
   async updateRef(spec: VcsUpdateRefSpec): Promise<void> {
     const { cwd, ref, sha } = spec
-    await exec(resolveGitBin(), ['update-ref', ref, sha], { cwd })
+    const tc = reconstructTraceCtx(spec.trace)
+    await exec(resolveGitBin(), ['update-ref', ref, sha], { cwd }, tc)
   },
 
   async hasCommitTrailer(spec: VcsHasCommitTrailerSpec): Promise<boolean> {
     const { cwd, sha, trailerKey, trailerValue } = spec
     const git = resolveGitBin()
+    const tc = reconstructTraceCtx(spec.trace)
     try {
       const result = await execProbe(
         git,
         ['log', '-1', `--format=%(trailers:key=${trailerKey},valueonly)`, sha],
         { cwd },
+        tc,
       )
       if (result.exitCode !== 0) return false
       return result.stdout.trim() === trailerValue
@@ -414,8 +421,9 @@ export const localGitVcs: Vcs = {
   async revListRange(spec: VcsRevListRangeSpec): Promise<string[] | null> {
     const { cwd, range } = spec
     const git = resolveGitBin()
+    const tc = reconstructTraceCtx(spec.trace)
     try {
-      const result = await execProbe(git, ['rev-list', range], { cwd })
+      const result = await execProbe(git, ['rev-list', range], { cwd }, tc)
       if (result.exitCode !== 0) return null
       return result.stdout
         .split('\n')
@@ -432,7 +440,8 @@ export const localGitVcs: Vcs = {
 
   async currentBranch(spec: VcsCurrentBranchSpec): Promise<string | null> {
     const { cwd } = spec
-    const r = await execProbe(resolveGitBin(), ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd })
+    const tc = reconstructTraceCtx(spec.trace)
+    const r = await execProbe(resolveGitBin(), ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd }, tc)
     if (r.exitCode !== 0) return null
     const branch = r.stdout.trim()
     return branch.length === 0 ? null : branch
@@ -440,16 +449,18 @@ export const localGitVcs: Vcs = {
 
   async gitPath(spec: VcsGitPathSpec): Promise<string> {
     const { cwd, name } = spec
-    const r = await exec(resolveGitBin(), ['rev-parse', '--git-path', name], { cwd })
+    const tc = reconstructTraceCtx(spec.trace)
+    const r = await exec(resolveGitBin(), ['rev-parse', '--git-path', name], { cwd }, tc)
     return r.stdout.trim()
   },
 
   async revListCount(spec: VcsRevListCountSpec): Promise<number | null> {
     const { cwd, range, timeoutMs } = spec
+    const tc = reconstructTraceCtx(spec.trace)
     const r = await execProbe(resolveGitBin(), ['rev-list', '--count', range], {
       cwd,
       timeout: timeoutMs,
-    })
+    }, tc)
     if (r.exitCode !== 0) return null
     const count = Number.parseInt(r.stdout.trim(), 10)
     return Number.isFinite(count) ? count : null
@@ -457,11 +468,12 @@ export const localGitVcs: Vcs = {
 
   async diffText(spec: VcsDiffTextSpec): Promise<string | null> {
     const { cwd, from, to, timeoutMs } = spec
+    const tc = reconstructTraceCtx(spec.trace)
     try {
       const r = await exec(resolveGitBin(), ['diff', '--no-color', from, to], {
         cwd,
         timeout: timeoutMs,
-      })
+      }, tc)
       return r.stdout.length > 0 ? r.stdout : null
     } catch {
       return null
@@ -470,22 +482,26 @@ export const localGitVcs: Vcs = {
 
   async pathsChangedInRange(spec: VcsPathsChangedInRangeSpec): Promise<boolean> {
     const { cwd, range, paths } = spec
-    const r = await execProbe(resolveGitBin(), ['diff', '--quiet', range, '--', ...paths], { cwd })
+    const tc = reconstructTraceCtx(spec.trace)
+    const r = await execProbe(resolveGitBin(), ['diff', '--quiet', range, '--', ...paths], { cwd }, tc)
     return r.exitCode === 1
   },
 
   async workingTreeMatches(spec: VcsWorkingTreeMatchesSpec): Promise<boolean> {
     const { cwd, rev } = spec
-    const r = await execProbe(resolveGitBin(), ['diff', '--quiet', rev], { cwd })
+    const tc = reconstructTraceCtx(spec.trace)
+    const r = await execProbe(resolveGitBin(), ['diff', '--quiet', rev], { cwd }, tc)
     return r.exitCode === 0
   },
 
   async recentShas(spec: VcsRecentShasSpec): Promise<string[]> {
     const { cwd, rev, count } = spec
+    const tc = reconstructTraceCtx(spec.trace)
     const r = await execProbe(
       resolveGitBin(),
       ['log', '--format=%H', '-n', String(count), rev],
       { cwd },
+      tc,
     )
     if (r.exitCode !== 0) return []
     return r.stdout
@@ -496,7 +512,8 @@ export const localGitVcs: Vcs = {
 
   async deleteBranch(spec: VcsDeleteBranchSpec): Promise<void> {
     const { cwd, branch } = spec
-    await exec(resolveGitBin(), ['branch', '-D', branch], { cwd })
+    const tc = reconstructTraceCtx(spec.trace)
+    await exec(resolveGitBin(), ['branch', '-D', branch], { cwd }, tc)
   },
 
   async attachToOriginWorktree(spec: AttachToOriginWorktreeSpec): Promise<WorktreeResult> {
@@ -540,10 +557,12 @@ export const localGitVcs: Vcs = {
 
   async commitsInRange(spec: VcsCommitsInRangeSpec): Promise<VcsCommitSummary[]> {
     const { cwd, range, abbrev } = spec
+    const tc = reconstructTraceCtx(spec.trace)
     const r = await execProbe(
       resolveGitBin(),
       ['log', `--format=${abbrev === true ? '%h' : '%H'} %s`, range],
       { cwd },
+      tc,
     )
     if (r.exitCode !== 0) return []
     return parseCommitSummaries(r.stdout)
@@ -551,16 +570,18 @@ export const localGitVcs: Vcs = {
 
   async searchCommits(spec: VcsSearchCommitsSpec): Promise<VcsCommitSummary[]> {
     const { cwd, rev, grep, limit } = spec
+    const tc = reconstructTraceCtx(spec.trace)
     const args = ['log', rev, `--grep=${grep}`, '--fixed-strings', '--format=%H %s']
     if (limit !== undefined) args.push('-n', String(limit))
-    const r = await execProbe(resolveGitBin(), args, { cwd })
+    const r = await execProbe(resolveGitBin(), args, { cwd }, tc)
     if (r.exitCode !== 0) return []
     return parseCommitSummaries(r.stdout)
   },
 
   async changedFiles(spec: VcsChangedFilesSpec): Promise<string[]> {
     const { cwd, range } = spec
-    const r = await execProbe(resolveGitBin(), ['diff', range, '--name-only'], { cwd })
+    const tc = reconstructTraceCtx(spec.trace)
+    const r = await execProbe(resolveGitBin(), ['diff', range, '--name-only'], { cwd }, tc)
     if (r.exitCode !== 0) return []
     return r.stdout
       .split('\n')
@@ -631,29 +652,34 @@ export const localGitVcs: Vcs = {
 
   async fetch(spec: VcsFetchSpec): Promise<void> {
     const { cwd, remote, branch } = spec
+    const tc = reconstructTraceCtx(spec.trace)
     const args = ['fetch', remote]
     if (branch !== undefined) args.push(branch)
-    await exec(resolveGitBin(), args, { cwd })
+    await exec(resolveGitBin(), args, { cwd }, tc)
   },
 
   async resetHard(spec: VcsResetHardSpec): Promise<void> {
     const { cwd, rev } = spec
-    await exec(resolveGitBin(), ['reset', '--hard', rev], { cwd })
+    const tc = reconstructTraceCtx(spec.trace)
+    await exec(resolveGitBin(), ['reset', '--hard', rev], { cwd }, tc)
   },
 
   async isAncestor(spec: VcsIsAncestorSpec): Promise<boolean> {
     const { cwd, ancestor, descendant } = spec
+    const tc = reconstructTraceCtx(spec.trace)
     const r = await execProbe(
       resolveGitBin(),
       ['merge-base', '--is-ancestor', ancestor, descendant],
       { cwd },
+      tc,
     )
     return r.exitCode === 0
   },
 
   async addWorktreeForBranch(spec: VcsAddWorktreeForBranchSpec): Promise<void> {
     const { cwd, path, branch } = spec
-    await exec(resolveGitBin(), ['worktree', 'add', path, branch], { cwd })
+    const tc = reconstructTraceCtx(spec.trace)
+    await exec(resolveGitBin(), ['worktree', 'add', path, branch], { cwd }, tc)
   },
 
   async autoCommitOperatorDirt(
