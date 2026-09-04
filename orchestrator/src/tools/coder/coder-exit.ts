@@ -1167,7 +1167,10 @@ function isApiConnectivityFailure(r: {
   if (r.apiUnreachable === true) return true
 
   // Stderr: plain-text connectivity error codes from the CLI or Node.js.
-  if (/ENOTFOUND|ECONNREFUSED|EAI_AGAIN|Unable to connect to API/i.test(r.stderr)) return true
+  // ETIMEDOUT is included per the 2026-09-03 incident post-mortem: a TCP
+  // connect timeout is a network-level failure identical to ENOTFOUND — the
+  // coder never reached the API, so spending the recovery slot is wrong.
+  if (/ENOTFOUND|ECONNREFUSED|EAI_AGAIN|ETIMEDOUT|Unable to connect to API/i.test(r.stderr)) return true
 
   // Event stream: scan for api_retry-at-max and result:api_error.
   for (const event of r.conversation) {
@@ -1196,7 +1199,7 @@ function isApiConnectivityFailure(r: {
     const resultText = e['result']
     if (
       typeof resultText === 'string' &&
-      /ENOTFOUND|ECONNREFUSED|EAI_AGAIN|Unable to connect to API/i.test(resultText)
+      /ENOTFOUND|ECONNREFUSED|EAI_AGAIN|ETIMEDOUT|Unable to connect to API/i.test(resultText)
     ) {
       return true
     }

@@ -147,8 +147,8 @@ export const errorClassRules: readonly ErrorClassRule[] = [
     // `provider-transport-dropped` (a stream severed mid-response after a
     // successful connect).
     errorClass: 'api-unreachable',
-    match: /ENOTFOUND|ECONNREFUSED|EAI_AGAIN|Unable to connect to API/i,
-    matchFull: /ENOTFOUND|ECONNREFUSED|EAI_AGAIN|Unable to connect to API|terminal_reason.*api_error/i,
+    match: /ENOTFOUND|ECONNREFUSED|EAI_AGAIN|ETIMEDOUT|Unable to connect to API/i,
+    matchFull: /ENOTFOUND|ECONNREFUSED|EAI_AGAIN|ETIMEDOUT|Unable to connect to API|terminal_reason.*api_error/i,
   },
   {
     // Behaviour verification (the behaviour-verify step) reached the live

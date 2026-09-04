@@ -362,6 +362,20 @@ describe('classifyCoderExitDisposition', () => {
       expect(result.kind).toBe('terminal-env-unreachable')
     })
 
+    it('classifies ETIMEDOUT in stderr as terminal-env-unreachable', () => {
+      // ETIMEDOUT is a TCP connect timeout — network-level, not code-level.
+      // The 2026-09-03 incident post-mortem explicitly lists it as a signal.
+      const result = classifyCoderExitDisposition({
+        r: makeOutcome({
+          exitCode: 1,
+          stderr: 'Error: connect ETIMEDOUT 104.18.6.192:443',
+          conversation: [{}],
+        }),
+        aborted: NOT_ABORTED,
+      })
+      expect(result.kind).toBe('terminal-env-unreachable')
+    })
+
     it('classifies EAI_AGAIN in stderr as terminal-env-unreachable', () => {
       const result = classifyCoderExitDisposition({
         r: makeOutcome({
