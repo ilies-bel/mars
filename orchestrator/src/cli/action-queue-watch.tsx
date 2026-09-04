@@ -56,6 +56,13 @@ import { join } from 'node:path'
 import { getStateDir } from '../core/context'
 import type { ActionQueueRow } from '../core/daemon/view/action-queue'
 import type { ActionQueueClass } from '../core/lib/action-queue-kinds'
+import {
+  buildRenderedTuiRows,
+  countNeedsYou,
+  sortItems as sortActionQueueItems,
+  isGroupableConditionKind,
+  type RenderedTuiRow,
+} from './action-queue-cluster'
 
 // ─── port discovery ───────────────────────────────────────────────────────────
 
@@ -395,6 +402,62 @@ const Row: React.FC<RowProps> = ({ row, selected, now, pending }) => {
       <Text dimColor>{shortId(row.entityId)}</Text>
       <Text>  </Text>
       <Text>{row.humanSummary || row.title}</Text>
+      {pending && <Text dimColor> ⟳</Text>}
+      <Text>  </Text>
+      <Text dimColor>{rel}</Text>
+    </Box>
+  )
+}
+
+// ─── ClusterRow ───────────────────────────────────────────────────────────────
+
+interface ClusterRowProps {
+  cluster: Extract<RenderedTuiRow, { type: 'cluster' }>
+  selected: boolean
+  now: number
+}
+
+const ClusterRow: React.FC<ClusterRowProps> = ({ cluster, selected, now }) => {
+  const ts = Date.parse(cluster.latestAt)
+  const rel = Number.isNaN(ts) ? cluster.latestAt : formatRelativeMs(ts, now)
+  return (
+    <Box>
+      <Text color={selected ? 'cyan' : undefined}>{selected ? '> ' : '  '}</Text>
+      <Text dimColor>
+        {cluster.count}× {cluster.kind}
+      </Text>
+      <Text>  </Text>
+      <Text dimColor>{rel}</Text>
+    </Box>
+  )
+}
+
+// ─── EntityGroupRow ───────────────────────────────────────────────────────────
+
+interface EntityGroupRowProps {
+  group: Extract<RenderedTuiRow, { type: 'entityGroup' }>
+  selected: boolean
+  now: number
+  pending: boolean
+}
+
+const EntityGroupRow: React.FC<EntityGroupRowProps> = ({ group, selected, now, pending }) => {
+  const { primary, badgeKinds } = group
+  const ts = Date.parse(primary.at)
+  const rel = Number.isNaN(ts) ? primary.at : formatRelativeMs(ts, now)
+  return (
+    <Box>
+      <Text color={selected ? 'cyan' : undefined}>{selected ? '> ' : '  '}</Text>
+      <Text color={CLASS_COLOR[primary.class]}>[{primary.class.toUpperCase()}]</Text>
+      <Text> </Text>
+      <Text color={kindColor(primary.kind)}>{primary.kind}</Text>
+      {badgeKinds.length > 0 && (
+        <Text dimColor> (+{badgeKinds.join(', ')})</Text>
+      )}
+      <Text> </Text>
+      <Text dimColor>{shortId(primary.entityId)}</Text>
+      <Text>  </Text>
+      <Text>{primary.humanSummary || primary.title}</Text>
       {pending && <Text dimColor> ⟳</Text>}
       <Text>  </Text>
       <Text dimColor>{rel}</Text>
@@ -973,7 +1036,30 @@ const ActionQueueWatchApp: React.FC<{ stateDir: string }> = ({ stateDir }) => {
     [stateDir],
   )
 
-  const selected = state.rows[state.lastCursorIndex] ?? null
+  // Compute rendered rows here so useInput can reference the count for bounds.
+  // This is recomputed on every render; renderedRows captures the current render's
+  // view of state.rows so navigation keys see the same list the screen shows.
+  const inputRenderedRows = buildRenderedTuiRows(sortActionQueueItems(state.rows))
+
+  // The ActionQueueRow for the selected rendered entry — used for action menus.
+  const inputSelectedRendered = inputRenderedRows[state.lastCursorIndex] ?? null
+  const inputSelected: ActionQueueRow | null =
+    inputSelectedRendered?.type === 'item'
+      ? inputSelectedRendered.item
+      : inputSelectedRendered?.type === 'entityGroup'
+        ? inputSelectedRendered.primary
+        : null
+
+  /**
+   * Derive the cursor row ID from a rendered row for re-anchoring after refresh.
+   * Clusters have no single row id; entity groups anchor on their primary.
+   */
+  const renderedRowId = (rr: RenderedTuiRow | null | undefined): string | null => {
+    if (!rr) return null
+    if (rr.type === 'item') return rr.item.id
+    if (rr.type === 'entityGroup') return rr.primary.id
+    return null
+  }
 
   useInput((input, key) => {
     // ── SGR mouse events ────────────────────────────────────────────────────
@@ -988,7 +1074,7 @@ const ActionQueueWatchApp: React.FC<{ stateDir: string }> = ({ stateDir }) => {
       if (mouseEv.kind === 'wheel-up') {
         setState((prev) => {
           const newIndex = Math.max(prev.lastCursorIndex - 1, 0)
-          return { ...prev, lastCursorIndex: newIndex, cursorRowId: prev.rows[newIndex]?.id ?? null }
+          return { ...prev, lastCursorIndex: newIndex, cursorRowId: renderedRowId(inputRenderedRows[newIndex]) }
         })
         return
       }
@@ -996,10 +1082,10 @@ const ActionQueueWatchApp: React.FC<{ stateDir: string }> = ({ stateDir }) => {
       if (mouseEv.kind === 'wheel-down') {
         setState((prev) => {
           const newIndex =
-            prev.rows.length === 0
+            inputRenderedRows.length === 0
               ? 0
-              : Math.min(prev.lastCursorIndex + 1, prev.rows.length - 1)
-          return { ...prev, lastCursorIndex: newIndex, cursorRowId: prev.rows[newIndex]?.id ?? null }
+              : Math.min(prev.lastCursorIndex + 1, inputRenderedRows.length - 1)
+          return { ...prev, lastCursorIndex: newIndex, cursorRowId: renderedRowId(inputRenderedRows[newIndex]) }
         })
         return
       }
@@ -1021,11 +1107,12 @@ const ActionQueueWatchApp: React.FC<{ stateDir: string }> = ({ stateDir }) => {
           return
         }
 
-        // List view: click selects a row; click on the selected row (or
-        // double-click within 500 ms) opens detail.
+        // List view: click selects a rendered row; click on the selected row (or
+        // double-click within 500 ms) opens detail (for item/entityGroup rows).
         const rowIndex = mouseEv.y - LIST_ROW_Y_START
-        if (rowIndex >= 0 && rowIndex < state.rows.length) {
-          const clickedRow = state.rows[rowIndex]!
+        if (rowIndex >= 0 && rowIndex < inputRenderedRows.length) {
+          const clickedRendered = inputRenderedRows[rowIndex]!
+          const clickedId = renderedRowId(clickedRendered)
           const now = Date.now()
           const isDoubleOrRepeat =
             lastClickRef.current !== null &&
@@ -1034,12 +1121,15 @@ const ActionQueueWatchApp: React.FC<{ stateDir: string }> = ({ stateDir }) => {
           lastClickRef.current = { y: mouseEv.y, timeMs: now }
 
           if (isDoubleOrRepeat || rowIndex === state.lastCursorIndex) {
-            setState((prev) => ({ ...prev, detailId: clickedRow.id }))
+            // Open detail for item and entityGroup rows; clusters don't open detail.
+            if (clickedRendered.type !== 'cluster' && clickedId) {
+              setState((prev) => ({ ...prev, detailId: clickedId }))
+            }
           } else {
             setState((prev) => ({
               ...prev,
               lastCursorIndex: rowIndex,
-              cursorRowId: clickedRow.id,
+              cursorRowId: clickedId,
             }))
           }
         }
@@ -1103,12 +1193,12 @@ const ActionQueueWatchApp: React.FC<{ stateDir: string }> = ({ stateDir }) => {
     if (key.downArrow) {
       setState((prev) => {
         const newIndex =
-          prev.rows.length === 0
+          inputRenderedRows.length === 0
             ? 0
-            : Math.min(prev.lastCursorIndex + 1, prev.rows.length - 1)
+            : Math.min(prev.lastCursorIndex + 1, inputRenderedRows.length - 1)
         return {
           ...prev,
-          cursorRowId: prev.rows[newIndex]?.id ?? null,
+          cursorRowId: renderedRowId(inputRenderedRows[newIndex]),
           lastCursorIndex: newIndex,
         }
       })
@@ -1119,7 +1209,7 @@ const ActionQueueWatchApp: React.FC<{ stateDir: string }> = ({ stateDir }) => {
         const newIndex = Math.max(prev.lastCursorIndex - 1, 0)
         return {
           ...prev,
-          cursorRowId: prev.rows[newIndex]?.id ?? null,
+          cursorRowId: renderedRowId(inputRenderedRows[newIndex]),
           lastCursorIndex: newIndex,
         }
       })
@@ -1128,12 +1218,12 @@ const ActionQueueWatchApp: React.FC<{ stateDir: string }> = ({ stateDir }) => {
     if (key.pageDown) {
       setState((prev) => {
         const newIndex =
-          prev.rows.length === 0
+          inputRenderedRows.length === 0
             ? 0
-            : Math.min(prev.lastCursorIndex + 10, prev.rows.length - 1)
+            : Math.min(prev.lastCursorIndex + 10, inputRenderedRows.length - 1)
         return {
           ...prev,
-          cursorRowId: prev.rows[newIndex]?.id ?? null,
+          cursorRowId: renderedRowId(inputRenderedRows[newIndex]),
           lastCursorIndex: newIndex,
         }
       })
@@ -1144,27 +1234,27 @@ const ActionQueueWatchApp: React.FC<{ stateDir: string }> = ({ stateDir }) => {
         const newIndex = Math.max(prev.lastCursorIndex - 10, 0)
         return {
           ...prev,
-          cursorRowId: prev.rows[newIndex]?.id ?? null,
+          cursorRowId: renderedRowId(inputRenderedRows[newIndex]),
           lastCursorIndex: newIndex,
         }
       })
       return
     }
     if (key.return) {
-      if (selected) {
-        setState((prev) => ({ ...prev, detailId: selected.id }))
+      if (inputSelected) {
+        setState((prev) => ({ ...prev, detailId: inputSelected.id }))
       }
       return
     }
     // Action keys in list view — derived from the selected row's actions[].
-    if (selected) {
-      const actionKeys = deriveActionKeys(selected.actions)
+    if (inputSelected) {
+      const actionKeys = deriveActionKeys(inputSelected.actions)
       const action = actionKeys[input]
       if (action) {
         if (action.needsConfirm) {
-          setState((prev) => ({ ...prev, confirm: { row: selected, action } }))
+          setState((prev) => ({ ...prev, confirm: { row: inputSelected, action } }))
         } else {
-          void fireAction(selected, action)
+          void fireAction(inputSelected, action)
         }
         return
       }
@@ -1226,6 +1316,16 @@ const ActionQueueWatchApp: React.FC<{ stateDir: string }> = ({ stateDir }) => {
   // ── detail view ───────────────────────────────────────────────────────────
   if (state.detailId !== null) {
     const detailRow = state.rows.find((r) => r.id === state.detailId)
+    // Find sibling conditions for the same task entity (entity-group detail).
+    const siblingRows =
+      detailRow?.entityId && isGroupableConditionKind(detailRow.kind)
+        ? state.rows.filter(
+            (r) =>
+              r.entityId === detailRow.entityId &&
+              r.id !== detailRow.id &&
+              isGroupableConditionKind(r.kind),
+          )
+        : []
     return (
       <Box flexDirection="column">
         <Box>
@@ -1243,6 +1343,16 @@ const ActionQueueWatchApp: React.FC<{ stateDir: string }> = ({ stateDir }) => {
         ) : (
           <Box>
             <Text dimColor>(item no longer available)</Text>
+          </Box>
+        )}
+        {siblingRows.length > 0 && (
+          <Box marginTop={1} flexDirection="column">
+            <Text dimColor>also affecting this task:</Text>
+            {siblingRows.map((r) => (
+              <Text key={r.id} dimColor>
+                {' '}· {r.kind}: {r.humanSummary}
+              </Text>
+            ))}
           </Box>
         )}
         {state.error && (
@@ -1263,9 +1373,17 @@ const ActionQueueWatchApp: React.FC<{ stateDir: string }> = ({ stateDir }) => {
   }
 
   // ── list view ─────────────────────────────────────────────────────────────
-  const failedCount = state.rows.filter((r) => r.kind === 'failed-task').length
-  const staleCount = state.rows.filter((r) => r.kind === 'stale-worktree').length
-  const draftCount = state.rows.filter((r) => r.kind === 'draft-proposal').length
+  const needsYouCount = countNeedsYou(state.rows)
+  const renderedRows = buildRenderedTuiRows(sortActionQueueItems(state.rows))
+
+  // Derive the ActionQueueRow for the selected rendered entry (for action menus).
+  const selectedRendered = renderedRows[state.lastCursorIndex] ?? null
+  const selected =
+    selectedRendered?.type === 'item'
+      ? selectedRendered.item
+      : selectedRendered?.type === 'entityGroup'
+        ? selectedRendered.primary
+        : null
 
   return (
     <Box flexDirection="column">
@@ -1274,11 +1392,7 @@ const ActionQueueWatchApp: React.FC<{ stateDir: string }> = ({ stateDir }) => {
           mars action-queue
         </Text>
         <Text> · </Text>
-        <Text color="red">{failedCount} failed</Text>
-        <Text> · </Text>
-        <Text color="yellow">{staleCount} stale</Text>
-        <Text> · </Text>
-        <Text color="magenta">{draftCount} drafts</Text>
+        <Text>{needsYouCount} needs you</Text>
         {state.live && !state.streamStale ? (
           <Text dimColor> · live</Text>
         ) : state.streamStale ? (
@@ -1290,20 +1404,44 @@ const ActionQueueWatchApp: React.FC<{ stateDir: string }> = ({ stateDir }) => {
         )}
       </Box>
       <Box marginTop={1} flexDirection="column">
-        {state.rows.length === 0 && !state.error ? (
+        {renderedRows.length === 0 && !state.error ? (
           <Box justifyContent="center" paddingY={2}>
             <Text dimColor>action queue empty</Text>
           </Box>
         ) : (
-          state.rows.map((row, i) => (
-            <Row
-              key={row.id}
-              row={row}
-              selected={i === state.lastCursorIndex}
-              now={state.now}
-              pending={!!state.pendingOps[row.id]}
-            />
-          ))
+          renderedRows.map((rr, i) => {
+            if (rr.type === 'item') {
+              return (
+                <Row
+                  key={rr.item.id}
+                  row={rr.item}
+                  selected={i === state.lastCursorIndex}
+                  now={state.now}
+                  pending={!!state.pendingOps[rr.item.id]}
+                />
+              )
+            }
+            if (rr.type === 'cluster') {
+              return (
+                <ClusterRow
+                  key={`cluster-${rr.kind}`}
+                  cluster={rr}
+                  selected={i === state.lastCursorIndex}
+                  now={state.now}
+                />
+              )
+            }
+            // entityGroup
+            return (
+              <EntityGroupRow
+                key={rr.primary.id}
+                group={rr}
+                selected={i === state.lastCursorIndex}
+                now={state.now}
+                pending={!!state.pendingOps[rr.primary.id]}
+              />
+            )
+          })
         )}
       </Box>
       {state.error && (
@@ -1323,7 +1461,7 @@ const ActionQueueWatchApp: React.FC<{ stateDir: string }> = ({ stateDir }) => {
       )}
       <Box marginTop={1}>
         <Text dimColor>
-          ↑/↓ move{state.rows.length > 10 ? ' · PgUp/PgDn' : ''} · enter detail · click select · q quit
+          ↑/↓ move{renderedRows.length > 10 ? ' · PgUp/PgDn' : ''} · enter detail · click select · q quit
         </Text>
       </Box>
     </Box>
