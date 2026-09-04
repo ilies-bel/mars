@@ -476,7 +476,8 @@ const RunStateBanner = ({ autoRunReflect, autoEnqueue, lastReflectedAt, originId
         {triggerLabel}
       </span>
       {needsManualTrigger && (
-        <span className="ml-1.5">
+        <>
+          {' '}
           {reflectCmd ? (
             <span className="inline-flex items-center gap-1.5 align-middle">
               Run manually:
@@ -489,10 +490,10 @@ const RunStateBanner = ({ autoRunReflect, autoEnqueue, lastReflectedAt, originId
             </span>
           ) : (
             <>
-              Run manually with <code>mars arc reflect &lt;originId&gt;</code>.
+              Enable it with <code>mars operator set auto-reflect on</code>.
             </>
           )}
-        </span>
+        </>
       )}
     </div>
   )
@@ -984,7 +985,8 @@ export const ReflectionsPage = () => {
                 data-testid="empty-state"
                 className="font-mono text-label text-muted-foreground border border-primary/20 bg-card p-4 text-center"
               >
-                No reflection reports yet. Run <code>mars arc reflect {'<originId>'}</code> to generate one.
+                No reflection reports yet.{' '}
+                Reports are generated automatically after each arc when auto-reflect is on.
               </div>
             ) : (
               <div className="flex flex-col gap-2" data-testid="reflection-list">

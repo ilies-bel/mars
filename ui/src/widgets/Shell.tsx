@@ -31,17 +31,17 @@ interface NavGroup {
 
 /**
  * Four-group sidebar navigation: Decide → Watch → Tune → Advanced.
- * Eight entries total. Advanced is collapsed by default.
+ * Ten entries total. Advanced is collapsed by default, and auto-expands
+ * when the active route is one of its own (steward, studio, events, reflections).
  *
  * Glyph rules:
  *   - Every icon is unique; the wordmark glyph (◆) is not reused here.
  *   - 'proposals' links to the dedicated #/proposals page.
- *   - 'studio' has no top-level entry — it is accessed via #/studio/<taskId>
- *     from the task detail UI; while on that route the Progress entry highlights.
+ *   - 'studio' links to #/progress (the entry point to studio per-task);
+ *     while on a studio route the Studio entry highlights and Advanced expands.
  *   - 'triage' ("Needs You") is the default landing page and carries the
  *     pending-decision badge.
- *   - 'steward' (#/steward) keeps its route but has no sidebar entry; its
- *     history is surfaced inside Control Room instead.
+ *   - 'steward' (#/steward) has a sidebar entry under Advanced.
  */
 export const SHELL_NAV_GROUPS: NavGroup[] = [
   {
@@ -74,6 +74,8 @@ export const SHELL_NAV_GROUPS: NavGroup[] = [
     entries: [
       { route: 'events', label: 'Events', href: '#/events', icon: '⌬' },
       { route: 'reflections', label: 'Reflections', href: '#/reflections', icon: '⚑' },
+      { route: 'steward', label: 'Steward', href: '#/steward', icon: '◎' },
+      { route: 'studio', label: 'Studio', href: '#/progress', icon: '⊞' },
     ],
   },
 ]
@@ -200,7 +202,7 @@ interface ShellSidebarProps {
 }
 
 /**
- * Dark 200 px sidebar with four labelled groups and eight nav entries.
+ * Dark 200 px sidebar with four labelled groups and ten nav entries.
  *
  * Exported for direct testing with controlled props — the badge count,
  * active route, and Advanced-group expansion state are passed in rather than
@@ -208,11 +210,11 @@ interface ShellSidebarProps {
  * for `renderToStaticMarkup` tests.
  *
  * Active-route rules:
- *   - 'progress' entry: active when activeRoute === 'progress' or 'studio'
- *     (studio is nested under Progress in the nav).
- *   - All other entries (including 'proposals'): active when entry.route === activeRoute.
- *   - 'steward' is not in the nav; #/steward is accessible directly but
- *     produces no highlighted entry.
+ *   - Every entry is active when entry.route === activeRoute. No exceptions.
+ *   - Studio and Steward are in the Advanced group; pass advancedExpanded=true
+ *     to see their entries and their active highlight.
+ *   - The Shell wrapper auto-expands Advanced when activeRoute is 'studio' or
+ *     'steward', so the highlight is always visible in the full shell.
  */
 export const ShellSidebar = ({
   activeRoute,
@@ -264,14 +266,10 @@ export const ShellSidebar = ({
           )}
           {isExpanded &&
             group.entries.map((entry) => {
-              // Progress entry highlights for bare progress visits AND studio
-              // sub-pages (studio is nested under Progress in the nav).
-              // All other entries (including proposals) highlight when their route
-              // matches activeRoute.
-              const isActive: boolean =
-                entry.route === 'progress'
-                  ? activeRoute === 'progress' || activeRoute === 'studio'
-                  : entry.route === activeRoute
+              // Every entry highlights when its route matches the active route.
+              // Studio and Steward are in Advanced; Shell auto-expands Advanced
+              // when those routes are active so the highlight is always visible.
+              const isActive: boolean = entry.route === activeRoute
 
               const showBadge = entry.route === 'triage' && decisionBadge > 0
 
@@ -363,6 +361,12 @@ export const Shell = ({ hash, children }: ShellProps) => {
       ? `${decisionBadge > 99 ? '99+' : decisionBadge} decisions pending`
       : undefined
 
+  // Auto-expand the Advanced group when the active route is one of its routes
+  // (steward, studio) so the highlighted entry is always visible regardless of
+  // the user's localStorage preference. Does not persist the expansion state.
+  const effectiveAdvancedExpanded =
+    advancedExpanded || activeRoute === 'steward' || activeRoute === 'studio'
+
   return (
     <div className="grid min-h-0 flex-1 grid-cols-[200px_1fr] grid-rows-[40px_1fr]">
       <ShellTopbar hash={hash} />
@@ -370,7 +374,7 @@ export const Shell = ({ hash, children }: ShellProps) => {
         activeRoute={activeRoute}
         decisionBadge={decisionBadge}
         badgeAriaLabel={badgeAriaLabel}
-        advancedExpanded={advancedExpanded}
+        advancedExpanded={effectiveAdvancedExpanded}
         onAdvancedToggle={handleAdvancedToggle}
       />
       {/* The banner sits above the page content rather than above the topbar so

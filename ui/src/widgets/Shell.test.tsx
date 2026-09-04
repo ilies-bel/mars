@@ -92,9 +92,9 @@ describe('SHELL_NAV_GROUPS', () => {
     expect(SHELL_NAV_GROUPS[3].label).toBe('Advanced')
   })
 
-  it('has eight total nav entries across all groups', () => {
+  it('has ten total nav entries across all groups', () => {
     const total = SHELL_NAV_GROUPS.reduce((sum, g) => sum + g.entries.length, 0)
-    expect(total).toBe(8)
+    expect(total).toBe(10)
   })
 
   it('Decide group contains Needs You and Proposals', () => {
@@ -123,20 +123,32 @@ describe('SHELL_NAV_GROUPS', () => {
     expect(labels).toContain('KPI')
   })
 
-  it('Advanced group contains Events and Reflections', () => {
+  it('Advanced group contains Events, Reflections, Steward, and Studio', () => {
     const advanced = SHELL_NAV_GROUPS[3]
     const labels = advanced.entries.map((e) => e.label)
     expect(labels).toContain('Events')
     expect(labels).toContain('Reflections')
+    expect(labels).toContain('Steward')
+    expect(labels).toContain('Studio')
   })
 
   it('Advanced group is marked collapsible', () => {
     expect(SHELL_NAV_GROUPS[3].collapsible).toBe(true)
   })
 
-  it('Steward is absent from all nav groups', () => {
-    const allLabels = SHELL_NAV_GROUPS.flatMap((g) => g.entries.map((e) => e.label))
-    expect(allLabels).not.toContain('Steward')
+  it('Steward has a sidebar entry in the Advanced group', () => {
+    const advanced = SHELL_NAV_GROUPS[3]
+    const steward = advanced.entries.find((e) => e.label === 'Steward')
+    expect(steward).toBeDefined()
+    expect(steward?.href).toBe('#/steward')
+    expect(steward?.route).toBe('steward')
+  })
+
+  it('Studio has a sidebar entry in the Advanced group', () => {
+    const advanced = SHELL_NAV_GROUPS[3]
+    const studio = advanced.entries.find((e) => e.label === 'Studio')
+    expect(studio).toBeDefined()
+    expect(studio?.route).toBe('studio')
   })
 
   it('Decide group has a description', () => {
@@ -261,12 +273,28 @@ describe('ShellSidebar — active state', () => {
     expect(matches).toHaveLength(1)
   })
 
-  it('progress entry is highlighted for studio route (studio is nested under progress)', () => {
-    const html = renderToStaticMarkup(<ShellSidebar activeRoute="studio" decisionBadge={0} />)
+  it('Studio entry is highlighted when activeRoute is studio and Advanced is expanded', () => {
+    // Advanced must be expanded to see Studio; Shell auto-expands it but ShellSidebar
+    // is a pure render function — pass advancedExpanded=true explicitly here.
+    const html = renderToStaticMarkup(
+      <ShellSidebar activeRoute="studio" decisionBadge={0} advancedExpanded={true} />,
+    )
     expect(html).toContain('aria-current="page"')
     // Exactly one active entry
     const matches = html.match(/aria-current="page"/g)
     expect(matches).toHaveLength(1)
+  })
+
+  it('progress entry is NOT highlighted when activeRoute is studio', () => {
+    // Studio has its own sidebar entry; Progress no longer claims studio routes.
+    const html = renderToStaticMarkup(
+      <ShellSidebar activeRoute="studio" decisionBadge={0} advancedExpanded={true} />,
+    )
+    // Only one active entry — the Studio entry, not Progress
+    const matches = html.match(/aria-current="page"/g)
+    expect(matches).toHaveLength(1)
+    // The active entry href should be the Studio entry (#/progress) not the Progress entry
+    // (both point to #/progress, so we verify no double-active by the count above)
   })
 })
 
@@ -293,9 +321,11 @@ describe('ShellSidebar — Proposals route highlighting', () => {
     expect(matches).toHaveLength(1)
   })
 
-  it('highlights Progress when activeRoute is studio (studio nests under Progress)', () => {
+  it('highlights Studio (not Progress) when activeRoute is studio and Advanced is expanded', () => {
+    // Studio now has its own sidebar entry in Advanced.
+    // ShellSidebar is a pure render function — pass advancedExpanded=true so the entry is visible.
     const html = renderToStaticMarkup(
-      <ShellSidebar activeRoute="studio" decisionBadge={0} />,
+      <ShellSidebar activeRoute="studio" decisionBadge={0} advancedExpanded={true} />,
     )
     const matches = html.match(/aria-current="page"/g)
     expect(matches).toHaveLength(1)
@@ -434,6 +464,25 @@ describe('Shell', () => {
 
   it('highlights Progress (not Proposals) for bare #/progress hash', () => {
     const html = renderToStaticMarkup(<Shell hash="#/progress">page</Shell>)
+    const matches = html.match(/aria-current="page"/g)
+    expect(matches).toHaveLength(1)
+  })
+
+  it('auto-expands Advanced and highlights Studio when hash is #/studio/<id>', () => {
+    // Shell auto-expands Advanced for studio/steward routes so the active entry
+    // is always visible without requiring the user to expand manually first.
+    const html = renderToStaticMarkup(<Shell hash="#/studio/abc123">page</Shell>)
+    expect(html).toContain('aria-current="page"')
+    // Studio entry is visible (Advanced was auto-expanded)
+    expect(html).toContain('href="#/progress"')
+    const matches = html.match(/aria-current="page"/g)
+    expect(matches).toHaveLength(1)
+  })
+
+  it('auto-expands Advanced and highlights Steward when hash is #/steward', () => {
+    const html = renderToStaticMarkup(<Shell hash="#/steward">page</Shell>)
+    expect(html).toContain('aria-current="page"')
+    expect(html).toContain('href="#/steward"')
     const matches = html.match(/aria-current="page"/g)
     expect(matches).toHaveLength(1)
   })

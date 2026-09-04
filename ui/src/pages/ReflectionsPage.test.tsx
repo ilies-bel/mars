@@ -393,7 +393,25 @@ describe('ReflectionsPage', () => {
     const html = renderToStaticMarkup(<ReflectionsPage />)
 
     expect(html).toContain('data-testid="empty-state"')
-    expect(html).toContain('mars arc reflect')
+    expect(html).toContain('No reflection reports yet')
+    // Empty state must not contain the un-fillable <originId> placeholder
+    expect(html).not.toContain('&lt;originId&gt;')
+  })
+
+  it('empty state does not concatenate sentences — no period immediately followed by a capital', () => {
+    vi.mocked(useQuery)
+      .mockReset()
+      .mockReturnValueOnce(mockQueryResult({ data: makeListResponse({ reports: [], autoRunReflect: 'off', autoEnqueue: false }) }))
+      .mockReturnValueOnce(mockQueryResult({ data: undefined }))
+
+    const html = renderToStaticMarkup(<ReflectionsPage />)
+
+    // Strip everything from the empty-state div and verify no period is
+    // immediately adjacent to a capital letter (the original defect pattern).
+    const emptyStateMatch = html.match(/data-testid="empty-state"[^>]*>([\s\S]*?)<\/div>/)
+    expect(emptyStateMatch).not.toBeNull()
+    const textContent = emptyStateMatch![1].replace(/<[^>]+>/g, '')
+    expect(textContent).not.toMatch(/\.[A-Z]/)
   })
 
   // -------------------------------------------------------------------------
