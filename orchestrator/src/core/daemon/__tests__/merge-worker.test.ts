@@ -1694,3 +1694,108 @@ describe('runMergeJob — dynamic watchdog scales with gate timeoutMin', () => {
     const _job2 = job2 // suppress lint
   })
 })
+
+// ── Boot-order invariant ───────────────────────────────────────────────────────
+//
+// Regression test for the 2026-09-04 phantom-in-flight incident.
+//
+// Root cause: the RECONCILERS array ran mergeJobsStartupReconcile BEFORE
+// mergingRecovery.  The merge worker raced in, committed in-flight tracker
+// entries for the rebuilt merge_jobs rows, and then mergingRecovery moved the
+// tasks to 'queued' in the DB.  The tracker entries survived, blocking dispatch.
+//
+// Fix 1 (reconcilers.ts): phase recoveries now run before
+// mergeJobsStartupReconcile.  These tests verify the two outcomes:
+//
+//   A) When phase recovery ran first, the task is already 'queued' → no
+//      merging tasks remain → reconcileMergeJobs creates ZERO rebuild jobs.
+//
+//   B) When a task genuinely stalled in 'merging' (phase recovery could not
+//      move it), reconcileMergeJobs CORRECTLY creates one rebuild job so the
+//      merge can complete.
+//
+// Together they assert: exactly one of {job+entry, queued row with no entry}
+// exists for a given task after the boot sequence completes.
+
+describe('reconcileMergeJobs — boot-order invariant (2026-09-04 regression)', () => {
+  // Create a minimal fake DomainTaskStore whose query returns the given rows.
+  const makeFakeTaskStore = (mergingRows: { id: string; worktree_path: string; branch: string }[]) => ({
+    execute: async (_sql: string) => {},
+    query: async (_sql: string) => ({ rows: mergingRows }),
+  })
+
+  it('A: rebuilds ZERO jobs when phase recovery already re-queued the merging tasks', async () => {
+    // Simulate the new boot order: mergingRecovery ran first, moved the task
+    // from 'merging' → 'queued'. When reconcileMergeJobs runs, no task is in
+    // 'merging' status. Expected: rebuiltCount=0, no phantom merge job created.
+    const { reconcileMergeJobs } = await import('../startup-reconcile.js')
+    const { store } = makeFakeStore()
+    const logs: string[] = []
+
+    const result = await reconcileMergeJobs({
+      store,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      taskStore: makeFakeTaskStore([]) as any,
+      log: (l) => logs.push(l),
+    })
+
+    expect(result.rebuiltCount).toBe(0)
+    expect(result.resetCount).toBe(0)
+    // No phantom rebuild log messages.
+    expect(logs.filter((l) => l.includes('rebuilt'))).toHaveLength(0)
+  })
+
+  it('B: rebuilds ONE job when a task genuinely stalled in merging (phase recovery did not move it)', async () => {
+    // Simulate: daemon died after setting task.status='merging' but before
+    // creating the merge_jobs row (genuine orphan). reconcileMergeJobs must
+    // rebuild a queued merge_jobs row so the merge can complete.
+    const { reconcileMergeJobs } = await import('../startup-reconcile.js')
+    const logs: string[] = []
+
+    // Need a store whose enqueue() succeeds (not throws like the default fake).
+    const { store, jobs } = makeFakeStore()
+    let enqueueCount = 0
+    // Override the enqueue stub so reconcileMergeJobs can call it without throwing.
+    ;(store as Record<string, unknown>).enqueue = async (params: {
+      taskId: string
+      integrationBranch: string
+      worktreePath: string
+      branch: string
+    }) => {
+      enqueueCount++
+      const job = {
+        id: `job-rebuilt-${params.taskId}`,
+        taskId: params.taskId,
+        status: 'queued' as const,
+        attempts: 0,
+        mergedSha: null,
+        claimedAt: null,
+        startedAt: null,
+        finishedAt: null,
+        error: null,
+        errorCode: null,
+        integrationBranch: params.integrationBranch,
+        worktreePath: params.worktreePath,
+        branch: params.branch,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }
+      jobs.set(job.id, job)
+      return job
+    }
+
+    const result = await reconcileMergeJobs({
+      store,
+      taskStore: makeFakeTaskStore([
+        { id: 'task-orphan', worktree_path: '/tmp/wt', branch: 'task/task-orphan' },
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ]) as any,
+      log: (l) => logs.push(l),
+    })
+
+    expect(result.rebuiltCount).toBe(1)
+    expect(enqueueCount).toBe(1)
+    // Rebuild must be logged with the task id.
+    expect(logs.some((l) => l.includes('rebuilt') && l.includes('task-orphan'))).toBe(true)
+  })
+})

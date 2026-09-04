@@ -776,6 +776,87 @@ export const SWEEPS: readonly SweepSpec[] = [
     },
   },
   {
+    // Stale in-flight entry sweep — invariant: a tracker entry whose task row
+    // is `queued` or terminal (`done`/`dropped`/`failed`) can never be a live
+    // dispatch. Remove it so the dispatcher can claim the slot again.
+    //
+    // Root cause (2026-09-04 incident): after daemon restart, five tasks were
+    // `merging` when the daemon died. The boot reconcile ran
+    // mergeJobsStartupReconcile (creating queued merge_jobs rows) BEFORE
+    // mergingRecovery re-queued the tasks from setup. The merge worker raced
+    // in, claimed a job, and called tracker.commitInFlight(task, 'merge') via
+    // the implement→merge handoff. mergingRecovery then set the task to
+    // 'queued' in the DB, but the tracker entry was never cleared. The
+    // dispatcher counted those entries as busy and never dispatched the tasks.
+    // mars sync fixed it because runStartupReconcile re-ran the reconcile with
+    // the real tracker predicate — but the phantom watchdog's mirror case
+    // (entry exists, DB row is queued) was missing.
+    //
+    // Fix 1 (ordering, reconcilers.ts): phase recoveries now run BEFORE
+    // mergeJobsStartupReconcile, so the tasks are in 'queued' status before
+    // the merge worker ever sees a job for them.
+    //
+    // Fix 2 (this sweep): safety net at the phantom watchdog cadence. Any
+    // in-flight tracker entry whose DB task is 'queued' or terminal is stale;
+    // force-release it and call drain() so the freed slot is reclaimed.
+    // Idempotent and non-destructive: we only touch tracker state, never the
+    // DB task row.
+    name: 'stale-in-flight-entry-sweep',
+    intervalMs: () => SWEEP_INTERVALS_MS.phantomWatchdog,
+    run: async ({ log, tracker, drain }) => {
+      const snapshot = tracker.inFlightSnapshot()
+      if (snapshot.length === 0) return
+
+      // Fetch the DB status for every in-flight task in one query.
+      // UUIDs are safe in an IN clause; no injection risk.
+      const store = getDefaultDomainTaskStore()
+      const taskIds = snapshot.map((e) => e.taskId)
+      const placeholders = taskIds.map((_, i) => `$${i + 1}`).join(', ')
+      const result = await store.query(
+        `SELECT id, status FROM tasks WHERE id IN (${placeholders})`,
+        taskIds,
+      )
+
+      const dbStatus = new Map<string, string>()
+      for (const row of result.rows) {
+        dbStatus.set(row.id as string, row.status as string)
+      }
+
+      // Statuses that can never hold a live dispatch slot. 'merging' and
+      // 'running'/'verifying' are live; everything else is stale.
+      const LIVE_DISPATCH_STATUSES = new Set([
+        'running',
+        'verifying',
+        'merging',
+        'vega-reconciling',
+      ])
+
+      let cleared = 0
+      for (const entry of snapshot) {
+        // Re-check: a concurrent release may have already cleared it.
+        if (!tracker.isInFlight(entry.taskId)) continue
+
+        const status = dbStatus.get(entry.taskId)
+        const isStale =
+          status === undefined || // task deleted
+          !LIVE_DISPATCH_STATUSES.has(status) // queued, done, dropped, failed, blocked, …
+
+        if (isStale) {
+          tracker.forceRelease(entry.taskId)
+          log(
+            `[stale-in-flight-entry-sweep] removed stale ${entry.kind} in-flight entry` +
+              ` for task ${entry.taskId} (DB status: ${status ?? 'missing'}); slot freed`,
+          )
+          cleared++
+        }
+      }
+
+      if (cleared > 0) {
+        void drain()
+      }
+    },
+  },
+  {
     // GitHub release update poller. Fetches the repo's latest release once on
     // startup (`runOnStart`) and every UPDATE_POLL_INTERVAL_MS (6 h) after
     // that, writing the result to `.mars/update.json`. On any failure it
