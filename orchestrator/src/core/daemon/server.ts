@@ -5567,6 +5567,19 @@ export const startDaemon = async (
       const { coreRejectTask } = await import('./validate-task')
       await coreRejectTask(id)
     },
+    approveStep: async (id) => {
+      // Delegate to handleStepDone, which tries in-process workflow resolution
+      // first (Path 1), then falls back to re-queue (Path 2) with bus emit.
+      // handleStepDone already closes the awaiting-human row and emits
+      // task.queued on the fallback path; it is the canonical approval path.
+      await handleStepDone(id)
+    },
+    abortRelease: async (id) => {
+      const { coreAbortRelease } = await import('./approve-step-action')
+      await coreAbortRelease(id)
+      // Emit so the recovery-spawn subscriber can react (same as handleReleaseLease abort).
+      bus.emit('task.failed', { taskId: id, error: 'operator aborted human work' })
+    },
     landWork: async (id) => {
       const { landWorkForTask } = await import('./land-work')
       await landWorkForTask(id)

@@ -572,7 +572,26 @@ const RECIPE_DEFINITIONS = {
           : { ageMinutes: p.ageMinutes ?? 0 }),
       }
     },
-    verbs: [],
+    verbs: (ctx) => {
+      // Only `lease-park` situations represent an operator actively working
+      // on the step — expired leases and escalations have different paths.
+      const situation = awaitingHumanSituation(ctx.payload)
+      if (situation !== 'lease-park') return []
+      const p = ctx.payload as Partial<LeaseParkPayload>
+      const isMergeGate = str(p.stepName) === 'merge-gate'
+      return [
+        {
+          op: 'approve-step',
+          label: isMergeGate ? 'Approve and merge' : 'Mark step done',
+          style: 'primary' as const,
+        },
+        {
+          op: 'abort-release',
+          label: 'Abort without merging',
+          style: 'destructive' as const,
+        },
+      ]
+    },
   },
 
   // ── Verification ──────────────────────────────────────────────────────────

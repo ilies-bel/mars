@@ -33,6 +33,10 @@ export const SAFE_MARS_VERBS: readonly string[] = [
   // source='observation' and resolves the verify-uncovered AQ row — the gate
   // can be removed with `mars verify-gate remove`, so this is recoverable.
   'add-gate',
+  // Approving a merge-gate step re-queues the task for the merge pipeline.
+  // The merge itself is the intended outcome, and it still goes through
+  // verify + fast-forward, so this is safe (recoverable via restart/continue).
+  'approve-step',
 ]
 
 /**
@@ -44,6 +48,10 @@ export const DESTRUCTIVE_MARS_VERBS: readonly string[] = [
   'purge',
   'reject',
   'prune-worktree',
+  // Aborting a release fails the task — worktree preserved but no merge.
+  // Requires confirmation because it ends the operator's work session and
+  // routes the task through the failure/recovery path.
+  'abort-release',
 ]
 
 /**

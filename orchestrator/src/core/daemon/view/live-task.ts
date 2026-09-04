@@ -34,6 +34,17 @@ export interface LiveTaskView {
   doneCriteria: LiveTaskCriterion[]
   /** Progress-journal notes, oldest-first (newest-last), capped at 20. */
   notes: LiveTaskNote[]
+  /**
+   * Machine name of the step the task is currently parked at.
+   * `'merge-gate'` means the task is waiting for operator approval before
+   * merging. Null when the step name is not recorded.
+   */
+  stepName: string | null
+  /**
+   * Absolute path to the task's git worktree on the host. Null when not set.
+   * Used by the UI to render the "Enter session" / "Open in terminal" action.
+   */
+  worktreePath: string | null
 }
 
 /** Maximum number of progress-journal notes to include. */
@@ -82,5 +93,7 @@ export async function buildLiveTaskView(taskId: string): Promise<LiveTaskView | 
     stepGuide: task.currentStepGuide ?? null,
     doneCriteria,
     notes,
+    stepName: task.currentStepName ?? null,
+    worktreePath: task.worktreePath ?? null,
   }
 }

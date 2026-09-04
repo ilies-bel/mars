@@ -505,3 +505,90 @@ describe('LiveTaskPanel — queryFn calls fetchImpl on each invalidation', () =>
     expect(mockFetch).toHaveBeenCalledTimes(2)
   })
 })
+
+// ── LiveTaskPanel — merge-gate approve / abort buttons ───────────────────────
+//
+// Consumer slice: "Make --merge gated approvable from the UI".
+//
+// When the live-task endpoint returns stepName='merge-gate', the panel must
+// render two action buttons:
+//   • "Approve and merge" (data-testid="merge-gate-approve-btn")
+//   • "Abort without merging" (data-testid="merge-gate-abort-btn")
+//
+// The confirmation copy must say what will happen in plain words.
+// Clicking either button posts to /api/actions with the appropriate op.
+
+describe('LiveTaskPanel — merge-gate buttons', () => {
+  it('renders Approve and Abort buttons when stepName is merge-gate', () => {
+    liveQueryData = { ...FIXTURE, stepName: 'merge-gate' }
+    liveQueryPending = false
+    liveQueryError = false
+
+    const html = renderToStaticMarkup(<LiveTaskPanel taskId="mars-test01" />)
+
+    expect(html).toContain('data-testid="merge-gate-actions"')
+    expect(html).toContain('data-testid="merge-gate-approve-btn"')
+    expect(html).toContain('Approve and merge')
+    expect(html).toContain('data-testid="merge-gate-abort-btn"')
+    expect(html).toContain('Abort without merging')
+  })
+
+  it('includes the confirmation copy with branch and destination', () => {
+    liveQueryData = { ...FIXTURE, stepName: 'merge-gate' }
+    liveQueryPending = false
+    liveQueryError = false
+
+    const html = renderToStaticMarkup(<LiveTaskPanel taskId="mars-test01" />)
+
+    // Must mention the task branch and the target ("main") so the operator knows what will happen.
+    expect(html).toContain('task/mars-test01')
+    expect(html).toContain('main')
+  })
+
+  it('omits the merge-gate actions when stepName is not merge-gate', () => {
+    liveQueryData = { ...FIXTURE, stepName: 'code' }
+    liveQueryPending = false
+    liveQueryError = false
+
+    const html = renderToStaticMarkup(<LiveTaskPanel taskId="mars-test01" />)
+
+    expect(html).not.toContain('data-testid="merge-gate-actions"')
+    expect(html).not.toContain('data-testid="merge-gate-approve-btn"')
+  })
+
+  it('omits the merge-gate actions when stepName is absent', () => {
+    liveQueryData = FIXTURE // no stepName
+    liveQueryPending = false
+    liveQueryError = false
+
+    const html = renderToStaticMarkup(<LiveTaskPanel taskId="mars-test01" />)
+
+    expect(html).not.toContain('data-testid="merge-gate-actions"')
+  })
+
+  it('renders the Approve button with postActionImpl wired', () => {
+    liveQueryData = { ...FIXTURE, stepName: 'merge-gate' }
+    liveQueryPending = false
+    liveQueryError = false
+
+    const html = renderToStaticMarkup(
+      <LiveTaskPanel taskId="mars-test01" postActionImpl={() => Promise.resolve()} />,
+    )
+
+    expect(html).toContain('data-testid="merge-gate-approve-btn"')
+    expect(html).toContain('Approve and merge')
+  })
+
+  it('renders the Abort button with postActionImpl wired', () => {
+    liveQueryData = { ...FIXTURE, stepName: 'merge-gate' }
+    liveQueryPending = false
+    liveQueryError = false
+
+    const html = renderToStaticMarkup(
+      <LiveTaskPanel taskId="mars-test01" postActionImpl={() => Promise.resolve()} />,
+    )
+
+    expect(html).toContain('data-testid="merge-gate-abort-btn"')
+    expect(html).toContain('Abort without merging')
+  })
+})

@@ -226,6 +226,8 @@ type EntityOp =
   | 'add-gate'
   | 'enrich-retire'
   | 'stop-asking-reflect'
+  | 'approve-step'
+  | 'abort-release'
 
 const TRACE_EVENT_SEVERITIES: readonly TraceEventSeverity[] = [
   'info',
@@ -424,6 +426,18 @@ export const registerRoutes = (
         throw Object.assign(new Error('stop-asking-reflect not implemented'), { code: 'NOT_IMPLEMENTED' as const })
       }
       await deps.stopAskingReflect(id)
+    },
+    'approve-step': async (id) => {
+      if (!deps.approveStep) {
+        throw Object.assign(new Error('approve-step not implemented'), { code: 'NOT_IMPLEMENTED' as const })
+      }
+      await deps.approveStep(id)
+    },
+    'abort-release': async (id) => {
+      if (!deps.abortRelease) {
+        throw Object.assign(new Error('abort-release not implemented'), { code: 'NOT_IMPLEMENTED' as const })
+      }
+      await deps.abortRelease(id)
     },
   }
 

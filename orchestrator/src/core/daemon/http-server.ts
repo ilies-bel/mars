@@ -608,6 +608,27 @@ export interface HttpServerDeps {
    */
   selfUpdate: () => Promise<void>
   /**
+   * Approve the current manual step on an `awaiting-human` task and advance it
+   * through the pipeline. For a `merge-gate` step this triggers the merge;
+   * for any other step it marks the step done and continues. Backed by
+   * `POST /actions/approve-step/:id`.
+   *
+   * Throws `code='NOT_FOUND'` when the task does not exist.
+   * Throws `code='WRONG_STATUS'` when the task is not `awaiting-human` or has
+   * no active lease. Optional for backwards compatibility with test stubs.
+   */
+  approveStep?: (id: string) => Promise<void>
+  /**
+   * Abort a manually-parked task without merging: fails the task, clears the
+   * lease, and closes the `awaiting-human` action-queue row. Backed by
+   * `POST /actions/abort-release/:id`.
+   *
+   * Throws `code='NOT_FOUND'` when the task does not exist.
+   * Throws `code='WRONG_STATUS'` when the task is not `awaiting-human` or has
+   * no active lease. Optional for backwards compatibility with test stubs.
+   */
+  abortRelease?: (id: string) => Promise<void>
+  /**
    * Complete the current manual step of a live workflow. Transitions the task
    * from `awaiting-human` → `queued` (keeping the lease so the pipeline can
    * re-grant it when it parks at the next manual step). Idempotent: if the task

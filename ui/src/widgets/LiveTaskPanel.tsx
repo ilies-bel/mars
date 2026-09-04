@@ -9,6 +9,11 @@
  * When the live endpoint returns a worktreePath, renders an EnterSessionButton
  * above the Step guide so the operator can copy `mars enter <id>` to the clipboard.
  *
+ * When the live endpoint indicates the task is parked at the `merge-gate` step,
+ * renders two primary action buttons:
+ *   • "Approve and merge" — calls POST /api/actions with op='approve-step'
+ *   • "Abort without merging" — calls POST /api/actions with op='abort-release'
+ *
  * Fetches GET /api/task/:taskId/live (proxied from the daemon's
  * GET /view/task/:id/live). Accepts a `fetchImpl` prop for testing.
  *
@@ -16,6 +21,7 @@
  * to be targeted (e.g. `SseInvalidator` explicit invalidation).
  */
 
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { EnterSessionButton } from './EnterSessionButton'
 
@@ -40,6 +46,13 @@ export interface LiveTaskData {
    * `null` or absent when the step has no associated worktree.
    */
   worktreePath?: string | null
+  /**
+   * Machine name of the step the task is currently parked at.
+   * When `'merge-gate'`, the panel renders Approve/Abort buttons so the
+   * operator can approve or abort the merge from the UI.
+   * `null` or absent when the step name is not available.
+   */
+  stepName?: string | null
 }
 
 export interface LiveTaskPanelProps {
@@ -49,6 +62,12 @@ export interface LiveTaskPanelProps {
    * component hits `/api/task/:taskId/live` via the runtime `fetch`.
    */
   fetchImpl?: typeof fetch
+  /**
+   * Override the POST action call in tests. Production callers omit it; the
+   * component posts to `/api/actions` via the runtime `fetch`.
+   * Receives `(op, entityId)` and must return a resolved promise.
+   */
+  postActionImpl?: (op: string, entityId: string) => Promise<void>
 }
 
 /**
@@ -72,7 +91,37 @@ const SECTION_LABEL = 'font-mono text-label uppercase tracking-[0.1em] text-mute
  * Shown above the existing drawer panes when task.status === 'awaiting-human'.
  * Hides itself entirely if the fetch returns 404 (task is no longer parked).
  */
-export const LiveTaskPanel = ({ taskId, fetchImpl }: LiveTaskPanelProps) => {
+export const LiveTaskPanel = ({ taskId, fetchImpl, postActionImpl }: LiveTaskPanelProps) => {
+  const [actionPending, setActionPending] = useState<string | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
+
+  const postAction = async (op: string): Promise<void> => {
+    if (postActionImpl) {
+      return postActionImpl(op, taskId)
+    }
+    const res = await fetch('/api/actions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ op, entityId: taskId }),
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({})) as Record<string, unknown>
+      throw new Error(typeof body['error'] === 'string' ? body['error'] : `HTTP ${res.status}`)
+    }
+  }
+
+  const handleAction = async (op: string): Promise<void> => {
+    setActionPending(op)
+    setActionError(null)
+    try {
+      await postAction(op)
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setActionPending(null)
+    }
+  }
+
   const { data, isPending, isError } = useQuery<LiveTaskData | null>({
     queryKey: liveTaskQueryKey(taskId),
     queryFn: async () => {
@@ -168,6 +217,49 @@ export const LiveTaskPanel = ({ taskId, fetchImpl }: LiveTaskPanelProps) => {
               </li>
             ))}
           </ul>
+        </div>
+      ) : null}
+
+      {/* ── Merge-gate approve / abort buttons ───────────────────────────── */}
+      {data.stepName === 'merge-gate' ? (
+        <div data-testid="merge-gate-actions" className="flex flex-col gap-2">
+          <p className="font-mono text-label text-muted-foreground">
+            {`This will merge branch task/${taskId} into main after the verify step passes.`}
+          </p>
+          {actionError ? (
+            <p
+              data-testid="merge-gate-action-error"
+              className="font-mono text-label text-destructive"
+            >
+              {actionError}
+            </p>
+          ) : null}
+          <div className="flex gap-2">
+            <button
+              data-testid="merge-gate-approve-btn"
+              type="button"
+              disabled={actionPending !== null}
+              onClick={() => { void handleAction('approve-step') }}
+              className="rounded px-3 py-1.5 font-mono text-label font-medium bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {actionPending === 'approve-step' ? 'Approving…' : 'Approve and merge'}
+            </button>
+            <button
+              data-testid="merge-gate-abort-btn"
+              type="button"
+              disabled={actionPending !== null}
+              onClick={() => { void handleAction('abort-release') }}
+              className="rounded px-3 py-1.5 font-mono text-label font-medium border border-destructive text-destructive hover:bg-destructive/10 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {actionPending === 'abort-release' ? 'Aborting…' : 'Abort without merging'}
+            </button>
+          </div>
+          {/* Enter session is a secondary affordance — "Open in terminal" */}
+          {data.worktreePath ? (
+            <div className="mt-1">
+              <EnterSessionButton taskId={taskId} worktreePath={data.worktreePath} />
+            </div>
+          ) : null}
         </div>
       ) : null}
 
