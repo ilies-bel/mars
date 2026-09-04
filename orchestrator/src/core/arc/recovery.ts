@@ -538,9 +538,10 @@ export const spawnMainCommitterRecovery = async (
               fix_for_task_id, failure_signature,
               failure_reason, failure_reason_code,
               recovery_spawned_count, origin_id, priority,
+              intent,
               recovery_payload,
               created_at, updated_at
-            ) VALUES (?, ?, 'queued', 'fix', ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)`,
+            ) VALUES (?, ?, 'queued', 'fix', ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)`,
         args: [
           fixTaskId,
           input.recipePrompt,
@@ -553,6 +554,13 @@ export const spawnMainCommitterRecovery = async (
           input.sourceOriginId,
           // Max priority: every queued task is blocked behind this.
           3,
+          // Store a clean plain-text title with no markdown syntax.
+          // The recipe body starts with `# Main committer` — storing that
+          // heading verbatim as `intent` causes `taskDisplayTitle` to return
+          // `# Main committer` (with the `#`) via tier-1 before 58cd68245,
+          // and leaves consumer databases with polluted rows. Setting an explicit
+          // clean value here ensures all new rows are correct from birth.
+          'Main committer',
           serialiseMainCommiterPayload(payload),
           now,
           now,

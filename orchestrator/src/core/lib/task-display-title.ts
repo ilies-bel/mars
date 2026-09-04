@@ -2,7 +2,12 @@
  * Derives a single-line display title from a task object.
  *
  * Fallback chain:
- *   1. `intent` when non-empty (trimmed verbatim — no further processing).
+ *   1. `intent` when non-empty — heading markers (`#`) stripped defensively
+ *      so pre-existing rows that stored a raw markdown heading (e.g.
+ *      `# Main committer`) still render cleanly. The writer-side fix in
+ *      `spawnMainCommitterRecovery` ensures NEW rows never store a heading-
+ *      prefixed intent, but belt-and-braces here protects consumer databases
+ *      that already contain polluted rows and cannot be retroactively cleaned.
  *   2. The prompt's first markdown heading with `#` markers and any trailing
  *      "Slice N of M …" scaffolding stripped.
  *   3. The prompt's first non-empty line, stripped the same way.
@@ -35,8 +40,13 @@ function stripAndCollapse(raw: string): string {
 
 export function taskDisplayTitle(task: { intent?: string | null; prompt: string }): string {
   // Tier 1 — explicit intent wins when non-empty.
+  // `stripAndCollapse` is applied defensively so pre-existing rows that stored
+  // a raw markdown heading (e.g. `# Main committer`) still render without the
+  // `#` marker. The writer-side fix in `spawnMainCommitterRecovery` ensures new
+  // rows never store a heading-prefixed intent, but consumer databases cannot be
+  // retroactively cleaned — belt-and-braces here closes that gap permanently.
   const intent = task.intent?.trim()
-  if (intent) return intent
+  if (intent) return stripAndCollapse(intent)
 
   const lines = task.prompt.split('\n')
 

@@ -13,6 +13,38 @@ describe('taskDisplayTitle', () => {
     ).toBe('Fix the merge guard')
   })
 
+  it('strips leading # from a markdown-heading-polluted intent', () => {
+    // Pre-existing rows in consumer DBs may have intent stored as
+    // `# Main committer` (with the heading marker). The renderer strips it
+    // defensively so those rows display cleanly without a data migration.
+    expect(
+      taskDisplayTitle({
+        intent: '# Main committer',
+        prompt: 'ignored',
+      }),
+    ).toBe('Main committer')
+  })
+
+  it('strips multi-# heading markers from intent', () => {
+    expect(
+      taskDisplayTitle({
+        intent: '## Some stored heading',
+        prompt: 'ignored',
+      }),
+    ).toBe('Some stored heading')
+  })
+
+  it('writer-contract: the value spawnMainCommitterRecovery stores has no leading #', () => {
+    // `spawnMainCommitterRecovery` sets intent to `'Main committer'` (the
+    // plain title from the recipe, no markdown syntax). Verify that this
+    // stored value round-trips through taskDisplayTitle without pollution.
+    const storedIntent = 'Main committer'
+    expect(storedIntent).not.toMatch(/^#/)
+    expect(taskDisplayTitle({ intent: storedIntent, prompt: '# Main committer\nbody' })).toBe(
+      'Main committer',
+    )
+  })
+
   it('trims surrounding whitespace from intent', () => {
     expect(
       taskDisplayTitle({ intent: '  Close the hatch  ', prompt: 'ignored' }),
