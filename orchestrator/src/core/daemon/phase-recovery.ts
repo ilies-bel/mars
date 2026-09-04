@@ -511,7 +511,13 @@ export const recoverPhase = async (
 
     if (!silent) log(policy.requeueLog(t))
     try {
-      await updateTask(t.id, { status: 'queued', ...patch })
+      // Reset the requeue-ceiling anchor to now so elapsed time is measured
+      // from THIS infrastructure re-queue, not from old step timestamps left
+      // over from a prior coder episode. Without this, a task swept from
+      // 'merging' several times (each eviction = a re-queue) would accumulate
+      // wall-clock time against the ceiling even though no coder work was
+      // attempted during those sweeps (root cause of mars-e6344985).
+      await updateTask(t.id, { status: 'queued', ...patch, requeueAnchorMs: Date.now() })
       if (policy.emitOnRequeue) bus.emit('task.queued', { taskId: t.id })
       result.requeued.push(t.id)
     } catch {

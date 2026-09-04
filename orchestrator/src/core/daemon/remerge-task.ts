@@ -34,6 +34,12 @@ export interface RemergeResult {
   status: 'queued' | 'done'
   /** Present only when `status === 'done'`: explains why nothing was dispatched. */
   message?: string
+  /**
+   * Set to `true` when the task had previously been failed by the re-queue
+   * ceiling and `mars remerge` reset that ceiling as part of re-queuing.
+   * Callers can surface this to the operator ("ceiling reset by operator").
+   */
+  ceilingReset?: boolean
 }
 
 /**
@@ -294,6 +300,15 @@ export const coreRemergeTask = async (
   if (TERMINAL_TASK_STATUSES.has(task.status)) {
     await reopenTerminalTask(id, 'mars remerge existing branch')
   }
+
+  // Detect whether this task was failed by the re-queue ceiling. If so, the
+  // operator verb resets it — we stamp requeueAnchorMs to now so the ceiling's
+  // elapsed-time window starts fresh from this re-queue, not from stale step
+  // timestamps in the prior episode. Both the time bound and the attempt count
+  // reset from this point: the ceiling measures dispatch-uptime elapsed since
+  // requeueAnchorMs, so a fresh anchor excludes all prior history.
+  const ceilingReset = task.failureReason === 'requeue:time-bound-exceeded'
+
   await updateTask(id, {
     status: 'queued',
     workflow: 'remerge',
@@ -301,9 +316,13 @@ export const coreRemergeTask = async (
     claudeSessionId: null,
     error: null,
     failedPhase: null,
+    failureReason: null,
     failureSignature: null,
     failureReasonCode: null,
+    // Reset the ceiling anchor to now so poll-fallback measures elapsed time
+    // from this operator re-queue, not from the prior episode's step timestamps.
+    requeueAnchorMs: Date.now(),
   })
 
-  return { status: 'queued' }
+  return { status: 'queued', ...(ceilingReset ? { ceilingReset: true } : {}) }
 }
