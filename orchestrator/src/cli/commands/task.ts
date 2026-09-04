@@ -22,6 +22,7 @@ import {
   isFullSuiteVerifyCmd,
   detectNonexistentNpmScript,
   detectNonexistentVitestPath,
+  findAtPathToken,
   parseBlockedBy,
   parseTags,
   hasFlag,
@@ -301,6 +302,18 @@ const taskAdd: Command = {
       }
     }
     const intentFlag = args.flags['--intent']?.trim()
+    // Reject @<path> tokens in --intent — it is a short label, not a body field.
+    if (intentFlag !== undefined) {
+      const atToken = findAtPathToken(intentFlag)
+      if (atToken !== null) {
+        deps.err(
+          `mars task add: --intent contains '${atToken}', which looks like a body-file reference.\n` +
+            `Pass the body as the prompt argument instead:\n` +
+            `  mars task add ${atToken} --intent "<short summary>"`,
+        )
+        return { code: 2 }
+      }
+    }
     const intent = intentFlag
       ? intentFlag.slice(0, 200)
       : (prompt.match(/^(.+?[.!?])(\s|$)/)?.[1] ?? prompt).slice(0, 200)

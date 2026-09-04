@@ -1150,3 +1150,54 @@ describe('task add research-prompt guard', () => {
     expect(r.stdout).toContain('--implement')
   })
 })
+
+// ---------------------------------------------------------------------------
+// @<path>-in-intent guard
+// ---------------------------------------------------------------------------
+
+describe('@<path>-in-intent guard', () => {
+  let bodyFile: string
+
+  beforeEach(() => {
+    bodyFile = resolve(mkdtempSync(resolve(tmpdir(), 'mars-at-intent-test-')), 'body.md')
+    writeFileSync(bodyFile, 'task body content\n')
+  })
+
+  afterEach(() => {
+    rmSync(resolve(bodyFile, '..'), { recursive: true, force: true })
+  })
+
+  it('--intent containing a resolvable @<path> is rejected non-zero', async () => {
+    const fake = makeFakeDaemon(() => ({ id: 'mars-task-at1', status: 'queued' }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'add', 'prompt body', '--intent', `My intent @${bodyFile}`],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).toBe(2)
+    expect(fake.calls).toHaveLength(0)
+    const errText = r.err.join('\n')
+    expect(errText).toContain(`@${bodyFile}`)
+    expect(errText).toContain('mars task add')
+  })
+
+  it('--intent with a non-path @ (e.g. email) is accepted', async () => {
+    const fake = makeFakeDaemon(() => ({ id: 'mars-task-at2', status: 'queued' }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'add', 'prompt body', '--intent', 'user@example.com fix'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).not.toBe(2)
+  })
+
+  it('--intent without @ is accepted normally', async () => {
+    const fake = makeFakeDaemon(() => ({ id: 'mars-task-at3', status: 'queued' }))
+    const { store, ctx } = await loadStoreAndCtx()
+    const r = await runCommandInProcess(
+      ['task', 'add', 'prompt body', '--intent', 'plain intent no at-sign'],
+      { store, ctx, daemon: fake },
+    )
+    expect(r.code).not.toBe(2)
+  })
+})
