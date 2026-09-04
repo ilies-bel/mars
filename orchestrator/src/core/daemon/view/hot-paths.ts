@@ -15,8 +15,6 @@ import { resolve as resolvePath, dirname } from 'node:path'
 import { resolveGitBin, execProbe } from '../../lib/git/internal'
 import type { HotPathEntry, HotPathsResult } from '../http-server'
 
-export type { HotPathEntry, HotPathsResult }
-
 type WindowKey = '7d' | '30d' | '90d'
 
 const WINDOW_DAYS: Record<WindowKey, number> = { '7d': 7, '30d': 30, '90d': 90 }

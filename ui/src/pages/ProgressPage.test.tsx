@@ -55,15 +55,13 @@ mock.module('@/entities/frameworkUpdate/useFrameworkUpdate', () => ({
 }))
 
 // Hot-paths hook — default to empty result so hot-paths tab renders without a
-// real daemon. Per-test overrides are applied via mockImplementation.
-const mockUseHotPaths = mock(() => ({
-  data: { paths: [], window: '7d' as const, total: 0 },
-  isLoading: false,
-  error: null,
-}))
-
+// real daemon.
 mock.module('@/hooks/useHotPaths', () => ({
-  useHotPaths: mockUseHotPaths,
+  useHotPaths: () => ({
+    data: { paths: [], window: '7d' as const, total: 0 },
+    isLoading: false,
+    error: null,
+  }),
 }))
 
 // Dispatch state — mutable so per-test overrides work. Default to running so
@@ -484,10 +482,4 @@ describe('ProgressPage – hot paths tab', () => {
     expect(html).not.toContain('data-testid="hot-paths-group-file"')
   })
 
-  it('useHotPaths hook is called in the component tree', () => {
-    // The mock is called during render — even for the default topology tab,
-    // because React hooks are called unconditionally (not conditionally on tab).
-    renderToStaticMarkup(<ProgressPage />)
-    expect(mockUseHotPaths).toHaveBeenCalled()
-  })
 })

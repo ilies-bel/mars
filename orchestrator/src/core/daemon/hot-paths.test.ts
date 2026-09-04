@@ -142,7 +142,7 @@ describe('GET /view/hot-paths (real git repo via buildHotPathsView)', () => {
     mkdirSync(worktreesDir, { recursive: true })
 
     const git = (cmd: string) =>
-      execSync(cmd, { cwd: repoRoot, env: { ...process.env, GIT_AUTHOR_DATE: '2026-01-01T00:00:00Z', GIT_COMMITTER_DATE: '2026-01-01T00:00:00Z' } })
+      execSync(cmd, { cwd: repoRoot })
 
     git('git init -b main')
     git('git config user.email "test@example.com"')
@@ -154,7 +154,6 @@ describe('GET /view/hot-paths (real git repo via buildHotPathsView)', () => {
     git('git commit -m "chore: human commit"')
 
     // Second commit — this will be the task's mergeCommitSha
-    writeFileSync(join(repoRoot, 'src/feature.ts'), 'export const y = 2')
     mkdirSync(join(repoRoot, 'src'), { recursive: true })
     writeFileSync(join(repoRoot, 'src/feature.ts'), 'export const y = 2')
     git('git add src/feature.ts')
@@ -199,7 +198,7 @@ describe('GET /view/hot-paths (real git repo via buildHotPathsView)', () => {
     mkdirSync(join(stateDir, 'worktrees'), { recursive: true })
 
     const git = (cmd: string) =>
-      execSync(cmd, { cwd: repoRoot, env: { ...process.env, GIT_AUTHOR_DATE: '2026-01-01T00:00:00Z', GIT_COMMITTER_DATE: '2026-01-01T00:00:00Z' } })
+      execSync(cmd, { cwd: repoRoot })
 
     git('git init -b main')
     git('git config user.email "t@t.com"')
