@@ -82,7 +82,7 @@ export interface KpiArcRow {
   status: string
   passed: boolean
   costTokens?: number
-  phaseBreakdown?: PhaseTokenBreakdown[]
+  phaseBreakdown?: Record<string, number>
 }
 
 export interface FailureRateResult {
@@ -761,15 +761,11 @@ export async function listCostPerArcArcs(
     if (r.weighted_tokens !== null && r.weighted_tokens !== undefined) {
       arcRow.costTokens = r.weighted_tokens
     }
-    if (options?.includePhaseBreakdown && r.phase_breakdown_json !== null && r.phase_breakdown_json !== undefined) {
-      const breakdown: Record<string, number> =
+    if (r.phase_breakdown_json !== null && r.phase_breakdown_json !== undefined) {
+      arcRow.phaseBreakdown =
         typeof r.phase_breakdown_json === 'string'
           ? (JSON.parse(r.phase_breakdown_json) as Record<string, number>)
           : r.phase_breakdown_json
-      arcRow.phaseBreakdown = Object.entries(breakdown).map(([phase, tokens]) => ({
-        phase: phase as PhaseLabel,
-        tokens,
-      }))
     }
     return arcRow
   })
