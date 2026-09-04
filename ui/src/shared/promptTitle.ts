@@ -20,6 +20,9 @@ const MAX_TITLE_LENGTH = 100
 /** Boundaries that would leave a stub shorter than this are skipped. */
 const MIN_SENTENCE = 24
 
+/** Strips trailing "Slice N of M …" scaffolding — e.g. "Slice 3 of 5 for PRD …" */
+const SLICE_RE = /\s+Slice\s+\d+\s+of\s+\d+(?:\s+for\s+PRD\b[^\n]*)?\s*$/i
+
 /**
  * Cut `text` at the first sentence boundary that leaves a usefully long title.
  * A boundary is `.`, `!`, or `?` followed by whitespace.
@@ -39,7 +42,7 @@ const firstSentence = (text: string): string => {
 
 export const titleFromPrompt = (prompt: string): string => {
   const first = (prompt.split(/\r?\n/, 1)[0] ?? '').trim()
-  const clean = first.replace(/^#+\s*/, '')
+  const clean = first.replace(/^#+\s*/, '').replace(SLICE_RE, '').trim()
   const base = clean.length > 0 ? clean : prompt.trim()
   const sentence = firstSentence(base).trim()
   if (sentence.length <= MAX_TITLE_LENGTH) return sentence

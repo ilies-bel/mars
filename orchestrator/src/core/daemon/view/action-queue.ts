@@ -9,6 +9,7 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
+import { taskDisplayTitle } from '../../lib/task-display-title'
 import { DAEMON_KILLED_SIGNATURE } from '../../lib/retry-budget'
 import {
   lookupFailureKind,
@@ -1152,11 +1153,12 @@ export const buildActionQueueView = async ({
   const toErrorKind = (k: string): string =>
     k === 'failed' ? 'failed-task' : k
 
-  // Truncates a task prompt to a single line of at most 80 characters.
-  // Used both by toNode (DAG summaries) and arcGoal derivation.
-  const summarizePrompt = (prompt: string): string => {
-    const oneLine = prompt.replace(/\s+/g, ' ').trim()
-    return oneLine.length <= 80 ? oneLine : `${oneLine.slice(0, 79)}…`
+  // Truncates a task's display title to a single line of at most 80 characters.
+  // Used by toNode (DAG summaries). Prefers intent over raw prompt — see
+  // taskDisplayTitle in core/lib/task-display-title.ts for the full chain.
+  const summarizeTask = (t: TaskForActionQueue): string => {
+    const title = taskDisplayTitle(t)
+    return title.length <= 80 ? title : `${title.slice(0, 79)}…`
   }
 
   const toNode = (id: string) => {
@@ -1164,7 +1166,7 @@ export const buildActionQueueView = async ({
     return {
       id,
       status: (t?.status ?? 'dropped') as string,
-      summary: t ? summarizePrompt(t.prompt) : '(unknown task)',
+      summary: t ? summarizeTask(t) : '(unknown task)',
     }
   }
 

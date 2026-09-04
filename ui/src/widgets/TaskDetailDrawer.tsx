@@ -30,6 +30,7 @@ import { dagClusterStyle } from '@/shared/dagColors'
 import { relativeTime, formatDuration } from '@/shared/time'
 import { studioHash, taskHash } from '@/shared/routing'
 import { humanizeFailureCode } from '@/shared/actionQueueDetail'
+import { taskTitle } from '@/shared/promptTitle'
 import { FallbackSurface } from '@/components/FallbackSurface'
 import { CopyButton } from '@/components/CopyButton'
 import { SkeletonBlock } from '@/components/Skeleton'
@@ -1074,12 +1075,11 @@ export const TaskDetailBody = ({
   changesUnsupported?: boolean
 }) => {
   const promptLines = task.prompt.split('\n')
-  const firstLine = promptLines[0] ?? task.prompt
   // The header already shows the whole prompt when it's a single short line;
   // in that case the dedicated Prompt section would be redundant.
-  const title = firstLine
+  const title = taskTitle(task)
   const promptFullyShownInHeader =
-    task.prompt === firstLine && firstLine.length <= 80
+    task.prompt === title && title.length <= 80
   // Collapse prompts longer than 20 lines behind a <details> disclosure.
   const promptLineCount = promptLines.length
   const promptIsLong = promptLineCount > 20

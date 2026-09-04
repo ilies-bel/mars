@@ -16,6 +16,7 @@ import type { Command, CommandDeps } from '../command'
 import { renderTaskDetail } from './task'
 import { renderProposalDetail } from './proposal'
 import { errorMessage, readDaemonPort } from './shared'
+import { taskDisplayTitle } from '../../core/lib/task-display-title'
 import {
   fetchActionQueueView,
   renderActionQueueDetail,
@@ -695,7 +696,7 @@ const list: Command = {
           ? `\t[${t.failureSignature}]`
           : ''
       deps.out(
-        `${t.id}\t${t.status}\tP${t.priority ?? 0}\t${t.prompt.slice(0, 60)}${sigSuffix}`,
+        `${t.id}\t${t.status}\tP${t.priority ?? 0}\t${taskDisplayTitle(t).slice(0, 60)}${sigSuffix}`,
       )
     }
 

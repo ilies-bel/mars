@@ -12,6 +12,7 @@ import { basename, resolve } from 'node:path'
 import { resolveAuthor, formatAuthor, detectOriginSession, type Author } from '../../core/author'
 import { detectNoCommitMarker } from '../../core/lib/no-commit-marker'
 import { causeForSignature } from '../../core/lib/failure-signature'
+import { taskDisplayTitle } from '../../core/lib/task-display-title'
 import { getProposal } from '../../core/proposals'
 import { planWorkflowCopies } from '../../init/scaffold-workflows'
 import { readWorkflowProvenance } from '../../workflows/agent-draft'
@@ -414,6 +415,7 @@ export const renderTaskDetail = async (
   task: NonNullable<Awaited<ReturnType<CommandDeps['store']['getTask']>>>,
   kindLabel: string,
 ): Promise<void> => {
+  deps.out(`title:      ${taskDisplayTitle(task)}`)
   deps.out(`kind:       ${kindLabel}`)
   deps.out(`id:         ${task.id}`)
   deps.out(`Status:     ${task.status}`)

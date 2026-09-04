@@ -33,6 +33,7 @@
 import { randomUUID } from 'node:crypto'
 import { getTask, MAX_PRIORITY, resolveQueueClient } from '../queue'
 import type { DomainTaskStore } from '../store/task-store'
+import { taskDisplayTitle } from '../lib/task-display-title'
 import { getRecipeOrGeneric, type FixRecipeContext } from '../lib/fix-recipes'
 import { getCustomClassifierMeta } from '../lib/failure-signature'
 import { buildEventInsert, emitEvent } from '../lib/outbox'
@@ -312,8 +313,9 @@ export const spawnRecovery = async (
               fix_for_task_id, failure_signature,
               kind,
               recovery_spawned_count, origin_id, priority,
+              intent,
               created_at, updated_at
-            ) VALUES (?, ?, 'queued', ?, ?, ?, ?, 'fix', 0, ?, ?, ?, ?)`,
+            ) VALUES (?, ?, 'queued', ?, ?, ?, ?, 'fix', 0, ?, ?, ?, ?, ?)`,
         args: [
           fixTaskId,
           prompt,
@@ -323,6 +325,7 @@ export const spawnRecovery = async (
           input.failureSignature,
           source.originId,
           fixPriority,
+          `Recovery for ${input.sourceTaskId}: ${taskDisplayTitle(source)}`,
           now,
           now,
         ],
