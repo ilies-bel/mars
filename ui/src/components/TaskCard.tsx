@@ -1,9 +1,11 @@
-import { memo } from 'react'
+import { memo, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import type { UITask } from '@/shared/types'
 import { relativeTime } from '@/shared/time'
 import { isLiveStatus, substepLabel } from '@/shared/substep'
 import { humanizeFailureCode } from '@/shared/actionQueueDetail'
 import { taskHash } from '@/shared/routing'
+import { fetchTaskChanges } from '@/shared/api'
 import { RoleTag } from './RoleTag'
 import { StatusChip } from './StatusChip'
 
@@ -26,6 +28,25 @@ const truncate = (s: string, n: number): string =>
   s.length > n ? `${s.slice(0, n - 1)}…` : s
 
 export const TaskCard = memo(({ task, index }: Props) => {
+  const [hovered, setHovered] = useState(false)
+
+  // Lazily fetch the diff stats for this task — only kicks off on first hover
+  // so we don't hammer the daemon with N requests on board mount.
+  const { data: changesData } = useQuery({
+    queryKey: ['task-changes', task.id],
+    queryFn: () => fetchTaskChanges(task.id),
+    enabled: hovered,
+    staleTime: 60_000,
+  })
+
+  const changeStats =
+    changesData && changesData.reason !== 'branch-gone' && changesData.files.length > 0
+      ? {
+          additions: changesData.files.reduce((s, f) => s + Math.max(f.additions, 0), 0),
+          deletions: changesData.files.reduce((s, f) => s + Math.max(f.deletions, 0), 0),
+        }
+      : null
+
   const accent =
     task.status === 'failed'
       ? 'bg-primary/10'
@@ -68,6 +89,8 @@ export const TaskCard = memo(({ task, index }: Props) => {
       data-task-index={index}
       data-task-status={task.status}
       title={failureLabel ?? undefined}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
       className={`mars-card relative flex flex-col gap-2 rounded-lg bg-card p-3 cursor-pointer transition-[transform,background-color] duration-150 ease-out hover:bg-secondary active:scale-[0.99] motion-reduce:transform-none has-[button:focus-visible]:outline-none has-[button:focus-visible]:ring-2 has-[button:focus-visible]:ring-ring${isLive ? ' mars-card-live' : ''} ${accent}`.trimEnd()}
     >
       {/* Row 1: id link + status badges — raised above the stretched button via z-10
@@ -200,9 +223,18 @@ export const TaskCard = memo(({ task, index }: Props) => {
 
       <div className="flex items-center justify-between gap-2">
         <RoleTag role={task.role} />
-        <span className="font-mono text-label text-muted-foreground">
-          upd {relativeTime(task.updatedAt)}
-        </span>
+        <div className="flex items-center gap-2">
+          {changeStats ? (
+            <span className="font-mono text-micro" data-testid="card-diff-stats">
+              <span className="text-success">+{changeStats.additions}</span>
+              {' '}
+              <span className="text-error">−{changeStats.deletions}</span>
+            </span>
+          ) : null}
+          <span className="font-mono text-label text-muted-foreground">
+            upd {relativeTime(task.updatedAt)}
+          </span>
+        </div>
       </div>
     </article>
   )

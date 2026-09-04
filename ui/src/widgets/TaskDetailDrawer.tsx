@@ -20,9 +20,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import type { AgentToolCall, ProgressProposalNode, ProgressTask, Task, TraceEvent } from '@/shared/schemas'
+import type { AgentToolCall, ProgressProposalNode, ProgressTask, Task, TaskChangesResponse, TraceEvent } from '@/shared/schemas'
 import { taskSchema } from '@/shared/schemas'
-import { fetchAgentToolCalls, fetchRunTimeline, fetchStepSpans } from '@/shared/api'
+import { fetchAgentToolCalls, fetchRunTimeline, fetchStepSpans, fetchTaskChanges } from '@/shared/api'
+import { parseDiff } from '@/shared/diff'
 import { useFocusedProject } from '@/shared/useFocusedProject'
 import { focusSubgraph } from '@/shared/focusSubgraph'
 import { dagClusterStyle } from '@/shared/dagColors'
@@ -613,11 +614,196 @@ export const RecoveryCommands = ({
   )
 }
 
+// ── Changes section ──────────────────────────────────────────────────────────
+
+const statusPillClass: Record<string, string> = {
+  A: 'bg-success/10 text-success border-success/30',
+  M: 'bg-primary/10 text-primary border-primary/30',
+  D: 'bg-error/10 text-error border-error/30',
+  R: 'bg-warn/10 text-warn border-warn/30',
+  C: 'bg-primary/10 text-primary border-primary/30',
+}
+
+interface ChangesSectionProps {
+  taskId: string
+  /** Optional: inject pre-loaded data (used in tests to skip the fetch). */
+  changesData?: TaskChangesResponse | null
+  projectId?: string
+  fetchImpl?: typeof fetch
+}
+
+const ChangesSection = ({ taskId, changesData: injected, projectId, fetchImpl }: ChangesSectionProps) => {
+  const [expandedFiles, setExpandedFiles] = useState<Set<string>>(new Set())
+  const [copyDone, setCopyDone] = useState(false)
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['task-changes', taskId, projectId],
+    queryFn: () => fetchTaskChanges(taskId, projectId, fetchImpl ?? fetch),
+    enabled: injected === undefined,
+    staleTime: 30_000,
+  })
+
+  const changes = injected !== undefined ? injected : data ?? null
+
+  const toggleFile = (path: string) => {
+    setExpandedFiles((prev) => {
+      const next = new Set(prev)
+      if (next.has(path)) next.delete(path)
+      else next.add(path)
+      return next
+    })
+  }
+
+  const handleCopyPatch = () => {
+    if (!changes || changes.reason === 'branch-gone' || !changes.patch) return
+    void navigator.clipboard.writeText(changes.patch).then(() => {
+      setCopyDone(true)
+      setTimeout(() => setCopyDone(false), 2000)
+    })
+  }
+
+  if (isLoading && !changes) {
+    return (
+      <div data-testid="changes-section">
+        <SectionLabel>Changes</SectionLabel>
+        <SkeletonBlock className="h-4 w-40" />
+      </div>
+    )
+  }
+
+  const isEmpty = !changes || changes.reason === 'branch-gone'
+  const files = isEmpty ? [] : changes.files
+  const patch = isEmpty ? '' : changes.patch
+  const truncated = isEmpty ? false : changes.truncated
+  const commits = isEmpty ? [] : changes.commits
+  const landedSha = isEmpty ? null : changes.landedSha
+
+  const totalAdditions = files.reduce((s, f) => s + Math.max(f.additions, 0), 0)
+  const totalDeletions = files.reduce((s, f) => s + Math.max(f.deletions, 0), 0)
+
+  const parsedFiles = patch ? parseDiff(patch) : []
+  const hunksByPath = Object.fromEntries(parsedFiles.map((f) => [f.path, f.hunks]))
+
+  return (
+    <div data-testid="changes-section">
+      <div className="mb-1.5 flex items-center justify-between">
+        <SectionLabel>Changes</SectionLabel>
+        {patch && (
+          <button
+            type="button"
+            onClick={handleCopyPatch}
+            className="font-mono text-micro text-muted-foreground hover:text-foreground transition-colors"
+            data-testid="copy-patch-btn"
+          >
+            {copyDone ? 'Copied!' : 'Copy patch'}
+          </button>
+        )}
+      </div>
+
+      {isEmpty ? (
+        <p className="font-mono text-label text-muted-foreground">No changes recorded for this task yet.</p>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {/* Summary line */}
+          <p className="font-mono text-label text-muted-foreground" data-testid="changes-summary">
+            {landedSha != null ? (
+              <>Landed on main as <span className="text-primary">{landedSha.slice(0, 7)}</span> · </>
+            ) : null}
+            <span className="text-foreground">{files.length} file{files.length !== 1 ? 's' : ''}</span>
+            {' · '}
+            <span className="text-success">+{totalAdditions}</span>
+            {' '}
+            <span className="text-error">−{totalDeletions}</span>
+            {commits.length > 0 ? (
+              <> · {commits.length} commit{commits.length !== 1 ? 's' : ''}</>
+            ) : null}
+            {truncated ? <span className="text-warn"> (patch truncated)</span> : null}
+          </p>
+
+          {/* File list */}
+          <ul className="flex flex-col gap-0.5">
+            {files.map((f) => {
+              const key = f.path
+              const isExpanded = expandedFiles.has(key)
+              const hunks = hunksByPath[f.path] ?? []
+              const hasHunks = hunks.length > 0
+              return (
+                <li key={key} className="flex flex-col">
+                  <button
+                    type="button"
+                    className="flex items-center gap-1.5 text-left"
+                    onClick={() => hasHunks && toggleFile(key)}
+                    data-testid={`file-row-${f.path}`}
+                    aria-expanded={hasHunks ? isExpanded : undefined}
+                  >
+                    <span
+                      className={`rounded border px-1 font-mono text-micro uppercase ${statusPillClass[f.status] ?? ''}`}
+                    >
+                      {f.status}
+                    </span>
+                    <span className="break-all font-mono text-label text-foreground">{f.path}</span>
+                    {f.additions >= 0 ? (
+                      <span className="ml-auto shrink-0 font-mono text-micro text-success">+{f.additions}</span>
+                    ) : null}
+                    {f.deletions >= 0 ? (
+                      <span className="font-mono text-micro text-error">−{f.deletions}</span>
+                    ) : null}
+                  </button>
+                  {isExpanded && hasHunks ? (
+                    <div
+                      className="mt-1 overflow-x-auto rounded border border-border/50 bg-muted/30"
+                      data-testid={`file-hunks-${f.path}`}
+                    >
+                      <pre className="p-2 font-mono text-micro leading-relaxed">
+                        {hunks.map((hunk, hi) => (
+                          <div key={hi}>
+                            <span className="text-muted-foreground">{hunk.header}</span>
+                            {'\n'}
+                            {hunk.lines.map((line, li) => (
+                              <span
+                                key={li}
+                                className={
+                                  line.kind === 'added'
+                                    ? 'text-success'
+                                    : line.kind === 'removed'
+                                    ? 'text-error'
+                                    : line.kind === 'no-newline'
+                                    ? 'text-muted-foreground'
+                                    : 'text-foreground'
+                                }
+                              >
+                                {line.kind === 'added'
+                                  ? '+'
+                                  : line.kind === 'removed'
+                                  ? '-'
+                                  : line.kind === 'no-newline'
+                                  ? ''
+                                  : ' '}
+                                {line.text}
+                                {'\n'}
+                              </span>
+                            ))}
+                          </div>
+                        ))}
+                      </pre>
+                    </div>
+                  ) : null}
+                </li>
+              )
+            })}
+          </ul>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export const TaskDetailBody = ({
   task,
   onNavigate,
   currentId,
   currentStep,
+  changesData,
 }: {
   task: Task
   /** Drill-in handler threaded into the OriginTree; omit for display-only. */
@@ -630,6 +816,13 @@ export const TaskDetailBody = ({
    * shown in place of the old Plan/Spec builder breakdown.
    */
   currentStep?: { stepName: string; startedAt: string } | null
+  /**
+   * Optional: inject pre-loaded changes data (skips the fetch).
+   * Pass `null` to suppress the Changes section entirely (used in tests
+   * that do not want to render it). When `undefined` (default), the section
+   * fetches live data from `/api/task/:id/changes`.
+   */
+  changesData?: TaskChangesResponse | null
 }) => {
   const promptLines = task.prompt.split('\n')
   const firstLine = promptLines[0] ?? task.prompt
@@ -785,7 +978,12 @@ export const TaskDetailBody = ({
         <p className="font-mono text-micro text-primary">recovery: {task.recoverySpawnedCount}</p>
       </div>
 
-      {/* h. Diagnostics — collapsed by default. */}
+      {/* h. Changes — per-file diff summary. Fetches live unless changesData was injected. */}
+      {changesData !== null ? (
+        <ChangesSection taskId={task.id} changesData={changesData} />
+      ) : null}
+
+      {/* i. Diagnostics — collapsed by default. */}
       <details data-testid="task-detail-diagnostics" className="text-label">
         <summary className={`cursor-pointer ${SECTION_LABEL}`}>Diagnostics</summary>
         <dl className="mt-2 flex flex-col gap-1.5">

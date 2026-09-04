@@ -34,6 +34,8 @@ import {
   tasksResponseSchema,
   visionResponseSchema,
   workerSessionsResponseSchema,
+  taskChangesResponseSchema,
+  type TaskChangesResponse,
   type ActionQueueHistoryResponse,
   type ActionQueueItem,
   type AdrEntry,
@@ -1724,4 +1726,18 @@ export type {
   ReflectionDissonantCall,
   ReflectionVerifyMismatch,
   ReflectionThrashingPattern,
+  TaskChangesResponse,
 } from './schemas'
+
+/** Fetch the diff summary (files, patch, commits) for one task. */
+export const fetchTaskChanges = async (
+  taskId: string,
+  projectId?: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<TaskChangesResponse> =>
+  fetchJson(
+    appendProject(`/api/task/${encodeURIComponent(taskId)}/changes`, projectId),
+    taskChangesResponseSchema,
+    undefined,
+    fetchImpl,
+  )

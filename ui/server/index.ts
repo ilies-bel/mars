@@ -1325,6 +1325,24 @@ export const startServer = async (
           return jsonResponse(r.status, r.body)
         }
 
+        // GET /api/task/:id/changes — per-file diff summary, unified patch, and
+        // commits for a task. Proxied to the daemon's GET /view/task/:id/changes.
+        // Always returns 200 (even for the branch-gone shape), never 404.
+        {
+          const changesMatch =
+            req.method === 'GET'
+              ? path.match(/^\/api\/task\/([^/]+)\/changes$/)
+              : null
+          if (changesMatch && changesMatch[1]) {
+            const taskId = decodeURIComponent(changesMatch[1])
+            const r = await proxyGet(
+              ctx.stateDir,
+              `/view/task/${encodeURIComponent(taskId)}/changes`,
+            )
+            return jsonResponse(r.status, r.body)
+          }
+        }
+
         // GET /api/projects — return all registered projects with live health.
         if (path === '/api/projects' && req.method === 'GET') {
           try {

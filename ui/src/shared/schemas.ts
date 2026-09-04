@@ -1913,3 +1913,49 @@ export type ReflectionDissonantCall = z.infer<typeof reflectionDissonantCallSche
 export type ReflectionVerifyMismatch = z.infer<typeof reflectionVerifyMismatchSchema>
 export type ReflectionThrashingPattern = z.infer<typeof reflectionThrashingPatternSchema>
 export type DeepReflectionsListResponse = z.infer<typeof deepReflectionsListResponseSchema>
+
+// ----------------------------------------------------------------------------
+// Task changes (GET /api/task/:id/changes)
+// Per-file diff summary, unified patch, and commits for a task.
+// ----------------------------------------------------------------------------
+
+const taskChangesFileStatSchema = z.object({
+  path: z.string(),
+  oldPath: z.string().optional(),
+  status: z.enum(['A', 'M', 'D', 'R', 'C']),
+  additions: z.number(),
+  deletions: z.number(),
+})
+
+const taskChangesCommitSchema = z.object({
+  sha: z.string(),
+  subject: z.string(),
+  authoredAt: z.string(),
+})
+
+export const taskChangesResponseSchema = z.discriminatedUnion('reason', [
+  z.object({
+    reason: z.literal('branch-gone'),
+    base: z.null(),
+    head: z.null(),
+    landedSha: z.null(),
+    files: z.tuple([]),
+    patch: z.literal(''),
+    truncated: z.literal(false),
+    commits: z.tuple([]),
+  }),
+  z.object({
+    reason: z.undefined().optional(),
+    base: z.string(),
+    head: z.string(),
+    landedSha: z.string().nullable(),
+    files: z.array(taskChangesFileStatSchema),
+    patch: z.string(),
+    truncated: z.boolean(),
+    commits: z.array(taskChangesCommitSchema),
+  }),
+])
+
+export type TaskChangesFileStat = z.infer<typeof taskChangesFileStatSchema>
+export type TaskChangesCommit = z.infer<typeof taskChangesCommitSchema>
+export type TaskChangesResponse = z.infer<typeof taskChangesResponseSchema>
