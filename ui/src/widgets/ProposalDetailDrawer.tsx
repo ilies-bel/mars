@@ -397,6 +397,13 @@ export const ProposalDetailDrawer = ({
 
   const isDraft = proposal.status === 'draft'
 
+  // Local story list — mutated by add/remove without a full page reload.
+  const [stories, setStories] = useState(proposal.userStories)
+  const [addingStory, setAddingStory] = useState(false)
+  const [newStoryText, setNewStoryText] = useState('')
+  const [storyOpState, setStoryOpState] = useState<'idle' | 'pending' | 'error'>('idle')
+  const [storyOpError, setStoryOpError] = useState<string | null>(null)
+
   // Format createdAt timestamp as an unambiguous absolute date.
   const createdLabel = proposal.createdAt ? formatAbsoluteDate(proposal.createdAt) : null
 
@@ -528,20 +535,108 @@ export const ProposalDetailDrawer = ({
           />
         ) : null}
 
-        {proposal.userStories.length > 0 ? (
+        {(stories.length > 0 || isDraft) ? (
           <section
             data-testid="proposal-detail-stories"
             className="border-b border-primary/40 px-4 py-3"
           >
             <CollapsibleSection label="User stories" defaultOpen>
-              <ol className="flex flex-col gap-1.5">
-                {proposal.userStories.map((story, idx) => (
-                  <li key={idx} className="flex gap-2 font-mono text-body text-foreground">
-                    <span className="shrink-0 text-muted-foreground">{idx + 1}.</span>
-                    <span>{story}</span>
-                  </li>
-                ))}
-              </ol>
+              {stories.length > 0 ? (
+                <ol className="flex flex-col gap-1.5">
+                  {stories.map((story, idx) => (
+                    <li key={idx} className="group flex gap-2 font-mono text-body text-foreground">
+                      <span className="shrink-0 text-muted-foreground">{idx + 1}.</span>
+                      <span className="flex-1">{story}</span>
+                      {isDraft ? (
+                        <button
+                          type="button"
+                          aria-label={`Remove story ${idx + 1}`}
+                          disabled={storyOpState === 'pending'}
+                          className="shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:text-foreground disabled:opacity-50"
+                          onClick={async () => {
+                            setStoryOpState('pending')
+                            setStoryOpError(null)
+                            try {
+                              await patchProposalUserStory(proposal.id, 'remove', { index: idx })
+                              setStories((prev) => prev.filter((_, i) => i !== idx))
+                              setStoryOpState('idle')
+                            } catch (err) {
+                              setStoryOpState('error')
+                              setStoryOpError(err instanceof Error ? err.message : 'Failed to remove story')
+                            }
+                          }}
+                        >
+                          ×
+                        </button>
+                      ) : null}
+                    </li>
+                  ))}
+                </ol>
+              ) : null}
+              {isDraft ? (
+                <div className="mt-2">
+                  {storyOpState === 'error' && storyOpError ? (
+                    <p className="mb-1.5 font-mono text-micro text-red-500">{storyOpError}</p>
+                  ) : null}
+                  {!addingStory ? (
+                    <button
+                      type="button"
+                      data-testid="btn-add-story"
+                      className="font-mono text-body text-primary underline hover:text-foreground"
+                      onClick={() => setAddingStory(true)}
+                    >
+                      Add story
+                    </button>
+                  ) : (
+                    <div className="flex flex-col gap-1.5">
+                      <input
+                        type="text"
+                        value={newStoryText}
+                        onChange={(e) => setNewStoryText(e.target.value)}
+                        placeholder="As a user, I want…"
+                        className="rounded border border-primary/40 bg-background px-2 py-1 font-mono text-body text-foreground"
+                      />
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          disabled={storyOpState === 'pending' || !newStoryText.trim()}
+                          className="font-mono text-body text-primary underline hover:text-foreground disabled:opacity-50"
+                          onClick={async () => {
+                            const trimmed = newStoryText.trim()
+                            if (!trimmed) return
+                            setStoryOpState('pending')
+                            setStoryOpError(null)
+                            try {
+                              await patchProposalUserStory(proposal.id, 'add', { story: trimmed })
+                              setStories((prev) => [...prev, trimmed])
+                              setNewStoryText('')
+                              setAddingStory(false)
+                              setStoryOpState('idle')
+                            } catch (err) {
+                              setStoryOpState('error')
+                              setStoryOpError(err instanceof Error ? err.message : 'Failed to add story')
+                            }
+                          }}
+                        >
+                          Submit
+                        </button>
+                        <button
+                          type="button"
+                          className="font-mono text-body text-muted-foreground underline hover:text-foreground"
+                          onClick={() => {
+                            setAddingStory(false)
+                            setNewStoryText('')
+                            setStoryOpError(null)
+                            setStoryOpState('idle')
+                          }}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : null}
             </CollapsibleSection>
           </section>
         ) : null}

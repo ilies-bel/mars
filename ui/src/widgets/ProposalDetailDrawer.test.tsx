@@ -534,14 +534,25 @@ describe('ProposalDetailDrawer – body sections', () => {
     expect(html).not.toContain('data-testid="proposal-detail-solution"')
   })
 
-  it('omits the user stories section when no stories exist', () => {
+  it('omits the user stories section when no stories exist for non-draft proposals', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer
+        proposal={draftProposal({ userStories: [], status: 'prd-ready' })}
+        onClose={() => {}}
+      />,
+    )
+    expect(html).not.toContain('data-testid="proposal-detail-stories"')
+  })
+
+  it('shows the user stories section for draft proposals even when no stories exist', () => {
     const html = renderToStaticMarkup(
       <ProposalDetailDrawer
         proposal={draftProposal({ userStories: [] })}
         onClose={() => {}}
       />,
     )
-    expect(html).not.toContain('data-testid="proposal-detail-stories"')
+    expect(html).toContain('data-testid="proposal-detail-stories"')
+    expect(html).toContain('Add story')
   })
 
   it('omits outOfScope when empty', () => {
@@ -582,6 +593,65 @@ describe('ProposalDetailDrawer – body sections', () => {
     expect(html).toContain('Fill the panel with PRD content.')
     expect(html).toContain('User sees the problem')
     expect(html).toContain('User sees the solution')
+  })
+})
+
+// ── User story management UI (slice 6) ──────────────────────────────────────
+
+describe('ProposalDetailDrawer – user story management UI', () => {
+  it('shows Add story button for a draft proposal with existing stories', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer
+        proposal={draftProposal({ userStories: ['Story one'] })}
+        onClose={() => {}}
+      />,
+    )
+    expect(html).toContain('data-testid="btn-add-story"')
+    expect(html).toContain('Add story')
+  })
+
+  it('does not show Add story button for non-draft proposals', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer
+        proposal={draftProposal({ userStories: ['Story one'], status: 'prd-ready' })}
+        onClose={() => {}}
+      />,
+    )
+    expect(html).not.toContain('data-testid="btn-add-story"')
+    expect(html).not.toContain('Add story')
+  })
+
+  it('renders a remove (×) button on each story for draft proposals', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer
+        proposal={draftProposal({ userStories: ['S1', 'S2', 'S3'] })}
+        onClose={() => {}}
+      />,
+    )
+    // Each story row has a × button; count equals story count.
+    const removeCount = (html.match(/aria-label="Remove story \d+"/g) ?? []).length
+    expect(removeCount).toBe(3)
+  })
+
+  it('does not render remove buttons for non-draft proposals', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer
+        proposal={draftProposal({ userStories: ['S1', 'S2'], status: 'sliced' })}
+        onClose={() => {}}
+      />,
+    )
+    expect(html).not.toContain('aria-label="Remove story')
+  })
+
+  it('shows the stories section with Add story for a draft with no stories', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer
+        proposal={draftProposal({ userStories: [] })}
+        onClose={() => {}}
+      />,
+    )
+    expect(html).toContain('data-testid="proposal-detail-stories"')
+    expect(html).toContain('data-testid="btn-add-story"')
   })
 })
 
