@@ -134,8 +134,13 @@ export const fetchActionQueueView = async (
  * so both produce identical output.
  */
 export const renderActionQueueDetail = (deps: CommandDeps, row: ActionQueueRow): void => {
+  const classLabel = `[${(row.class ?? 'alert').toUpperCase()}]`
+  const headline = row.humanSummary || row.title
+  deps.out(`${classLabel}  ${headline}`)
+  if (row.humanSummary && row.humanSummary !== row.title) {
+    deps.out(`  title:     ${row.title}`)
+  }
   deps.out(`id:        ${row.id}`)
-  deps.out(`title:     ${row.title}`)
   deps.out(`kind:      ${row.kind}`)
   if (row.kind !== 'verify-uncovered') deps.out(`entity:    ${row.entityId}`)
   deps.out(`priority:  ${row.priority}`)
@@ -143,6 +148,15 @@ export const renderActionQueueDetail = (deps: CommandDeps, row: ActionQueueRow):
   deps.out(`dag:       ${JSON.stringify(row.dag)}`)
   deps.out('')
   deps.out(row.body)
+  const detailEntries = Object.entries(row.humanDetail ?? {}).filter(
+    ([, v]) => v !== null && v !== undefined && v !== '',
+  )
+  if (detailEntries.length > 0) {
+    deps.out('')
+    for (const [k, v] of detailEntries) {
+      deps.out(`  ${k}: ${String(v)}`)
+    }
+  }
   if (row.kind === 'tool-promotion' && row.toolPromotionDetail) {
     const d = row.toolPromotionDetail
     deps.out('')
@@ -221,12 +235,13 @@ const actionQueueList: Command = {
       const parts = Object.entries(counts).map(([k, n]) => `${k}:${n}`)
       deps.out(`action queue ${rows.length} (${parts.join(', ')})`)
       for (const row of rows.slice(0, LEAN_PREVIEW))
-        deps.out(`  ${row.id}  ${row.title}`)
+        deps.out(`  ${row.id}  ${row.humanSummary || row.title}`)
       const overflow = rows.length - LEAN_PREVIEW
       if (overflow > 0) deps.out(`  ... +${overflow} more`)
     } else {
       for (const row of rows) {
-        deps.out(`${row.id}\t${row.priority}\t${row.kind}\t${row.title}`)
+        const classCol = `[${(row.class ?? 'alert').toUpperCase()}]`
+        deps.out(`${row.id}\t${row.priority}\t${row.kind}\t${classCol}\t${row.humanSummary || row.title}`)
       }
     }
     return { code: 0 }

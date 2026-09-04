@@ -84,6 +84,8 @@ const makeRow = (
   humanSummary: 'Test alert',
   humanDetail: {},
   verbs: [],
+  class: 'alert',
+  noticeKey: null,
   ...overrides,
 } as ActionQueueRow)
 
@@ -129,7 +131,7 @@ describe('action-queue list', () => {
     const r = await runCommandInProcess(['action-queue', 'list', 'open'], opts)
 
     expect(r.code).toBe(0)
-    expect(r.out).toContain('aq-abc\thigh\tfailed\tTask A')
+    expect(r.out).toContain('aq-abc\thigh\tfailed\t[ALERT]\tTest alert')
     // draft-proposal excluded from default open listing
     expect(r.out).not.toContain('aq-def')
     expect(r.out).not.toContain('draft-proposal')
@@ -150,7 +152,7 @@ describe('action-queue list', () => {
     const r = await runCommandInProcess(['action-queue', 'list', 'open', '--kind', 'draft-proposal'], opts)
 
     expect(r.code).toBe(0)
-    expect(r.out).toContain('aq-def\tlow\tdraft-proposal\tProp B')
+    expect(r.out).toContain('aq-def\tlow\tdraft-proposal\t[ALERT]\tTest alert')
     expect(r.out).not.toContain('aq-abc')
   })
 
