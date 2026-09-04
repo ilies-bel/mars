@@ -169,6 +169,22 @@ vi.mock('@/hooks/useProgress', () => ({
 
 vi.mock('@tanstack/react-query', () => ({
   useQueryClient: () => ({ invalidateQueries: vi.fn().mockResolvedValue(undefined) }),
+  // useQuery is called by useCounts() inside Shell. Provide it so the module
+  // can load; useCounts is also mocked below so this mock never executes.
+  useQuery: vi.fn().mockReturnValue({ data: undefined }),
+}))
+
+// Shell now reads useCounts().needsYou for the badge (single source of truth).
+// Mock useCounts to derive the count from currentQueueItems via countNeedsYou
+// so the parity assertion still holds: all surfaces agree on the same integer.
+vi.mock('@/entities/counts/useCounts', () => ({
+  useCounts: () => ({
+    needsYou: countNeedsYou(currentQueueItems),
+    running: 0, verifying: 0, merging: 0,
+    queued: 0, blocked: 0, failed: 0, doneToday: 0,
+    proposals: { draft: 0, total: 0 },
+    known: true,
+  }),
 }))
 
 vi.mock('@/shared/time', () => ({
