@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { resolveStateClient } from '../store/state-client.js'
 import { postConversationNotice } from './conversation-delivery.js'
-import { exec } from './git/internal.js'
+import { resolveVcs } from '../ports/vcs/registry.js'
 
 const stateClient = resolveStateClient
 
@@ -77,19 +77,7 @@ export const applyWorkflowPatch = async (
   }
 
   const diff = row.unified_diff as string
-  const { writeFile, mkdtemp, rm } = await import('node:fs/promises')
-  const { join } = await import('node:path')
-  const { tmpdir } = await import('node:os')
-
-  const tmpDir = await mkdtemp(join(tmpdir(), 'mars-patch-'))
-  const patchFile = join(tmpDir, 'patch.diff')
-  try {
-    await writeFile(patchFile, diff, 'utf-8')
-    await exec('git', ['apply', '--check', patchFile], { cwd: repoRoot })
-    await exec('git', ['apply', patchFile], { cwd: repoRoot })
-  } finally {
-    await rm(tmpDir, { recursive: true, force: true }).catch(() => {})
-  }
+  await resolveVcs().applyPatch({ cwd: repoRoot, patch: diff })
 
   await c.execute({
     sql: `UPDATE workflow_patch_proposals SET status = 'applied' WHERE id = ?`,
