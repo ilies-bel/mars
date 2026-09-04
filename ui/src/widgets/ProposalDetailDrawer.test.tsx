@@ -814,3 +814,68 @@ describe('ProposalDetailDrawer – exported contract types', () => {
     expect(typeof props.onNavigate).toBe('function')
   })
 })
+
+// ── Disabled actions on empty body ────────────────────────────────────────────
+
+describe('ProposalDetailDrawer – disabled actions on empty body', () => {
+  it('Promote button carries a tooltip when both problem and solution are blank', () => {
+    // draftProposal() defaults to problem='' and solution='' — body is empty.
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer proposal={draftProposal()} onClose={() => {}} />,
+    )
+    expect(html).toContain('data-testid="btn-promote"')
+    // Title attribute communicates why the button is disabled.
+    expect(html).toContain('Fill in the problem or solution first')
+  })
+
+  it('Implement live button carries a tooltip when both problem and solution are blank', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer proposal={draftProposal()} onClose={() => {}} />,
+    )
+    expect(html).toContain('data-testid="btn-implement-live"')
+    expect(html).toContain('Fill in the problem or solution first')
+  })
+
+  it('Promote has no tooltip when problem is non-empty', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer
+        proposal={draftProposal({ problem: 'A real problem.' })}
+        onClose={() => {}}
+      />,
+    )
+    expect(html).not.toContain('Fill in the problem or solution first')
+  })
+
+  it('Promote has no tooltip when solution is non-empty', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer
+        proposal={draftProposal({ solution: 'A real solution.' })}
+        onClose={() => {}}
+      />,
+    )
+    expect(html).not.toContain('Fill in the problem or solution first')
+  })
+})
+
+// ── CLI copy-command collapsible menu ─────────────────────────────────────────
+
+describe('ProposalDetailDrawer – CLI copy-command menu', () => {
+  it('CLI section renders a collapsible "Copy command" toggle', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer proposal={draftProposal()} onClose={() => {}} />,
+    )
+    expect(html).toContain('Copy command')
+  })
+
+  it('CLI commands are present in the DOM (inside the collapsed details element)', () => {
+    const html = renderToStaticMarkup(
+      <ProposalDetailDrawer
+        proposal={draftProposal({ id: 'prop-cli', status: 'draft' })}
+        onClose={() => {}}
+      />,
+    )
+    // Content is in the DOM even when the <details> is closed.
+    expect(html).toContain('mars proposal promote prop-cli')
+    expect(html).toContain('mars proposal show prop-cli')
+  })
+})

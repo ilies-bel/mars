@@ -22,6 +22,12 @@ export interface ProposalActionRowProps {
   /** URL of the proposal's mockup HTML file (used alongside `mockupExists`). */
   mockupUrl?: string
   /**
+   * When true, the Promote and Implement live buttons are disabled with a
+   * tooltip explaining that the problem or solution must be filled in first.
+   * Set by the parent when both `problem` and `solution` are blank.
+   */
+  bodyEmpty?: boolean
+  /**
    * Called after a successful Dismiss so the parent can react (e.g. close the drawer).
    * Optional — omit when no parent-level cleanup is needed on dismiss.
    */
@@ -50,6 +56,7 @@ export interface ProposalActionRowProps {
  */
 export const ProposalActionRow = ({
   proposalId,
+  bodyEmpty,
   onDismissed,
 }: ProposalActionRowProps) => {
   const [promoteState, setPromoteState] = useState<
@@ -173,7 +180,8 @@ export const ProposalActionRow = ({
           type="button"
           data-testid="btn-promote"
           onClick={() => { void handlePromote() }}
-          disabled={promoteState.kind === 'pending'}
+          disabled={promoteState.kind === 'pending' || !!bodyEmpty}
+          title={bodyEmpty ? 'Fill in the problem or solution first' : undefined}
           className="rounded border border-primary/40 px-2 py-0.5 font-mono text-body text-primary hover:bg-primary/10 disabled:opacity-50"
         >
           {promoteState.kind === 'pending' ? 'Promoting…' : 'Promote'}
@@ -238,7 +246,8 @@ export const ProposalActionRow = ({
           type="button"
           data-testid="btn-implement-live"
           onClick={() => { void handleImplementLive() }}
-          disabled={implementLiveState.kind === 'pending'}
+          disabled={implementLiveState.kind === 'pending' || !!bodyEmpty}
+          title={bodyEmpty ? 'Fill in the problem or solution first' : undefined}
           className="rounded border border-primary/40 px-2 py-0.5 font-mono text-body text-primary hover:bg-primary/10 disabled:opacity-50"
         >
           {implementLiveState.kind === 'pending' ? 'Queuing…' : 'Implement live'}

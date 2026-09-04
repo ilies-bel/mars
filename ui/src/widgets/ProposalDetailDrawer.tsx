@@ -33,10 +33,10 @@ interface ProposalDetailDrawerProps {
    */
   tasks?: ProgressTask[]
   /**
-   * Seed value for the mockup-exists check. When provided the HEAD probe is
-   * still issued on mount, but the initial render reflects this value — useful
-   * in test environments where `useEffect` does not fire (e.g. SSR with
-   * `renderToStaticMarkup`).
+   * Authoritative flag for whether a mockup file exists for this proposal.
+   * The drawer uses this value directly — no HEAD probe is issued. The parent
+   * is responsible for deriving this from the proposal record (e.g. a
+   * `mockupReady` field) so no speculative network request is made on open.
    */
   initialMockupExists?: boolean
   /**
@@ -320,7 +320,7 @@ export const ProposalDetailDrawer = ({
   // Synchronous guard — prevents double-scheduling the close timer.
   const closingRef = useRef(false)
 
-  const [mockupExists, setMockupExists] = useState<boolean>(initialMockupExists)
+  const [mockupExists] = useState<boolean>(initialMockupExists)
 
   /**
    * Initiates the exit animation (180 ms) then calls the onClose prop.
@@ -385,15 +385,10 @@ export const ProposalDetailDrawer = ({
     }
   }, [handleClose])
 
-  // Check whether a mockup file has been generated for this proposal.
+  // Derive the mockup URL for the header link. No HEAD probe is issued —
+  // `mockupExists` is seeded by `initialMockupExists` and stays fixed for
+  // the lifetime of the drawer to avoid speculative 404 requests.
   const mockupUrl = useMemo(() => `${BASE}/mockups/${encodeURIComponent(proposal.id)}.html`, [proposal.id])
-  useEffect(() => {
-    let cancelled = false
-    fetch(mockupUrl, { method: 'HEAD' }).then((r) => {
-      if (!cancelled) setMockupExists(r.ok)
-    }).catch(() => { /* file does not exist */ })
-    return () => { cancelled = true }
-  }, [mockupUrl])
 
   const isDraft = proposal.status === 'draft'
 
@@ -503,11 +498,13 @@ export const ProposalDetailDrawer = ({
         </button>
       </header>
 
-      {/* Action row — Promote / Grill / Mockup / Implement live / Dismiss — visible for draft */}
+      {/* Action row — Promote / Grill / Mockup / Implement live / Dismiss — visible for draft.
+          Promote and Implement live are disabled when both problem and solution are blank. */}
       {isDraft && (
         <ProposalActionRow
           proposalId={proposal.id}
           status={proposal.status}
+          bodyEmpty={!proposal.problem.trim() && !proposal.solution.trim()}
         />
       )}
 
@@ -695,26 +692,31 @@ export const ProposalDetailDrawer = ({
         ) : null}
       </div>
 
-      {/* CLI commands — read-only, status-appropriate, copy-to-clipboard */}
+      {/* CLI commands — read-only, status-appropriate, copy-to-clipboard.
+          Collapsed behind a <details> so the drawer footer stays compact. */}
       <section className="border-t border-primary/40 px-4 py-3">
-        <p className="mb-2 font-mono text-micro uppercase tracking-wide text-muted-foreground">
-          CLI
-        </p>
-        {(STATUS_CLI_VERBS[proposal.status] ?? ['show']).map((verb) => {
-          const cmd = `mars proposal ${verb} ${proposal.id}`
-          return (
-            <div key={verb} className="mb-1.5 flex items-center gap-2">
-              <code className="flex-1 truncate rounded bg-primary/10 px-2 py-1 font-mono text-body text-foreground">
-                {cmd}
-              </code>
-              <CopyButton
-                text={cmd}
-                data-testid="copy-cli-cmd"
-                aria-label={`Copy: ${cmd}`}
-              />
-            </div>
-          )
-        })}
+        <details>
+          <summary className="cursor-pointer select-none font-mono text-body text-primary hover:text-foreground">
+            Copy command ▾
+          </summary>
+          <div className="mt-2 flex flex-col gap-1.5">
+            {(STATUS_CLI_VERBS[proposal.status] ?? ['show']).map((verb) => {
+              const cmd = `mars proposal ${verb} ${proposal.id}`
+              return (
+                <div key={verb} className="flex items-center gap-2">
+                  <code className="flex-1 truncate rounded bg-primary/10 px-2 py-1 font-mono text-body text-foreground">
+                    {cmd}
+                  </code>
+                  <CopyButton
+                    text={cmd}
+                    data-testid="copy-cli-cmd"
+                    aria-label={`Copy: ${cmd}`}
+                  />
+                </div>
+              )
+            })}
+          </div>
+        </details>
       </section>
     </aside>
     </>
