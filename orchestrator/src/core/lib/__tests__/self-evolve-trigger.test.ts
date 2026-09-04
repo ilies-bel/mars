@@ -26,6 +26,28 @@ import { execFileSync } from 'node:child_process'
 import { openLibsql } from '../libsql.js'
 import { createTaskStore, type DomainTaskStore as TaskStore } from '../../store/task-store.js'
 import type { ProposalSource } from '../../proposals.js'
+import type { KpiArcRow } from '../kpi-compute.js'
+
+// ---------------------------------------------------------------------------
+// Module-level mock for kpi-compute.js.
+//
+// listCostPerArcArcs uses PostgreSQL-specific JSON operators (::jsonb,
+// json_object_agg) that libsql/SQLite does not support, so in-process tests
+// cannot call it against the real DB.  We stub it here with a controllable
+// variable; the phaseMedians test sets phaseEnrichmentArcs before running the
+// trigger so the enrichment block receives pre-built arcs.  All other tests
+// leave it as [] (the branch is never entered for failure_rate regressions).
+// ---------------------------------------------------------------------------
+let phaseEnrichmentArcs: KpiArcRow[] = []
+vi.mock('../kpi-compute.js', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('../kpi-compute.js')>()
+  return {
+    ...mod,
+    listCostPerArcArcs: vi.fn().mockImplementation(() =>
+      Promise.resolve(phaseEnrichmentArcs),
+    ),
+  }
+})
 
 // ---------------------------------------------------------------------------
 // Test-DB DDL — per-KPI schema matching kpi-snapshots.ts (slice 1).
@@ -198,6 +220,7 @@ describe('runSelfEvolveTrigger', () => {
 
   afterEach(() => {
     delete process.env.MARS_REPO
+    phaseEnrichmentArcs = [] // reset between tests so the mock is inert by default
     rmSync(repo, { recursive: true, force: true })
   })
 
@@ -256,11 +279,12 @@ describe('runSelfEvolveTrigger', () => {
     expect(p.problem).toContain('failure_rate')
     expect(p.problem).toContain('0.1')   // priorValue
     expect(p.problem).toContain('0.25')  // currentValue
-    // Notes contains the full KPI vector JSON
-    const vector = JSON.parse(p.notes) as Record<string, { prior: number; current: number }>
-    expect(vector).toHaveProperty('failure_rate')
-    expect(vector.failure_rate.prior).toBe(0.10)
-    expect(vector.failure_rate.current).toBe(0.25)
+    // Notes is a KpiDriftProposalNotes JSON blob; the vector is nested inside it
+    const notesObj = JSON.parse(p.notes) as { vector: Record<string, { prior: number; current: number }> }
+    expect(notesObj).toHaveProperty('vector')
+    expect(notesObj.vector).toHaveProperty('failure_rate')
+    expect(notesObj.vector.failure_rate.prior).toBe(0.10)
+    expect(notesObj.vector.failure_rate.current).toBe(0.25)
   })
 
   // PRD case 3: dedup — re-running while prior draft is still 'draft' creates
@@ -388,93 +412,79 @@ describe('runSelfEvolveTrigger', () => {
   })
 
   // Phase-enrichment: cost_per_arc_p50 proposals include a phaseMedians breakdown.
-  // listCostPerArcArcs is mocked (it uses PG-specific SQL) so this is a pure
-  // unit test of the median-computation and note-serialisation logic.
+  // listCostPerArcArcs is stubbed via the module-level vi.mock (it uses PG-specific
+  // SQL that libsql/SQLite cannot execute).  phaseEnrichmentArcs controls what the
+  // stub returns; it is reset to [] in afterEach.
   it('enriches cost_per_arc_p50 proposal notes with phaseMedians', async () => {
-    // Must mock BEFORE importing self-evolve-trigger (vi.resetModules is called
-    // below, then the mock is registered, then the module is imported fresh).
-    vi.resetModules()
-    process.env.MARS_REPO = repo
-
-    // Provide three arcs with distinct per-phase costs so we can verify the
-    // median computation independently.  Arc costs per phase:
+    // Three arcs with distinct per-phase costs so we can verify the median
+    // independently of the DB query layer:
     //   code:   [300, 400, 600]  → sorted median = 400
     //   verify: [150, 200, 200]  → sorted median = 200
     //   setup:  [ 50, 100, 100]  → sorted median = 100
-    vi.doMock('../kpi-compute.js', () => ({
-      listCostPerArcArcs: vi.fn().mockResolvedValue([
-        {
-          arcId: 'arc1', originTaskId: 'arc1', title: '', status: 'done', passed: true,
-          costTokens: 900, phaseBreakdown: { code: 600, verify: 200, setup: 100 },
-        },
-        {
-          arcId: 'arc2', originTaskId: 'arc2', title: '', status: 'done', passed: true,
-          costTokens: 700, phaseBreakdown: { code: 400, verify: 200, setup: 100 },
-        },
-        {
-          arcId: 'arc3', originTaskId: 'arc3', title: '', status: 'done', passed: true,
-          costTokens: 500, phaseBreakdown: { code: 300, verify: 150, setup: 50 },
-        },
-      ]),
-    }))
+    phaseEnrichmentArcs = [
+      {
+        arcId: 'arc1', originTaskId: 'arc1', title: '', status: 'done', passed: true,
+        costTokens: 900, phaseBreakdown: { code: 600, verify: 200, setup: 100 },
+      },
+      {
+        arcId: 'arc2', originTaskId: 'arc2', title: '', status: 'done', passed: true,
+        costTokens: 700, phaseBreakdown: { code: 400, verify: 200, setup: 100 },
+      },
+      {
+        arcId: 'arc3', originTaskId: 'arc3', title: '', status: 'done', passed: true,
+        costTokens: 500, phaseBreakdown: { code: 300, verify: 150, setup: 50 },
+      },
+    ]
 
-    const dbPath = resolve(repo, '.mars', 'mars.db')
-    const client = openLibsql({ url: `file:${dbPath}` })
-    await client.execute(KPI_SNAPSHOTS_DDL)
-    await client.execute(`
-      CREATE TABLE IF NOT EXISTS tasks (
-        id TEXT PRIMARY KEY,
-        prompt TEXT NOT NULL DEFAULT '',
-        status TEXT NOT NULL DEFAULT 'queued',
-        priority INTEGER NOT NULL DEFAULT 1,
-        created_at TEXT NOT NULL DEFAULT (datetime('now')),
-        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-      )
-    `)
+    const ctx = await loadContext(repo)
 
-    const { initProposals, listProposals: listProposalsFn } = await import('../../proposals.js')
-    await initProposals()
-
-    const store = createTaskStore(client)
-
-    // cost_per_arc_p50: 500 → 700, +40% regression (lower-is-better).
-    // failure_rate is null in both snapshots so it is excluded from drift detection.
-    await insertSnapshot(store, {
+    // cost_per_arc_p50: 500 → 700 (+40%) lower-is-better regression.
+    // cost_per_arc_p90 is deliberately null in both snapshots so the detector
+    // only fires for p50 — avoiding the near-duplicate title dedup that would
+    // otherwise collapse both proposals into the p50 draft and corrupt its notes.
+    // failure_rate is also null so it is excluded from drift detection.
+    await insertSnapshot(ctx.store, {
       id: 'snap-prior',
       takenAt: '2026-01-01T00:00:00Z',
       failureRate: null,
       costPerArcP50: 500,
-      costPerArcP90: 600,
+      costPerArcP90: null,
     })
-    await insertSnapshot(store, {
+    await insertSnapshot(ctx.store, {
       id: 'snap-current',
       takenAt: '2026-01-02T00:00:00Z',
       failureRate: null,
       costPerArcP50: 700,
-      costPerArcP90: 900,
+      costPerArcP90: null,
     })
 
-    const { runSelfEvolveTrigger } = await import('../self-evolve-trigger.js')
-    const result = await runSelfEvolveTrigger({ store })
+    const result = await ctx.runSelfEvolveTrigger({ store: ctx.store })
 
     // At least the cost_per_arc_p50 proposal must have been raised
     expect(result.raised.length).toBeGreaterThanOrEqual(1)
 
-    const proposals = await listProposalsFn({ source: 'reflection' })
-    const p50Proposal = proposals.find(p => p.kpiTag === 'cost_per_arc_p50')
+    // Find the cost_per_arc_p50 proposal by its title (the title always contains
+    // the KPI name per the trigger's title-building logic)
+    const proposals = await ctx.listProposals({ source: 'reflection' })
+    const p50Proposal = proposals.find(p => p.title.includes('cost_per_arc_p50'))
     expect(p50Proposal).toBeDefined()
 
-    // The notes JSON must carry a phaseMedians block with the computed medians
-    const notes = JSON.parse(p50Proposal!.notes) as {
+    // The notes JSON must carry a phaseMedians block alongside the vector
+    const notesObj = JSON.parse(p50Proposal!.notes) as {
       kpi: string
-      vector: unknown
+      vector: Record<string, { prior: number; current: number }>
       phaseMedians?: Record<string, number>
     }
-    expect(notes).toHaveProperty('phaseMedians')
-    expect(notes.phaseMedians).toEqual({ code: 400, verify: 200, setup: 100 })
+    expect(notesObj).toHaveProperty('vector')
+    expect(notesObj).toHaveProperty('phaseMedians')
+    // code: [300, 400, 600] sorted → median = 400
+    // verify: [150, 200, 200] sorted → median = 200
+    // setup: [50, 100, 100] sorted → median = 100
+    expect(notesObj.phaseMedians).toEqual({ code: 400, verify: 200, setup: 100 })
 
-    // Non-cost proposals (e.g. failure_rate) are not raised in this scenario
-    const failureProposal = proposals.find(p => p.kpiTag === 'failure_rate')
+    // Non-cost proposals (failure_rate) are not raised in this scenario because
+    // failure_rate is null in both snapshots and never enters the detector
+    const failureProposal = proposals.find(p => p.title.includes('failure_rate'))
     expect(failureProposal).toBeUndefined()
   })
 
