@@ -2093,35 +2093,55 @@ export const startDaemon = async (
       }
       log(`[implement] ${task.id} -> ${result.status}`)
       if (result.status === 'failed' && resultTerminal === null) {
-        // Unhandled failure: the step that threw is not a WorkflowTerminalError,
-        // so no step-level code called updateTask({ status: 'failed' }). The task
-        // row would otherwise stay 'running' indefinitely and daemon stop would
-        // wait for an in-flight entry that never self-releases.
-        //
-        // Stamp it failed now so:
-        //   - `mars list` shows the correct status immediately
-        //   - the recovery spawner can react to the task.failed event
-        //   - daemon stop's terminal-status check (below) can release the tracker
-        //     entry if it is still present when stop() is called
-        //
-        // Use the pre-dispatch worktree presence to infer which step failed:
-        //   - worktreePath === null  → worktree was never created → setup failed
-        //   - worktreePath !== null  → worktree existed; failure is in code step
+        // Unhandled failure: the step that threw is not a WorkflowTerminalError.
+        // A step may have ALREADY self-handled by calling
+        //   updateTask({ status: 'failed', failedPhase: '<step>' })
+        // before throwing (e.g. the review primitive stamps failedPhase:'verify'
+        // then throws a plain Error to stop the pipeline). Re-read the task from
+        // the DB so we can:
+        //   1. Skip the overwrite when a step already recorded the phase + signature —
+        //      the stale `task` snapshot would otherwise clobber a correctly-stamped
+        //      'verify' with 'setup' (see bug: worktreePath is null in the pre-dispatch
+        //      snapshot even after setup has run for a freshly-dispatched task).
+        //   2. Use the CURRENT worktreePath for phase inference instead of the
+        //      stale pre-dispatch snapshot (which has worktreePath=null for any
+        //      first-time dispatch, mis-stamping code/verify failures as 'setup').
         const errorMsg = result.error instanceof Error ? result.error.message : String(result.error ?? 'unknown')
-        const failedPhase = (task.worktreePath === null || task.worktreePath === undefined) ? 'setup' : 'code'
-        const unhandledSig = computeFailureSignature(`${failedPhase}:unhandled`, errorMsg)
+        let selfHandled = false
+        let freshWorktreePath = task.worktreePath
         try {
-          await updateTask(task.id, {
-            status: 'failed',
-            error: errorMsg,
-            failedPhase,
-            failureReason: errorMsg,
-            failureSignature: unhandledSig,
-            failureReasonCode: unhandledSig,
-          })
+          const freshTask = await getTask(task.id)
+          if (freshTask !== null) {
+            freshWorktreePath = freshTask.worktreePath
+            // A step stamped its own phase: trust it, don't overwrite.
+            if (freshTask.status === 'failed' && freshTask.failedPhase != null) {
+              selfHandled = true
+            }
+          }
         } catch {
-          // best-effort: if the DB write fails the recovery spawner won't fire,
-          // but the finally block still releases the tracker slot
+          // best-effort: fall through to inference below
+        }
+        if (!selfHandled) {
+          // Truly unhandled: infer the phase from CURRENT worktree presence.
+          //   - worktreePath === null → worktree never created → setup failed
+          //   - worktreePath !== null → worktree existed; code step threw unexpectedly
+          //     (verify/merge steps self-handle their failures via updateTask before
+          //     throwing, so they are caught by the selfHandled check above)
+          const failedPhase = (freshWorktreePath === null || freshWorktreePath === undefined) ? 'setup' : 'code'
+          const unhandledSig = computeFailureSignature(`${failedPhase}:unhandled`, errorMsg)
+          try {
+            await updateTask(task.id, {
+              status: 'failed',
+              error: errorMsg,
+              failedPhase,
+              failureReason: errorMsg,
+              failureSignature: unhandledSig,
+              failureReasonCode: unhandledSig,
+            })
+          } catch {
+            // best-effort: if the DB write fails the recovery spawner won't fire,
+            // but the finally block still releases the tracker slot
+          }
         }
         try {
           bus.emit('task.failed', { taskId: task.id, error: errorMsg })
