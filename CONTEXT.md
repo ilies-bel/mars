@@ -620,3 +620,7 @@ A swappable module boundary in Mars: a cordis service slot bound to an async Typ
 **Decision**:
 An action queue message in which Mars asks the operator to choose between courses it cannot pick between itself, resolved by that choice rather than by any change in the world. It is the third operator-facing class alongside Alert and Notice: a Notice asks nothing, an Alert reports that something is wrong and needs fixing, and a Decision reports that nothing is wrong but work cannot proceed until the operator picks.
 _Avoid_: prompt, question, approval item, choice item
+
+**Domain Timeline**:
+The durable, per-repo record of a target repository's business domain, held as named Domain Flows of Domain Events and Domain Policies, and versioned alongside that repo's code.
+_Avoid_: storm, event storm, domain model file
