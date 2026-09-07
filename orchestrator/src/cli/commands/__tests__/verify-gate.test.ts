@@ -645,7 +645,7 @@ describe('mars verify-gate set — update timeout by id', () => {
     expect(r.code).toBe(2)
   })
 
-  it('exits 2 when --timeout is omitted', async () => {
+  it('exits 2 when no update flag is specified', async () => {
     const { store, ctx } = await loadDeps()
     const daemon = await makeFake()
 
@@ -660,7 +660,71 @@ describe('mars verify-gate set — update timeout by id', () => {
       { store, ctx, daemon },
     )
     expect(r.code).toBe(2)
-    expect(r.err.join('\n')).toContain('--timeout')
+    expect(r.err.join('\n')).toContain('at least one flag')
+  })
+
+  it('flips a gate to required=true via --required', async () => {
+    const { store, ctx } = await loadDeps()
+    const daemon = await makeFake()
+
+    const addR = await run(
+      ['verify-gate', 'add', '--name', 'full-suite', '--cmd', 'npm', '--optional', '--evidence', 'test: unit test fixture'],
+      { store, ctx, daemon },
+    )
+    expect(addR.code).toBe(0)
+    const id = addR.out[0]!
+
+    const setR = await run(
+      ['verify-gate', 'set', id, '--required'],
+      { store, ctx, daemon },
+    )
+    expect(setR.code).toBe(0)
+
+    const listR = await run(['verify-gate', 'list'], { store, ctx, daemon })
+    const rows = listR.out.filter((l) => l.includes('full-suite'))
+    expect(rows.length).toBeGreaterThan(0)
+    expect(rows[0]).toContain('true')
+  })
+
+  it('flips a gate to required=false via --optional', async () => {
+    const { store, ctx } = await loadDeps()
+    const daemon = await makeFake()
+
+    const addR = await run(
+      ['verify-gate', 'add', '--name', 'full-suite', '--cmd', 'npm', '--required', '--evidence', 'test: unit test fixture'],
+      { store, ctx, daemon },
+    )
+    expect(addR.code).toBe(0)
+    const id = addR.out[0]!
+
+    const setR = await run(
+      ['verify-gate', 'set', id, '--optional'],
+      { store, ctx, daemon },
+    )
+    expect(setR.code).toBe(0)
+
+    const listR = await run(['verify-gate', 'list'], { store, ctx, daemon })
+    const rows = listR.out.filter((l) => l.includes('full-suite'))
+    expect(rows.length).toBeGreaterThan(0)
+    expect(rows[0]).toContain('false')
+  })
+
+  it('exits 2 when --required and --optional are both specified', async () => {
+    const { store, ctx } = await loadDeps()
+    const daemon = await makeFake()
+
+    const addR = await run(
+      ['verify-gate', 'add', '--name', 'full-suite', '--cmd', 'npm', '--evidence', 'test: unit test fixture'],
+      { store, ctx, daemon },
+    )
+    const id = addR.out[0]!
+
+    const r = await run(
+      ['verify-gate', 'set', id, '--required', '--optional'],
+      { store, ctx, daemon },
+    )
+    expect(r.code).toBe(2)
+    expect(r.err.join('\n')).toContain('mutually exclusive')
   })
 })
 

@@ -100,9 +100,11 @@ export type VerifyGateInput = z.infer<typeof VerifyGateInputSchema>
 const VerifyGateUpdateSchema = z.object({
   /** Per-gate wall-clock timeout in minutes. Pass `null` to clear (revert to process-wide default). */
   timeoutMin: z.number().positive().nullable().optional(),
+  /** Whether a non-zero exit fails the verify phase. */
+  required: z.boolean().optional(),
 }).refine(
-  (v) => v.timeoutMin !== undefined,
-  { message: 'at least one updatable field (timeoutMin) must be provided' },
+  (v) => v.timeoutMin !== undefined || v.required !== undefined,
+  { message: 'at least one updatable field (timeoutMin, required) must be provided' },
 )
 
 /** Input accepted by {@link updateVerifyGate}. */
@@ -320,6 +322,11 @@ export const updateVerifyGate = async (
   if (updates.timeoutMin !== undefined) {
     setClauses.push('timeout_min = ?')
     params.push(updates.timeoutMin)
+  }
+
+  if (updates.required !== undefined) {
+    setClauses.push('required = ?')
+    params.push(updates.required ? 1 : 0)
   }
 
   if (setClauses.length === 0) return false

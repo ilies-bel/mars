@@ -330,10 +330,10 @@ const verifyGateDetect: Command = {
 
 const verifyGateSet: Command = {
   path: 'verify-gate set',
-  summary: 'update an existing verify gate (e.g. set --timeout)',
+  summary: 'update an existing verify gate (e.g. set --timeout, --required, --optional)',
   usage:
-    'usage: mars verify-gate set <id>  [--timeout <min>]\n' +
-    '       mars verify-gate set --scope <s> --name <n>  [--timeout <min>]',
+    'usage: mars verify-gate set <id>  [--timeout <min>] [--required|--optional]\n' +
+    '       mars verify-gate set --scope <s> --name <n>  [--timeout <min>] [--required|--optional]',
   run: async (args, deps) => {
     const id = args.positional[0]
     const scope = args.flags['--scope']
@@ -347,25 +347,45 @@ const verifyGateSet: Command = {
       target = { scope, name }
     } else {
       deps.err(
-        'usage: mars verify-gate set <id> [--timeout <min>]\n' +
-          '       mars verify-gate set --scope <s> --name <n> [--timeout <min>]',
+        'usage: mars verify-gate set <id> [--timeout <min>] [--required|--optional]\n' +
+          '       mars verify-gate set --scope <s> --name <n> [--timeout <min>] [--required|--optional]',
       )
       return { code: 2 }
     }
 
     // Parse --timeout.
     const timeoutRaw = args.flags['--timeout']
-    if (timeoutRaw === undefined) {
-      deps.err('at least one flag must be specified; supported: --timeout <min>')
+    let timeoutMin: number | null | undefined
+    if (timeoutRaw !== undefined) {
+      const parsed = Number(timeoutRaw)
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        deps.err('--timeout must be a positive number (minutes)')
+        return { code: 2 }
+      }
+      timeoutMin = parsed
+    }
+
+    // Parse --required / --optional.
+    const hasRequired = '--required' in args.flags
+    const hasOptional = '--optional' in args.flags
+    if (hasRequired && hasOptional) {
+      deps.err('--required and --optional are mutually exclusive')
       return { code: 2 }
     }
-    const parsed = Number(timeoutRaw)
-    if (!Number.isFinite(parsed) || parsed <= 0) {
-      deps.err('--timeout must be a positive number (minutes)')
+    let required: boolean | undefined
+    if (hasRequired) required = true
+    if (hasOptional) required = false
+
+    if (timeoutMin === undefined && required === undefined) {
+      deps.err('at least one flag must be specified; supported: --timeout <min>, --required, --optional')
       return { code: 2 }
     }
 
-    const updated = await updateVerifyGate(target, { timeoutMin: parsed })
+    const updates: Parameters<typeof updateVerifyGate>[1] = {}
+    if (timeoutMin !== undefined) updates.timeoutMin = timeoutMin
+    if (required !== undefined) updates.required = required
+
+    const updated = await updateVerifyGate(target, updates)
     if (!updated) {
       deps.err(
         typeof target === 'string'
