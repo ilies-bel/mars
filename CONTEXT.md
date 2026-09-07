@@ -632,3 +632,7 @@ _Avoid_: flow, process, timeline
 **Domain Event**:
 A past-tense, business-meaningful fact that occurred in a target repository's domain; the unit a Domain Flow is a sequence of.
 _Avoid_: event, events, domain fact
+
+**Domain Policy**:
+A reactive rule inside a Domain Flow of the form whenever a given Domain Event occurs, some further action follows.
+_Avoid_: policy, reactor, rule
