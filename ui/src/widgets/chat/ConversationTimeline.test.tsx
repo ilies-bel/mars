@@ -243,6 +243,102 @@ describe('ConversationTimeline', () => {
     expect(html).toContain('data-testid="notice-card-notice-spend"')
   })
 
+  it('shows only the most recent 20 subjects on first paint when the history is deep', () => {
+    // Build 25 subjects, each with one entry.
+    const entries = Array.from({ length: 25 }, (_, i) => ({
+      id: `msg-${i}`,
+      seq: i + 1,
+      threadId: `sub-${i}`,
+      subjectId: `sub-${i}`,
+      subjectTitle: `Subject ${i}`,
+      subjectClosed: true,
+      role: 'assistant' as const,
+      content: `Body of subject ${i}.`,
+      segments: [],
+      createdAt: `2026-01-01T00:${String(i).padStart(2, '0')}:00.000Z`,
+      kind: 'acknowledgment' as const,
+      backingEntityId: null,
+      resolution: null,
+    }))
+
+    const html = renderToStaticMarkup(<ConversationTimeline entries={entries} />)
+
+    // The 5 oldest subjects should be hidden behind the expander.
+    expect(html).toContain('data-testid="show-earlier-button"')
+    expect(html).toContain('5 earlier')
+
+    // The 20 most recent subjects (5..24) must be visible.
+    expect(html).toContain('Subject 24')
+    expect(html).toContain('Subject 5')
+
+    // The 5 oldest (0..4) must NOT be in the initial paint.
+    expect(html).not.toContain('Subject 0')
+    expect(html).not.toContain('Subject 4')
+  })
+
+  it('shows no expander when there are 20 or fewer subjects', () => {
+    const entries = Array.from({ length: 20 }, (_, i) => ({
+      id: `msg-${i}`,
+      seq: i + 1,
+      threadId: `sub-${i}`,
+      subjectId: `sub-${i}`,
+      subjectTitle: `Subject ${i}`,
+      subjectClosed: true,
+      role: 'assistant' as const,
+      content: `Body ${i}.`,
+      segments: [],
+      createdAt: `2026-01-01T00:${String(i).padStart(2, '0')}:00.000Z`,
+      kind: 'acknowledgment' as const,
+      backingEntityId: null,
+      resolution: null,
+    }))
+
+    const html = renderToStaticMarkup(<ConversationTimeline entries={entries} />)
+
+    expect(html).not.toContain('data-testid="show-earlier-button"')
+    expect(html).toContain('Subject 0')
+    expect(html).toContain('Subject 19')
+  })
+
+  it('replaces raw kind enum with a plain-language label', () => {
+    const html = renderToStaticMarkup(
+      <ConversationTimeline
+        entries={[{
+          id: 'ack', seq: 1, threadId: 'sub', subjectId: 'sub',
+          subjectTitle: 'Sub', subjectClosed: false,
+          role: 'user', content: 'Hello.', segments: [],
+          createdAt: '2026-01-01T00:00:00.000Z', kind: 'acknowledgment',
+          backingEntityId: null, resolution: null,
+        }]}
+      />,
+    )
+
+    // The friendly label must appear in the rendered header.
+    expect(html).toContain('Reply')
+    // The raw enum may still live in a data attribute (data-message-kind) for tooling,
+    // but must NOT appear in a human-visible header span.
+    expect(html).not.toMatch(/>[^<]*acknowledgment[^<]*<\/span>/)
+  })
+
+  it('hides backingEntityId behind a details disclosure', () => {
+    const html = renderToStaticMarkup(
+      <ConversationTimeline
+        entries={[{
+          id: 'val', seq: 1, threadId: 'sub', subjectId: 'sub',
+          subjectTitle: 'Sub', subjectClosed: false,
+          role: 'assistant', content: 'Checked.', segments: [],
+          createdAt: '2026-01-01T00:00:00.000Z', kind: 'validation',
+          backingEntityId: 'task-uuid-abc123', resolution: null,
+        }]}
+      />,
+    )
+
+    // The UUID is in the DOM but inside a <details> — not inline-visible text
+    expect(html).toContain('task-uuid-abc123')
+    expect(html).toContain('<details')
+    expect(html).toContain('<summary')
+  })
+
   it('renders an error state instead of a blank pane when loadError is set and entries are empty', () => {
     const error = new Error('GET /api/chat/conversation → response failed schema validation')
     const html = renderToStaticMarkup(

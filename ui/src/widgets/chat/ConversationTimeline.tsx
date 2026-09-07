@@ -1,4 +1,4 @@
-import { Fragment, useRef } from 'react'
+import { Fragment, useRef, useState } from 'react'
 import type { ChatConversationEntry, PreloadedResponse, SubjectBoundary } from '@/shared/schemas'
 import { MemoryBoundaryLine } from './MemoryBoundaryLine'
 import { PreloadedResponses } from './PreloadedResponses'
@@ -33,6 +33,20 @@ export interface ConversationTimelineProps {
    */
   loadError?: unknown
 }
+
+/** How many subjects to show on first paint — matches Control Room's steward-timeline cap. */
+const INITIAL_SUBJECTS = 20
+
+/** Maps wire enum values to readable labels so raw enums never appear in visible text. */
+const ENTRY_KIND_LABELS: Record<string, string> = {
+  acknowledgment: 'Reply',
+  notice: 'Notice',
+  validation: 'Validation',
+  situation: 'Situation',
+  context_line: 'Context',
+  'verify/unclassified': 'Verify',
+}
+const friendlyKind = (kind: string): string => ENTRY_KIND_LABELS[kind] ?? kind
 
 const isTextSegment = (segment: unknown): segment is { type: 'text'; text: string } =>
   typeof segment === 'object' && segment !== null &&
@@ -98,6 +112,8 @@ export const ConversationTimeline = ({
   composerHeight = 0,
   loadError,
 }: ConversationTimelineProps) => {
+  const [visibleSubjectCount, setVisibleSubjectCount] = useState(INITIAL_SUBJECTS)
+
   // Mark all notice entries present on first render as already-revealed so
   // TypedBody does not replay the whole backlog when the timeline mounts.
   // This runs synchronously during render (before any layout effects), so
@@ -124,6 +140,13 @@ export const ConversationTimeline = ({
     subjectGroups.get(entry.subjectId)!.push(entry)
   }
 
+  // Paginate: show only the most recent N subjects on first paint.
+  // Older subjects are hidden behind "Show N earlier" so the first paint stays
+  // fast — the same pattern used by the Control Room's steward timeline.
+  const totalSubjectCount = subjectOrder.length
+  const hiddenSubjectCount = Math.max(0, totalSubjectCount - visibleSubjectCount)
+  const visibleSubjectOrder = subjectOrder.slice(hiddenSubjectCount)
+
   // When the fetch failed and there is nothing to render, surface the failure
   // explicitly so the operator can distinguish "no messages yet" from "messages
   // failed to load". An empty timeline with no explanation reads as intentional
@@ -147,7 +170,17 @@ export const ConversationTimeline = ({
 
   return (
     <section aria-label="Conversation timeline" data-testid="conversation-timeline" className="space-y-4">
-      {subjectOrder.map((subjectId) => {
+      {hiddenSubjectCount > 0 && (
+        <button
+          type="button"
+          onClick={() => setVisibleSubjectCount((c) => c + INITIAL_SUBJECTS)}
+          data-testid="show-earlier-button"
+          className="inline-flex min-h-[24px] items-center px-2 py-1 font-mono text-micro uppercase text-foreground underline"
+        >
+          Show {hiddenSubjectCount} earlier
+        </button>
+      )}
+      {visibleSubjectOrder.map((subjectId) => {
         const subjectEntries = subjectGroups.get(subjectId)!
         const isClosed = subjectEntries[0]!.subjectClosed
         const boundary = boundariesBySubject.get(subjectId)
@@ -191,8 +224,15 @@ export const ConversationTimeline = ({
                       <span>{entry.subjectTitle || 'Untitled subject'}</span>
                     )}
                     {!isNotice && <span>closed</span>}
-                    <span className={isNotice ? 'rounded bg-muted-foreground/[0.08] px-1.5 py-0.5' : undefined}>{entry.role} · {entry.kind}</span>
-                    {entry.backingEntityId && <span>{entry.backingEntityId}</span>}
+                    <span className={isNotice ? 'rounded bg-muted-foreground/[0.08] px-1.5 py-0.5' : undefined}>{entry.role} · {friendlyKind(entry.kind)}</span>
+                    {entry.backingEntityId && (
+                      <details className="inline">
+                        <summary className="cursor-pointer font-mono text-micro text-muted-foreground/60 underline decoration-dotted">
+                          details
+                        </summary>
+                        <span className="ml-1 select-all">{entry.backingEntityId}</span>
+                      </details>
+                    )}
                     {entry.resolution === 'resolved' && (
                       <span data-testid="conversation-message-resolved">Resolved</span>
                     )}
@@ -272,8 +312,15 @@ export const ConversationTimeline = ({
                     <span>{entry.subjectTitle || 'Untitled subject'}</span>
                   )}
                   {!isNotice && <span>{entry.subjectClosed ? 'closed' : 'open'}</span>}
-                  <span className={isNotice ? 'rounded bg-muted-foreground/[0.08] px-1.5 py-0.5' : undefined}>{entry.role} · {entry.kind}</span>
-                  {entry.backingEntityId && <span>{entry.backingEntityId}</span>}
+                  <span className={isNotice ? 'rounded bg-muted-foreground/[0.08] px-1.5 py-0.5' : undefined}>{entry.role} · {friendlyKind(entry.kind)}</span>
+                  {entry.backingEntityId && (
+                    <details className="inline">
+                      <summary className="cursor-pointer font-mono text-micro text-muted-foreground/60 underline decoration-dotted">
+                        details
+                      </summary>
+                      <span className="ml-1 select-all">{entry.backingEntityId}</span>
+                    </details>
+                  )}
                   {entry.resolution === 'resolved' && (
                     <span data-testid="conversation-message-resolved">Resolved</span>
                   )}
