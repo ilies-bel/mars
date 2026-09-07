@@ -897,6 +897,7 @@ export const TriageCauseGroupRow = ({
   const [expanded, setExpanded] = useState(false)
   const [pending, setPending] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null)
 
   const kindLabel =
     (KIND_LABEL as Record<string, string | undefined>)[group.kind] ??
@@ -915,23 +916,43 @@ export const TriageCauseGroupRow = ({
       ? group.signature.split('/').slice(1).join('/')
       : group.signature)
 
-  // Primary bulk verb from the first member — all members share the same
-  // recipe so the first non-copy verb is representative of the group's action.
-  const sampleItem = group.members[0]
-  const bulkVerb =
-    sampleItem?.verbs?.find((v) => v.op !== 'copy' && v.style !== 'snooze') ??
-    sampleItem?.verbs?.[0] ??
-    null
+  // Primary bulk verb: use the kind's recipe-declared bulkResolveVerb (HR-3).
+  // A kind that declares none shows only Snooze — no invented action.
+  const bulkVerb = group.bulkResolveVerb ?? null
 
   const handleBulkAction = useCallback(async () => {
     if (!bulkVerb || pending !== null) return
+    const total = group.members.length
     setPending(bulkVerb.op)
+    setProgress({ done: 0, total })
+    setError(null)
+    let failCount = 0
+    await Promise.allSettled(
+      group.members.map(async (member) => {
+        try {
+          await dispatchAlertVerb(member.id, member.entityId, bulkVerb.op)
+        } catch {
+          failCount++
+        } finally {
+          setProgress((p) => (p ? { ...p, done: p.done + 1 } : p))
+        }
+      }),
+    )
+    await qc.invalidateQueries({ queryKey: ['action-queue'] })
+    setProgress(null)
+    setPending(null)
+    if (failCount > 0) {
+      setError(`${failCount} of ${total} failed — the rest re-appear above`)
+    }
+  }, [bulkVerb, pending, group.members, qc])
+
+  const handleSnoozeAll = useCallback(async () => {
+    if (pending !== null) return
+    setPending('snooze')
     setError(null)
     try {
       await Promise.all(
-        group.members.map((member) =>
-          dispatchAlertVerb(member.id, member.entityId, bulkVerb.op),
-        ),
+        group.members.map((member) => snoozeActionQueueItem(member.id, '1h')),
       )
       await qc.invalidateQueries({ queryKey: ['action-queue'] })
     } catch (err) {
@@ -939,7 +960,7 @@ export const TriageCauseGroupRow = ({
     } finally {
       setPending(null)
     }
-  }, [bulkVerb, pending, group.members, qc])
+  }, [pending, group.members, qc])
 
   return (
     <div
@@ -979,9 +1000,19 @@ export const TriageCauseGroupRow = ({
             className="shrink-0 rounded border border-primary/30 bg-primary/10 px-2 py-1 font-mono text-micro font-medium text-primary transition-colors hover:bg-primary/20 disabled:opacity-50"
             data-testid="cause-group-bulk-action"
           >
-            {pending !== null ? '…' : `${bulkVerb.label} all`}
+            {progress !== null
+              ? `${progress.done} of ${progress.total}…`
+              : `${bulkVerb.label} all ${group.count}`}
           </button>
         )}
+        <button
+          disabled={pending !== null}
+          onClick={() => void handleSnoozeAll()}
+          className="shrink-0 rounded border border-border px-2 py-1 font-mono text-micro text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+          data-testid="cause-group-snooze-all"
+        >
+          Snooze all
+        </button>
       </div>
 
       {error && (
@@ -1190,7 +1221,7 @@ export const TriagePage = () => {
   const isLoading = queuePending === true && !hasContent && !isDown
 
   return (
-    <div className="flex h-full flex-col overflow-hidden bg-background" data-testid="triage-page">
+    <div className="flex h-full flex-col overflow-hidden bg-background">
       {/* Header strip */}
       <div className="flex shrink-0 items-center border-b border-border px-5 py-3.5 shadow-sm">
         <h1 className="font-mono text-title font-semibold text-foreground">

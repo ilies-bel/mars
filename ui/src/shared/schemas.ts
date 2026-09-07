@@ -727,6 +727,12 @@ export const actionQueueGroupRowSchema = z.object({
   previewIds: z.array(z.string()).default([]),
   /** Full member rows — present for rendering the expanded list and bulk actions. */
   members: z.array(actionQueueItemSchema),
+  /**
+   * Kind's declared bulk-resolve verb — present when the kind declares one
+   * (see Recipe.bulkResolveVerb in action-queue-recipes.ts). Absent means
+   * only Snooze is offered on the group card.
+   */
+  bulkResolveVerb: alertVerbSchema.optional(),
 })
 
 /** A single action-queue item in its wire envelope. */
@@ -2043,7 +2049,7 @@ const hotPathEntrySchema = z.object({
 
 export const hotPathsResponseSchema = z.object({
   paths: z.array(hotPathEntrySchema),
-  window: z.enum(['30d', '90d', 'all']),
+  window: z.enum(['7d', '30d', '90d']),
   total: z.number(),
 })
 
