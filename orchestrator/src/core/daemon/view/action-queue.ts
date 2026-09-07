@@ -1601,6 +1601,17 @@ export const buildActionQueueView = async ({
       humanSummary = 'Mars is attempting a repair — no action needed yet'
     }
 
+    // Title normalisation (HR-3, DEC-18): when the recipe provides a human
+    // summary and no operational copy or failure-registry title has already
+    // overridden the raiser's machine string, promote humanSummary to title so
+    // BOTH the CLI (`humanSummary || title`) and the UI (`title`) display the
+    // same human copy. Without this, the UI shows the machine string the raiser
+    // stamped (e.g. "Slicer failed for PRD 04b4e4e0-…") while the CLI shows
+    // the recipe sentence ("Mars could not turn this PRD into tasks — …").
+    if (humanSummary && operationalCopy === null && !REGISTRY_TITLED_KINDS.has(row.kind)) {
+      title = humanSummary
+    }
+
     // Extract conditionKey for health-check-alert rows. Used by the Steward
     // to auto-close open rows when the associated condition is gone.
     const conditionKey: string | null =
@@ -2077,6 +2088,11 @@ export const buildActionQueueHistoryView = async ({
     // Apply the same operationalCopy humanSummary override as the live view
     // (see the matching comment in buildActionQueueView above).
     const historyHumanSummary = operationalCopy?.humanSummary ?? historyRecipeFields.humanSummary
+
+    // Title normalisation — same rule as buildActionQueueView (HR-3, DEC-18).
+    if (historyHumanSummary && operationalCopy === null && !REGISTRY_TITLED_KINDS.has(row.kind)) {
+      title = historyHumanSummary
+    }
 
     let historyItemClass: ActionQueueClass = isActionQueueKind(row.kind)
       ? classifyKind(row.kind)

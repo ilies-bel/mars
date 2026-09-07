@@ -21,7 +21,8 @@ import { hasFlag } from '../args'
 import type { Command, CommandDeps } from '../command'
 import { errorMessage, readDaemonPort } from './shared'
 import type { ActionQueueRow } from '../../core/daemon/view/action-queue'
-import { groupActionQueueRows, formatGroupRowTsv } from '../action-queue-group'
+import type { ActionQueueGroupedRow } from '../../core/daemon/view/action-queue-group'
+import { formatGroupRowTsv } from '../action-queue-group'
 
 const LEAN_PREVIEW = 3
 
@@ -117,7 +118,7 @@ export const fetchActionQueueView = async (
   port: number,
   filter: string,
   opts?: { kinds?: ReadonlySet<string>; signal?: AbortSignal },
-): Promise<ActionQueueRow[]> => {
+): Promise<ActionQueueGroupedRow[]> => {
   const url = new URL(`http://127.0.0.1:${port}/view/action-queue`)
   url.searchParams.set('filter', filter)
   if (opts?.kinds && opts.kinds.size > 0) {
@@ -126,7 +127,7 @@ export const fetchActionQueueView = async (
   const signal = opts?.signal ?? AbortSignal.timeout(DAEMON_VIEW_TIMEOUT_MS)
   const res = await fetch(url.toString(), { signal })
   if (!res.ok) throw new Error(`daemon returned ${res.status}`)
-  return (await res.json()) as ActionQueueRow[]
+  return (await res.json()) as ActionQueueGroupedRow[]
 }
 
 /**
@@ -203,10 +204,12 @@ const actionQueueList: Command = {
       deps.err(NO_DAEMON_MSG)
       return { code: 1 }
     }
-    let rows: ActionQueueRow[]
+    let groupedRows: ActionQueueGroupedRow[]
     const fetchStartedAt = Date.now()
     try {
-      rows = await fetchActionQueueView(port, filter, {
+      // The endpoint applies groupActionQueueRows server-side (HR-3) so both
+      // the CLI and the UI receive the same pre-grouped rows.
+      groupedRows = await fetchActionQueueView(port, filter, {
         kinds: kindSet.size > 0 ? kindSet : undefined,
       })
     } catch (err) {
@@ -214,15 +217,22 @@ const actionQueueList: Command = {
       deps.err(actionQueueViewErrorMessage(err, elapsedMs, DAEMON_VIEW_TIMEOUT_MS))
       return { code: 1 }
     }
+    // Client-side kind filter: the daemon pre-filters by kinds when `--kind`
+    // is set but a client-side pass guarantees correctness in case the daemon
+    // returns a superset (e.g. a group spanning multiple kinds).
     if (kindSet.size > 0) {
-      rows = rows.filter((row) => kindSet.has(row.kind))
+      groupedRows = groupedRows.filter((gr) =>
+        gr.type === 'group' ? kindSet.has(gr.kind) : kindSet.has(gr.row.kind),
+      )
     } else if (filter === 'open') {
       // Draft proposals are a backlog, not operational alerts. Exclude them from
       // the default open listing so the count reflects rows that need an operator
       // decision. They remain accessible via --kind draft-proposal.
-      rows = rows.filter((row) => row.kind !== 'draft-proposal')
+      groupedRows = groupedRows.filter((gr) =>
+        gr.type === 'group' ? gr.kind !== 'draft-proposal' : gr.row.kind !== 'draft-proposal',
+      )
     }
-    if (rows.length === 0) {
+    if (groupedRows.length === 0) {
       // Machine-readable stdout stays empty on a clear queue — a poller that
       // diffs stdout lines must never see this as a row. The human-readable
       // confirmation goes to stderr so interactive operators still see it,
@@ -231,16 +241,18 @@ const actionQueueList: Command = {
       deps.err('action queue empty')
       return { code: 0 }
     }
-    // Apply signature-based grouping unless the caller opted out. Singletons
-    // (groups of one) are passed through as plain items, so --no-group is
-    // redundant for low-cardinality queues but matters for pollers that must
-    // see one line per raw row.
-    const grouped = noGroup ? null : groupActionQueueRows(rows)
+    // --no-group: expand each server-side group back into individual item rows.
+    // The endpoint always returns pre-grouped rows (HR-3); --no-group rebuilds
+    // the flat view for pollers that must see exactly one line per raw row.
+    const displayRows: ActionQueueGroupedRow[] = noGroup
+      ? groupedRows.flatMap((gr) =>
+          gr.type === 'group'
+            ? gr.members.map((r) => ({ type: 'item' as const, row: r }))
+            : [gr],
+        )
+      : groupedRows
     if (lean) {
       // Lean mode: count per kind, preview first LEAN_PREVIEW items.
-      // When grouping is active, count by visible rendered lines, not raw rows,
-      // so the summary stays coherent with what the operator sees.
-      const displayRows = grouped ?? rows.map((r) => ({ type: 'item' as const, row: r }))
       const counts: Record<string, number> = {}
       for (const dr of displayRows) {
         const kind = dr.type === 'group' ? dr.kind : dr.row.kind
@@ -260,7 +272,6 @@ const actionQueueList: Command = {
       if (overflow > 0) deps.out(`  ... +${overflow} more`)
     } else {
       // Full listing: one tab-separated line per visible row.
-      const displayRows = grouped ?? rows.map((r) => ({ type: 'item' as const, row: r }))
       for (const dr of displayRows) {
         if (dr.type === 'group') {
           deps.out(formatGroupRowTsv(dr))
@@ -301,18 +312,23 @@ const actionQueueShow: Command = {
       deps.err(NO_DAEMON_MSG)
       return { code: 1 }
     }
-    let rows: ActionQueueRow[]
     const showFetchStartedAt = Date.now()
+    let allRows: ActionQueueRow[]
     try {
-      rows = await fetchActionQueueView(port, 'all')
+      const grouped = await fetchActionQueueView(port, 'all')
+      // Flatten groups into individual rows for the show command (detail pane
+      // operates at the individual-row level, not the group level).
+      allRows = grouped.flatMap((gr) =>
+        gr.type === 'group' ? gr.members : [gr.row],
+      )
     } catch (err) {
       const elapsedMs = Date.now() - showFetchStartedAt
       deps.err(actionQueueViewErrorMessage(err, elapsedMs, DAEMON_VIEW_TIMEOUT_MS))
       return { code: 1 }
     }
     const row =
-      rows.find((r) => r.id === id || r.entityId === id) ??
-      rows.find((r) => r.id.startsWith(id) || r.entityId.startsWith(id))
+      allRows.find((r) => r.id === id || r.entityId === id) ??
+      allRows.find((r) => r.id.startsWith(id) || r.entityId.startsWith(id))
     if (!row) {
       deps.err(`no action queue item matching ${id}`)
       return { code: 1 }
@@ -416,17 +432,20 @@ const actionQueueResolve: Command = {
     // handful of condition kinds that can be acknowledged via the CLI.
     const port = await readDaemonPort(deps.ctx.stateDir)
     if (port !== null) {
-      let rows: ActionQueueRow[]
+      let allRows: ActionQueueRow[]
       try {
-        rows = await fetchActionQueueView(port, 'all', {
+        const grouped = await fetchActionQueueView(port, 'all', {
           signal: AbortSignal.timeout(10_000),
         })
+        allRows = grouped.flatMap((gr) =>
+          gr.type === 'group' ? gr.members : [gr.row],
+        )
       } catch {
-        rows = []
+        allRows = []
       }
       const derivedRow =
-        rows.find((r) => r.id === id || r.entityId === id) ??
-        rows.find((r) => r.id.startsWith(id) || r.entityId.startsWith(id))
+        allRows.find((r) => r.id === id || r.entityId === id) ??
+        allRows.find((r) => r.id.startsWith(id) || r.entityId.startsWith(id))
       if (derivedRow?.kind === 'daemon-died') {
         // Acknowledge daemon-died: call the daemon's dismiss-daemon-died endpoint
         // which deletes the crash marker file. The derived row disappears on the

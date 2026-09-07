@@ -794,21 +794,24 @@ describe('GET /view/action-queue via HTTP server', () => {
     httpServer = null
   })
 
-  it('returns 200 with ActionQueueRow[] for GET /view/action-queue', async () => {
+  it('returns 200 with grouped ActionQueueRow[] for GET /view/action-queue', async () => {
     const url = `http://127.0.0.1:${httpServer!.port}/view/action-queue`
     const res = await fetch(url)
     expect(res.status).toBe(200)
-    const body = (await res.json()) as ActionQueueRow[]
+    // The endpoint applies groupActionQueueRows before responding (HR-3).
+    // A single stub row has no group partners so it becomes a singleton item row.
+    const body = (await res.json()) as Array<{ type: string; row?: ActionQueueRow }>
     expect(Array.isArray(body)).toBe(true)
-    expect(body[0]!.id).toBe('test-row')
-    expect(body[0]!.title).toContain('filter=open')
+    expect(body[0]!.type).toBe('item')
+    expect(body[0]!.row!.id).toBe('test-row')
+    expect(body[0]!.row!.title).toContain('filter=open')
   })
 
   it('passes filter=all param to viewActionQueue', async () => {
     const url = `http://127.0.0.1:${httpServer!.port}/view/action-queue?filter=all`
     const res = await fetch(url)
     expect(res.status).toBe(200)
-    const body = (await res.json()) as ActionQueueRow[]
-    expect(body[0]!.title).toContain('filter=all')
+    const body = (await res.json()) as Array<{ type: string; row?: ActionQueueRow }>
+    expect(body[0]!.row!.title).toContain('filter=all')
   })
 })

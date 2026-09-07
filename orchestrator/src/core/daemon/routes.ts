@@ -20,6 +20,7 @@ import { FAILURE_KINDS } from '../lib/failure-kinds'
 import { getProvider } from '../lib/deployment/registry'
 import { buildOriginTree } from '../lib/origin-tree'
 import type { DerivedActionQueueFilter } from './view/action-queue'
+import { groupActionQueueRows } from './view/action-queue-group'
 import {
   cursorAfter,
   type TraceEventFilter,
@@ -1794,7 +1795,8 @@ export const registerRoutes = (
           : undefined
       deps.appServices
         .viewActionQueue(filter, kinds ? { kinds } : undefined)
-        .then((rows) => sendJson(res, 200, rows))
+        .then((rows) => groupActionQueueRows(rows))
+        .then((grouped) => sendJson(res, 200, grouped))
         .catch((err: unknown) => sendError(res, err))
       return
     }

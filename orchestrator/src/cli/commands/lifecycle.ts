@@ -51,10 +51,13 @@ const show: Command = {
     const port = await readDaemonPort(deps.ctx.stateDir)
     if (port !== null) {
       try {
-        const rows = await fetchActionQueueView(port, 'all')
+        const grouped = await fetchActionQueueView(port, 'all')
+        const allRows = grouped.flatMap((gr) =>
+          gr.type === 'group' ? gr.members : [gr.row],
+        )
         const alertRow =
-          rows.find((r) => r.id === id || r.entityId === id) ??
-          rows.find((r) => r.id.startsWith(id) || r.entityId.startsWith(id))
+          allRows.find((r) => r.id === id || r.entityId === id) ??
+          allRows.find((r) => r.id.startsWith(id) || r.entityId.startsWith(id))
         if (alertRow) {
           renderActionQueueDetail(deps, alertRow)
           return { code: 0 }
