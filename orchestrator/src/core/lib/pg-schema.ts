@@ -2171,6 +2171,23 @@ const DDL: readonly string[] = [
   // Both are fixed at the first turn and persist across daemon restarts.
   `ALTER TABLE chat_threads ADD COLUMN IF NOT EXISTS model_id text`,
   `ALTER TABLE chat_threads ADD COLUMN IF NOT EXISTS thinking_effort text`,
+
+  // mars-e3ea634a (PRD cd54a867, slice 1): Domain Flow DDL.
+  // One Domain Flow per Arc — models the ordered sequence of Domain Events and
+  // Policies the change touches so the operator can steer domain impact at
+  // planning time. `nodes` is a JSONB array of DomainFlowNode (discriminated
+  // union: event | policy | hotspot). `frozen_at` is set once the flow is
+  // accepted by the operator; a NULL value means the flow is still a draft.
+  `CREATE TABLE IF NOT EXISTS domain_flows (
+    id         TEXT        PRIMARY KEY,
+    arc_id     TEXT        NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    name       TEXT        NOT NULL,
+    nodes      JSONB       NOT NULL DEFAULT '[]',
+    frozen_at  TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS domain_flows_arc_id_idx ON domain_flows(arc_id)`,
 ]
 
 /**
@@ -2340,6 +2357,7 @@ export const SCHEMA_TABLES: readonly string[] = [
   'health_silences',
   'health_postures',
   'notice_dismissals',
+  'domain_flows',
 ]
 
 /**
