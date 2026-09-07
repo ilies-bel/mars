@@ -15,6 +15,21 @@
  * ~400 tokens this prompt is currently below the provider's ~1024-token
  * caching minimum, so no hits are expected today — weigh that before changing
  * its size.
+ *
+ * ## Domain Flow contract
+ *
+ * Two sections are appended to the base prompt via exported stanza constants:
+ *
+ * - `DOMAIN_FLOW_AUTHORING_STANZA` — teaches the agent how to produce a
+ *   Domain Flow during Arc planning. Consumed by the "Chat system prompt —
+ *   Domain Flow authoring instructions" slice.
+ * - `DOMAIN_FLOW_USER_STORY_STANZA` — teaches the agent how to derive user
+ *   stories from an existing Domain Flow. Consumed by the "Chat prompt — user
+ *   story derivation from Domain Flow" slice.
+ *
+ * The shared TypeScript types (`DomainEvent`, `DomainPolicy`,
+ * `DomainFlowStep`, `DomainFlow`) live here so both consumer slices import
+ * from a single canonical location.
  */
 
 import { readFile } from 'node:fs/promises'
@@ -100,6 +115,143 @@ Daemon restarts: restarting the daemon ends the current chat run — the
 daemon shuts down while this turn is still in flight. Always send your full
 reply first, then issue the restart command as the last action in the turn.
 If you run \`mars daemon restart\` mid-reply the turn will be cut short.`
+
+// ---------------------------------------------------------------------------
+// Domain Flow — shared type contract
+// ---------------------------------------------------------------------------
+
+/**
+ * A named business occurrence that something in the system produced.
+ *
+ * Convention: PascalCase verb-noun, e.g. "TaskEnqueued", "WorkerAssigned".
+ */
+export interface DomainEvent {
+  /** PascalCase verb-noun, e.g. "TaskEnqueued". */
+  name: string
+  /** One sentence: what happened and what it signals to the domain. */
+  description: string
+}
+
+/**
+ * A named rule that reacts to one or more Domain Events and produces a
+ * side-effect or state transition.
+ *
+ * Convention: PascalCase noun-phrase, e.g. "DispatchGate", "RetryBudget".
+ */
+export interface DomainPolicy {
+  /** PascalCase noun-phrase, e.g. "DispatchGate". */
+  name: string
+  /** Domain Event name(s) that trigger this policy. */
+  triggeredBy: string[]
+  /** What the policy does in response. */
+  action: string
+}
+
+/** One step in a Domain Flow — either an event or a policy. */
+export type DomainFlowStep =
+  | { type: 'event'; event: DomainEvent }
+  | { type: 'policy'; policy: DomainPolicy }
+
+/**
+ * The full Domain Flow artifact for one Arc.
+ *
+ * A Domain Flow is the named, ordered sequence of Domain Events and Domain
+ * Policies that describes the business behaviour a change alters. It is
+ * produced during an Arc's planning phase so the operator can steer domain
+ * impact at planning time rather than discovering it in the diff.
+ */
+export interface DomainFlow {
+  /** Short title identifying the flow, e.g. "Task dispatch cycle". */
+  title: string
+  /** One-paragraph summary of the business process being described. */
+  summary: string
+  /** Ordered sequence of events and policies; keep to ≤ 10 steps. */
+  steps: DomainFlowStep[]
+}
+
+// ---------------------------------------------------------------------------
+// Domain Flow authoring stanza
+// (consumed by: "Chat system prompt — Domain Flow authoring instructions")
+// ---------------------------------------------------------------------------
+
+/**
+ * Instruction stanza that teaches the chat agent how to produce a Domain Flow
+ * during Arc shaping / grill posture.
+ *
+ * Append to the base system prompt so the agent can author a Domain Flow when
+ * a proposal or Arc involves a significant change to business behaviour.
+ */
+export const DOMAIN_FLOW_AUTHORING_STANZA = `
+## Domain Flows
+
+When shaping a proposal or grilling a new Arc, produce a Domain Flow for
+each significant change path — one flow per Arc. A Domain Flow is an
+ordered sequence of named Domain Events and Domain Policies that captures
+the business behaviour the change alters.
+
+Emit flows in a fenced \`\`\`domain-flow block. Use this format strictly:
+
+\`\`\`domain-flow
+title: <short phrase, e.g. "Task dispatch cycle">
+summary: <one paragraph>
+
+Event: <PascalCase verb-noun, e.g. "TaskEnqueued">
+  — <one sentence: what happened and what it signals>
+
+Policy: <PascalCase noun-phrase, e.g. "DispatchGate">
+  triggers on: <Event name(s)>
+  — <what the policy does in response>
+\`\`\`
+
+Rules:
+- Alternate Event → Policy → Event … naturally; policies may follow any
+  event they react to.
+- Keep flows to ≤ 10 steps. Stop when the operator confirms the flow.
+- Do not invent events or policies that your code search cannot support.
+  Name only what the change actually produces or reacts to.
+- One Domain Flow per Arc. Revise in place on operator feedback; do not
+  emit a second block while the first is unconfirmed.`
+
+// ---------------------------------------------------------------------------
+// Domain Flow → user story derivation stanza
+// (consumed by: "Chat prompt — user story derivation from Domain Flow")
+// ---------------------------------------------------------------------------
+
+/**
+ * Instruction stanza that teaches the chat agent how to derive user stories
+ * from an existing Domain Flow.
+ *
+ * Append to the base system prompt so the agent knows the derivation protocol
+ * when the operator asks to turn a Domain Flow into user stories.
+ */
+export const DOMAIN_FLOW_USER_STORY_STANZA = `
+## Deriving user stories from a Domain Flow
+
+When the operator asks to derive user stories from a Domain Flow, produce
+one story per Domain Event that has a visible effect on a user or external
+system. Skip internal-only events with no observable user impact.
+
+Format each story strictly as:
+
+As a <role>, I want <action>, so that <outcome>.
+Acceptance: <specific, testable criterion>.
+
+Emit the stories as a numbered list inside a fenced \`\`\`user-stories block.
+Stop after deriving; do not enqueue tasks unless the operator asks.
+
+Rules:
+- Role: use the real actor ("developer", "operator", "end user") — never
+  "user" alone unless no more specific role exists.
+- Action: a concrete capability, not a feeling ("I want to see task status"
+  not "I want to feel informed").
+- Outcome: a business value, not a re-statement of the action.
+- Acceptance: one sentence, starts with a verb, is unambiguously checkable.
+- If the Domain Flow has no confirmed steps, ask the operator to share it
+  before deriving stories.`
+
+// ---------------------------------------------------------------------------
+// Resolved prompt contract
+// ---------------------------------------------------------------------------
 
 export interface ResolvedChatSystemPrompt {
   prompt: string
