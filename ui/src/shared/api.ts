@@ -386,7 +386,7 @@ export const fetchStatusCounts = async (
 }
 
 export const fetchHotPaths = async (
-  opts: { window?: '7d' | '30d' | '90d'; group?: 'file' | 'dir'; projectId?: string },
+  opts: { window?: '30d' | '90d' | 'all'; group?: 'file' | 'dir'; projectId?: string },
   signal?: AbortSignal,
 ): Promise<HotPathsResponse> => {
   const qs = new URLSearchParams()

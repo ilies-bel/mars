@@ -87,11 +87,6 @@ const isExcluded = (file: string): boolean => {
  */
 const SCOPE_PREFIXES: string[] = ['orchestrator/src', 'ui/src', 'packages/']
 
-const isInScope = (file: string): boolean => {
-  if (SCOPE_PREFIXES.length === 0) return true
-  return SCOPE_PREFIXES.some((p) => file.startsWith(p))
-}
-
 // ── SHA-keyed in-process cache ─────────────────────────────────────────────────
 
 interface CacheEntry {

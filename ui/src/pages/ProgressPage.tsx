@@ -23,13 +23,13 @@ import type { HotPathEntry } from '@/shared/schemas'
 // ── Hot paths section ─────────────────────────────────────────────────────────
 
 interface HotPathsSectionProps {
-  window: '7d' | '30d' | '90d'
+  window: '30d' | '90d' | 'all'
   group: 'file' | 'dir'
-  onWindowChange: (w: '7d' | '30d' | '90d') => void
+  onWindowChange: (w: '30d' | '90d' | 'all') => void
   onGroupChange: (g: 'file' | 'dir') => void
 }
 
-const WINDOWS = ['7d', '30d', '90d'] as const
+const WINDOWS = ['30d', '90d', 'all'] as const
 const GROUPS = ['file', 'dir'] as const
 
 const HotPathsSection = ({
@@ -180,7 +180,7 @@ export const ProgressPage = () => {
   )
 
   // Hot-paths controls — window and group toggles for the hot-paths tab.
-  const [hotPathsWindow, setHotPathsWindow] = useState<'7d' | '30d' | '90d'>('7d')
+  const [hotPathsWindow, setHotPathsWindow] = useState<'30d' | '90d' | 'all'>('90d')
   const [hotPathsGroup, setHotPathsGroup] = useState<'file' | 'dir'>('file')
 
   const [selectedProposalId, setSelectedProposalId] = useState<string | null>(

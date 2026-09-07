@@ -2043,7 +2043,7 @@ const hotPathEntrySchema = z.object({
 
 export const hotPathsResponseSchema = z.object({
   paths: z.array(hotPathEntrySchema),
-  window: z.enum(['7d', '30d', '90d']),
+  window: z.enum(['30d', '90d', 'all']),
   total: z.number(),
 })
 

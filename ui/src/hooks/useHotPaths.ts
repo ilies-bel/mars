@@ -4,7 +4,7 @@ import { useFocusedProject } from '@/shared/useFocusedProject'
 import type { HotPathsResponse } from '@/shared/schemas'
 
 export interface UseHotPathsOptions {
-  window: '7d' | '30d' | '90d'
+  window: '30d' | '90d' | 'all'
   group: 'file' | 'dir'
 }
 

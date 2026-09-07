@@ -91,6 +91,13 @@ vi.mock('./StewardPage', async (importOriginal) => {
   }
 })
 
+// useHotPaths — default empty result so the HOT PATH section renders without
+// a real daemon. Individual tests can override for specific assertions.
+const mockUseHotPaths = vi.fn()
+vi.mock('@/hooks/useHotPaths', () => ({
+  useHotPaths: (...args: unknown[]) => mockUseHotPaths(...args),
+}))
+
 /** Default empty progress state used by tests that don't care about engine drift. */
 const emptyProgressState = () => ({
   tasks: [],
@@ -149,6 +156,7 @@ describe('ControlRoomPage — Steward history section', () => {
     })
     mockUseActionQueue.mockReturnValue({ items: [], serverGroups: [], error: null, isPending: false })
     mockUseProgress.mockReturnValue(emptyProgressState())
+    mockUseHotPaths.mockReturnValue({ data: undefined, isLoading: true, error: null })
   })
 
   it('renders the Steward history section', () => {
@@ -176,6 +184,7 @@ describe('ControlRoomPage – NOW block dispatch indicator', () => {
   beforeEach(() => {
     mockUseActionQueue.mockReturnValue({ items: [], serverGroups: [], error: null, isPending: false })
     mockUseProgress.mockReturnValue(emptyProgressState())
+    mockUseHotPaths.mockReturnValue({ data: undefined, isLoading: true, error: null })
   })
 
   it('does not render the "Live" label when dispatch is paused', () => {
@@ -211,6 +220,7 @@ describe('ControlRoomPage — Gates section', () => {
   beforeEach(() => {
     mockUseActionQueue.mockReturnValue({ items: [], serverGroups: [], error: null, isPending: false })
     mockUseProgress.mockReturnValue(emptyProgressState())
+    mockUseHotPaths.mockReturnValue({ data: undefined, isLoading: true, error: null })
   })
 
   it('renders the Gates section with testid', () => {
@@ -269,6 +279,7 @@ describe('ControlRoomPage — Gates section run status', () => {
     })
     mockUseActionQueue.mockReturnValue({ items: [], serverGroups: [], error: null, isPending: false })
     mockUseProgress.mockReturnValue(emptyProgressState())
+    mockUseHotPaths.mockReturnValue({ data: undefined, isLoading: true, error: null })
   })
 
   const makeGate = (overrides: Partial<import('@/shared/api').VerifyGate> = {}): import('@/shared/api').VerifyGate => ({
@@ -466,6 +477,7 @@ describe('ControlRoomPage — Engine section: no drift', () => {
     mockUseDispatchState.mockReturnValue({ paused: false, reason: null, since: null, detail: null })
     mockUseActionQueue.mockReturnValue({ items: [], serverGroups: [], error: null, isPending: false })
     mockUseProgress.mockReturnValue(emptyProgressState())
+    mockUseHotPaths.mockReturnValue({ data: undefined, isLoading: true, error: null })
   })
 
   it('does not render the engine section when no drift is detected', () => {
@@ -485,6 +497,7 @@ describe('ControlRoomPage — Engine section: drift detected, no tasks in flight
       isPending: false,
     })
     mockUseProgress.mockReturnValue(emptyProgressState())
+    mockUseHotPaths.mockReturnValue({ data: undefined, isLoading: true, error: null })
     mockInvokeAction.mockResolvedValue(undefined)
     vi.useFakeTimers()
   })
@@ -543,6 +556,7 @@ describe('ControlRoomPage — Engine section: drift detected, tasks in flight', 
         'In progress': [task1, task2, task3],
       },
     })
+    mockUseHotPaths.mockReturnValue({ data: undefined, isLoading: true, error: null })
     mockInvokeAction.mockResolvedValue(undefined)
     vi.useFakeTimers()
   })
@@ -596,5 +610,120 @@ describe('ControlRoomPage — Engine section: drift detected, tasks in flight', 
     })
 
     expect(mockInvokeAction).toHaveBeenCalledWith('restart-daemon')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// HOT PATH section
+// ---------------------------------------------------------------------------
+
+describe('ControlRoomPage — HOT PATH section', () => {
+  const defaultSetup = () => {
+    mockUseDispatchState.mockReturnValue({ paused: false, reason: null, since: null, detail: null })
+    mockUseActionQueue.mockReturnValue({ items: [], serverGroups: [], error: null, isPending: false })
+    mockUseProgress.mockReturnValue(emptyProgressState())
+  }
+
+  it('renders the hot-path section container', () => {
+    defaultSetup()
+    mockUseHotPaths.mockReturnValue({ data: undefined, isLoading: true, error: null })
+    const html = renderControlRoom()
+    expect(html).toContain('data-testid="hot-path-section"')
+  })
+
+  it('shows a loading state while data is pending', () => {
+    defaultSetup()
+    mockUseHotPaths.mockReturnValue({ data: undefined, isLoading: true, error: null })
+    const html = renderControlRoom()
+    expect(html).toContain('Loading')
+  })
+
+  it('renders the circle-packing SVG and top-10 list when data is available', () => {
+    defaultSetup()
+    mockUseHotPaths.mockReturnValue({
+      data: {
+        paths: [
+          {
+            path: 'orchestrator/src/core/daemon/server.ts',
+            changes: 333,
+            tasks: [],
+            lastChangedAt: new Date().toISOString(),
+            touchedByHumans: 100,
+            touchedByMars: 233,
+          },
+          {
+            path: 'ui/src/pages/ChatPage.tsx',
+            changes: 143,
+            tasks: [],
+            lastChangedAt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
+            touchedByHumans: 50,
+            touchedByMars: 93,
+          },
+        ],
+        window: '90d' as const,
+        total: 2,
+      },
+      isLoading: false,
+      error: null,
+    })
+    const html = renderControlRoom()
+    expect(html).toContain('data-testid="hot-path-top10"')
+    // The largest file should appear in the top-10 list
+    expect(html).toContain('orchestrator/src/core/daemon/server.ts')
+    expect(html).toContain('333')
+  })
+
+  it('renders the three window selector buttons (30d / 90d / all)', () => {
+    defaultSetup()
+    mockUseHotPaths.mockReturnValue({ data: undefined, isLoading: true, error: null })
+    const html = renderControlRoom()
+    expect(html).toContain('data-testid="hot-path-window-30d"')
+    expect(html).toContain('data-testid="hot-path-window-90d"')
+    expect(html).toContain('data-testid="hot-path-window-all"')
+  })
+
+  it('renders the section label "Hot path"', () => {
+    defaultSetup()
+    mockUseHotPaths.mockReturnValue({ data: undefined, isLoading: true, error: null })
+    const html = renderControlRoom()
+    expect(html).toContain('Hot path')
+  })
+
+  it('renders an SVG with title and desc for accessibility', () => {
+    defaultSetup()
+    mockUseHotPaths.mockReturnValue({
+      data: {
+        paths: [
+          {
+            path: 'orchestrator/src/core/daemon/server.ts',
+            changes: 333,
+            tasks: [],
+            lastChangedAt: new Date().toISOString(),
+            touchedByHumans: 100,
+            touchedByMars: 233,
+          },
+        ],
+        window: '90d' as const,
+        total: 1,
+      },
+      isLoading: false,
+      error: null,
+    })
+    const html = renderControlRoom()
+    // SVG must have an accessible title and description
+    expect(html).toContain('<title>')
+    expect(html).toContain('<desc>')
+    expect(html).toContain('aria-label="Hot path churn diagram"')
+  })
+
+  it('shows empty state when paths array is empty', () => {
+    defaultSetup()
+    mockUseHotPaths.mockReturnValue({
+      data: { paths: [], window: '90d' as const, total: 0 },
+      isLoading: false,
+      error: null,
+    })
+    const html = renderControlRoom()
+    expect(html).toContain('data-testid="hot-path-empty"')
   })
 })

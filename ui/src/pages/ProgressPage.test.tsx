@@ -58,7 +58,7 @@ mock.module('@/entities/frameworkUpdate/useFrameworkUpdate', () => ({
 // real daemon.
 mock.module('@/hooks/useHotPaths', () => ({
   useHotPaths: () => ({
-    data: { paths: [], window: '7d' as const, total: 0 },
+    data: { paths: [], window: '90d' as const, total: 0 },
     isLoading: false,
     error: null,
   }),
