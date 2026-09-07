@@ -30,7 +30,8 @@ export type RouteName = 'progress' | 'events' | 'kpi' | 'studio' | 'chat' | 'ste
  * #/progress[/…]        → progress
  * #/events[/…]          → events
  * #/kpi or #/kpi/<key>  → kpi
- * #/studio/<taskId>     → studio
+ * #/studio              → studio (index listing recent scored runs)
+ * #/studio/<taskId>     → studio (per-task execution tree)
  * everything else       → chat  (also covers the legacy #/action-queue and
  *                                #/todo hashes — the chat page absorbed the
  *                                action queue as projection Threads)
@@ -42,6 +43,7 @@ export const detectRoute = (hash: string): RouteName => {
   if (hash.startsWith('#/progress')) return 'progress'
   if (hash.startsWith('#/events')) return 'events'
   if (hash === '#/kpi' || hash.startsWith('#/kpi/')) return 'kpi'
+  if (hash === '#/studio') return 'studio'
   if (parseStudioRoute(hash) !== null) return 'studio'
   if (parseArcQaRoute(hash) !== null) return 'arc-qa'
   if (hash === '#/steward') return 'steward'
@@ -71,7 +73,9 @@ export const isKnownRoute = (hash: string): boolean => {
   if (hash.startsWith('#/progress')) return true
   if (hash.startsWith('#/events')) return true
   if (hash === '#/kpi' || hash.startsWith('#/kpi/')) return true
-  // Studio requires a task id — #/studio/<taskId> only; bare #/studio is unknown.
+  // Studio: bare #/studio is the index page; #/studio/<taskId> is the per-task view.
+  // #/studio/ (trailing slash, no id) is still unknown — parseStudioRoute returns null for it.
+  if (hash === '#/studio') return true
   if (parseStudioRoute(hash) !== null) return true
   // Arc QA requires a non-empty origin id — a bare `#/arc//qa` redirects.
   if (parseArcQaRoute(hash) !== null) return true

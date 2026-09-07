@@ -46,6 +46,7 @@ import { ChatPage } from '@/pages/ChatPage'
 import { EventsPage } from '@/pages/EventsPage'
 import { KpiDetailPage } from '@/pages/KpiDetailPage'
 import { KpiIndexPage } from '@/pages/KpiIndexPage'
+import { StudioIndexPage } from '@/pages/StudioIndexPage'
 import { StudioPage } from '@/pages/StudioPage'
 import { StewardPage } from '@/pages/StewardPage'
 import { ReflectionsPage } from '@/pages/ReflectionsPage'
@@ -203,7 +204,7 @@ const AppInner = () => {
           ) : route === 'studio' && studioTaskId !== null ? (
             <StudioPage taskId={studioTaskId} />
           ) : route === 'studio' ? (
-            <ProgressPage />
+            <StudioIndexPage />
           ) : route === 'kpi' && kpiKey !== null ? (
             <KpiDetailPage kpiKey={kpiKey} />
           ) : route === 'kpi' ? (

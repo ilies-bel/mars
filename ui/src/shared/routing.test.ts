@@ -562,10 +562,28 @@ describe('studio route integration', () => {
     expect(detectRoute('#/studio/')).toBe('chat')
   })
 
-  it('isKnownRoute accepts #/studio/<id> but rejects a bare #/studio/', () => {
+  it('isKnownRoute accepts #/studio/<id>', () => {
     expect(isKnownRoute('#/studio/mars-abc')).toBe(true)
+  })
+
+  it('isKnownRoute accepts bare #/studio (Studio index)', () => {
+    expect(isKnownRoute('#/studio')).toBe(true)
+  })
+
+  it('isKnownRoute rejects #/studio/ (trailing slash, no id)', () => {
     expect(isKnownRoute('#/studio/')).toBe(false)
-    expect(isKnownRoute('#/studio')).toBe(false)
+  })
+
+  it('detectRoute resolves bare #/studio to studio (index)', () => {
+    expect(detectRoute('#/studio')).toBe('studio')
+  })
+
+  it('resolvePageRoute resolves bare #/studio to studio (index)', () => {
+    expect(resolvePageRoute('#/studio')).toBe('studio')
+  })
+
+  it('detectRoute still falls back to chat for #/studio/ (trailing slash, no id)', () => {
+    expect(detectRoute('#/studio/')).toBe('chat')
   })
 
   it('resolvePageRoute resolves #/studio/<id> to studio', () => {

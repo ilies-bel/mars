@@ -37,8 +37,8 @@ interface NavGroup {
  * Glyph rules:
  *   - Every icon is unique; the wordmark glyph (◆) is not reused here.
  *   - 'proposals' links to the dedicated #/proposals page.
- *   - 'studio' links to #/progress (the entry point to studio per-task);
- *     while on a studio route the Studio entry highlights and Advanced expands.
+ *   - 'studio' links to #/studio (the Studio index of recent scored runs);
+ *     drilling into a task opens #/studio/<taskId>; Advanced auto-expands on both.
  *   - 'triage' ("Needs You") is the default landing page and carries the
  *     pending-decision badge.
  *   - 'steward' (#/steward) has a sidebar entry under Advanced.
@@ -75,7 +75,7 @@ export const SHELL_NAV_GROUPS: NavGroup[] = [
       { route: 'events', label: 'Events', href: '#/events', icon: '⌬' },
       { route: 'reflections', label: 'Reflections', href: '#/reflections', icon: '⚑' },
       { route: 'steward', label: 'Steward', href: '#/steward', icon: '◎' },
-      { route: 'studio', label: 'Studio', href: '#/progress', icon: '⊞' },
+      { route: 'studio', label: 'Studio', href: '#/studio', icon: '⊞' },
     ],
   },
 ]

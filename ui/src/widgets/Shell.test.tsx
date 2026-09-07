@@ -144,11 +144,12 @@ describe('SHELL_NAV_GROUPS', () => {
     expect(steward?.route).toBe('steward')
   })
 
-  it('Studio has a sidebar entry in the Advanced group', () => {
+  it('Studio has a sidebar entry in the Advanced group pointing at #/studio', () => {
     const advanced = SHELL_NAV_GROUPS[3]
     const studio = advanced.entries.find((e) => e.label === 'Studio')
     expect(studio).toBeDefined()
     expect(studio?.route).toBe('studio')
+    expect(studio?.href).toBe('#/studio')
   })
 
   it('Decide group has a description', () => {
@@ -286,15 +287,14 @@ describe('ShellSidebar — active state', () => {
   })
 
   it('progress entry is NOT highlighted when activeRoute is studio', () => {
-    // Studio has its own sidebar entry; Progress no longer claims studio routes.
+    // Studio has its own sidebar entry pointing at #/studio; Progress is a separate
+    // entry pointing at #/progress. Only the Studio entry should be active.
     const html = renderToStaticMarkup(
       <ShellSidebar activeRoute="studio" decisionBadge={0} advancedExpanded={true} />,
     )
     // Only one active entry — the Studio entry, not Progress
     const matches = html.match(/aria-current="page"/g)
     expect(matches).toHaveLength(1)
-    // The active entry href should be the Studio entry (#/progress) not the Progress entry
-    // (both point to #/progress, so we verify no double-active by the count above)
   })
 })
 
@@ -473,8 +473,18 @@ describe('Shell', () => {
     // is always visible without requiring the user to expand manually first.
     const html = renderToStaticMarkup(<Shell hash="#/studio/abc123">page</Shell>)
     expect(html).toContain('aria-current="page"')
-    // Studio entry is visible (Advanced was auto-expanded)
-    expect(html).toContain('href="#/progress"')
+    // Studio entry is visible (Advanced was auto-expanded) and points at #/studio
+    expect(html).toContain('href="#/studio"')
+    const matches = html.match(/aria-current="page"/g)
+    expect(matches).toHaveLength(1)
+  })
+
+  it('auto-expands Advanced and highlights Studio when hash is bare #/studio', () => {
+    // Bare #/studio is the Studio index — Shell should still auto-expand Advanced
+    // and highlight the Studio entry.
+    const html = renderToStaticMarkup(<Shell hash="#/studio">page</Shell>)
+    expect(html).toContain('aria-current="page"')
+    expect(html).toContain('href="#/studio"')
     const matches = html.match(/aria-current="page"/g)
     expect(matches).toHaveLength(1)
   })
