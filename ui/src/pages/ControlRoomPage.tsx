@@ -493,7 +493,7 @@ const GatesSection = () => {
                     <p className="mt-1 font-mono text-micro text-muted-foreground/70">
                       <span className="font-mono">{[gate.cmd, ...gate.args].join(' ')}</span>
                       {gate.scope !== '.' && (
-                        <span className="ml-2 text-muted-foreground/40">in {gate.scope}</span>
+                        <>{' '}<span className="text-muted-foreground/40">in {gate.scope}</span></>
                       )}
                     </p>
                     {/* Show last pass when gate is currently passing */}

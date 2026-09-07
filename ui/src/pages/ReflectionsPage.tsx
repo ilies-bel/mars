@@ -539,7 +539,7 @@ const ReflectionRow = ({ report }: ReflectionRowProps) => (
       {report.thrashingPatternCount > 0 && (
         <span>{report.thrashingPatternCount} thrashing</span>
       )}
-      <span>{report.totalToolCalls.toLocaleString()} tool calls</span>
+      <span>{report.totalToolCalls.toLocaleString()} tool call{report.totalToolCalls !== 1 ? 's' : ''}</span>
       {report.verdictResult.saved > 0 && (
         <span className="text-primary">{report.verdictResult.saved} saved</span>
       )}

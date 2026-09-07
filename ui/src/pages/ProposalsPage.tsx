@@ -29,6 +29,10 @@ import { SkeletonBlock } from '@/components/Skeleton'
 import type { DraftFeature } from '@/shared/schemas'
 import { stripMarkdown } from '@/shared/stripMarkdown'
 
+/** Round floats with more than 2 decimal digits to 2 d.p. (display only). */
+const tidyFloats = (s: string): string =>
+  s.replace(/\d+\.\d{3,}/g, (m) => parseFloat(m).toFixed(2))
+
 // ── Source display ────────────────────────────────────────────────────────────
 
 const SOURCE_LABEL: Record<string, string> = {
@@ -99,11 +103,13 @@ const ProposalRow = ({ draft, onDismiss }: ProposalRowProps) => {
   const sourceLabel = SOURCE_LABEL[draft.source] ?? draft.source
   const chipClass =
     SOURCE_CHIP_CLASS[draft.source] ?? 'text-muted-foreground border-border'
+  // Title — strip markdown tokens (backticks, headings) and round raw floats.
+  const cleanTitle = tidyFloats(stripMarkdown(draft.title))
   // Body preview — strip markdown and collapse newlines to spaces for the
   // clamped view. Legacy (pre-split) rows may still carry a multi-paragraph
   // `problem`; collapsing newlines keeps the preview readable. When expanded,
   // still show markdown-stripped text with whitespace preserved.
-  const strippedProblem = stripMarkdown(draft.problem)
+  const strippedProblem = tidyFloats(stripMarkdown(draft.problem))
   const preview = strippedProblem.replace(/\s*\n\s*/g, ' ').trim()
 
   const [grillState, setGrillState] = useState<
@@ -189,7 +195,7 @@ const ProposalRow = ({ draft, onDismiss }: ProposalRowProps) => {
         href={proposalHash(draft.id, 'proposals')}
         className="mb-1 block line-clamp-2 font-mono text-title font-semibold leading-snug text-foreground hover:underline"
       >
-        {draft.title}
+        {cleanTitle}
       </a>
 
       {/* Body preview — 3 lines max when collapsed; full text when expanded */}

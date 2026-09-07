@@ -71,7 +71,7 @@ export const isKnownRoute = (hash: string): boolean => {
   if (hash.startsWith('#/progress')) return true
   if (hash.startsWith('#/events')) return true
   if (hash === '#/kpi' || hash.startsWith('#/kpi/')) return true
-  // Studio requires a non-empty task id — a bare `#/studio/` redirects.
+  // Studio requires a task id — #/studio/<taskId> only; bare #/studio is unknown.
   if (parseStudioRoute(hash) !== null) return true
   // Arc QA requires a non-empty origin id — a bare `#/arc//qa` redirects.
   if (parseArcQaRoute(hash) !== null) return true

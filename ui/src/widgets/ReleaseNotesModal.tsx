@@ -25,6 +25,7 @@ import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { fetchReleaseNotes, getReleaseNotesCursor, postReleaseNotesViewed } from '@/shared/api'
 import type { ReleaseNoteEntry } from '@/shared/schemas'
+import { stripMarkdown } from '@/shared/stripMarkdown'
 import { relativeTime } from '@/shared/time'
 import { useFocusedProjectId } from '@/shared/useFocusedProject'
 import { computeUnseen } from '@/shared/useUnseenReleaseNotes'
@@ -336,7 +337,7 @@ export const ReleaseNotesModal = ({ onClose }: ReleaseNotesModalProps) => {
                         >
                           <div className="min-w-0 flex-1">
                             <p className="break-words text-title font-medium text-foreground">
-                              {entry.title}
+                              {stripMarkdown(entry.title).replace(/\s*-+\s*$/, '').trim()}
                             </p>
                             <div className="mt-0.5 flex flex-wrap items-center gap-2">
                               <span className="font-mono text-label text-primary">
