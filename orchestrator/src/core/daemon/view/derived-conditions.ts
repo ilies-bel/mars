@@ -737,13 +737,18 @@ function deriveBaselineBrokenConditions(
     caughtTaskIds.length > 0
       ? `Integration branch fails required gate: ${failingGateName ?? 'unknown gate'} — caught ${caughtTaskIds.length} task failure${caughtTaskIds.length === 1 ? '' : 's'}`
       : `Integration branch fails required gate: ${failingGateName ?? 'unknown gate'}`
+  const remedyNote =
+    `Fix the failing gate — dispatch resumes automatically once a commit lands and the gate passes.` +
+    ` Do NOT run 'mars operator set dispatch on': the baseline health checker re-asserts the pause` +
+    ` on its next run because the branch still fails the gate.`
+  const body = output ? `${output}\n\n${remedyNote}` : remedyNote
   return [
     {
       id: deriveId('baseline-broken', 'baseline-broken'),
       kind: 'baseline-broken',
       priority: 'urgent',
       title,
-      body: output,
+      body,
       payload: {
         failingGateName,
         gateOutput,

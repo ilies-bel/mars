@@ -32,7 +32,7 @@ const PRODUCER_LEVER_SPECS: readonly ProducerLeverSpec[] = [
   { key: 'terminal-matcher', defaultAutonomyLevel: 'ask' },
 ] as const
 const KNOWN_PRODUCER_KEYS: readonly string[] = PRODUCER_LEVER_SPECS.map((s) => s.key)
-import { describePauseState } from '../../core/daemon/pause-state'
+import { describePauseState, pauseResumeHint } from '../../core/daemon/pause-state'
 import type { DispatchPauseState } from '../../core/daemon/pause-state'
 import {
   captureDaemonBootStderr,
@@ -283,9 +283,7 @@ const daemonStatus: Command = {
     }
     const pauseLine = describePauseState(data.pause)
     if (pauseLine !== null) {
-      deps.out(
-        `⏸ PAUSED (${pauseLine}) — dispatch suspended; run \`mars operator set dispatch on\` to resume`,
-      )
+      deps.out(`⏸ PAUSED (${pauseLine}) — dispatch suspended; ${pauseResumeHint(data.pause)}`)
     }
     deps.out(`pid:        ${data.pid}`)
     deps.out(`startedAt:  ${data.startedAt}`)

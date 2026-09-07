@@ -43,7 +43,7 @@ import {
 } from '../../core/daemon/config'
 import { ALL_THINKING_EFFORT_IDS } from '../../core/workers/model-catalog'
 import { isDaemonAlive } from '../../core/daemon/paths'
-import { describePauseState } from '../../core/daemon/pause-state'
+import { describePauseState, pauseResumeHint } from '../../core/daemon/pause-state'
 import type { DispatchPauseState } from '../../core/daemon/pause-state'
 import {
   computeBudgetStatus,
@@ -156,7 +156,7 @@ const operatorStatus: Command = {
         `dispatch: ${pauseLine === null ? 'on' : `paused (${pauseLine})`}  in-flight: ${status.inFlight.length}`,
       )
       if (pauseLine !== null) {
-        deps.out("resume with 'mars operator set dispatch on'")
+        deps.out(pauseResumeHint(status.pause))
       }
     }
     const budget = await computeBudgetStatus(deps.store)

@@ -114,3 +114,39 @@ export const describePauseState = (state: DispatchPauseState): string | null => 
   const since = state.since !== null ? ` (since ${state.since})` : ''
   return `reason: ${reason}${detail}${since}`
 }
+
+/**
+ * Reason-aware resume hint for the operator, used by `mars daemon status` and
+ * `mars operator status`.
+ *
+ * The hint MUST NOT recommend `mars operator set dispatch on` for a `baseline`
+ * pause: although that command technically clears the pause latch, the baseline
+ * health checker re-asserts the pause on its next run because the branch still
+ * fails a required gate.  The correct remedy is to fix the gate, after which the
+ * daemon detects the SHA advance and resumes dispatch automatically.
+ *
+ * For `storm`, both the general resume verb and the targeted breaker-reset verb
+ * are mentioned so operators know the targeted option exists.
+ */
+export const pauseResumeHint = (state: DispatchPauseState): string => {
+  if (state.reason === 'baseline') {
+    const detail = state.detail ?? 'integration branch fails a required gate'
+    // Do NOT mention 'mars operator set dispatch on' here — although that command
+    // technically clears the latch, the baseline health checker re-asserts the
+    // pause on its next run, so recommending it sends tasks into a broken branch.
+    // Dispatch resumes automatically once a good commit lands; the operator just
+    // needs to fix the gate.
+    return (
+      `${detail} — fix the gate; dispatch resumes automatically once a commit lands` +
+      ` and the gate passes (clearing the pause manually is ineffective: the baseline` +
+      ` health checker re-asserts it)`
+    )
+  }
+  if (state.reason === 'storm') {
+    return (
+      `resume with 'mars operator set dispatch on'` +
+      ` (or 'mars daemon reset-breaker' to target the storm breaker only)`
+    )
+  }
+  return `resume with 'mars operator set dispatch on'`
+}
