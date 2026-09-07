@@ -8,6 +8,7 @@ import { taskHash } from '@/shared/routing'
 import { fetchTaskChanges } from '@/shared/api'
 import { RoleTag } from './RoleTag'
 import { StatusChip } from './StatusChip'
+import { DomainFlowPanel } from './DomainFlowPanel'
 
 /** Maps raw activityDetail phase strings to friendly single-line labels. */
 const ACTIVITY_DETAIL_LABEL: Record<string, string> = {
@@ -220,6 +221,10 @@ export const TaskCard = memo(({ task, index }: Props) => {
           </div>
         </details>
       ) : null}
+
+      {/* Domain Flow panel: renders its own z-10 wrapper + border only when
+          a flow exists for the arc, so no visual artefact appears otherwise. */}
+      <DomainFlowPanel arcId={task.id} />
 
       <div className="flex items-center justify-between gap-2">
         <RoleTag role={task.role} />
