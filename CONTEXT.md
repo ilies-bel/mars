@@ -624,3 +624,7 @@ _Avoid_: prompt, question, approval item, choice item
 **Domain Timeline**:
 The durable, per-repo record of a target repository's business domain, held as named Domain Flows of Domain Events and Domain Policies, and versioned alongside that repo's code.
 _Avoid_: storm, event storm, domain model file
+
+**Domain Flow**:
+One named business process inside a Domain Timeline, expressed as an ordered sequence of Domain Events.
+_Avoid_: flow, process, timeline
