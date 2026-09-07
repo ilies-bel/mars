@@ -35,6 +35,9 @@ import {
 } from '../args'
 import type { Command, CommandDeps, CommandResult } from '../command'
 import { errorMessage, spawnNoticeErr } from './shared'
+import { getFlowByArcId } from '../../core/domain-flow/store'
+import { renderDomainFlow } from '../../core/domain-flow/render'
+import type { DbClient } from '../../core/lib/db'
 
 const TASK_ADD_USAGE =
   'usage: mars task add ("<prompt>" | @<file> | --prompt-file <path> | -) [--intent <text>] [--author kind:name] [--blocked-by <id> ...] [--priority 0..3] [--tag <label>] [--files <path> ...] [--verify "<cmd>"] [--done "<criterion>" ...] [--merge auto|gated] [--workflow <name>] [--live] [--supersede <task-id>] [--qa auto|manual] [--implement] [plan flags]'
@@ -589,6 +592,15 @@ export const renderTaskDetail = async (
     const siblings = await deps.store.listSiblings(task.originId, task.id)
     if (siblings.length > 0) {
       deps.out(`siblings:   ${siblings.join(', ')}`)
+    }
+  }
+  const arcId = task.originId ?? task.id
+  const flow = await getFlowByArcId(deps.store as unknown as DbClient, arcId)
+  if (flow) {
+    const rendered = renderDomainFlow(flow)
+    if (rendered) {
+      deps.out(`Domain Flow:`)
+      deps.out(rendered)
     }
   }
 }
