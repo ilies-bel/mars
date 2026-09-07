@@ -236,10 +236,7 @@ describe('TriageCauseGroupRow', () => {
     container.remove()
   })
 
-  function makeGroup(
-    memberCount: number,
-    opts: { bulkResolveVerb?: { op: string; label: string; style: 'primary' | 'default' | 'destructive' | 'snooze' } } = {},
-  ) {
+  function makeGroup(memberCount: number) {
     const SIG = 'slice-failed/slicer-timeout'
     const members = Array.from({ length: memberCount }, (_, i) =>
       makeItem('slice-failed', {
@@ -257,41 +254,22 @@ describe('TriageCauseGroupRow', () => {
       count: members.length,
       priority: 'normal' as const,
       members,
-      ...opts,
     }
   }
 
-  it('the bulk action button renders once in the collapsed header when bulkResolveVerb is declared', () => {
-    // Group with a bulkResolveVerb → primary action button appears.
-    const group = makeGroup(19, {
-      bulkResolveVerb: { op: 'proposal.slice', label: 'Retry', style: 'primary' as const },
-    })
+  it('the bulk action button renders once in the collapsed header', () => {
+    const group = makeGroup(19)
     act(() => {
       root.render(<TriageCauseGroupRow group={group} />)
     })
 
-    // Only ONE primary bulk action button visible (not 19, one per member)
+    // Only ONE bulk action button visible (not 19, one per member)
     const bulkButtons = container.querySelectorAll('[data-testid="cause-group-bulk-action"]')
     expect(bulkButtons).toHaveLength(1)
-    expect(bulkButtons[0]?.textContent).toContain('Retry all 19')
 
     // Member rows are not rendered while collapsed
     const memberContainer = container.querySelector('[data-testid="cause-group-members"]')
     expect(memberContainer).toBeNull()
-  })
-
-  it('shows only Snooze all when kind declares no bulkResolveVerb', () => {
-    // Group without bulkResolveVerb → no primary button, only Snooze all.
-    const group = makeGroup(5)
-    act(() => {
-      root.render(<TriageCauseGroupRow group={group} />)
-    })
-
-    const bulkButtons = container.querySelectorAll('[data-testid="cause-group-bulk-action"]')
-    expect(bulkButtons).toHaveLength(0)
-
-    const snoozeButton = container.querySelector('[data-testid="cause-group-snooze-all"]')
-    expect(snoozeButton).not.toBeNull()
   })
 
   it('expanding the toggle reveals all member rows', () => {

@@ -23,8 +23,6 @@
 
 import type { ActionQueueRow } from './action-queue'
 import { lookupFailureKind } from '../../lib/failure-kinds'
-import { getGroupBulkVerb, type RecipeVerb } from '../../lib/action-queue-recipes'
-import { isActionQueueKind } from '../../lib/action-queue-kinds'
 
 /** How many entity ids to show inline before "…and N more". */
 const PREVIEW_COUNT = 3
@@ -63,11 +61,6 @@ export type ActionQueueGroupedRow =
       overflowCount: number
       /** All member rows — use for bulk actions or expand display. */
       members: ActionQueueRow[]
-      /**
-       * Kind's declared bulk-resolve verb, or undefined when the kind declares
-       * none. Absent → the group card shows only Snooze.
-       */
-      bulkResolveVerb?: RecipeVerb
     }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -228,9 +221,6 @@ export function groupActionQueueRows(rows: ActionQueueRow[]): ActionQueueGrouped
       previewIds,
       overflowCount: members.length - previewIds.length,
       members,
-      bulkResolveVerb: isActionQueueKind(row.kind)
-        ? (getGroupBulkVerb(row.kind) ?? undefined)
-        : undefined,
     })
   }
 

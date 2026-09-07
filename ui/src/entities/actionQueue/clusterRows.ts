@@ -11,7 +11,7 @@
  */
 
 import { isTaskFailureActionQueueKind } from '@/shared/schemas'
-import type { ActionQueueItem, ActionQueueGroupRow, AlertVerb } from '@/shared/schemas'
+import type { ActionQueueItem, ActionQueueGroupRow } from '@/shared/schemas'
 
 // ── Canonical "needs you" count ────────────────────────────────────────────
 
@@ -145,13 +145,6 @@ export type RenderedRow =
       priority: 'high' | 'normal' | 'low'
       /** All member rows — expose for expand display and bulk actions. */
       members: ActionQueueItem[]
-      /**
-       * Kind's declared bulk-resolve verb from the server (carried through
-       * from `ActionQueueGroupRow.bulkResolveVerb`). When present, the group
-       * card renders this as its primary action. When absent, only Snooze is
-       * offered.
-       */
-      bulkResolveVerb?: AlertVerb
     }
 
 /**
@@ -228,7 +221,6 @@ export function buildRenderedRows(
       count: sg.count,
       priority: sg.priority,
       members: sg.members,
-      bulkResolveVerb: sg.bulkResolveVerb,
     })
   }
   const remainingSorted = serverGroupMemberIds.size > 0

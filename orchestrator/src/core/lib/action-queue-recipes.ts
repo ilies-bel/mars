@@ -134,24 +134,6 @@ export type Recipe<K extends ActionQueueKind = ActionQueueKind> = {
    * Notice responses deliberately omit AlertCard-only presentation styling.
    */
   preloadedResponses: PreloadedResponse[] | ((ctx: RecipeContext<K>) => PreloadedResponse[])
-  /**
-   * Optional bulk-resolve verb for a cause-group card whose members all share
-   * this kind. When present, the group card shows this as its primary action
-   * (e.g. "Retry all 18") with Snooze demoted to secondary. When absent, only
-   * Snooze is offered — no invented action.
-   *
-   * The verb belongs here (shared layer, HR-3) so the CLI can expose the same
-   * bulk action later without duplicating the recipe lookup.
-   *
-   * Which kinds could sensibly declare one:
-   * - `slice-failed` ✓ — re-slice is idempotent; transient outage is the
-   *   dominant cause of a batch failure.
-   * - `env-incident` — restart-task per member is safe; not added yet because
-   *   env incidents rarely form large batches.
-   * - `failed` — restart/continue per member is safe but destructive; needs
-   *   a per-member worktree-dirty check before bulk-restart is reasonable.
-   */
-  bulkResolveVerb?: RecipeVerb
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -490,7 +472,6 @@ const RECIPE_DEFINITIONS = {
       errorExcerpt: str(ctx.payload['error']),
     }),
     verbs: [],
-    bulkResolveVerb: { op: 'proposal.slice', label: 'Retry', style: 'primary' as const },
   },
 
   'slicer-transport-outage': {
@@ -1586,17 +1567,6 @@ export const lookupRecipe = (kind: ActionQueueKind): Recipe => {
  */
 export const registeredKinds = (): ActionQueueKind[] =>
   Object.keys(REGISTRY) as ActionQueueKind[]
-
-/**
- * Return the bulk-resolve verb declared by a kind's recipe, or null when the
- * kind declares none.
- *
- * Used by the group-building layer (`action-queue-group.ts`) so a cause-group
- * row carries the verb at the point of construction — the UI and CLI can then
- * render it without independently looking up the recipe.
- */
-export const getGroupBulkVerb = (kind: ActionQueueKind): RecipeVerb | null =>
-  REGISTRY[kind]?.bulkResolveVerb ?? null
 
 /**
  * Render the plain-language copy for an operational event without involving an
