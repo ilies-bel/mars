@@ -374,3 +374,147 @@ describe('recoverPhase("verifying") — merged-branch finalize detection', () =>
     expect(result.requeued).not.toContain(task.id)
   })
 })
+
+// ── Regression: pointer-nulled-checkpoint-survived (mars-d89a0cce) ───────────
+//
+// The failure shape: a running task has worktreePath=null in the DB but its
+// canonical worktree directory (.mars/worktrees/<task-id>) still exists on disk
+// with a live checkpoint and real commits. The prior phase-recovery code saw
+// t.worktreePath=null → worktreePhysicallyPresent=false → "worktree gone" path:
+// it deleted the checkpoint but skipped removeWorktree (null pointer guard).
+// The canonical directory was abandoned on disk. The next dispatch's setup step
+// called `git worktree add <canonical-path>` and failed because git refuses to
+// create a worktree at an existing directory → setup:unhandled/unclassified.
+//
+// Fix: detect the canonical path when the stored pointer is null, restore the
+// pointer in the task row, and preserve the checkpoint so the next dispatch
+// resumes from the existing worktree without re-running setup.
+
+describe('recoverPhase — pointer-nulled-checkpoint-survived (mars-d89a0cce)', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    vi.resetModules()
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('restores nulled worktreePath and preserves checkpoint when canonical dir exists (running phase)', async () => {
+    // Scenario: daemon restart strands a running task. worktreePath is null in
+    // the DB but the canonical worktree directory exists with a live workflow run.
+    // After recoverPhase('running'), the task must be requeued with worktreePath
+    // restored to the canonical path so the next dispatch can find the worktree.
+    const { q, store, recovery } = await loadModules(repo)
+
+    const task = await q.enqueueTask('pointer-nulled task', undefined, { skipTriage: true })
+
+    // Create canonical worktree directory (.mars/worktrees/<task.id>).
+    const canonicalWorktreePath = resolve(repo, '.mars', 'worktrees', task.id)
+    mkdirSync(canonicalWorktreePath, { recursive: true })
+
+    // Strand task in running with branch set but worktreePath null.
+    const fakeBranch = `task/${task.id}`
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'running', branch = ?, worktree_path = NULL WHERE id = ?`,
+      args: [fakeBranch, task.id],
+    })
+
+    // Seed a live (non-failed) workflow run with a setup-worktree checkpoint.
+    const wfStore = store.createQueueWorkflowStore()
+    await wfStore.createRun({
+      id: task.id,
+      workflowId: 'implement',
+      inputJson: '{}',
+      status: 'running',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    })
+    await wfStore.putStep({
+      runId: task.id,
+      name: 'setup-worktree',
+      status: 'completed',
+      sha: null,
+      startedAt: Date.now(),
+      finishedAt: Date.now() + 100,
+      attempt: 1,
+      summary: 'worktree created',
+      errorSummary: null,
+      transcriptKey: null,
+      resultJson: '"done"',
+    })
+
+    const bus = makeBus()
+    const result = await recovery.recoverPhase('running', {
+      log: nullLog,
+      bus,
+      repoRoot: repo,
+    })
+
+    const updated = await q.getTask(task.id)
+
+    // Task must be requeued — NOT failed.
+    expect(updated?.status).toBe('queued')
+    expect(result.requeued).toContain(task.id)
+    expect(result.failed).toBe(0)
+
+    // worktreePath must be RESTORED to the canonical path so the next dispatch
+    // does not attempt `git worktree add` at an already-existing directory.
+    expect(updated?.worktreePath).toBe(canonicalWorktreePath)
+
+    // branch must be preserved (it was non-null and is needed for checkout).
+    expect(updated?.branch).toBe(fakeBranch)
+
+    // Checkpoint must be PRESERVED (not deleted) so the next dispatch can
+    // resume from the existing worktree without re-running setup from scratch.
+    const run = await wfStore.getRun(task.id)
+    expect(run).toBeDefined()
+    const steps = await wfStore.listSteps(task.id)
+    expect(steps.length).toBeGreaterThan(0)
+  })
+
+  it('does not fail with "no worktree available" when canonical dir exists but stored pointer is null', async () => {
+    // Regression guard for the done criterion: the task must not end up failed
+    // with the "no worktree available" signature after phase-recovery.
+    // This test drives the same scenario as the one above but focuses on the
+    // negative outcome (the bug) rather than the positive outcome (the fix).
+    const { q, store, recovery } = await loadModules(repo)
+
+    const task = await q.enqueueTask('no-worktree-available guard', undefined, { skipTriage: true })
+
+    const canonicalWorktreePath = resolve(repo, '.mars', 'worktrees', task.id)
+    mkdirSync(canonicalWorktreePath, { recursive: true })
+
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'running', branch = ?, worktree_path = NULL WHERE id = ?`,
+      args: [`task/${task.id}`, task.id],
+    })
+
+    const wfStore = store.createQueueWorkflowStore()
+    await wfStore.createRun({
+      id: task.id,
+      workflowId: 'implement',
+      inputJson: '{}',
+      status: 'running',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    })
+
+    const result = await recovery.recoverPhase('running', {
+      log: nullLog,
+      bus: new EventEmitter(),
+      repoRoot: repo,
+    })
+
+    const updated = await q.getTask(task.id)
+
+    // Must NOT be failed — the presence of the canonical dir means the worktree
+    // is recoverable, not lost. "no worktree available" would mean failed.
+    expect(updated?.status).not.toBe('failed')
+    expect(result.failed).toBe(0)
+    expect(updated?.worktreePath).not.toBeNull()
+  })
+})

@@ -237,6 +237,7 @@ export const recoverPhase = async (
   const { log, bus, repoRoot, silent = false, isOwnedByCurrentDaemon } = opts
 
   const { existsSync: exists } = await import('node:fs')
+  const { resolve: resolvePath } = await import('node:path')
   const { resolveVcs } = await import('../ports/vcs/registry')
   const vcs = resolveVcs()
   const removeWorktree = (
@@ -368,7 +369,30 @@ export const recoverPhase = async (
     const branch = t.branch ?? `task/${t.id}`
     // Whether the worktree is physically on disk (not just stored in DB).
     const worktreePhysicallyPresent = t.worktreePath != null && exists(t.worktreePath)
-    let worktreeOnDisk = worktreePhysicallyPresent
+
+    // Fix (mars-d89a0cce): when the stored worktree pointer is null but the
+    // canonical path (<repoRoot>/.mars/worktrees/<task.id>) exists on disk,
+    // re-adopt it rather than treating the worktree as gone.
+    //
+    // Without this, phase-recovery deletes the checkpoint and clears branch/
+    // worktreePath — but the canonical directory is still on disk (the removeWorktree
+    // call is skipped because t.worktreePath is null). The next dispatch's setup
+    // step then calls `git worktree add <canonical-path>` and fails immediately
+    // because git refuses to create a worktree in an existing directory, producing
+    // the setup:unhandled/unclassified failure shape seen in mars-d89a0cce.
+    const canonicalWorktreePath = resolvePath(repoRoot, '.mars', 'worktrees', t.id)
+    const worktreeAtCanonical =
+      !worktreePhysicallyPresent && t.worktreePath == null && exists(canonicalWorktreePath)
+    if (worktreeAtCanonical) {
+      log(
+        `[reconcile] RESTORING nulled worktree pointer for task ${t.id}: ` +
+          `worktree directory exists at canonical path ${canonicalWorktreePath} ` +
+          `but DB pointer is null. Re-adopting to allow checkpoint-resume. ` +
+          `Upstream pointer-nulling bug still present — see mars-d89a0cce.`,
+      )
+    }
+
+    let worktreeOnDisk = worktreePhysicallyPresent || worktreeAtCanonical
 
     if (policy.forceCleanWorktree) {
       // Phase policy demands we always discard the worktree (e.g. vega-reconciling,
@@ -398,11 +422,20 @@ export const recoverPhase = async (
       // let the commits-ahead guard below own the branch lifecycle — we pass
       // keepBranch=true so removeWorktree only removes the directory and does
       // not race the guard by also deleting the branch ref.
-      if (t.worktreePath) {
+      //
+      // When the stored pointer was null but we detected the canonical path
+      // (worktreeAtCanonical), use that path for cleanup so the directory is
+      // actually removed — otherwise it is abandoned on disk and the next setup
+      // step fails when it tries to create a new worktree there.
+      const effectiveWorktreePath = t.worktreePath ?? (worktreeAtCanonical ? canonicalWorktreePath : null)
+      if (effectiveWorktreePath) {
         await removeWorktree(
-          { path: t.worktreePath, branch },
+          { path: effectiveWorktreePath, branch },
           true,
-          worktreePhysicallyPresent, // keepBranch=true only when dir exists
+          // keepBranch=true when the dir physically exists (stored or canonical)
+          // so removeWorktree only unregisters the worktree, not deleting the
+          // branch ref — the commits-ahead guard below owns branch lifecycle.
+          worktreePhysicallyPresent || worktreeAtCanonical,
         ).catch(() => {})
       }
       // Guard: only delete the branch if it has no unmerged commits. A branch
@@ -460,7 +493,18 @@ export const recoverPhase = async (
 
     // Preserve branch/worktreePath when the worktree is live; clear everything
     // (including pointers) when the worktree is gone so the task row is clean.
-    const patch = worktreeOnDisk ? CLEARED_TRANSIENT : CLEARED_INFLIGHT
+    // When we adopted the canonical path (pointer was null, dir was on disk),
+    // include worktreePath (and branch, if null) in the patch so the restored
+    // pointer is written to the task row and resolveWorktree can find it.
+    const patch = worktreeOnDisk
+      ? worktreeAtCanonical
+        ? {
+            ...CLEARED_TRANSIENT,
+            worktreePath: canonicalWorktreePath,
+            ...(t.branch == null ? { branch } : {}),
+          }
+        : CLEARED_TRANSIENT
+      : CLEARED_INFLIGHT
 
     // Kill any orphaned worker process before flipping the row so the next
     // dispatch does not race with an abandoned coder session.

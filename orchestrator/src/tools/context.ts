@@ -285,6 +285,50 @@ export const resolveWorktree = async (
     worktreeCache.set(ctx, recovered)
     return recovered
   }
+
+  // Defense-in-depth (mars-d89a0cce): when the task row has a null worktreePath
+  // but the canonical worktree path exists and is still a live worktree root,
+  // re-adopt it. This handles the "pointer-nulled-checkpoint-survived" failure
+  // shape that phase-recovery should have caught but may not have (e.g. the
+  // fix was not yet deployed, or deleteRun failed silently). Logs at WARNING
+  // level so a recurrence is visible rather than silently papered over.
+  const repoRoot = process.env.MARS_REPO
+  if (repoRoot) {
+    const { resolve: resolvePath } = await import('node:path')
+    const { existsSync, realpathSync } = await import('node:fs')
+    const canonicalPath = resolvePath(repoRoot, '.mars', 'worktrees', taskId)
+    if (existsSync(canonicalPath)) {
+      try {
+        const { execFileSync } = await import('node:child_process')
+        const toplevel = execFileSync(
+          'git',
+          ['-C', canonicalPath, 'rev-parse', '--show-toplevel'],
+          { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
+        ).trim()
+        if (realpathSync(toplevel) === realpathSync(canonicalPath)) {
+          // Re-adopt: branch from DB row if present, else ask git.
+          const branch =
+            task?.branch ??
+            execFileSync(
+              'git',
+              ['-C', canonicalPath, 'rev-parse', '--abbrev-ref', 'HEAD'],
+              { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
+            ).trim()
+          const adopted: WorktreeRef = { path: canonicalPath, branch }
+          worktreeCache.set(ctx, adopted)
+          console.warn(
+            `[context:resolveWorktree] WARNING task ${taskId}: adopted nulled worktree ` +
+              `pointer at canonical path ${canonicalPath} (branch: ${branch}). ` +
+              `phase-recovery should have restored this pointer — see mars-d89a0cce.`,
+          )
+          return adopted
+        }
+      } catch {
+        // Not a live worktree root or git unavailable — fall through to throw.
+      }
+    }
+  }
+
   throw new Error(
     'no worktree available: call setupWorktree(ctx, ...) before verify/merge, ' +
       'or pass { worktree } explicitly.',
