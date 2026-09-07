@@ -636,3 +636,7 @@ _Avoid_: event, events, domain fact
 **Domain Policy**:
 A reactive rule inside a Domain Flow of the form whenever a given Domain Event occurs, some further action follows.
 _Avoid_: policy, reactor, rule
+
+**Pivotal Event**:
+A Domain Event that marks a phase change within a Domain Flow, and therefore a candidate boundary between bounded contexts in the target repository.
+_Avoid_: milestone, phase marker
