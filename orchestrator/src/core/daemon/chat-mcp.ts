@@ -24,6 +24,10 @@ import { readFile } from 'node:fs/promises'
 import { createInterface } from 'node:readline'
 import { join } from 'node:path'
 import { promoteProposalFromThread } from './promote-from-thread'
+import { upsertFlow, getFlowByArcId } from '../domain-flow/store.js'
+import { renderDomainFlow } from '../domain-flow/render.js'
+import { domainFlowContentSchema } from '../domain-flow/types.js'
+import { resolveStateClient } from '../store/state-client.js'
 
 export interface McpServerConfig {
   name: string
@@ -40,19 +44,60 @@ export interface McpToolInfo {
 }
 
 /** Daemon-owned tools that share the same function surface as configured MCP tools. */
-const LOCAL_CHAT_TOOLS: readonly McpToolInfo[] = [{
-  server: 'mars-chat',
-  name: 'promote_proposal_from_thread',
-  description: 'Promote a settled grill conversation into a PRD-ready proposal and return the thread to triage.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      threadId: { type: 'string', description: 'The settled grill thread to promote.' },
+const LOCAL_CHAT_TOOLS: readonly McpToolInfo[] = [
+  {
+    server: 'mars-chat',
+    name: 'promote_proposal_from_thread',
+    description: 'Promote a settled grill conversation into a PRD-ready proposal and return the thread to triage.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        threadId: { type: 'string', description: 'The settled grill thread to promote.' },
+      },
+      required: ['threadId'],
+      additionalProperties: false,
     },
-    required: ['threadId'],
-    additionalProperties: false,
   },
-}]
+  {
+    server: 'mars-chat',
+    name: 'set_domain_flow',
+    description: 'Create or update the Domain Flow for an Arc. Returns the rendered diagram.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        arc_id: { type: 'string' },
+        name: { type: 'string' },
+        nodes: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              kind: { type: 'string', enum: ['event', 'policy', 'hotspot'] },
+              name: { type: 'string' },
+              description: { type: 'string' },
+              pivotal: { type: 'boolean' },
+              question: { type: 'string' },
+            },
+            required: ['kind', 'name'],
+          },
+        },
+      },
+      required: ['arc_id', 'name', 'nodes'],
+    },
+  },
+  {
+    server: 'mars-chat',
+    name: 'get_domain_flow',
+    description: 'Read the Domain Flow for an Arc.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        arc_id: { type: 'string' },
+      },
+      required: ['arc_id'],
+    },
+  },
+]
 
 /** Handshake + list must complete within this budget or the server is skipped. */
 const CONNECT_TIMEOUT_MS = 15_000
@@ -284,6 +329,41 @@ export class ChatMcpManager {
       try {
         const proposal = await promoteProposalFromThread(threadId)
         return { text: `promoted proposal ${proposal.id}`, isError: false }
+      } catch (err) {
+        return { text: err instanceof Error ? err.message : String(err), isError: true }
+      }
+    }
+
+    if (tool === 'set_domain_flow') {
+      const arcId = typeof args.arc_id === 'string' ? args.arc_id.trim() : ''
+      if (arcId.length === 0) {
+        return { text: 'set_domain_flow requires a non-empty arc_id', isError: true }
+      }
+      const parsed = domainFlowContentSchema.safeParse({ name: args.name, nodes: args.nodes })
+      if (!parsed.success) {
+        return { text: `set_domain_flow: invalid input — ${parsed.error.message}`, isError: true }
+      }
+      try {
+        const flow = await upsertFlow(resolveStateClient(), arcId, parsed.data.name, parsed.data.nodes)
+        const rendered = renderDomainFlow(flow)
+        return { text: JSON.stringify({ persisted: true, rendered }), isError: false }
+      } catch (err) {
+        return { text: err instanceof Error ? err.message : String(err), isError: true }
+      }
+    }
+
+    if (tool === 'get_domain_flow') {
+      const arcId = typeof args.arc_id === 'string' ? args.arc_id.trim() : ''
+      if (arcId.length === 0) {
+        return { text: 'get_domain_flow requires a non-empty arc_id', isError: true }
+      }
+      try {
+        const flow = await getFlowByArcId(resolveStateClient(), arcId)
+        if (flow === null) {
+          return { text: JSON.stringify({ found: false, message: `No domain flow exists for arc ${arcId}.` }), isError: false }
+        }
+        const rendered = renderDomainFlow(flow)
+        return { text: JSON.stringify({ found: true, flow, rendered }), isError: false }
       } catch (err) {
         return { text: err instanceof Error ? err.message : String(err), isError: true }
       }
