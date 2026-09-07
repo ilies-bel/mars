@@ -38,7 +38,7 @@ function TaskTracePanel({ taskId }: { taskId: string }) {
     return <SkeletonList rows={3} rowClassName="h-4 w-full mb-1" label="Loading traces" />
   }
   if (!data || data.events.length === 0) {
-    return <p className="font-mono text-label text-muted-foreground">No trace events for this task.</p>
+    return <p className="font-mono text-label text-muted-foreground">No trace events</p>
   }
 
   return (

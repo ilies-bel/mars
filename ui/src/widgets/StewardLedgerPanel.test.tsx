@@ -16,7 +16,7 @@ import type { StewardLedgerEntry } from '@/shared/schemas'
 // Response (Streamdown) is an interactive streaming renderer. In a static
 // render context it is a no-op; stub it so tests stay focused on the
 // StewardLedgerPanel behaviour rather than the markdown library internals.
-vi.mock('@/components/ai-elements/response', () => ({
+vi.mock('@/components/chat-primitives/response', () => ({
   Response: ({ children }: { children?: React.ReactNode }) =>
     createElement('span', { 'data-testid': 'response-stub' }, children),
 }))

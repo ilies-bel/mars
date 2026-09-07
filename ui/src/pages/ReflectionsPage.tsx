@@ -431,7 +431,7 @@ export const LeverGapCard = ({ gap, index }: LeverGapCardProps) => (
       className="mt-1 border border-warn/20 bg-warn/5 px-2 py-1 text-micro text-warn"
       role="note"
     >
-      No parameter controls this yet — this is a documented gap, not a lever you can set.
+      Not configurable
     </div>
   </div>
 )
@@ -993,8 +993,7 @@ export const ReflectionsPage = () => {
                 data-testid="empty-state"
                 className="font-mono text-label text-muted-foreground border border-primary/20 bg-card p-4 text-center"
               >
-                No reflection reports yet.{' '}
-                Reports are generated automatically after each arc when auto-reflect is on.
+                No reports
               </div>
             ) : (
               <div className="flex flex-col gap-2" data-testid="reflection-list">

@@ -295,7 +295,7 @@ export const ReleaseNotesModal = ({ onClose }: ReleaseNotesModalProps) => {
                 data-testid="release-notes-empty"
                 className="px-4 py-6 font-mono text-body text-primary"
               >
-                No work has landed yet.
+                No landed work
               </p>
             ) : (
               <ul data-testid="release-notes-list">

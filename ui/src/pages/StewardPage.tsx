@@ -504,8 +504,7 @@ const WorkflowPatchesLane = ({ data }: { data: StewardView['workflowPatches'] })
           className="font-mono text-micro text-muted-foreground"
           data-testid="patches-empty-state"
         >
-          No proposals in workflow_patch_proposals. This lane has no callers — it is inert, not
-          waiting.
+          No proposals
         </p>
       </article>
     )

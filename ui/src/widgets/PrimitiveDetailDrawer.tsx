@@ -414,7 +414,7 @@ export const PrimitiveDetailDrawer = ({
                         data-testid="primitive-no-observed-tools"
                         className="font-mono text-label text-muted-foreground"
                       >
-                        No shell tools observed in the trace window yet.
+                        No shell tools
                       </p>
                     )}
                   </>
@@ -521,7 +521,7 @@ export const PrimitiveDetailDrawer = ({
                         data-testid="primitive-no-runs"
                         className="font-mono text-label text-muted-foreground"
                       >
-                        No Step spans recorded in the trace window yet.
+                        No step spans
                       </p>
                     )}
                   </>

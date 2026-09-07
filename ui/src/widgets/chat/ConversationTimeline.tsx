@@ -215,7 +215,7 @@ export const ConversationTimeline = ({
                   data-thread-id={entry.threadId}
                   data-message-kind={entry.kind}
                   data-testid={isNotice ? `notice-card-${entry.id}` : undefined}
-                  className={isNotice ? 'mars-card rounded-md border-l-2 border-l-highlight/30 bg-card p-3' : undefined}
+                  className={isNotice ? 'mars-card rounded-md bg-card p-3' : undefined}
                 >
                   <header className="mb-1 flex items-center gap-2 font-mono text-micro text-muted-foreground">
                     {isNotice ? (
@@ -303,7 +303,7 @@ export const ConversationTimeline = ({
                 data-thread-id={entry.threadId}
                 data-message-kind={entry.kind}
                 data-testid={isNotice ? `notice-card-${entry.id}` : undefined}
-                className={isNotice ? 'mars-card rounded-md border-l-2 border-l-highlight/30 bg-card p-3' : undefined}
+                className={isNotice ? 'mars-card rounded-md bg-card p-3' : undefined}
               >
                 <header className="mb-1 flex items-center gap-2 font-mono text-micro text-muted-foreground">
                   {isNotice ? (

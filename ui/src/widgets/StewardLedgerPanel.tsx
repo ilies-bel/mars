@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { fetchStewardLedger } from '@/shared/api'
 import type { StewardLedgerEntry } from '@/shared/schemas'
 import { smartTimestamp, formatFailureSig } from '@/shared/displayStrings'
-import { Response } from '@/components/ai-elements/response'
+import { Response } from '@/components/chat-primitives/response'
 
 export interface StewardLedgerPanelProps {
   /** Restricts the ledger to one durable target when both fields are present. */

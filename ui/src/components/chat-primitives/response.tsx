@@ -17,7 +17,7 @@ const taskLinkComponents: ResponseProps["components"] = {
       return (
         <a
           href={href}
-          className="inline-flex items-center gap-1 font-mono text-xs px-1.5 py-0.5 rounded border border-border bg-secondary text-secondary-foreground no-underline cursor-pointer hover:bg-secondary/80 hover:text-foreground"
+          className="inline-flex items-center gap-1 font-mono text-label px-1.5 py-0.5 rounded border border-border bg-secondary text-secondary-foreground no-underline cursor-pointer hover:bg-secondary/80 hover:text-foreground"
         >
           <Ticket className="h-3 w-3 shrink-0" />
           {children}

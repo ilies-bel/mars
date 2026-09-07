@@ -442,8 +442,7 @@ export const StudioView = ({ taskId, timeline, stepPrompts, nowMs, fetchImpl }: 
         className="flex flex-1 items-center justify-center p-6"
       >
         <p className="max-w-[52ch] text-center font-mono text-title text-primary">
-          No step spans recorded for task {taskId} yet. Either its workflow has
-          not started executing, or the run predates step tracing.
+          No step spans for {taskId}
         </p>
       </div>
     )

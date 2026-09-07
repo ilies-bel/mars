@@ -91,8 +91,7 @@ const SuggestedScorersPanel = ({ scorers }: SuggestedScorersPanelProps) => {
   if (scorers.length === 0) {
     return (
       <p className="text-body text-muted-foreground">
-        No scores yet and no pending suggestions. Run a deep reflection to
-        surface quality dimensions worth grading.
+        No scores. Run a deep reflection to generate scorer suggestions.
       </p>
     )
   }

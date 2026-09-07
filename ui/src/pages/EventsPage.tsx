@@ -752,12 +752,6 @@ const ToolCallGroup = memo(({
 
 type EventsViewMode = 'flat' | 'timeline'
 
-const arcSeverityBorder = (severity: TraceEvent['severity']): string => {
-  if (severity === 'error') return 'border-l-error/60'
-  if (severity === 'warn') return 'border-l-warn/60'
-  return 'border-l-success/60'
-}
-
 const arcSeverityBg = (severity: TraceEvent['severity']): string => {
   if (severity === 'error') return 'bg-error/[0.03]'
   if (severity === 'warn') return 'bg-warn/[0.03]'
@@ -922,7 +916,7 @@ const TimelineArcGroup = ({ group, now }: TimelineArcGroupProps) => {
 
   return (
     <div
-      className={`rounded border-l-4 ${arcSeverityBorder(group.severity)} ${arcSeverityBg(group.severity)} p-2`}
+      className={`rounded ${arcSeverityBg(group.severity)} p-2`}
     >
       <button
         type="button"

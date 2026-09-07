@@ -74,12 +74,12 @@ const CONFIRM_COPY: Record<ConfirmAction['kind'], { title: string; body: string;
   {
     'dispatch-off': {
       title: 'Pause dispatch?',
-      body: 'No new tasks will be dispatched. In-flight tasks continue to completion. Resume at any time.',
+      body: 'Dispatch paused. In-flight tasks unaffected.',
       button: 'Pause dispatch',
     },
     'dispatch-on': {
       title: 'Resume dispatch?',
-      body: 'Queued tasks will start dispatching again. Any storm-breaker flag is cleared.',
+      body: 'Queued tasks will dispatch. Storm-breaker flag cleared.',
       button: 'Resume dispatch',
     },
     'recovery-off': {
@@ -328,7 +328,7 @@ const GATE_ACTION_COPY: Record<GateActionKind, { title: string; body: string; bu
   },
   restore: {
     title: 'Restore this gate?',
-    body: 'The gate will become active again and run on all future verifications.',
+    body: 'Gate re-activates for future verifications.',
     button: 'Restore gate',
   },
   retire: {

@@ -166,8 +166,7 @@ const ShellTopbar = ({ hash }: ShellTopbarProps) => {
           <span
             data-testid="sse-reconnecting-pill"
             aria-label="Live updates paused — reconnecting to the daemon"
-            className="shrink-0 rounded-full px-2 py-0.5 font-mono text-micro leading-none"
-            style={{ background: 'rgba(168, 150, 132, 0.15)', color: 'var(--color-muted-dark)' }}
+            className="shrink-0 rounded-full bg-muted-dark/15 px-2 py-0.5 font-mono text-micro leading-none text-muted-dark"
           >
             ⊘ live updates paused
           </span>

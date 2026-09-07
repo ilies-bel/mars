@@ -95,7 +95,7 @@ const getStatusBadge = (status: ToolUIPart["state"]): ReactNode => {
   };
 
   return (
-    <Badge className="gap-1.5 rounded-full text-xs" variant="secondary">
+    <Badge className="gap-1.5 rounded-full text-label" variant="secondary">
       {icons[status]}
       {labels[status]}
     </Badge>
@@ -137,9 +137,9 @@ export const ToolHeader = ({
         ) : (
           <WrenchIcon className="size-4 shrink-0 text-muted-foreground" />
         )}
-        <span className="shrink-0 font-medium text-sm">{label}</span>
+        <span className="shrink-0 font-medium text-body">{label}</span>
         {command && (
-          <span className="max-w-[32ch] truncate font-mono text-muted-foreground text-xs">
+          <span className="max-w-[32ch] truncate font-mono text-muted-foreground text-label">
             {command}
           </span>
         )}
@@ -181,10 +181,10 @@ export const ToolInput = ({ className, input, ...props }: ToolInputProps) => {
   if (command !== undefined) {
     return (
       <div className={cn("space-y-2 overflow-hidden p-4", className)} {...props}>
-        <h4 className="font-medium text-muted-foreground text-xs uppercase tracking-wide">
+        <h4 className="font-medium text-muted-foreground text-label uppercase tracking-wide">
           Command
         </h4>
-        <pre className="overflow-x-auto rounded-md bg-accent/50 p-3 text-xs">
+        <pre className="overflow-x-auto rounded-md bg-accent/50 p-3 text-label">
           <code>{command}</code>
         </pre>
       </div>
@@ -200,10 +200,10 @@ export const ToolInput = ({ className, input, ...props }: ToolInputProps) => {
           className={cn("space-y-2 overflow-hidden p-4", className)}
           {...props}
         >
-          <h4 className="font-medium text-muted-foreground text-xs uppercase tracking-wide">
+          <h4 className="font-medium text-muted-foreground text-label uppercase tracking-wide">
             Parameters
           </h4>
-          <dl className="space-y-1 text-xs">
+          <dl className="space-y-1 text-label">
             {entries.map(([key, value]) => (
               <div key={key} className="flex gap-2">
                 <dt className="shrink-0 font-medium text-muted-foreground">
@@ -223,10 +223,10 @@ export const ToolInput = ({ className, input, ...props }: ToolInputProps) => {
   // Fallback: pretty-printed JSON for genuinely unknown shapes.
   return (
     <div className={cn("space-y-2 overflow-hidden p-4", className)} {...props}>
-      <h4 className="font-medium text-muted-foreground text-xs uppercase tracking-wide">
+      <h4 className="font-medium text-muted-foreground text-label uppercase tracking-wide">
         Parameters
       </h4>
-      <pre className="overflow-x-auto rounded-md bg-accent/50 p-3 text-xs">
+      <pre className="overflow-x-auto rounded-md bg-accent/50 p-3 text-label">
         <code>{JSON.stringify(input, null, 2)}</code>
       </pre>
     </div>
@@ -254,12 +254,12 @@ export const ToolOutput = ({
 
   return (
     <div className={cn("space-y-2 p-4", className)} {...props}>
-      <h4 className="font-medium text-muted-foreground text-xs uppercase tracking-wide">
+      <h4 className="font-medium text-muted-foreground text-label uppercase tracking-wide">
         {errorText ? "Error" : "Result"}
       </h4>
       <div
         className={cn(
-          "overflow-x-auto rounded-md text-xs [&_table]:w-full",
+          "overflow-x-auto rounded-md text-label [&_table]:w-full",
           errorText
             ? "bg-destructive/10 text-destructive"
             : "bg-accent/50 text-foreground",
@@ -317,7 +317,7 @@ function groupSummaryLabel(tools: ToolGroupEntryData[]): string {
 const aggregateStatusBadge = (status: AggregateStatus): ReactNode => {
   if (status === "running") {
     return (
-      <Badge className="gap-1.5 rounded-full text-xs" variant="secondary">
+      <Badge className="gap-1.5 rounded-full text-label" variant="secondary">
         <ClockIcon className="size-4 animate-pulse" />
         Running
       </Badge>
@@ -325,14 +325,14 @@ const aggregateStatusBadge = (status: AggregateStatus): ReactNode => {
   }
   if (status === "error") {
     return (
-      <Badge className="gap-1.5 rounded-full text-xs" variant="secondary">
+      <Badge className="gap-1.5 rounded-full text-label" variant="secondary">
         <XCircleIcon className="size-4 text-destructive" />
         Error
       </Badge>
     );
   }
   return (
-    <Badge className="gap-1.5 rounded-full text-xs" variant="secondary">
+    <Badge className="gap-1.5 rounded-full text-label" variant="secondary">
       <CheckCircleIcon className="size-4 text-success" />
       Done
     </Badge>
@@ -372,7 +372,7 @@ export const ToolGroup = ({ tools }: { tools: ToolGroupEntryData[] }) => {
       <CollapsibleTrigger className="group flex w-full items-center justify-between gap-4 p-3">
         <div className="flex items-center gap-2">
           <TerminalIcon className="size-4 shrink-0 text-muted-foreground" />
-          <span className="font-medium text-sm">{summary}</span>
+          <span className="font-medium text-body">{summary}</span>
           {aggregateStatusBadge(aggStatus)}
         </div>
         <ChevronDownIcon className="size-4 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />

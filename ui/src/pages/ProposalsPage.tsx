@@ -172,7 +172,7 @@ const ProposalRow = ({ draft, onDismiss }: ProposalRowProps) => {
   }
 
   return (
-    <div ref={cardRef} className="mars-card relative border-l-2 border-l-success px-4 py-3">
+    <div ref={cardRef} className="mars-card relative rounded-lg bg-card px-4 py-3">
       {/* Top row: source chip + age */}
       <div className="mb-2 flex items-center gap-2">
         <span
@@ -284,12 +284,9 @@ const EmptyState = () => (
       style={{ color: 'var(--color-amber)' }}
       aria-hidden="true"
     >
-      💡
+      ◇
     </span>
     <p className="mb-1 text-title font-medium text-foreground">No drafts</p>
-    <p className="font-mono text-label text-muted-foreground">
-      Proposals appear here when agents or the slicer file them.
-    </p>
   </div>
 )
 
@@ -301,7 +298,7 @@ const ProposalsSkeleton = () => (
     {Array.from({ length: 4 }, (_, i) => (
       <div
         key={i}
-        className="mars-card border-l-2 border-l-primary/20 px-4 py-3 flex flex-col gap-2"
+        className="mars-card rounded-lg bg-card px-4 py-3 flex flex-col gap-2"
       >
         <div className="flex items-center gap-2 mb-1">
           <SkeletonBlock className="h-4 w-20" />

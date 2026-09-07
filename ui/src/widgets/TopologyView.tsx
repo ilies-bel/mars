@@ -565,7 +565,6 @@ const TopologyViewInner = ({
               ◈
             </span>
             <p className="text-title font-medium text-foreground">No active tasks</p>
-            <p className="text-body text-muted-foreground">Tasks will appear here when queued</p>
           </div>
         )}
       </main>

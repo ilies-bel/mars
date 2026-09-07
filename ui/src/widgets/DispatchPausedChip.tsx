@@ -26,11 +26,7 @@ export const DispatchPausedChip = () => {
       data-testid="dispatch-paused-chip"
       aria-label={`Dispatch is paused (${reason}) — no new work is being dispatched. Open Control Room to resume.`}
       title={dispatch.detail ?? undefined}
-      className="shrink-0 rounded-full px-2 py-0.5 font-mono text-micro leading-none transition-colors hover:opacity-80"
-      style={{
-        background: 'rgba(239, 68, 68, 0.15)',
-        color: 'var(--color-red, #ef4444)',
-      }}
+      className="shrink-0 rounded-full bg-error/15 px-2 py-0.5 font-mono text-micro leading-none text-error transition-colors hover:opacity-80"
     >
       ⏸&nbsp;paused · {reason}
     </a>

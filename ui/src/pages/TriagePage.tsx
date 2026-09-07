@@ -146,24 +146,6 @@ const KIND_LABEL: Record<ActionQueueKind, string> = {
   'phantom-merge-unknown': 'phantom merge?',
 }
 
-/** Left accent bar color per kind. */
-const KIND_ACCENT: Record<string, string> = {
-  failed: 'border-l-error',
-  'daemon-killed': 'border-l-error',
-  'arc-failed': 'border-l-error',
-  'baseline-broken': 'border-l-error',
-  'stale-queued': 'border-l-warn',
-  'stale-worktree': 'border-l-warn',
-  'dirty-integration': 'border-l-warn',
-  'daemon-code-drift': 'border-l-warn',
-  'signature-storm': 'border-l-warn',
-  'phantom-merge': 'border-l-warn',
-  'phantom-merge-unknown': 'border-l-warn',
-  'awaiting-validation': 'border-l-trace-mars',
-  'draft-proposal': 'border-l-success',
-  'awaiting-human': 'border-l-primary',
-}
-
 /** Badge text + border tint per kind. */
 const KIND_CHIP_CLASS: Record<string, string> = {
   failed: 'text-error border-error/40',
@@ -241,15 +223,11 @@ const TriageClusterRow = ({ kind, count, latestAt }: TriageClusterRowProps) => {
   const kindLabel = (KIND_LABEL as Record<string, string | undefined>)[kind] ?? kind.replace(/-/g, ' ')
   const kindIcon = KIND_ICON[kind] ?? '•'
   const chipClass = KIND_CHIP_CLASS[kind] ?? 'text-muted-foreground border-border'
-  const accentClass = KIND_ACCENT[kind] ?? 'border-l-muted'
   const isDraftProposal = kind === 'draft-proposal'
 
   return (
     <div
-      className={[
-        'mars-card relative rounded-lg border-l-2 bg-card px-4 py-3',
-        accentClass,
-      ].join(' ')}
+      className="mars-card relative rounded-lg bg-card px-4 py-3"
     >
       {/* Top row: kind chip + age */}
       <div className="mb-1.5 flex items-center gap-2">
@@ -382,7 +360,6 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
   // humanSummary || title falls back to the sole headline.
   const goal = item.operatorGoal ?? null
   const headline = !goal ? (item.humanSummary || item.title) : null
-  const accentClass = KIND_ACCENT[item.kind] ?? 'border-l-muted'
   const kindLabel = KIND_LABEL[item.kind] ?? item.kind.replace(/-/g, ' ')
   const kindIcon = KIND_ICON[item.kind] ?? '•'
   const chipClass =
@@ -479,10 +456,7 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
 
   return (
     <div
-      className={[
-        'mars-card relative rounded-lg border-l-2 bg-card px-4 py-3 transition-opacity',
-        accentClass,
-      ].join(' ')}
+      className="mars-card relative rounded-lg bg-card px-4 py-3 transition-opacity"
     >
       {/* Top row: kind chip + priority badge + age */}
       <div className="mb-1.5 flex items-center gap-2">
@@ -772,7 +746,7 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
               className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground"
               data-testid="triage-chat"
             >
-              💬
+              ⊙
             </a>
 
             {/* More ⋯ — disclosure that hides Restart (and copy verbs) */}
@@ -928,7 +902,6 @@ export const TriageCauseGroupRow = ({
     (KIND_LABEL as Record<string, string | undefined>)[group.kind] ??
     group.kind.replace(/-/g, ' ')
   const kindIcon = KIND_ICON[group.kind] ?? '•'
-  const accentClass = KIND_ACCENT[group.kind] ?? 'border-l-muted'
   const chipClass =
     KIND_CHIP_CLASS[group.kind] ?? 'text-muted-foreground border-border'
 
@@ -970,10 +943,7 @@ export const TriageCauseGroupRow = ({
 
   return (
     <div
-      className={[
-        'mars-card rounded-lg border-l-2 bg-card px-4 py-3',
-        accentClass,
-      ].join(' ')}
+      className="mars-card rounded-lg bg-card px-4 py-3"
       data-testid="cause-group-row"
     >
       {/* Header: toggle + kind chip + count + cause label + bulk action */}
@@ -1059,7 +1029,7 @@ const FeedErrorCard = ({ label, error }: FeedErrorCardProps) => {
   const { message, remedy } = describeFeedFailure(error, label)
   return (
     <div
-      className="mars-card border-l-2 border-l-error px-4 py-3"
+      className="mars-card rounded-lg bg-card px-4 py-3"
       data-testid={`triage-feed-error-${label.replace(/\s+/g, '-')}`}
       role="alert"
     >

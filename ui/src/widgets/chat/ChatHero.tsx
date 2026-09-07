@@ -128,7 +128,7 @@ export const ChatHero = ({ delta, onBack }: ChatHeroProps) => {
                 <ul className={SECTION_WRAPPER}>
                   {delta.merges.map((m) => (
                     <li key={m.taskId} className={ITEM_ROW}>
-                      ✅ <span className={TASK_ID}>{m.taskId}</span> {m.title}
+                      <span className="text-success opacity-60">✓</span> <span className={TASK_ID}>{m.taskId}</span> {m.title}
                     </li>
                   ))}
                 </ul>
@@ -144,7 +144,7 @@ export const ChatHero = ({ delta, onBack }: ChatHeroProps) => {
                 <ul className={SECTION_WRAPPER}>
                   {delta.recoveries.map((r) => (
                     <li key={r.taskId} className={ITEM_ROW}>
-                      🔧 <span className={TASK_ID}>{r.originTaskId}</span> recovered — {r.title}
+                      <span className="opacity-60">↻</span> <span className={TASK_ID}>{r.originTaskId}</span> recovered — {r.title}
                     </li>
                   ))}
                 </ul>
@@ -160,7 +160,7 @@ export const ChatHero = ({ delta, onBack }: ChatHeroProps) => {
                 <ul className={SECTION_WRAPPER}>
                   {delta.recipes.map((r, i) => (
                     <li key={i} data-testid="recipe-entry" className={ITEM_ROW}>
-                      🤖 {r.text}
+                      <span className="opacity-60">⚙</span> {r.text}
                     </li>
                   ))}
                 </ul>
@@ -176,7 +176,7 @@ export const ChatHero = ({ delta, onBack }: ChatHeroProps) => {
                 <ul className={SECTION_WRAPPER}>
                   {delta.throttles.map((t) => (
                     <li key={t.taskId} className={ITEM_ROW}>
-                      ⏸ <span className={TASK_ID}>{t.taskId}</span> {t.reason}
+                      <span className="opacity-60">◔</span> <span className={TASK_ID}>{t.taskId}</span> {t.reason}
                     </li>
                   ))}
                 </ul>
@@ -192,7 +192,7 @@ export const ChatHero = ({ delta, onBack }: ChatHeroProps) => {
                 <ul className={SECTION_WRAPPER}>
                   {delta.evaporated.map((e) => (
                     <li key={e.threadId} className={ITEM_ROW}>
-                      💨 {e.title}
+                      <span className="opacity-60">⊘</span> {e.title}
                     </li>
                   ))}
                 </ul>

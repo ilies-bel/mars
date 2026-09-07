@@ -221,7 +221,7 @@ export const PromptInputAttachment = ({
   return (
     <div
       className={cn(
-        "group relative flex items-center gap-2 rounded-md border bg-accent/50 py-1 pr-1 pl-2 text-xs",
+        "group relative flex items-center gap-2 rounded-md border bg-accent/50 py-1 pr-1 pl-2 text-label",
         className
       )}
       {...props}
@@ -256,7 +256,7 @@ export type PromptInputTextareaProps = ComponentProps<typeof Textarea>;
 export const PromptInputTextarea = ({
   className,
   onKeyDown,
-  placeholder = "What would you like to know?",
+  placeholder = "Ask anything…",
   ...props
 }: PromptInputTextareaProps) => {
   const handleKeyDown: KeyboardEventHandler<HTMLTextAreaElement> = (event) => {

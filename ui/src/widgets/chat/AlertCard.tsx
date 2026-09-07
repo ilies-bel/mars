@@ -21,7 +21,7 @@
  */
 
 import { useState } from 'react'
-import { Response } from '@/components/ai-elements/response'
+import { Response } from '@/components/chat-primitives/response'
 import { snoozeActionQueueItem, restoreSnoozedItem, postDecision } from '@/shared/api'
 import { dispatchAlertVerb, verbButtonClass } from './alertVerbs'
 import type { AlertHumanDetail, AlertVerb, Decision } from '@/shared/schemas'
@@ -39,17 +39,6 @@ const KIND_ICON: Record<string, string> = {
   'draft-proposal': '◇',
   'awaiting-validation': '◎',
   'arc-failed': '⊗',
-}
-
-/** Left accent-bar + border tint per kind. */
-const KIND_ACCENT: Record<string, string> = {
-  failed: 'border-l-error',
-  'daemon-killed': 'border-l-error',
-  'stale-queued': 'border-l-warn',
-  'arc-failed': 'border-l-error',
-  'stale-worktree': 'border-l-warn',
-  'awaiting-validation': 'border-l-trace-mars',
-  'draft-proposal': 'border-l-success',
 }
 
 export type SnoozePreset = '1h' | '4h' | 'tomorrow-morning' | 'next-week'
@@ -480,8 +469,6 @@ export const AlertCard = ({
     }
   }
 
-  const accentClass = KIND_ACCENT[kind] ?? 'border-l-iron'
-
   const entityHash =
     kind === 'draft-proposal'
       ? proposalHash(entityId, 'chat')
@@ -506,7 +493,7 @@ export const AlertCard = ({
   if (isSnoozed) {
     return (
       <div
-        className={`mars-card my-2 rounded-lg border-l-2 ${accentClass} bg-card p-3 text-body opacity-50`}
+        className="mars-card my-2 rounded-lg bg-card p-3 text-body opacity-50"
         data-testid="alert-card-snoozed"
       >
         <div className="flex items-center gap-2">
@@ -537,10 +524,9 @@ export const AlertCard = ({
   return (
     <div
       className={[
-        'mars-card my-2 rounded-lg border-l-2 p-3 text-body',
-        accentClass,
+        'mars-card my-2 rounded-lg p-3 text-body',
         resolved
-          ? 'border-primary/20 bg-card opacity-60'
+          ? 'bg-card opacity-60'
           : 'bg-card',
       ].join(' ')}
       data-testid="alert-card"

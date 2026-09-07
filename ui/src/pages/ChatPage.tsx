@@ -58,21 +58,21 @@ import {
   ConversationContent,
   ConversationEmptyState,
   ConversationScrollButton,
-} from '@/components/ai-elements/conversation'
-import { Message, MessageContent } from '@/components/ai-elements/message'
-import { Response } from '@/components/ai-elements/response'
-import type { ResponseProps } from '@/components/ai-elements/response'
-import { Reasoning, ReasoningTrigger, ReasoningContent } from '@/components/ai-elements/reasoning'
-import { ToolGroup, type ToolGroupEntryData } from '@/components/ai-elements/tool'
+} from '@/components/chat-primitives/conversation'
+import { Message, MessageContent } from '@/components/chat-primitives/message'
+import { Response } from '@/components/chat-primitives/response'
+import type { ResponseProps } from '@/components/chat-primitives/response'
+import { Reasoning, ReasoningTrigger, ReasoningContent } from '@/components/chat-primitives/reasoning'
+import { ToolGroup, type ToolGroupEntryData } from '@/components/chat-primitives/tool'
 // Loader removed — ThinkingIndicator replaces it in ChatConversation
-import { Suggestions, Suggestion } from '@/components/ai-elements/suggestion'
+import { Suggestions, Suggestion } from '@/components/chat-primitives/suggestion'
 import {
   PromptInputTextarea,
   PromptInputToolbar,
   PromptInputTools,
   PromptInputButton,
   PromptInputSubmit,
-} from '@/components/ai-elements/prompt-input'
+} from '@/components/chat-primitives/prompt-input'
 import { PaperclipIcon, MicIcon, SquareIcon, XIcon, PauseIcon } from 'lucide-react'
 import { AgentConfigPanel } from '@/widgets/chat/AgentConfigPanel'
 import { ContextRail } from '@/widgets/chat/ContextRail'
@@ -135,13 +135,13 @@ const SLASH_COMMANDS = [
 // ---------------------------------------------------------------------------
 
 const KIND_ICON: Record<string, string> = {
-  failed: '⚠️',
-  'daemon-killed': '⛔',
-  'stale-queued': '⏳',
-  'stale-worktree': '🗑️',
-  'draft-proposal': '💡',
-  'awaiting-validation': '🔍',
-  'arc-failed': '⛓️',
+  failed: '⚠',
+  'daemon-killed': '⊘',
+  'stale-queued': '◔',
+  'stale-worktree': '⌧',
+  'draft-proposal': '◇',
+  'awaiting-validation': '◎',
+  'arc-failed': '⊗',
 }
 
 export interface HeroSuggestionsProps {
@@ -173,7 +173,7 @@ export const HeroSuggestions = ({ alerts, onAlertClick, onChipClick, onWhatHappe
           aria-label="Most important conversation"
         >
           <div className="flex items-center gap-2 font-mono text-micro text-muted-foreground">
-            <span aria-hidden="true" className="text-body">{KIND_ICON[topAlert.kind] ?? '🔔'}</span>
+            <span aria-hidden="true" className="text-body">{KIND_ICON[topAlert.kind] ?? '•'}</span>
             <span>Mars</span>
             <span aria-hidden="true">·</span>
             <span>{kindBadgeLabel(topAlert.kind)}</span>
@@ -211,7 +211,7 @@ export const HeroSuggestions = ({ alerts, onAlertClick, onChipClick, onWhatHappe
                 className="flex min-w-0 max-w-full items-center gap-1.5 rounded-full border border-primary/25 px-3 py-1.5 font-mono text-label text-primary transition-colors hover:bg-primary/10 hover:text-foreground active:scale-[0.98]"
                 onClick={() => onAlertClick(alert)}
               >
-                <span aria-hidden="true">{KIND_ICON[alert.kind] ?? '🔔'}</span>
+                <span aria-hidden="true">{KIND_ICON[alert.kind] ?? '•'}</span>
                 <span className="truncate">{chipLabel}</span>
               </button>
             )
@@ -874,7 +874,7 @@ const ThreadItem = ({ thread, isSelected, onSelect, onRename, indented = false, 
   // Action-queue ids are opaque persisted ids, not `kind:entity` strings. A
   // thread therefore cannot infer a kind from alertItemId; alert threads use a
   // neutral bell and queue rows render their own real-kind icon and badge.
-  const typeIcon = thread.origin === 'alert' ? '🔔' : '💬'
+  const typeIcon = thread.origin === 'alert' ? '◉' : '⊙'
   const iconDimmed = thread.origin === 'alert' && thread.alertResolved
 
   // Show the objective only when it says something the title does not. Creation
@@ -1500,9 +1500,9 @@ function sendErrorMessage(err: unknown): string {
       const statusStr = err.status != null ? ` (${err.status})` : ''
       return `Daemon error${statusStr} — try restarting with \`mars daemon restart\`.`
     }
-    if (err.status != null) return `Message could not be sent — server responded ${err.status}.`
+    if (err.status != null) return `Send failed (${err.status})`
   }
-  return 'Message could not be sent — please try again.'
+  return 'Send failed'
 }
 
 // ---------------------------------------------------------------------------
@@ -2483,7 +2483,7 @@ export const ThreadSidebar = ({
             className="px-2 py-3 font-mono text-micro text-primary/40"
             data-testid="empty-rail"
           >
-            {filters.query.trim() ? 'No matches' : "You're all clear"}
+            {filters.query.trim() ? 'No matches' : 'No items'}
           </p>
         ) : null}
         {visibleLiveThreads.map((t) => (

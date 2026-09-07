@@ -24,14 +24,14 @@ export const priorityBadgeClass = (priority: string): string => {
 
 const KIND_ICON: Record<string, string> = {
   failed: '⚠',
-  'daemon-killed': '⛔',
-  'stale-queued': '⏳',
-  'arc-failed': '⛓',
+  'daemon-killed': '⊘',
+  'stale-queued': '◔',
+  'arc-failed': '⊗',
   'stale-worktree': '◌',
   'awaiting-validation': '⌁',
   'draft-proposal': '✦',
-  'awaiting-human': '⏳',
-  'reflect-recommended': '💡',
+  'awaiting-human': '▸',
+  'reflect-recommended': '✦',
   'scorer-suggested': '★',
 }
 
@@ -140,7 +140,7 @@ export const QueueThreadRow = memo(({
               className="shrink-0 font-mono text-micro text-muted-foreground"
               data-testid="projection-has-conversation"
             >
-              💬
+              ⊙
             </span>
           )}
           <span
