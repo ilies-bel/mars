@@ -33,6 +33,7 @@ const FULL_OPTS: HeadlessRunOpts = {
   maxContextTokens: 128_000,
   mcpServers: { codegraph: { type: 'stdio', command: 'codegraph', args: ['mcp'] } },
   taskId: 'mars-b9c3283b',
+  workerClass: 'Coder',
 }
 
 describe('HeadlessRunOpts — Port-legal serializable shape', () => {

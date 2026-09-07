@@ -711,8 +711,10 @@ const buildWorker = (config: WorkerConfig): Worker => {
               // Passing a taskId is what injects the mars-worker (and, with
               // it, codegraph) MCP servers. A Worker that denies the whole
               // tool surface must not get them back through MCP — see
-              // deniesAllToolUse.
+              // deniesAllToolUse. workerClass stamps MARS_MCP_WORKER_CLASS so
+              // the MCP server advertises only the class-appropriate tool set.
               taskId: deniesAllToolUse(config) ? undefined : options.taskId,
+              workerClass: deniesAllToolUse(config) ? undefined : config.name,
             },
             {
               onEvent: options.onEvent,

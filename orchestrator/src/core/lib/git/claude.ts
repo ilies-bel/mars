@@ -248,9 +248,17 @@ export interface RunAgentArgs {
    *      back to the correct task without accepting an id from the model.
    *   2. The mars-worker stdio MCP server is merged into the inline `--mcp-config`
    *      JSON (alongside any operator-provisioned `mcpServers`) so every
-   *      dispatched Coder/Fixer run inherits the tool.
+   *      dispatched worker run that has a task id inherits the tool.
    */
   taskId?: string
+  /**
+   * The worker class dispatching this run (e.g. `'Planner'`, `'Coder'`). When
+   * set alongside `taskId`, `buildWorkerEnv` stamps `MARS_MCP_WORKER_CLASS` so
+   * the mars-worker MCP server advertises only the tools that are meaningful for
+   * that class — e.g. `mars_task_check` for implementation workers but not for
+   * read-only synthesis workers like Planner or Slicer.
+   */
+  workerClass?: string
 }
 
 export type AgentEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
@@ -603,17 +611,24 @@ const HOST_AGENT_ENV_RE = /^(?:CLAUDE(?:CODE)?(?:$|_)|CMUX_|AI_AGENT$|MARS_REPO$
  * Strips host-agent identity vars (see regex above) so a daemon launched from
  * inside an interactive `claude` shell cannot contaminate dispatched workers.
  *
- * When `taskId` is supplied (Coder/Fixer dispatches), `MARS_MCP_TASK_ID` is
+ * When `taskId` is supplied (any dispatched worker), `MARS_MCP_TASK_ID` is
  * stamped so the injected MCP worker server can route `mars_task_note` calls
  * back to the correct task without accepting an id argument from the model.
+ *
+ * When `workerClass` is supplied, `MARS_MCP_WORKER_CLASS` is stamped so the
+ * MCP server can advertise only the tools that make sense for that class
+ * (e.g. `mars_task_check` for a Coder but not for a read-only Planner).
  */
-export const buildWorkerEnv = (taskId?: string): NodeJS.ProcessEnv => {
+export const buildWorkerEnv = (taskId?: string, workerClass?: string): NodeJS.ProcessEnv => {
   const env: NodeJS.ProcessEnv = { ...process.env }
   for (const key of Object.keys(env)) {
     if (HOST_AGENT_ENV_RE.test(key)) delete env[key]
   }
   if (taskId) {
     env['MARS_MCP_TASK_ID'] = taskId
+  }
+  if (workerClass) {
+    env['MARS_MCP_WORKER_CLASS'] = workerClass
   }
   // Set CI=true so any package manager the coding agent invokes (pnpm, npm,
   // yarn, bun) behaves non-interactively in the TTY-less worker process.
@@ -740,6 +755,7 @@ export const runClaudeCode = async ({
   externalAbort,
   onPid,
   taskId,
+  workerClass,
 }: RunAgentArgs): Promise<RunAgentResult> => {
   // Refuse before spawning: `claude -p ''` reads the prompt from stdin, which
   // is /dev/null for dispatched workers. See EMPTY_PROMPT_REFUSAL.
@@ -893,7 +909,7 @@ export const runClaudeCode = async ({
       }
     },
     abort.signal,
-    buildWorkerEnv(taskId),
+    buildWorkerEnv(taskId, workerClass),
     onPid,
   )
   clearTimeout(timeoutHandle)

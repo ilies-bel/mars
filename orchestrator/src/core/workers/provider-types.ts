@@ -119,6 +119,13 @@ export type HeadlessRunOpts = Readonly<{
    * MCP server is injected into the inline `--mcp-config` JSON.
    */
   taskId?: string
+  /**
+   * Worker class for this dispatch (e.g. `'Planner'`, `'Coder'`). Forwarded to
+   * {@link runClaudeCode} → `buildWorkerEnv` so `MARS_MCP_WORKER_CLASS` is
+   * stamped in the worker env, enabling the mars-worker MCP server to advertise
+   * only the tools that make sense for that class.
+   */
+  workerClass?: string
 }>
 
 // Out-of-band extras for a headless run that are meaningful only to an

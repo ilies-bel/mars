@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { PassThrough } from 'node:stream'
-import { startWorkerMcpServer } from '../worker-server.js'
+import { startWorkerMcpServer, WORKER_TOOL_MATRIX } from '../worker-server.js'
 import type { DaemonRequest } from '../../daemon/protocol.js'
 
 // ---------------------------------------------------------------------------
@@ -43,6 +43,9 @@ function nextLine(output: PassThrough): Promise<unknown> {
  * Create a pair of PassThrough streams and start the server.
  * Returns the streams and a server promise; the server runs until
  * `serverInput` is closed (end-of-stream).
+ *
+ * @param env         - full env map (must include MARS_MCP_TASK_ID; optionally MARS_MCP_WORKER_CLASS)
+ * @param sendRequest - stub daemon router
  */
 function startServer(
   env: Record<string, string | undefined>,
@@ -135,9 +138,9 @@ describe('startWorkerMcpServer', () => {
     await serverDone
   })
 
-  it('lists mars_task_note, mars_task_check, and mars_task_context in tools/list', async () => {
+  it('lists all three tools for a Coder worker class', async () => {
     const { serverInput, serverOutput, serverDone } = startServer(
-      { MARS_MCP_TASK_ID: 'task-abc' },
+      { MARS_MCP_TASK_ID: 'task-abc', MARS_MCP_WORKER_CLASS: 'Coder' },
       sendRequest,
     )
     await handshake(serverInput, serverOutput)
@@ -152,6 +155,95 @@ describe('startWorkerMcpServer', () => {
 
     serverInput.end()
     await serverDone
+  })
+
+  it('lists only mars_task_note and mars_task_context for a Planner worker class', async () => {
+    const { serverInput, serverOutput, serverDone } = startServer(
+      { MARS_MCP_TASK_ID: 'task-planner', MARS_MCP_WORKER_CLASS: 'Planner' },
+      sendRequest,
+    )
+    await handshake(serverInput, serverOutput)
+
+    sendMsg(serverInput, { jsonrpc: '2.0', id: 2, method: 'tools/list' })
+    const resp = await nextLine(serverOutput) as Record<string, unknown>
+
+    expect(resp.id).toBe(2)
+    const tools = (resp.result as Record<string, unknown>).tools as Array<Record<string, unknown>>
+    // Planner is read-only: no done-criterion checking
+    expect(tools.map(t => t.name)).toEqual(['mars_task_note', 'mars_task_context'])
+
+    serverInput.end()
+    await serverDone
+  })
+
+  it('returns only mars_task_note for an unrecognised worker class (conservative fallback)', async () => {
+    const { serverInput, serverOutput, serverDone } = startServer(
+      { MARS_MCP_TASK_ID: 'task-unknown', MARS_MCP_WORKER_CLASS: 'UnknownWidget' },
+      sendRequest,
+    )
+    await handshake(serverInput, serverOutput)
+
+    sendMsg(serverInput, { jsonrpc: '2.0', id: 2, method: 'tools/list' })
+    const resp = await nextLine(serverOutput) as Record<string, unknown>
+
+    const tools = (resp.result as Record<string, unknown>).tools as Array<Record<string, unknown>>
+    expect(tools.map(t => t.name)).toEqual(['mars_task_note'])
+
+    serverInput.end()
+    await serverDone
+  })
+
+  it('returns only mars_task_note when MARS_MCP_WORKER_CLASS is absent (conservative fallback)', async () => {
+    const { serverInput, serverOutput, serverDone } = startServer(
+      { MARS_MCP_TASK_ID: 'task-no-class' },
+      sendRequest,
+    )
+    await handshake(serverInput, serverOutput)
+
+    sendMsg(serverInput, { jsonrpc: '2.0', id: 2, method: 'tools/list' })
+    const resp = await nextLine(serverOutput) as Record<string, unknown>
+
+    const tools = (resp.result as Record<string, unknown>).tools as Array<Record<string, unknown>>
+    expect(tools.map(t => t.name)).toEqual(['mars_task_note'])
+
+    serverInput.end()
+    await serverDone
+  })
+
+  it('rejects mars_task_check for a Planner even if called directly', async () => {
+    const { serverInput, serverOutput, serverDone } = startServer(
+      { MARS_MCP_TASK_ID: 'task-planner', MARS_MCP_WORKER_CLASS: 'Planner' },
+      sendRequest,
+    )
+    await handshake(serverInput, serverOutput)
+
+    sendMsg(serverInput, {
+      jsonrpc: '2.0',
+      id: 99,
+      method: 'tools/call',
+      params: { name: 'mars_task_check', arguments: { index: 1 } },
+    })
+    const resp = await nextLine(serverOutput) as Record<string, unknown>
+
+    expect(resp.id).toBe(99)
+    const result = resp.result as Record<string, unknown>
+    expect(result.isError).toBe(true)
+    // No daemon call should have been made
+    expect(capturedRequests).toHaveLength(0)
+
+    serverInput.end()
+    await serverDone
+  })
+
+  it('WORKER_TOOL_MATRIX: Coder and Fixer include mars_task_check; Planner and Slicer do not', () => {
+    expect(WORKER_TOOL_MATRIX['Coder']).toContain('mars_task_check')
+    expect(WORKER_TOOL_MATRIX['Fixer']).toContain('mars_task_check')
+    expect(WORKER_TOOL_MATRIX['Planner']).not.toContain('mars_task_check')
+    expect(WORKER_TOOL_MATRIX['Slicer']).not.toContain('mars_task_check')
+    // All classes get mars_task_note
+    for (const tools of Object.values(WORKER_TOOL_MATRIX)) {
+      expect(tools).toContain('mars_task_note')
+    }
   })
 
   it('mars_task_note forwards op:task.note with env-bound id and verbatim body to daemon', async () => {
@@ -249,7 +341,7 @@ describe('startWorkerMcpServer', () => {
   it('mars_task_check forwards op:task.check with criterionIndex and uncheck:false', async () => {
     const TASK_ID = 'mars-abc123'
     const { serverInput, serverOutput, serverDone } = startServer(
-      { MARS_MCP_TASK_ID: TASK_ID },
+      { MARS_MCP_TASK_ID: TASK_ID, MARS_MCP_WORKER_CLASS: 'Coder' },
       sendRequest,
     )
     await handshake(serverInput, serverOutput)
@@ -288,7 +380,7 @@ describe('startWorkerMcpServer', () => {
   it('mars_task_check with uncheck:true forwards uncheck:true', async () => {
     const TASK_ID = 'mars-abc123'
     const { serverInput, serverOutput, serverDone } = startServer(
-      { MARS_MCP_TASK_ID: TASK_ID },
+      { MARS_MCP_TASK_ID: TASK_ID, MARS_MCP_WORKER_CLASS: 'Coder' },
       sendRequest,
     )
     await handshake(serverInput, serverOutput)
@@ -415,7 +507,7 @@ describe('startWorkerMcpServer', () => {
       return { ok: true }
     })
     const { serverInput, serverOutput, serverDone } = startServer(
-      { MARS_MCP_TASK_ID: 'task-abc' },
+      { MARS_MCP_TASK_ID: 'task-abc', MARS_MCP_WORKER_CLASS: 'Coder' },
       failingSendRequest,
     )
     await handshake(serverInput, serverOutput)
@@ -468,7 +560,7 @@ describe('startWorkerMcpServer', () => {
     })
 
     const { serverInput, serverOutput, serverDone } = startServer(
-      { MARS_MCP_TASK_ID: TASK_ID },
+      { MARS_MCP_TASK_ID: TASK_ID, MARS_MCP_WORKER_CLASS: 'Coder' },
       contextSendRequest,
     )
     await handshake(serverInput, serverOutput)

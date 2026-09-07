@@ -24,6 +24,40 @@ const TaskCheckArgsSchema = z.object({
   uncheck: z.boolean().optional(),
 })
 
+// ---------------------------------------------------------------------------
+// Per-class tool matrix — the declarative gating of which tools each worker
+// class may call. A class not listed here falls back to FALLBACK_TOOLS.
+//
+// Adding a new class: one line here.
+// Adding a new tool: add to the schema/handler below AND to the relevant
+// class lists here. The tool surfaces listed by tools/list are the ONLY ones
+// the model will attempt, so keeping the lists accurate removes guesswork.
+// ---------------------------------------------------------------------------
+
+/** Tools available to implementation workers (can tick done criteria). */
+const IMPLEMENTATION_TOOLS = ['mars_task_note', 'mars_task_check', 'mars_task_context'] as const
+
+/** Tools available to read-only synthesis workers (cannot tick done criteria). */
+const SYNTHESIS_TOOLS = ['mars_task_note', 'mars_task_context'] as const
+
+/**
+ * Declarative map from worker class name to the tool names it may call.
+ * Exported so tests can pin the exact tool surface per class.
+ */
+export const WORKER_TOOL_MATRIX: Readonly<Record<string, readonly string[]>> = {
+  Coder: IMPLEMENTATION_TOOLS,
+  Fixer: IMPLEMENTATION_TOOLS,
+  RescueOperator: IMPLEMENTATION_TOOLS,
+  Planner: SYNTHESIS_TOOLS,
+  Slicer: SYNTHESIS_TOOLS,
+  BehaviourVerifier: SYNTHESIS_TOOLS,
+  Scorer: SYNTHESIS_TOOLS,
+  Reflector: SYNTHESIS_TOOLS,
+}
+
+/** Fallback for an unrecognised or absent worker class: note-only. */
+const FALLBACK_TOOLS = ['mars_task_note'] as const
+
 export interface WorkerServerDeps {
   sendRequest: (req: DaemonRequest) => Promise<unknown>
 }
@@ -50,6 +84,15 @@ export async function startWorkerMcpServer(
   if (!taskId || taskId.trim().length === 0) {
     throw new Error('MARS_MCP_TASK_ID is required but not set in the environment')
   }
+
+  // Resolve the allowed tool set for this worker class. The class is stamped by
+  // buildWorkerEnv when the dispatch path is new enough to supply it; older
+  // or unrecognised classes fall back to FALLBACK_TOOLS (note-only) so the
+  // surface is conservative rather than permissive.
+  const workerClass = env['MARS_MCP_WORKER_CLASS']
+  const allowedToolNames = new Set<string>(
+    (workerClass ? WORKER_TOOL_MATRIX[workerClass] : undefined) ?? FALLBACK_TOOLS,
+  )
 
   const { input, output } = io
 
@@ -129,62 +172,77 @@ export async function startWorkerMcpServer(
         // No response for notifications.
         break
 
-      case 'tools/list':
+      case 'tools/list': {
+        // The full tool catalogue — every tool this server can possibly serve.
+        // tools/list filters this down to what allowedToolNames permits for the
+        // current worker class, so the model only sees the tools it may call.
+        const ALL_TOOL_DEFS = [
+          {
+            name: 'mars_task_note',
+            description: 'Append a progress note to the current task',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                body: {
+                  type: 'string',
+                  minLength: 1,
+                  description: 'Note body text',
+                },
+              },
+              required: ['body'],
+              additionalProperties: false,
+            },
+          },
+          {
+            name: 'mars_task_check',
+            description: 'Mark or unmark a done-criterion on the current task',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                index: {
+                  type: 'integer',
+                  minimum: 1,
+                  description: '1-based index of the done criterion to toggle',
+                },
+                uncheck: {
+                  type: 'boolean',
+                  description: 'When true, unmarks the criterion instead of marking it',
+                },
+              },
+              required: ['index'],
+              additionalProperties: false,
+            },
+          },
+          {
+            name: 'mars_task_context',
+            description:
+              'Fetch structured context for the current task: id, title, prompt, files, verify command, done criteria with check state, merge mode, status, and blocker ids',
+            inputSchema: {
+              type: 'object',
+              properties: {},
+              additionalProperties: false,
+            },
+          },
+        ]
         respond(id, {
-          tools: [
-            {
-              name: 'mars_task_note',
-              description: 'Append a progress note to the current task',
-              inputSchema: {
-                type: 'object',
-                properties: {
-                  body: {
-                    type: 'string',
-                    minLength: 1,
-                    description: 'Note body text',
-                  },
-                },
-                required: ['body'],
-                additionalProperties: false,
-              },
-            },
-            {
-              name: 'mars_task_check',
-              description: 'Mark or unmark a done-criterion on the current task',
-              inputSchema: {
-                type: 'object',
-                properties: {
-                  index: {
-                    type: 'integer',
-                    minimum: 1,
-                    description: '1-based index of the done criterion to toggle',
-                  },
-                  uncheck: {
-                    type: 'boolean',
-                    description: 'When true, unmarks the criterion instead of marking it',
-                  },
-                },
-                required: ['index'],
-                additionalProperties: false,
-              },
-            },
-            {
-              name: 'mars_task_context',
-              description:
-                'Fetch structured context for the current task: id, title, prompt, files, verify command, done criteria with check state, merge mode, status, and blocker ids',
-              inputSchema: {
-                type: 'object',
-                properties: {},
-                additionalProperties: false,
-              },
-            },
-          ],
+          tools: ALL_TOOL_DEFS.filter((t) => allowedToolNames.has(t.name)),
         })
         break
+      }
 
       case 'tools/call': {
         const p = params as Record<string, unknown> | undefined
         const toolName = p?.name
+
+        // Defense-in-depth: reject any tool not in this class's allowed set,
+        // even if the model somehow calls one not listed by tools/list.
+        if (typeof toolName !== 'string' || !allowedToolNames.has(toolName)) {
+          respond(id, {
+            content: [{ type: 'text', text: `Unknown tool: ${String(toolName)}` }],
+            isError: true,
+          })
+          break
+        }
 
         if (toolName === 'mars_task_note') {
           const parsed = TaskNoteArgsSchema.safeParse(p?.arguments)
