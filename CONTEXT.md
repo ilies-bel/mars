@@ -628,3 +628,7 @@ _Avoid_: storm, event storm, domain model file
 **Domain Flow**:
 One named business process inside a Domain Timeline, expressed as an ordered sequence of Domain Events.
 _Avoid_: flow, process, timeline
+
+**Domain Event**:
+A past-tense, business-meaningful fact that occurred in a target repository's domain; the unit a Domain Flow is a sequence of.
+_Avoid_: event, events, domain fact
