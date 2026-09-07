@@ -11,7 +11,7 @@
  */
 
 import { isTaskFailureActionQueueKind } from '@/shared/schemas'
-import type { ActionQueueItem } from '@/shared/schemas'
+import type { ActionQueueItem, ActionQueueGroupRow } from '@/shared/schemas'
 
 // ── Canonical "needs you" count ────────────────────────────────────────────
 
@@ -31,10 +31,22 @@ import type { ActionQueueItem } from '@/shared/schemas'
  * matching the entity-grouping `buildRenderedRows` performs — a task shown
  * on three rows is one subject needing attention, not three.
  */
-export function countNeedsYou(items: readonly ActionQueueItem[]): number {
-  const seenEntities = new Set<string>()
+export function countNeedsYou(
+  items: readonly ActionQueueItem[],
+  serverGroups?: readonly ActionQueueGroupRow[],
+): number {
+  // Server-pre-grouped rows: each group is one subject.
+  const serverGroupMemberIds = new Set<string>()
   let count = 0
+  for (const sg of (serverGroups ?? [])) {
+    if (sg.kind === 'draft-proposal') continue
+    count++
+    for (const m of sg.members) serverGroupMemberIds.add(m.id)
+  }
+
+  const seenEntities = new Set<string>()
   for (const item of items) {
+    if (serverGroupMemberIds.has(item.id)) continue // counted via server group
     if (item.kind === 'draft-proposal') continue
     if (item.entityId && isGroupableConditionKind(item.kind)) {
       if (seenEntities.has(item.entityId)) continue
@@ -111,6 +123,9 @@ export type RenderedRow =
    * Mirrors the CLI's `groupActionQueueRows` algorithm (HR-3 shared grouping model) —
    * same key, same singleton pass-through, same bulk-action surface.
    * Singletons always pass through as plain `item` rows.
+   *
+   * When produced from a server-sent group row, `causeLabel` carries the server's
+   * pre-computed human-readable label and takes precedence over the client fallback.
    */
   | {
       type: 'causeGroup'
@@ -119,6 +134,12 @@ export type RenderedRow =
       kind: string
       /** The shared `failureReasonCode` that defines this group. */
       signature: string
+      /**
+       * Human-readable cause label from the server (HR-3). When present,
+       * `TriageCauseGroupRow` prefers this over the client-computed label.
+       * Absent for client-side-computed cause groups.
+       */
+      causeLabel?: string
       count: number
       /** Highest priority among members. */
       priority: 'high' | 'normal' | 'low'
@@ -181,14 +202,37 @@ function highestPriority(items: ActionQueueItem[]): 'high' | 'normal' | 'low' {
  * Each group row is inserted at the position of its first (highest-priority,
  * most-recent) member within the already-sorted list.
  */
-export function buildRenderedRows(sorted: ActionQueueItem[]): RenderedRow[] {
+export function buildRenderedRows(
+  sorted: ActionQueueItem[],
+  serverGroups?: readonly ActionQueueGroupRow[],
+): RenderedRow[] {
+  // Prepend server-pre-grouped rows as causeGroup RenderedRows, and exclude
+  // their members from the flat sort so they are not double-rendered.
+  const serverGroupMemberIds = new Set<string>()
+  const serverGroupRows: RenderedRow[] = []
+  for (const sg of (serverGroups ?? [])) {
+    for (const m of sg.members) serverGroupMemberIds.add(m.id)
+    serverGroupRows.push({
+      type: 'causeGroup',
+      id: `causeGroup:${sg.kind}:${sg.signature}`,
+      kind: sg.kind,
+      signature: sg.signature,
+      causeLabel: sg.causeLabel,
+      count: sg.count,
+      priority: sg.priority,
+      members: sg.members,
+    })
+  }
+  const remainingSorted = serverGroupMemberIds.size > 0
+    ? sorted.filter((i) => !serverGroupMemberIds.has(i.id))
+    : sorted
   const kindCounts = new Map<string, number>()
-  for (const item of sorted) {
+  for (const item of remainingSorted) {
     kindCounts.set(item.kind, (kindCounts.get(item.kind) ?? 0) + 1)
   }
 
   const entityBuckets = new Map<string, ActionQueueItem[]>()
-  for (const item of sorted) {
+  for (const item of remainingSorted) {
     if (!item.entityId || !isGroupableConditionKind(item.kind)) continue
     const bucket = entityBuckets.get(item.entityId)
     if (bucket) bucket.push(item)
@@ -199,7 +243,7 @@ export function buildRenderedRows(sorted: ActionQueueItem[]): RenderedRow[] {
   // Items already destined for a multi-item entity group are excluded — they
   // are collapsed by entity-grouping and must not also appear in a cause group.
   const causeBuckets = new Map<string, ActionQueueItem[]>()
-  for (const item of sorted) {
+  for (const item of remainingSorted) {
     const entityBucket = item.entityId ? entityBuckets.get(item.entityId) : undefined
     if (entityBucket && entityBucket.length > 1) continue
     const sig = item.failureReasonCode?.trim()
@@ -215,7 +259,7 @@ export function buildRenderedRows(sorted: ActionQueueItem[]): RenderedRow[] {
   const emittedCauses = new Set<string>()
   const result: RenderedRow[] = []
 
-  for (const item of sorted) {
+  for (const item of remainingSorted) {
     // ── 1. Entity-group: several conditions for the SAME task ────────────────
     const bucket = item.entityId ? entityBuckets.get(item.entityId) : undefined
     if (bucket && bucket.length > 1) {
@@ -272,5 +316,7 @@ export function buildRenderedRows(sorted: ActionQueueItem[]): RenderedRow[] {
     }
   }
 
-  return result
+  // Server-grouped rows are prepended: they represent high-signal groups the
+  // server already computed and they should appear first in the list.
+  return [...serverGroupRows, ...result]
 }

@@ -698,48 +698,122 @@ export const hasResolvableTask = (
   item.entityId !== '' &&
   item.dag !== null
 
+// ── Wire format (HR-3 shared view layer, commit 452bef166) ────────────────────
+//
+// GET /view/action-queue returns a discriminated union per row since the
+// grouping logic was moved to the server-side view layer. Every entry is either
+// a pre-grouped cause row or a single-item envelope:
+//
+//   { "type": "group", "kind": …, "count": 18, "causeLabel": …, … }
+//   { "type": "item",  "row":  <flat ActionQueueItem> }
+
+/**
+ * A server-pre-grouped cause row: N items sharing the same (kind, signature).
+ * The server computes the group so the UI and CLI see the same count and label
+ * without each independently re-running the grouping algorithm.
+ */
+export const actionQueueGroupRowSchema = z.object({
+  type: z.literal('group'),
+  kind: z.string(),
+  count: z.number(),
+  /** Human-readable cause label computed by the server (e.g. "context window exhausted"). */
+  causeLabel: z.string(),
+  /** Machine-readable failure signature shared by all members. */
+  signature: z.string(),
+  firstAt: z.string(),
+  lastAt: z.string(),
+  priority: z.enum(['high', 'normal', 'low']),
+  class: z.enum(['alert', 'notice', 'decision']).optional(),
+  previewIds: z.array(z.string()).default([]),
+  /** Full member rows — present for rendering the expanded list and bulk actions. */
+  members: z.array(actionQueueItemSchema),
+})
+
+/** A single action-queue item in its wire envelope. */
+const actionQueueItemRowWireSchema = z.object({
+  type: z.literal('item'),
+  row: actionQueueItemSchema,
+})
+
+/** One entry in the GET /view/action-queue response. */
+export const actionQueueWireRowSchema = z.discriminatedUnion('type', [
+  actionQueueGroupRowSchema,
+  actionQueueItemRowWireSchema,
+])
+
 // Element-level catch: malformed rows must not reject an entire queue response.
-// Valid daemon task-failure kinds parse above with their persisted kind intact;
-// this fallback is only for invalid payloads and legacy failed-task rows.
+// Valid item rows parse via actionQueueItemRowWireSchema above. Valid group rows
+// parse via actionQueueGroupRowSchema. The catch handles:
+//   - malformed group rows (no `at` field — never trigger the at-missing throw)
+//   - malformed item row wrappers (bad `row` content — thread the inner `at`)
+//   - legacy flat rows that predate the HR-3 wire envelope (treat as item)
 export const actionQueueResponseSchema = z.array(
-  actionQueueItemSchema.catch((ctx) => {
+  actionQueueWireRowSchema.catch((ctx) => {
     const raw =
       typeof ctx.input === 'object' && ctx.input !== null
         ? (ctx.input as Record<string, unknown>)
         : {}
+
+    // Group rows have no `at` field — degrade to a sentinel group, never throw.
+    if (raw.type === 'group') {
+      return {
+        type: 'group' as const,
+        kind: typeof raw.kind === 'string' ? raw.kind : 'unknown',
+        count: typeof raw.count === 'number' ? raw.count : 0,
+        causeLabel: typeof raw.causeLabel === 'string' ? raw.causeLabel : '',
+        signature: typeof raw.signature === 'string' ? raw.signature : '',
+        firstAt: typeof raw.firstAt === 'string' ? raw.firstAt : new Date().toISOString(),
+        lastAt: typeof raw.lastAt === 'string' ? raw.lastAt : new Date().toISOString(),
+        priority: 'normal' as const,
+        previewIds: [] as string[],
+        members: [] as z.infer<typeof actionQueueItemSchema>[],
+      }
+    }
+
+    // Item row or legacy flat row — extract the inner payload and thread `at`.
+    // Legacy flat rows (no `type` field) are handled the same as item rows.
+    const rowRaw =
+      raw.type === 'item' && typeof raw.row === 'object' && raw.row !== null
+        ? (raw.row as Record<string, unknown>)
+        : raw
+
     // Re-parse as the generic failed condition; preserves all other base fields
     // a task-failure row accepts. Falls back to a minimal sentinel
     // when even the failed-task variant rejects the row.
-    const attempt = taskFailureItemSchema.safeParse({ ...raw, kind: 'failed' })
-    if (attempt.success) return attempt.data
+    const attempt = taskFailureItemSchema.safeParse({ ...rowRaw, kind: 'failed' })
+    if (attempt.success) return { type: 'item' as const, row: attempt.data }
+
     // Thread the real `at` from the daemon payload rather than defaulting to
     // the epoch-0 sentinel — a missing timestamp is a parse error, not a silent
     // fallback, so callers can detect it and the UI can't silently show "56y ago".
-    if (typeof raw.at !== 'string' || raw.at.length === 0) {
-      throw new Error(`action-queue row ${String(raw.id ?? 'unknown')} is missing required 'at' timestamp`)
+    if (typeof rowRaw.at !== 'string' || rowRaw.at.length === 0) {
+      throw new Error(`action-queue row ${String(rowRaw.id ?? 'unknown')} is missing required 'at' timestamp`)
     }
     return {
-      id: typeof raw.id === 'string' ? raw.id : 'unknown',
-      kind: 'failed',
-      entityId: typeof raw.entityId === 'string' ? raw.entityId : '',
-      priority: 'high' as const,
-      title: typeof raw.title === 'string' ? raw.title : '',
-      body: typeof raw.body === 'string' ? raw.body : '',
-      at: raw.at,
-      dag: null,
-      errorKind:
-        typeof raw.errorKind === 'string'
-          ? raw.errorKind
-          : typeof raw.kind === 'string'
-            ? raw.kind
-            : 'unknown',
-      actions: [],
-      diagnosis: null,
-      failureReasonCode: null,
-      recoveryExhausted: false,
-      humanSummary: '',
-      verbs: [],
-      decisions: [],
+      type: 'item' as const,
+      row: {
+        id: typeof rowRaw.id === 'string' ? rowRaw.id : 'unknown',
+        kind: 'failed',
+        entityId: typeof rowRaw.entityId === 'string' ? rowRaw.entityId : '',
+        priority: 'high' as const,
+        title: typeof rowRaw.title === 'string' ? rowRaw.title : '',
+        body: typeof rowRaw.body === 'string' ? rowRaw.body : '',
+        at: rowRaw.at,
+        dag: null,
+        errorKind:
+          typeof rowRaw.errorKind === 'string'
+            ? rowRaw.errorKind
+            : typeof rowRaw.kind === 'string'
+              ? rowRaw.kind
+              : 'unknown',
+        actions: [],
+        diagnosis: null,
+        failureReasonCode: null,
+        recoveryExhausted: false,
+        humanSummary: '',
+        verbs: [],
+        decisions: [],
+      },
     }
   }),
 )
@@ -1150,6 +1224,8 @@ export type ActionQueueHistoryResponse = z.infer<typeof actionQueueHistoryRespon
 
 export type Decision = z.infer<typeof zDecision>
 export type ActionQueueItem = z.infer<typeof actionQueueItemSchema>
+export type ActionQueueGroupRow = z.infer<typeof actionQueueGroupRowSchema>
+export type ActionQueueWireRow = z.infer<typeof actionQueueWireRowSchema>
 export type NoticeItem = z.infer<typeof noticeItemSchema>
 export type ActionDescriptor = z.infer<typeof actionDescriptorSchema>
 export type AlertChainNode = z.infer<typeof alertChainNodeSchema>

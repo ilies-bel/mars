@@ -11,24 +11,27 @@ import { describe, expect, it } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ChatPage } from './ChatPage'
-import type { ActionQueueItem, ChatThread } from '@/shared/schemas'
+import type { ActionQueueWireRow, ChatThread } from '@/shared/schemas'
 
-const QUEUE_ITEM: ActionQueueItem = {
-  id: 'failed-task:t-1',
-  kind: 'failed-task',
-  entityId: 't-1',
-  priority: 'high',
-  title: 'projection thread title',
-  body: 'the daemon needs a decision',
-  at: new Date().toISOString(),
-  dag: null,
-  errorKind: 'failed-task',
-  actions: [
-    { id: 'restart', label: 'Restart', op: 'restart' },
-    { id: 'purge', label: 'Purge', op: 'purge', needsConfirm: true },
-  ],
-  diagnosis: null,
-} as unknown as ActionQueueItem
+const QUEUE_ITEM: ActionQueueWireRow = {
+  type: 'item',
+  row: {
+    id: 'failed-task:t-1',
+    kind: 'failed-task',
+    entityId: 't-1',
+    priority: 'high',
+    title: 'projection thread title',
+    body: 'the daemon needs a decision',
+    at: new Date().toISOString(),
+    dag: null,
+    errorKind: 'failed-task',
+    actions: [
+      { id: 'restart', label: 'Restart', op: 'restart' },
+      { id: 'purge', label: 'Purge', op: 'purge', needsConfirm: true },
+    ],
+    diagnosis: null,
+  } as unknown as import('@/shared/schemas').ActionQueueItem,
+}
 
 const PLAIN_THREAD: ChatThread = {
   id: 'th-plain',
@@ -40,7 +43,7 @@ const PLAIN_THREAD: ChatThread = {
 } as unknown as ChatThread
 
 const renderPage = (
-  items: ActionQueueItem[],
+  items: ActionQueueWireRow[],
   threads: ChatThread[],
   needsCodexAuth = false,
 ): string => {

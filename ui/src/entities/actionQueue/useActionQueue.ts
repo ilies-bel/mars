@@ -1,10 +1,19 @@
 import { useQuery } from '@tanstack/react-query'
 import { fetchActionQueue } from '@/shared/api'
 import { useFocusedProject } from '@/shared/useFocusedProject'
-import type { ActionQueueItem } from '@/shared/schemas'
+import type { ActionQueueItem, ActionQueueGroupRow } from '@/shared/schemas'
 
 interface State {
   items: ActionQueueItem[]
+  /**
+   * Server-pre-grouped cause rows from the wire envelope (HR-3).
+   * Each entry represents N items sharing the same (kind, signature) that the
+   * server already collapsed into one group row. Consumers pass these to
+   * `buildRenderedRows` and `countNeedsYou` so the UI and CLI show the same
+   * count and cause label. Optional for backward compat with mocks that predate
+   * this field.
+   */
+  serverGroups?: ActionQueueGroupRow[]
   error: Error | null
   /**
    * True while the query's first fetch is still in flight (no cached data
@@ -50,8 +59,16 @@ export const useActionQueue = (): State => {
     refetchOnWindowFocus: true,
   })
 
+  // Split the wire rows into flat items (type:'item' → .row) and server-pre-grouped
+  // cause rows (type:'group'). Consumers use items for display and bulk actions;
+  // serverGroups flow to buildRenderedRows/countNeedsYou for the triage view.
+  const wireRows = query.data ?? []
+  const items = wireRows.flatMap((r) => r.type === 'item' ? [r.row] : [])
+  const serverGroups = wireRows.flatMap((r) => r.type === 'group' ? [r] : [])
+
   return {
-    items: query.data ?? [],
+    items,
+    serverGroups,
     error: (query.error as Error | null) ?? null,
     isPending: enabled && query.isPending,
     projectsError,

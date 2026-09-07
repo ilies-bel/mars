@@ -11,7 +11,7 @@
 import { mock, describe, expect, it } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import type { ActionQueueItem, ChatThread } from '@/shared/schemas'
+import type { ActionQueueItem, ActionQueueWireRow, ChatThread } from '@/shared/schemas'
 
 mock.module('@/shared/actionQueueUrlState', () => ({
   readAqStateFromUrl: () => ({ item: 'failed-task:gone-item', kind: 'all', q: '', thread: null, project: null }),
@@ -24,7 +24,7 @@ mock.module('@/shared/actionQueueUrlState', () => ({
 // Dynamic import AFTER the mock is declared.
 const { ChatPage } = await import('./ChatPage')
 
-const LIVE_ITEM: ActionQueueItem = {
+const LIVE_ITEM_ROW: ActionQueueItem = {
   id: 'failed-task:t-alive',
   kind: 'failed-task',
   entityId: 't-alive',
@@ -39,7 +39,10 @@ const LIVE_ITEM: ActionQueueItem = {
   failureReasonCode: null,
 } as unknown as ActionQueueItem
 
-const renderPage = (items: ActionQueueItem[], threads: ChatThread[] = []): string => {
+/** Wire-format wrapper — matches what GET /view/action-queue sends (HR-3). */
+const LIVE_ITEM: ActionQueueWireRow = { type: 'item', row: LIVE_ITEM_ROW }
+
+const renderPage = (items: ActionQueueWireRow[], threads: ChatThread[] = []): string => {
   const qc = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: Infinity } },
   })
@@ -61,10 +64,9 @@ describe('ChatPage — resolved pane for vanished projection Threads', () => {
   })
 
   it('does NOT show the resolved pane when the selected row is still live', () => {
-    const matchingItem: ActionQueueItem = {
-      ...LIVE_ITEM,
-      id: 'failed-task:gone-item',
-      entityId: 'gone-item',
+    const matchingItem: ActionQueueWireRow = {
+      type: 'item',
+      row: { ...LIVE_ITEM_ROW, id: 'failed-task:gone-item', entityId: 'gone-item' },
     }
     const html = renderPage([matchingItem])
     expect(html).not.toContain('data-testid="resolved-pane"')

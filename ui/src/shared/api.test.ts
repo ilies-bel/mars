@@ -493,33 +493,39 @@ describe('fetchActionQueue', () => {
   })
 
   it('returns a typed ActionQueueItem array on a valid response', async () => {
-    fetchSpy.mockResolvedValue(json([minActionQueueItem()]))
+    fetchSpy.mockResolvedValue(json([{ type: 'item', row: minActionQueueItem() }]))
     const result = await fetchActionQueue()
     expect(result).toHaveLength(1)
-    expect(result[0].id).toBe('aq-1')
-    expect(result[0].kind).toBe('failed')
+    expect(result[0].type).toBe('item')
+    expect(result[0].type === 'item' && result[0].row.id).toBe('aq-1')
+    expect(result[0].type === 'item' && result[0].row.kind).toBe('failed')
   })
 
   it('parses a failed row without staleWorktreeDetail without error', async () => {
     // Task-failure rows do not carry staleWorktreeDetail — the field belongs only
     // to the stale-worktree variant of the discriminated union and is stripped by
     // zod for all other kinds.
-    fetchSpy.mockResolvedValue(json([minActionQueueItem()]))
+    fetchSpy.mockResolvedValue(json([{ type: 'item', row: minActionQueueItem() }]))
     const result = await fetchActionQueue()
     expect(result).toHaveLength(1)
-    expect(result[0].kind).toBe('failed')
+    expect(result[0].type).toBe('item')
+    const row = result[0].type === 'item' ? result[0].row : null
+    expect(row?.kind).toBe('failed')
     // staleWorktreeDetail is not a property of task-failure variants;
-      // runtime value is undefined (zod strips unknown keys by default).
-      expect((result[0] as Record<string, unknown>)['staleWorktreeDetail']).toBeUndefined()
+    // runtime value is undefined (zod strips unknown keys by default).
+    expect((row as unknown as Record<string, unknown>)?.['staleWorktreeDetail']).toBeUndefined()
   })
 
   it('parses a failed row with staleWorktreeDetail null in server payload without error', async () => {
     // staleWorktreeDetail:null is stripped from a task-failure row.
     // the discriminated-union schema strips the unknown key — the row still parses.
-    fetchSpy.mockResolvedValue(json([minActionQueueItem({ staleWorktreeDetail: null })]))
+    fetchSpy.mockResolvedValue(
+      json([{ type: 'item', row: minActionQueueItem({ staleWorktreeDetail: null }) }]),
+    )
     const result = await fetchActionQueue()
     expect(result).toHaveLength(1)
-    expect(result[0].kind).toBe('failed')
+    const row = result[0].type === 'item' ? result[0].row : null
+    expect(row?.kind).toBe('failed')
   })
 
   it('throws on HTTP error', async () => {

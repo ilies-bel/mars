@@ -29,6 +29,7 @@ import { hasResolvableTask, isTaskFailureActionQueueKind } from '@/shared/schema
 import type {
   ActionDescriptor,
   ActionQueueItem,
+  ActionQueueWireRow,
   ActionQueueResolution,
   TraceEvent,
 } from '@/shared/schemas'
@@ -154,12 +155,15 @@ export const ActionBar = ({ item }: ActionBarProps) => {
       // Prevent an in-flight refetch from overwriting our optimistic removal.
       await qc.cancelQueries({ queryKey: ['action-queue'] })
       // Snapshot the current list so we can roll back on error.
-      const snapshot = qc.getQueryData<ActionQueueItem[]>(['action-queue', projectId])
+      const snapshot = qc.getQueryData<ActionQueueWireRow[]>(['action-queue', projectId])
       // Optimistically remove this item so the row disappears immediately.
+      // Wire rows are either {type:'item', row:{id,...}} or {type:'group', members:[...]}.
+      // We only remove the specific item row; group rows are left intact and the
+      // onSettled invalidation reconciles them with the server immediately after.
       if (snapshot) {
         qc.setQueryData(
           ['action-queue', projectId],
-          snapshot.filter((i) => i.id !== item.id),
+          snapshot.filter((r) => r.type !== 'item' || r.row.id !== item.id),
         )
       }
       return { snapshot }

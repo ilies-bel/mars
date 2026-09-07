@@ -40,7 +40,7 @@ import {
   type TaskChangesResponse,
   type HotPathsResponse,
   type ActionQueueHistoryResponse,
-  type ActionQueueItem,
+  type ActionQueueWireRow,
   type AdrEntry,
   type AgentToolCall,
   type AutoRecipeRun,
@@ -422,7 +422,7 @@ export const fetchFrameworkUpdate = async (): Promise<FrameworkUpdate> => {
   return fetchJson('/api/framework-update', frameworkUpdateSchema)
 }
 
-export const fetchActionQueue = async (projectId?: string): Promise<ActionQueueItem[]> => {
+export const fetchActionQueue = async (projectId?: string): Promise<ActionQueueWireRow[]> => {
   return fetchJson(appendProject('/api/action-queue', projectId), actionQueueResponseSchema)
 }
 
@@ -1801,6 +1801,7 @@ export type {
   ActionQueueHistoryResponse,
   ActionQueueItem,
   ActionQueueResolution,
+  ActionQueueWireRow,
   AdrEntry,
   AutoRecipeRun,
   ChatThread,

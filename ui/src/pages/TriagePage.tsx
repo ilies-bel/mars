@@ -932,9 +932,11 @@ export const TriageCauseGroupRow = ({
   const chipClass =
     KIND_CHIP_CLASS[group.kind] ?? 'text-muted-foreground border-border'
 
-  // Cause label: prefer the signatureFamilyPhrase mapping; fall back to the
-  // slug portion after the first `/` (matches the CLI's causeLabel fallback).
+  // Cause label: prefer server-computed causeLabel (HR-3), then the local
+  // signatureFamilyPhrase mapping, then fall back to the slug portion after
+  // the first `/` (matches the CLI's causeLabel fallback).
   const label =
+    group.causeLabel ??
     signatureFamilyPhrase(group.signature) ??
     (group.signature.includes('/')
       ? group.signature.split('/').slice(1).join('/')
@@ -1153,7 +1155,7 @@ const EmptyState = ({ running, doneToday }: EmptyStateProps) => (
 // ── TriagePage ────────────────────────────────────────────────────────────────
 
 export const TriagePage = () => {
-  const { items, error: queueError, isPending: queuePending } = useActionQueue()
+  const { items, serverGroups = [], error: queueError, isPending: queuePending } = useActionQueue()
   const { isDown } = useDaemonHealth()
   const { byCluster, aggregates } = useProgress()
   // Proposals is a third independent feed. Its error is surfaced as an inline
@@ -1197,8 +1199,8 @@ export const TriagePage = () => {
     return result
   }, [sorted, kindFilter, searchQuery])
 
-  const renderedRows = buildRenderedRows(filteredSorted)
-  const needsYouCount = countNeedsYou(items)
+  const renderedRows = buildRenderedRows(filteredSorted, serverGroups)
+  const needsYouCount = countNeedsYou(items, serverGroups)
 
   // Only show the empty state when every feed succeeded AND there is genuinely
   // nothing to act on. A feed error is itself something to surface, so the
