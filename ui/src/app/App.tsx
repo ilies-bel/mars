@@ -167,10 +167,18 @@ const AppInner = () => {
   // Fetch the full proposal detail by id when a #/proposal/<id> hash is present.
   // This avoids the limit-50 / status-filter miss of the list endpoint and works
   // for any proposal regardless of status or pagination position.
-  const { proposal } = useProposalDetail(proposalId)
+  const { proposal, isPending: proposalDetailPending } = useProposalDetail(proposalId)
   const proposalNodeDraft = proposalNodeId
     ? (drafts.find((d) => d.id === proposalNodeId) ?? undefined)
     : undefined
+  // Determine whether a #/proposal-node/<id> resolves to a known proposal.
+  // tasks === null means progress data is still loading; null = unknown, true/false = settled.
+  const proposalNodeExists: boolean | null =
+    proposalNodeId === null
+      ? null
+      : tasks !== null
+        ? proposals.some((p) => p.id === proposalNodeId) || proposalNodeDraft !== undefined
+        : null
   const route = resolvePageRoute(hash)
 
   // Global tab-title badge: prepends `(N)` when there are items needing
@@ -246,8 +254,48 @@ const AppInner = () => {
             tasks={tasks ?? []}
           />
         </FallbackBoundary>
+      ) : proposalId !== null && !proposalDetailPending ? (
+        <>
+          <div
+            aria-hidden="true"
+            className="fixed inset-0 z-40 bg-foreground/40"
+            onClick={() => {
+              const origin = parseProposalOrigin(hash)
+              navigateReplace(origin ? ROUTE_BASE[origin] : '#/progress')
+            }}
+          />
+          <aside
+            role="dialog"
+            aria-modal="true"
+            aria-label="Proposal not found"
+            data-testid="proposal-not-found"
+            className="fixed inset-y-0 right-0 z-50 flex w-[min(560px,100vw)] flex-col border-l border-primary/40 bg-background shadow-2xl"
+          >
+            <header className="flex items-start justify-between gap-3 border-b border-primary/40 px-4 py-3">
+              <h2 className="break-words font-mono text-title font-semibold text-foreground">
+                Unknown proposal
+              </h2>
+              <button
+                type="button"
+                onClick={() => {
+                  const origin = parseProposalOrigin(hash)
+                  navigateReplace(origin ? ROUTE_BASE[origin] : '#/progress')
+                }}
+                aria-label="Close"
+                className="shrink-0 rounded border border-primary/40 px-2 py-0.5 font-mono text-body text-primary hover:bg-primary/10"
+              >
+                Close
+              </button>
+            </header>
+            <div className="flex flex-1 flex-col gap-3 px-4 py-3">
+              <p className="font-mono text-body text-foreground">
+                <span className="text-error">{proposalId}</span> is not a known proposal.
+              </p>
+            </div>
+          </aside>
+        </>
       ) : null}
-      {proposalNodeId ? (
+      {proposalNodeId !== null && proposalNodeExists !== false ? (
         <FallbackBoundary of="proposal" variant="inline">
           <ProposalNodeDrawer
             proposalId={proposalNodeId}
@@ -260,6 +308,46 @@ const AppInner = () => {
             }}
           />
         </FallbackBoundary>
+      ) : proposalNodeId !== null && proposalNodeExists === false ? (
+        <>
+          <div
+            aria-hidden="true"
+            className="fixed inset-0 z-40 bg-foreground/40"
+            onClick={() => {
+              const origin = parseOverlayOrigin(hash)
+              navigateReplace(origin ? ROUTE_BASE[origin] : '#/progress')
+            }}
+          />
+          <aside
+            role="dialog"
+            aria-modal="true"
+            aria-label="Proposal not found"
+            data-testid="proposal-node-not-found"
+            className="fixed inset-y-0 right-0 z-50 flex w-[min(560px,100vw)] flex-col border-l border-primary/40 bg-background shadow-2xl"
+          >
+            <header className="flex items-start justify-between gap-3 border-b border-primary/40 px-4 py-3">
+              <h2 className="break-words font-mono text-title font-semibold text-foreground">
+                Unknown proposal
+              </h2>
+              <button
+                type="button"
+                onClick={() => {
+                  const origin = parseOverlayOrigin(hash)
+                  navigateReplace(origin ? ROUTE_BASE[origin] : '#/progress')
+                }}
+                aria-label="Close"
+                className="shrink-0 rounded border border-primary/40 px-2 py-0.5 font-mono text-body text-primary hover:bg-primary/10"
+              >
+                Close
+              </button>
+            </header>
+            <div className="flex flex-1 flex-col gap-3 px-4 py-3">
+              <p className="font-mono text-body text-foreground">
+                <span className="text-error">{proposalNodeId}</span> is not a known proposal.
+              </p>
+            </div>
+          </aside>
+        </>
       ) : null}
       {primitiveName ? (
         <FallbackBoundary of="primitive detail" variant="inline">

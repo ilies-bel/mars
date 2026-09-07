@@ -95,6 +95,16 @@ export const ArcQaPage = ({ originId }: ArcQaPageProps) => {
     )
   }
 
+  if (data.criteria.length === 0) {
+    return (
+      <main className="flex h-full flex-1 flex-col bg-background p-4">
+        <h1 className="font-semibold text-foreground">Arc QA</h1>
+        <p className="mb-4 font-mono text-micro text-muted-foreground">{originId}</p>
+        <p className="text-label text-muted-foreground">No QA steps recorded for this arc.</p>
+      </main>
+    )
+  }
+
   const stopped = data.stoppedAtStep
 
   return (

@@ -112,6 +112,28 @@ describe('ArcQaPage — stopped-step marker', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Empty criteria (arc exists but has no steps)
+// ---------------------------------------------------------------------------
+
+describe('ArcQaPage — empty criteria', () => {
+  it('shows an empty-state message when arc has no QA steps', () => {
+    const html = renderPage(makeQaData({ criteria: [] }))
+    expect(html).toContain('No QA steps recorded for this arc.')
+  })
+
+  it('shows heading and arc id in the empty-criteria state', () => {
+    const html = renderPage(makeQaData({ criteria: [] }))
+    expect(html).toContain('Arc QA')
+    expect(html).toContain(ORIGIN_ID)
+  })
+
+  it('does not show the "no report" message for empty criteria (arc exists)', () => {
+    const html = renderPage(makeQaData({ criteria: [] }))
+    expect(html).not.toContain('No QA report exists for this arc.')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Screenshot URL
 // ---------------------------------------------------------------------------
 
