@@ -70,7 +70,22 @@ const BUN_TEST_TIMEOUT_MS = 60_000
 // (npm run dev:server → bun run server/index.ts), so exercising the
 // bun:test-importing files under the real Bun runtime catches runtime gaps
 // that vitest's compatibility shim can hide. Both runners are intentional.
-const result = spawnSync('bun', ['test', `--timeout=${BUN_TEST_TIMEOUT_MS}`, ...files], {
+//
+// --preload loads the shared setup shim before any test file runs.  Under
+// vitest this file is loaded via setupFiles in vitest.config.ts; under `bun
+// test` it would be skipped entirely without --preload.  The shim does two
+// things relevant here:
+//
+//   1. Installs a Bun.serve / Bun.write / Bun.file compatibility layer — a
+//      no-op under the real Bun runtime since Bun already provides those.
+//
+//   2. Sets MARS_PROJECTS_FILE to a per-process temp path, redirecting
+//      ensureProjectRegistered() away from the developer's real
+//      ~/.mars/projects.json.  Without this, every startServer() call in
+//      every bun:test file writes a permanent fixture entry to the real
+//      registry.  The env var is set unconditionally (not ??=) so a
+//      developer shell export cannot accidentally re-enable the leak.
+const result = spawnSync('bun', ['test', `--timeout=${BUN_TEST_TIMEOUT_MS}`, '--preload', 'server/__testing__/bun-vitest-setup.ts', ...files], {
   cwd: dirname(serverDir),
   stdio: 'inherit',
 })

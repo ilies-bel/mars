@@ -22,8 +22,14 @@ describe('startServer — project registry self-registration', () => {
   let repo: string
   let projectsFile: string
   let uiServer: ReturnType<typeof Bun.serve> | null = null
+  // Save and restore MARS_PROJECTS_FILE so this describe block never
+  // clobbers the redirect established by bun-vitest-setup.ts (or --preload)
+  // for the rest of the test run.
+  let savedRegistryEnv: string | undefined
 
   beforeEach(() => {
+    savedRegistryEnv = process.env.MARS_PROJECTS_FILE
+
     repo = mkdtempSync(resolve(tmpdir(), 'mars-ui-reg-test-'))
     execFileSync('git', ['init', '-q'], { cwd: repo })
     mkdirSync(join(repo, '.mars'), { recursive: true })
@@ -39,7 +45,15 @@ describe('startServer — project registry self-registration', () => {
       uiServer.stop(true)
       uiServer = null
     }
-    delete process.env.MARS_PROJECTS_FILE
+    // Restore rather than delete: deleting removes the redirect established
+    // by the test harness setup (bun-vitest-setup.ts / --preload), which
+    // would cause subsequent test files in the same process to write to
+    // the real ~/.mars/projects.json.
+    if (savedRegistryEnv !== undefined) {
+      process.env.MARS_PROJECTS_FILE = savedRegistryEnv
+    } else {
+      delete process.env.MARS_PROJECTS_FILE
+    }
     rmSync(repo, { recursive: true, force: true })
   })
 
@@ -91,33 +105,64 @@ describe('startServer — project registry self-registration', () => {
 
 describe('registry isolation — real ~/.mars/projects.json is never mutated under test', () => {
   /**
-   * Regression guard: bun-vitest-setup.ts redirects MARS_PROJECTS_FILE to a
-   * per-worker temp file so no test can write to the real operator registry.
-   * This test measures the real file's mtime (or marks it absent) before and
-   * after spawning a fixture server and asserts no mutation occurred.
+   * Regression guard: MARS_PROJECTS_FILE must be redirected to a throwaway
+   * path before startServer() is called, both under vitest (done by
+   * bun-vitest-setup.ts) and under bun test (done by this describe's own
+   * beforeEach, since bun-vitest-setup.ts is not loaded by bun test).
+   *
+   * The test measures the real file's mtime (or notes it absent) before and
+   * after spawning a fixture server, asserts no mutation occurred, and
+   * confirms the fixture's write went to the redirected path instead.
    */
+  let savedRegistryFile: string | undefined
+  let tmpRegistry: string
+  let tmpRepo: string
+
+  beforeEach(() => {
+    // Save whatever MARS_PROJECTS_FILE was (may be set by bun-vitest-setup.ts,
+    // or unset when running under bare `bun test`).
+    savedRegistryFile = process.env.MARS_PROJECTS_FILE
+    // Redirect to an isolated throwaway file for this test.
+    tmpRegistry = join(tmpdir(), `mars-isolation-test-${Date.now()}-${process.pid}.json`)
+    process.env.MARS_PROJECTS_FILE = tmpRegistry
+
+    tmpRepo = mkdtempSync(resolve(tmpdir(), 'mars-isolation-test-'))
+    execFileSync('git', ['init', '-q'], { cwd: tmpRepo })
+    mkdirSync(join(tmpRepo, '.mars'), { recursive: true })
+  })
+
+  afterEach(() => {
+    // Restore MARS_PROJECTS_FILE to exactly what it was before this test.
+    if (savedRegistryFile !== undefined) {
+      process.env.MARS_PROJECTS_FILE = savedRegistryFile
+    } else {
+      delete process.env.MARS_PROJECTS_FILE
+    }
+    rmSync(tmpRepo, { recursive: true, force: true })
+  })
+
   it('spawning a fixture server does not touch the real registry', async () => {
     const realRegistry = join(homedir(), '.mars', 'projects.json')
 
-    // Snapshot the real file's state before the test.
+    // Snapshot the real file's state before starting the server.
     const mtimeBefore = existsSync(realRegistry) ? statSync(realRegistry).mtimeMs : null
 
-    const tmpRepo = mkdtempSync(resolve(tmpdir(), 'mars-isolation-test-'))
     let server: ReturnType<typeof Bun.serve> | null = null
     try {
-      execFileSync('git', ['init', '-q'], { cwd: tmpRepo })
-      mkdirSync(join(tmpRepo, '.mars'), { recursive: true })
-
       server = await startServer({ repo: tmpRepo, port: 0, host: '127.0.0.1' })
       server.stop(true)
       server = null
     } finally {
       if (server) (server as ReturnType<typeof Bun.serve>).stop(true)
-      rmSync(tmpRepo, { recursive: true, force: true })
     }
 
-    // The real file must be in exactly the same state as before.
+    // The real file must be in exactly the same state as before the test.
     const mtimeAfter = existsSync(realRegistry) ? statSync(realRegistry).mtimeMs : null
     expect(mtimeAfter).toBe(mtimeBefore)
+
+    // The registration must have gone to the redirected temp file instead.
+    expect(existsSync(tmpRegistry)).toBe(true)
+    const entries = JSON.parse(readFileSync(tmpRegistry, 'utf-8')) as unknown[]
+    expect(entries).toHaveLength(1)
   })
 })
