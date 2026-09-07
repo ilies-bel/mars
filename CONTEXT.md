@@ -626,7 +626,7 @@ The named, ordered sequence of Domain Events and Domain Policies describing the 
 _Avoid_: flow, timeline, domain timeline, event storm
 
 **Domain Event**:
-A past-tense, business-meaningful fact that occurred in a target repository's domain; the unit a Domain Flow is a sequence of.
+A past-tense, business-meaningful fact that occurs in a target repository's domain; the unit a Domain Flow is a sequence of.
 _Avoid_: event, events, domain fact
 
 **Domain Policy**:
