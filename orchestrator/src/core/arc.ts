@@ -3264,6 +3264,43 @@ export const updateTask = async (
     throw new IllegalTransitionError(id, previousStatus, patch.status)
   }
 
+  // No-reason-failed invariant: a task that reaches 'failed' with no
+  // diagnostic evidence is unactionable. The operator sees an action-queue row
+  // with no error, no reason, no phase — nothing to act on. The self-heal
+  // chain (recipe lookup, signature-storm streak, Steward brief) also skips
+  // NULL/empty signals. Enforce non-emptiness at the write site so the
+  // unrepresentable case is caught at the boundary, not discovered post-mortem
+  // (observed 2026-09-07: mars-87b7c958 reached 'failed' with all three
+  // diagnostic columns empty, producing an unresolvable action-queue row).
+  //
+  // The check only fires on a real status transition to 'failed'. Skip when:
+  //   – patch.status is not 'failed' (most calls)
+  //   – the patch is not a status change (patch.status === previousStatus)
+  //   – the current row has an existing failure_signature — the COALESCE floor
+  //     below will not overwrite it, so the row already has evidence.
+  //
+  // "Has reason" = at least one of error / failureReason / failedPhase /
+  // failureReasonCode is non-empty. failureSignature is intentionally excluded:
+  // the COALESCE floor derives it from the other fields, so a caller-supplied
+  // signature without ANY supporting diagnostic field is still unactionable.
+  if (
+    patch.status === 'failed' &&
+    (previousStatus === null || patch.status !== previousStatus)
+  ) {
+    const hasReason =
+      (typeof patch.error === 'string' && patch.error.length > 0) ||
+      (typeof patch.failureReason === 'string' && patch.failureReason.length > 0) ||
+      patch.failedPhase != null ||
+      (typeof patch.failureReasonCode === 'string' && patch.failureReasonCode.length > 0)
+    if (!hasReason) {
+      throw new Error(
+        `updateTask: cannot transition task ${id} to 'failed' without a reason — ` +
+          `supply at least one of: error, failureReason, failedPhase, or failureReasonCode. ` +
+          `A 'failed' row with no reason is unactionable and cannot be self-healed.`,
+      )
+    }
+  }
+
   // Done-implies-merged invariant (ADR-0052 / done-with-unmerged-commits).
   //
   // When a task is transitioning to 'done' AND its branch column is set, assert

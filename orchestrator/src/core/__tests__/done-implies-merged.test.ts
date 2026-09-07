@@ -224,3 +224,84 @@ describe('done-implies-merged guard (ADR-0052)', () => {
     expect(fetched?.failureReasonCode).toBe('done-with-unverifiable-merge')
   })
 })
+
+describe('no-reason-failed invariant', () => {
+  /**
+   * A transition to `failed` without any of error / failureReason /
+   * failedPhase / failureReasonCode must be rejected at the write site.
+   * Observed 2026-09-07: mars-87b7c958 reached 'failed' with all diagnostic
+   * columns empty, producing an unresolvable action-queue row.
+   */
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('throws when transitioning to failed with no reason fields', async () => {
+    const { q } = await loadMods(repo)
+    const task = await q.enqueueTask('test task', undefined, { skipTriage: true })
+
+    // Attempt to mark failed with no diagnostic evidence.
+    await expect(
+      q.updateTask(task.id, { status: 'failed' }),
+    ).rejects.toThrow(/cannot transition task .* to 'failed' without a reason/)
+
+    // Task must still be in its original status.
+    const fetched = await q.getTask(task.id)
+    expect(fetched?.status).toBe('queued')
+  })
+
+  it('allows failed transition when error is provided', async () => {
+    const { q } = await loadMods(repo)
+    const task = await q.enqueueTask('test task', undefined, { skipTriage: true })
+
+    await expect(
+      q.updateTask(task.id, { status: 'failed', error: 'something went wrong' }),
+    ).resolves.not.toThrow()
+
+    const fetched = await q.getTask(task.id)
+    expect(fetched?.status).toBe('failed')
+  })
+
+  it('allows failed transition when failureReason is provided', async () => {
+    const { q } = await loadMods(repo)
+    const task = await q.enqueueTask('test task', undefined, { skipTriage: true })
+
+    await expect(
+      q.updateTask(task.id, { status: 'failed', failureReason: 'code step crashed' }),
+    ).resolves.not.toThrow()
+
+    const fetched = await q.getTask(task.id)
+    expect(fetched?.status).toBe('failed')
+  })
+
+  it('allows failed transition when failedPhase is provided', async () => {
+    const { q } = await loadMods(repo)
+    const task = await q.enqueueTask('test task', undefined, { skipTriage: true })
+
+    await expect(
+      q.updateTask(task.id, { status: 'failed', failedPhase: 'code' }),
+    ).resolves.not.toThrow()
+
+    const fetched = await q.getTask(task.id)
+    expect(fetched?.status).toBe('failed')
+  })
+
+  it('allows failed transition when failureReasonCode is provided', async () => {
+    const { q } = await loadMods(repo)
+    const task = await q.enqueueTask('test task', undefined, { skipTriage: true })
+
+    await expect(
+      q.updateTask(task.id, { status: 'failed', failureReasonCode: 'verify:typecheck/error' }),
+    ).resolves.not.toThrow()
+
+    const fetched = await q.getTask(task.id)
+    expect(fetched?.status).toBe('failed')
+  })
+})

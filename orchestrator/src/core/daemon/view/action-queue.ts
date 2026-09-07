@@ -897,7 +897,22 @@ const failedRowCopy = (
     }
   }
 
-  // Null signature, generic persisted title: use failedTaskTitle for the
+  // Null signature AND no captured error: the failure was recorded without any
+  // diagnostic evidence — this is itself a bug (see 2026-09-07 incident, task
+  // mars-87b7c958). Do not present the normal decision body; the operator has
+  // nothing to base a decision on. Name the bug so they can investigate why
+  // the failure arrived with no reason rather than presenting a false choice.
+  if (!capturedError) {
+    return {
+      title: `${taskPart}failed: no diagnostic recorded`,
+      body:
+        'This failure was recorded without an error, reason, or phase — the diagnostic ' +
+        'data is missing. This is itself a bug. Inspect the task transcript to understand ' +
+        'what happened, then restart or drop once the cause is known.',
+    }
+  }
+
+  // Null signature with captured error: use failedTaskTitle for the
   // summary (handles error-head extraction and recovery-prefix stripping).
   const summary = failedTaskTitle({ signature: null, capturedError })
   return {

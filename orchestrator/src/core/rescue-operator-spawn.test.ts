@@ -654,7 +654,7 @@ describe('rescue-operator-spawn', () => {
       failureSignature: 'code/unclassified',
     })
     expect(first.spawned).toBe(true)
-    await q.updateTask(first.rescueTaskId!, { status: 'failed' })
+    await q.updateTask(first.rescueTaskId!, { status: 'failed', error: 'simulated rescue failure' })
 
     const second = await rescue.maybeSpawnRescueOperator({
       failedTask: loaded,
@@ -681,7 +681,7 @@ describe('rescue-operator-spawn', () => {
       failureSignature: 'code/unclassified',
     })
     expect(first.spawned).toBe(true)
-    await q.updateTask(first.rescueTaskId!, { status: 'failed' })
+    await q.updateTask(first.rescueTaskId!, { status: 'failed', error: 'simulated rescue failure' })
 
     await expect(
       rescue.maybeSpawnRescueOperator({ failedTask: loaded, failureSignature: 'code/unclassified' }),
@@ -766,6 +766,116 @@ describe('rescue-operator-spawn', () => {
       args: [],
     })
     expect(Number((aqRows.rows[0] as unknown as { n: number | bigint }).n)).toBe(0)
+  })
+
+  // ── Arc-recovered guard: queued / running origin → no rescue spawned ─────────
+  //
+  // Observed 2026-09-07: rescue mars-87b7c958 was spawned for arc
+  // mars-b13ff95e even though the arc's origin had already been `mars
+  // continue`'d back to 'queued' (recovered by the operator) at spawn time.
+  // The rescue failed with no recorded reason because there was nothing to do.
+  // The fix: check 'queued' and 'running' in addition to 'done' at spawn time.
+  //
+  // These tests model the production scenario correctly: `failedTask` is a FIX
+  // TASK (fixForTaskId points to the origin), and the TARGET (origin) is the
+  // task we check. In production, `maybeSpawnRescueOperator` is always called
+  // with the recovery Chore as `failedTask`, never with the root origin task.
+
+  it("arc-recovered: does not spawn rescue when origin is 'queued' (already continue'd)", async () => {
+    const { q, ft, rc, rescue } = await loadModules(repo)
+
+    // Create origin task + fix task, matching the production call shape.
+    const origin = await q.enqueueTask('original work', undefined, { skipTriage: true })
+    const cleanup = registerTestRecipe(rc, 'test/recipe-for-arc-recovered')
+    let fixTaskId: string
+    try {
+      const fix = await ft.upsertFixTask({
+        sourceTaskId: origin.id,
+        failureSignature: 'test/recipe-for-arc-recovered',
+        failingStep: 'code',
+        truncatedError: 'initial failure',
+        branch: null,
+        recipeContext: {
+          targetPath: '/tmp/test',
+          statusOutput: '',
+          targetBranch: 'main',
+          originalPrompt: 'original work',
+        },
+      })
+      fixTaskId = fix.fixTaskId
+    } finally {
+      cleanup()
+    }
+
+    // Simulate operator `mars continue`'d the origin: origin is now queued again.
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'queued' WHERE id = ?`,
+      args: [origin.id],
+    })
+
+    const loadedFix = await q.getTask(fixTaskId)
+    if (!loadedFix) throw new Error('fix task not found')
+    // Fix task is 'blocked' (waiting on origin), which is the realistic state
+    // at the moment the recovery Chore itself fails.
+
+    const result = await rescue.maybeSpawnRescueOperator({
+      failedTask: loadedFix,
+      failureSignature: 'code/unclassified',
+    })
+
+    // No rescue: origin is queued (arc has recovered — operator already acted).
+    expect(result.spawned).toBe(false)
+    expect(result.rescueTaskId).toBeUndefined()
+    expect(await countRescueTasks(q)).toBe(0)
+
+    // Arc-rescue counter must stay 0: skipped-for-recovered must not consume the slot.
+    expect(await readArcRescueAttempts(q, origin.id)).toBe(0)
+  })
+
+  it("arc-recovered: does not spawn rescue when origin is 'running' (already dispatched)", async () => {
+    const { q, ft, rc, rescue } = await loadModules(repo)
+
+    // Create origin task + fix task, matching the production call shape.
+    const origin = await q.enqueueTask('original work', undefined, { skipTriage: true })
+    const cleanup = registerTestRecipe(rc, 'test/recipe-for-arc-running')
+    let fixTaskId: string
+    try {
+      const fix = await ft.upsertFixTask({
+        sourceTaskId: origin.id,
+        failureSignature: 'test/recipe-for-arc-running',
+        failingStep: 'code',
+        truncatedError: 'initial failure',
+        branch: null,
+        recipeContext: {
+          targetPath: '/tmp/test',
+          statusOutput: '',
+          targetBranch: 'main',
+          originalPrompt: 'original work',
+        },
+      })
+      fixTaskId = fix.fixTaskId
+    } finally {
+      cleanup()
+    }
+
+    // Simulate origin having been re-dispatched and actively running.
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'running' WHERE id = ?`,
+      args: [origin.id],
+    })
+
+    const loadedFix = await q.getTask(fixTaskId)
+    if (!loadedFix) throw new Error('fix task not found')
+
+    const result = await rescue.maybeSpawnRescueOperator({
+      failedTask: loadedFix,
+      failureSignature: 'code/unclassified',
+    })
+
+    expect(result.spawned).toBe(false)
+    expect(result.rescueTaskId).toBeUndefined()
+    expect(await countRescueTasks(q)).toBe(0)
+    expect(await readArcRescueAttempts(q, origin.id)).toBe(0)
   })
 
   // ── Regression: recovery Chore's fix target already done, in a fan-out Arc ──

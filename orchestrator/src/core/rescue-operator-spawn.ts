@@ -148,6 +148,34 @@ export const maybeSpawnRescueOperator = async (
       )
       return { spawned: false }
     }
+    // Arc-recovered early exit: if the target (the ORIGIN, a different task
+    // from failedTask) has already been resumed by an operator
+    // (`mars continue` → 'queued', `mars restart` → 'queued') or is actively
+    // running again ('running'), the arc is no longer stuck. Spawning a rescue
+    // is pointless — the agent would enter, find the origin progressing, and
+    // reach a no-op verdict (observed 2026-09-07: rescue mars-87b7c958 was
+    // spawned for arc mars-b13ff95e, which had already been `mars continue`'d
+    // back to 'queued' at spawn time; the rescue failed with no recorded reason
+    // because there was nothing to do). Do not spawn; do not claim the
+    // arc-rescue counter.
+    //
+    // The guard only fires when targetTaskId differs from failedTask.id. In
+    // production, failedTask is always the recovery Chore (a fix task) and
+    // targetTaskId is the origin (a different task). A root-task caller that
+    // passes its own id as the target will never have its own status flipped
+    // to queued/running by the mechanism being guarded here — those statuses
+    // only appear during the gap between the fix task's failure and this spawn.
+    if (
+      targetTask !== null &&
+      targetTask.id !== failedTask.id &&
+      (targetTask.status === 'queued' || targetTask.status === 'running')
+    ) {
+      // eslint-disable-next-line no-console
+      console.info(
+        `[rescue-operator] arc ${originId} target ${targetTaskId} is ${targetTask.status} — arc has recovered, not spawning`,
+      )
+      return { spawned: false }
+    }
   }
 
   // In-flight-recovery early exit: if the arc already has a non-terminal
