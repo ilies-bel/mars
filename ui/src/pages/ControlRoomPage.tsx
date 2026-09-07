@@ -22,6 +22,7 @@ import {
   fetchAdrs,
   fetchOperatorState,
   fetchVerifyGates,
+  invokeAction,
   postOperatorDispatch,
   postOperatorRecovery,
   postRestoreVerifyGate,
@@ -680,7 +681,183 @@ const Stat = ({ label, value, colorClass }: StatProps) => (
 )
 
 // ---------------------------------------------------------------------------
-// Section 4 — Advisory Digest
+// Section 4 — Engine (daemon-code-drift restart button)
+// ---------------------------------------------------------------------------
+
+/**
+ * Shows when the daemon has drifted behind the code on disk.
+ * Mirrors the `daemon-code-drift` card's restart action so the operator does
+ * not have to leave the Control Room and open a terminal.
+ *
+ * Before firing the restart the component checks how many tasks are currently
+ * running and names them (by human title, not id — DEC-18):
+ *  - Zero tasks → one click: restart fires immediately.
+ *  - N tasks → confirm dialog that quotes the count so the cost is explicit.
+ *
+ * After the restart fires the component polls the action-queue cache until the
+ * daemon-code-drift condition disappears or a 30-second deadline expires; if
+ * the deadline is hit it surfaces a terminal-command fallback.
+ */
+const EngineSection = () => {
+  const queryClient = useQueryClient()
+  const { items } = useActionQueue()
+  const { byCluster } = useProgress()
+
+  const driftItem = items.find((i) => i.kind === 'daemon-code-drift') ?? null
+  const runningTasks = byCluster?.['In progress'] ?? []
+  const runningCount = runningTasks.length
+
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const [restarting, setRestarting] = useState(false)
+  const [restartError, setRestartError] = useState<string | null>(null)
+  const [timedOut, setTimedOut] = useState(false)
+
+  const doRestart = async () => {
+    setRestarting(true)
+    setRestartError(null)
+    setTimedOut(false)
+    setConfirmOpen(false)
+    try {
+      await invokeAction('restart-daemon')
+      // Poll until the daemon-code-drift condition clears, up to 30 seconds.
+      const deadline = Date.now() + 30_000
+      while (Date.now() < deadline) {
+        await new Promise<void>((r) => setTimeout(r, 1_500))
+        await queryClient.invalidateQueries({ queryKey: ['action-queue'] })
+        const cached = queryClient.getQueryData<{ items: Array<{ kind: string }> }>(
+          ['action-queue'],
+        )
+        if (!cached?.items?.some((i) => i.kind === 'daemon-code-drift')) break
+      }
+      if (Date.now() >= deadline) setTimedOut(true)
+    } catch (err) {
+      setRestartError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setRestarting(false)
+    }
+  }
+
+  const handleRestartClick = () => {
+    if (runningCount > 0) {
+      setConfirmOpen(true)
+    } else {
+      void doRestart()
+    }
+  }
+
+  // All hooks must be called above this point (Rules of Hooks).
+  if (!driftItem) return null
+
+  return (
+    <>
+      <section data-testid="engine-drift-section">
+        <div className="mb-3"><SectionLabel>Engine</SectionLabel></div>
+        <div className="mars-card rounded border border-warn/30 bg-warn/5 px-4 py-3">
+          <p className="font-mono text-body font-medium text-warn">
+            {driftItem.title ?? 'Engine update available'}
+          </p>
+          {driftItem.body && (
+            <p className="mt-1 font-mono text-micro text-muted-foreground">
+              {driftItem.body}
+            </p>
+          )}
+          {runningCount > 0 && (
+            <p
+              className="mt-2 font-mono text-micro text-muted-foreground/70"
+              data-testid="engine-running-count"
+            >
+              {runningCount} task{runningCount !== 1 ? 's are' : ' is'} currently running — will be
+              stopped and re-queued on restart.
+            </p>
+          )}
+          {timedOut && (
+            <p
+              className="mt-2 font-mono text-label text-error"
+              data-testid="engine-timeout-msg"
+            >
+              Daemon did not respond. Run{' '}
+              <code className="font-mono text-micro bg-surface px-1 rounded">
+                mars daemon restart
+              </code>{' '}
+              in a terminal to retry.
+            </p>
+          )}
+          {restartError && (
+            <p className="mt-2 font-mono text-label text-error" data-testid="engine-restart-error">
+              {restartError}
+            </p>
+          )}
+          <div className="mt-3">
+            <button
+              onClick={handleRestartClick}
+              disabled={restarting}
+              className="rounded-md border border-warn/50 bg-warn/10 px-3 py-1.5 font-mono text-label text-warn hover:bg-warn/20 disabled:opacity-50 transition-colors"
+              data-testid="restart-engine-btn"
+            >
+              {restarting ? 'Restarting…' : 'Restart engine'}
+            </button>
+          </div>
+        </div>
+      </section>
+
+      {/* Confirm dialog — only shown when tasks are in flight */}
+      <Dialog
+        open={confirmOpen}
+        onOpenChange={(open) => {
+          if (!open) setConfirmOpen(false)
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="font-mono text-title">Restart engine?</DialogTitle>
+            <DialogDescription
+              className="font-mono text-body text-foreground/70"
+              data-testid="engine-restart-confirm-body"
+            >
+              {runningCount} task{runningCount !== 1 ? 's are' : ' is'} currently running and will
+              be stopped and re-queued. Restart anyway?
+            </DialogDescription>
+          </DialogHeader>
+          <ul className="mt-1 space-y-0.5" data-testid="engine-running-tasks-list">
+            {runningTasks.slice(0, 5).map((t) => (
+              <li key={t.id} className="font-mono text-micro text-muted-foreground">
+                · {t.intent ?? t.prompt.slice(0, 60)}
+              </li>
+            ))}
+            {runningTasks.length > 5 && (
+              <li className="font-mono text-micro text-muted-foreground/60">
+                … and {runningTasks.length - 5} more
+              </li>
+            )}
+          </ul>
+          {restartError && (
+            <p className="font-mono text-label text-error">{restartError}</p>
+          )}
+          <DialogFooter>
+            <DialogClose asChild>
+              <button className="rounded border border-border px-3 py-1.5 font-mono text-label text-foreground/70 hover:border-border/80">
+                Cancel
+              </button>
+            </DialogClose>
+            <button
+              onClick={() => {
+                void doRestart()
+              }}
+              disabled={restarting}
+              className="rounded border border-warn/50 bg-warn/10 px-3 py-1.5 font-mono text-label text-warn hover:bg-warn/20 disabled:opacity-50"
+              data-testid="engine-restart-confirm-btn"
+            >
+              {restarting ? 'Restarting…' : 'Restart anyway'}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Section 5 — Advisory Digest (section numbering offset by new EngineSection)
 // ---------------------------------------------------------------------------
 
 const ADVISORY_LABELS: Record<string, string> = {
@@ -741,7 +918,7 @@ const AdvisorySection = () => {
 }
 
 // ---------------------------------------------------------------------------
-// Section 5 — Rules & Language (collapsed, searchable)
+// Section 6 — Rules & Language (collapsed, searchable)
 // ---------------------------------------------------------------------------
 
 const RulesSection = () => {
@@ -839,7 +1016,7 @@ const RulesSection = () => {
 }
 
 // ---------------------------------------------------------------------------
-// Section 6 — Steward history
+// Section 7 — Steward history
 // ---------------------------------------------------------------------------
 
 /**
@@ -907,6 +1084,7 @@ export const ControlRoomPage = () => (
     <LeversSection />
     <GatesSection />
     <NowSection />
+    <EngineSection />
     <AdvisorySection />
     <RulesSection />
     <StewardHistorySection />
