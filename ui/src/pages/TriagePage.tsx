@@ -1190,7 +1190,7 @@ export const TriagePage = () => {
   const isLoading = queuePending === true && !hasContent && !isDown
 
   return (
-    <div className="flex h-full flex-col overflow-hidden bg-background">
+    <div className="flex h-full flex-col overflow-hidden bg-background" data-testid="triage-page">
       {/* Header strip */}
       <div className="flex shrink-0 items-center border-b border-border px-5 py-3.5 shadow-sm">
         <h1 className="font-mono text-title font-semibold text-foreground">

@@ -927,11 +927,15 @@ export const ReflectionsPage = () => {
   )
 
   if (listError) {
-    return <FallbackSurface error={listError} of="reflections" variant="pane" />
+    return (
+      <div className="flex h-full flex-col overflow-hidden bg-background" data-testid="reflections-page">
+        <FallbackSurface error={listError} of="reflections" variant="pane" />
+      </div>
+    )
   }
 
   return (
-    <div className="flex h-full flex-col overflow-hidden bg-background">
+    <div className="flex h-full flex-col overflow-hidden bg-background" data-testid="reflections-page">
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
         {isDetail ? (
           // ── Detail view ──

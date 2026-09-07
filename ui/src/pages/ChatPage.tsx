@@ -3013,7 +3013,7 @@ export const ChatPage = () => {
   }, [projectId, qc])
 
   return (
-    <div className="flex h-full flex-col overflow-hidden">
+    <div className="flex h-full flex-col overflow-hidden" data-testid="chat-page">
       {/* Global Codex auth banner — one banner for all throttled threads */}
       {codexAuthState?.needsAuth && (
         <div

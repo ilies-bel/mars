@@ -321,7 +321,7 @@ export const ProposalsPage = () => {
 
   if (error) {
     return (
-      <div className="flex h-full flex-col overflow-hidden bg-background">
+      <div className="flex h-full flex-col overflow-hidden bg-background" data-testid="proposals-page">
         <div className="flex shrink-0 items-center border-b border-border px-5 py-3">
           <h1 className="font-mono text-title font-semibold text-foreground">Draft proposals</h1>
         </div>
@@ -364,7 +364,7 @@ export const ProposalsPage = () => {
   const isFiltered = q.length > 0 || activeSources.size > 0
 
   return (
-    <div className="flex h-full flex-col overflow-hidden bg-background">
+    <div className="flex h-full flex-col overflow-hidden bg-background" data-testid="proposals-page">
       {/* Header strip */}
       <div className="flex shrink-0 items-center border-b border-border px-5 py-3">
         <h1 className="font-mono text-title font-semibold text-foreground">

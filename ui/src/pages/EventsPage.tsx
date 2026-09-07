@@ -1185,14 +1185,14 @@ export const EventsPage = () => {
 
   if (initial.isError && !initial.data) {
     return (
-      <main className="flex min-h-0 flex-1 overflow-hidden bg-background">
+      <main className="flex min-h-0 flex-1 overflow-hidden bg-background" data-testid="events-page">
         <FallbackSurface error={initial.error} of="events stream" variant="pane" />
       </main>
     )
   }
 
   return (
-    <main className="flex h-full min-h-0 flex-1 flex-col gap-3 overflow-hidden bg-background p-4">
+    <main className="flex h-full min-h-0 flex-1 flex-col gap-3 overflow-hidden bg-background p-4" data-testid="events-page">
       {/* Header — fixed above the scrollable list */}
       <PageHeader
         title="Events"

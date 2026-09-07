@@ -1079,7 +1079,7 @@ const StewardHistorySection = () => {
 // ---------------------------------------------------------------------------
 
 export const ControlRoomPage = () => (
-  <main className="flex h-full min-h-0 flex-1 flex-col gap-8 overflow-y-auto bg-background p-6">
+  <main className="flex h-full min-h-0 flex-1 flex-col gap-8 overflow-y-auto bg-background p-6" data-testid="control-page">
     <h1 className="font-mono text-title font-semibold text-foreground">Control Room</h1>
     <LeversSection />
     <GatesSection />

@@ -240,7 +240,7 @@ export const ProgressPage = () => {
   const failedCount = aggregates.failedOpen
 
   return (
-    <div className="flex h-full w-full min-h-0 overflow-hidden bg-background">
+    <div className="flex h-full w-full min-h-0 overflow-hidden bg-background" data-testid="progress-page">
       <div className="flex min-w-0 flex-1 flex-col">
         <TopStripe
           inProgress={inProgressCount}

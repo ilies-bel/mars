@@ -9,7 +9,7 @@ import { PageHeader } from '@/widgets/primitives/DensityPrimitives'
  * Reachable at #/kpi.  Each tile navigates to #/kpi/<key>.
  */
 export const KpiIndexPage = () => (
-  <div className="flex flex-col gap-4 overflow-y-auto p-6">
+  <div className="flex flex-col gap-4 overflow-y-auto p-6" data-testid="kpi-page">
     <PageHeader title="KPIs" />
     <KpiVector />
     <WatchtowerSection />

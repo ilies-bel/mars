@@ -695,7 +695,7 @@ const GateHealthLane = ({
 // ---------------------------------------------------------------------------
 
 const StewardSkeleton = () => (
-  <main className="flex h-full min-h-0 flex-1 flex-col gap-6 overflow-y-auto bg-background p-6">
+  <main className="flex h-full min-h-0 flex-1 flex-col gap-6 overflow-y-auto bg-background p-6" data-testid="steward-page">
     <PageHeader title="Steward" />
     <GateHealthLane data={undefined} isLoading />
     {[0, 1, 2].map((i) => (
@@ -715,7 +715,7 @@ export const StewardPage = () => {
 
   if (error !== null && data === undefined) {
     return (
-      <main className="flex min-h-0 flex-1 overflow-hidden bg-background p-6">
+      <main className="flex min-h-0 flex-1 overflow-hidden bg-background p-6" data-testid="steward-page">
         <GateHealthLane data={undefined} error={error} />
       </main>
     )
