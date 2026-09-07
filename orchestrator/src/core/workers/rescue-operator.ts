@@ -21,7 +21,7 @@ import type { Worker } from '.'
 // ---------------------------------------------------------------------------
 
 export type RescueVerdict = {
-  readonly action: 'restart' | 'continue' | 'supersede'
+  readonly action: 'restart' | 'continue' | 'supersede' | 'no-action-needed'
   readonly reasoning: string
   readonly supersedePrompt?: string
 }
@@ -41,10 +41,27 @@ export type RescueVerdict = {
 export const RESCUE_OPERATOR_SYSTEM_PROMPT =
   'You are a rescue-operator agent. An Arc has dead-ended — either the ' +
   'original failure had no automatic fix recipe, or the recovery attempt ' +
-  'itself failed. Your role is to choose EXACTLY ONE corrective action ' +
-  'from the list below and execute it.\n' +
+  'itself failed. Your role is to choose EXACTLY ONE action from the list ' +
+  'below and execute it.\n' +
+  '\n' +
+  '## Step 0 (MANDATORY — do this before anything else)\n' +
+  '\n' +
+  'Run `mars show <origin-id>` to check the arc origin\'s LIVE status. ' +
+  'The arc member statuses in the prompt are a stale snapshot captured ' +
+  'when the arc dead-ended; the arc may have self-resolved by the time ' +
+  'you run. If the origin task is now `done`, OR every arc member is ' +
+  'terminal in a non-`failed` state, the work has already been completed ' +
+  'without your intervention. In that case you MUST choose ' +
+  '`no-action-needed` — do NOT run restart/continue/supersede.\n' +
   '\n' +
   '## Permitted actions (choose exactly one)\n' +
+  '\n' +
+  '0. **no-action-needed** — Emit the verdict below and exit immediately.\n' +
+  '   REQUIRED when the origin task is now `done` or every arc member is ' +
+  'terminal in a non-`failed` state (the arc has self-resolved). Include ' +
+  'the resolving evidence — the task status, and the merge commit sha from ' +
+  'the worktree tombstone (`.mars/worktrees/<task-id>.removed.json`) if ' +
+  'present — in `reasoning`.\n' +
   '\n' +
   '1. **restart** — Run `mars restart <task-id>`.\n' +
   '   Use when the failure appears transient (flaky test, environment ' +
@@ -72,22 +89,24 @@ export const RESCUE_OPERATOR_SYSTEM_PROMPT =
   '`reasoning` field in the JSON verdict below is your ONLY output surface ' +
   'for analysis — it is already persisted (recordStewardIntervention), so a ' +
   'separate file is redundant duplication, not a backup.\n' +
-  '- Do NOT take any action beyond the three listed above.\n' +
+  '- Do NOT take any action beyond the four listed above.\n' +
   '\n' +
   '## Process\n' +
   '\n' +
-  '1. Read the failed task\'s failure signature and reason from the prompt.\n' +
-  '2. Inspect the worktree: check `git log`, `git status`, and any ' +
-  'verify or error output left in the branch.\n' +
-  '3. Choose ONE action from the list above and execute it.\n' +
+  '1. Run `mars show <origin-id>` — check live status FIRST (Step 0 above).\n' +
+  '2. If the arc has self-resolved: emit `no-action-needed` and exit.\n' +
+  '3. Otherwise: read the failed task\'s failure signature and reason from ' +
+  'the prompt, inspect the worktree (`git log`, `git status`, verify output), ' +
+  'choose ONE of actions 1–3 and execute it.\n' +
   '4. After executing, emit a JSON verdict as the LAST line of your output. ' +
   'Put your full assessment — what went wrong, what you inspected, why you ' +
   'picked this action — into `reasoning`; it is the only place that record ' +
   'lives, so write it as the complete note, not a summary of a note filed ' +
   'elsewhere:\n' +
-  '   - restart:   `{"action":"restart","reasoning":"<why>"}`\n' +
-  '   - continue:  `{"action":"continue","reasoning":"<why>"}`\n' +
-  '   - supersede: `{"action":"supersede","reasoning":"<why>","supersedePrompt":"<the prompt you passed to mars task add --supersede>"}`\n'
+  '   - no-action-needed: `{"action":"no-action-needed","reasoning":"<evidence: origin done, merged as <sha> / status=<status>>"}`\n' +
+  '   - restart:          `{"action":"restart","reasoning":"<why>"}`\n' +
+  '   - continue:         `{"action":"continue","reasoning":"<why>"}`\n' +
+  '   - supersede:        `{"action":"supersede","reasoning":"<why>","supersedePrompt":"<the prompt you passed to mars task add --supersede>"}`\n'
 
 // ---------------------------------------------------------------------------
 // Denied tools (belt-and-suspenders on top of the system-prompt constraint)
@@ -226,8 +245,12 @@ export const buildRescueOperatorPrompt = (input: RescueOperatorPromptInput): str
               `${boundedText(member.failureReason, MAX_FAILURE_REASON_CHARS)}`,
           )
           .join('\n') + '\n') +
-    `\nInspect the task, worktree, and git history, then choose and execute ` +
-    `exactly one of the three permitted actions (restart, continue, or supersede). ` +
+    `\nBefore choosing any action, run \`mars show ${boundedText(input.originId, MAX_MEMBER_ID_CHARS)}\` to re-read ` +
+    `live status — the arc may have self-resolved since this prompt was built. ` +
+    `If the origin is now \`done\`, emit \`no-action-needed\` immediately. ` +
+    `Otherwise inspect the task, worktree, and git history, then choose and ` +
+    `execute exactly one of the four permitted actions ` +
+    `(no-action-needed, restart, continue, or supersede). ` +
     `Emit the JSON verdict as the last line of your output.`
 
   const estimatedTokens = estimateRescueTriagePromptTokens(prompt)
@@ -264,7 +287,10 @@ export const parseRescueVerdict = (text: string): RescueVerdict | null => {
     if (typeof parsed !== 'object' || parsed === null) continue
     const p = parsed as Record<string, unknown>
     if (
-      (p.action === 'restart' || p.action === 'continue' || p.action === 'supersede') &&
+      (p.action === 'restart' ||
+        p.action === 'continue' ||
+        p.action === 'supersede' ||
+        p.action === 'no-action-needed') &&
       typeof p.reasoning === 'string'
     ) {
       return {
@@ -282,6 +308,23 @@ export const parseRescueVerdict = (text: string): RescueVerdict | null => {
 // ---------------------------------------------------------------------------
 
 /**
+ * Injectable checker: resolves the current live status of the arc's origin
+ * task BEFORE the rescue Worker is invoked. When the origin has already
+ * reached `done` (or every member is terminal in a non-`failed` state), the
+ * checker returns `{ resolved: true }` with a human-readable evidence string
+ * (e.g. the merge sha from the worktree tombstone) so `runRescueOperator`
+ * can short-circuit with a `no-action-needed` verdict without ever calling
+ * `worker.run()`.
+ *
+ * In production, inject a function that calls `store.getTask(originId)` and
+ * reads the tombstone at `.mars/worktrees/<originId>.removed.json`. In tests,
+ * inject a stub that returns the desired outcome deterministically.
+ */
+export type OriginResolvedChecker = (
+  originId: string,
+) => Promise<{ resolved: true; evidence: string } | { resolved: false }>
+
+/**
  * Run the rescue-operator Worker for a given rescue task and return a
  * structured RescueVerdict describing which corrective action the agent took.
  *
@@ -290,18 +333,45 @@ export const parseRescueVerdict = (text: string): RescueVerdict | null => {
  * context built by buildRescueOperatorPrompt. The Worker is injected so
  * tests can pass a lightweight mock without spawning a real claude process.
  *
- * @param task            The rescue-operator task (prompt already built).
- * @param options.worker  The Worker to run (pass Workers.RescueOperator in
- *                        production; a mock in tests).
- * @param options.cwd     Working directory. Defaults to task.worktreePath
- *                        when present, then process.cwd() as a last resort.
+ * @param task                      The rescue-operator task (prompt already built).
+ * @param options.worker            The Worker to run (pass Workers.RescueOperator in
+ *                                  production; a mock in tests).
+ * @param options.cwd               Working directory. Defaults to task.worktreePath
+ *                                  when present, then process.cwd() as a last resort.
+ * @param options.originId          Arc origin task id. When provided together with
+ *                                  `checkOriginResolved`, a live-state probe runs
+ *                                  BEFORE the worker — if the origin is already done,
+ *                                  returns `no-action-needed` immediately without
+ *                                  calling `worker.run()`.
+ * @param options.checkOriginResolved  Injectable origin-status checker (see
+ *                                  {@link OriginResolvedChecker}). Only consulted
+ *                                  when `originId` is also provided.
  */
 export const runRescueOperator = async (
   task: Pick<Task, 'id' | 'prompt' | 'worktreePath'>,
-  options: { worker: Worker; cwd?: string },
+  options: {
+    worker: Worker
+    cwd?: string
+    originId?: string
+    checkOriginResolved?: OriginResolvedChecker
+  },
 ): Promise<RescueVerdict> => {
   const { worker } = options
   const cwd = options.cwd ?? task.worktreePath ?? process.cwd()
+
+  // Pre-run short-circuit: if the caller supplied both an originId and a
+  // live-state checker, probe the arc's current status before invoking the
+  // Worker. When the arc has already self-resolved (origin `done`, or every
+  // member terminal in a non-`failed` state), return `no-action-needed`
+  // immediately — no Worker spawn, no alert raised. This closes the race
+  // between spawn time and dispatch time that the setup-worktree guard
+  // cannot cover (2026-09-07: mars-87b7c958 rescued an already-merged arc).
+  if (options.originId && options.checkOriginResolved) {
+    const precheck = await options.checkOriginResolved(options.originId)
+    if (precheck.resolved) {
+      return { action: 'no-action-needed', reasoning: precheck.evidence }
+    }
+  }
 
   // Accumulate text content emitted by the agent across all assistant turns.
   const textChunks: string[] = []

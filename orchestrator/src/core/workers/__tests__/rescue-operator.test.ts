@@ -2,14 +2,16 @@
  * Tests for the rescue-operator Worker and runRescueOperator function.
  *
  * Covers:
- * - System prompt content (exactly 3 actions listed, all others forbidden)
+ * - System prompt content (4 actions: no-action-needed / restart / continue / supersede)
  * - Tool surface registration (WORKER_CONFIGS.RescueOperator, tag routing)
- * - Verdict parsing (restart / continue / supersede)
+ * - Verdict parsing (no-action-needed / restart / continue / supersede)
  * - Integration: fake failed Arc drives through runRescueOperator and
- *   exactly one of the three actions fires.
+ *   exactly one of the four actions fires.
+ * - Pre-run short-circuit: origin `done` yields no-action-needed without
+ *   calling the worker; origin still-failed proceeds normally.
  */
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   RESCUE_OPERATOR_SYSTEM_PROMPT,
   RESCUE_OPERATOR_DENIED_TOOLS,
@@ -17,6 +19,7 @@ import {
   parseRescueVerdict,
   runRescueOperator,
   type RescueVerdict,
+  type OriginResolvedChecker,
 } from '../rescue-operator'
 import {
   WORKER_CONFIGS,
@@ -125,6 +128,20 @@ describe('RESCUE_OPERATOR_SYSTEM_PROMPT', () => {
     expect(RESCUE_OPERATOR_SYSTEM_PROMPT).toContain('"action":"restart"')
     expect(RESCUE_OPERATOR_SYSTEM_PROMPT).toContain('"action":"continue"')
     expect(RESCUE_OPERATOR_SYSTEM_PROMPT).toContain('"action":"supersede"')
+    expect(RESCUE_OPERATOR_SYSTEM_PROMPT).toContain('"action":"no-action-needed"')
+  })
+
+  it('lists no-action-needed as the first permitted action', () => {
+    expect(RESCUE_OPERATOR_SYSTEM_PROMPT).toMatch(/no-action-needed/i)
+  })
+
+  it('mandates a live-state check before any other analysis (Step 0)', () => {
+    expect(RESCUE_OPERATOR_SYSTEM_PROMPT).toMatch(/Step 0.*MANDATORY/i)
+    expect(RESCUE_OPERATOR_SYSTEM_PROMPT).toContain('mars show <origin-id>')
+  })
+
+  it('states no-action-needed is REQUIRED when arc has self-resolved', () => {
+    expect(RESCUE_OPERATOR_SYSTEM_PROMPT).toMatch(/REQUIRED when the origin task is now.*done/i)
   })
 })
 
@@ -265,6 +282,20 @@ describe('buildRescueOperatorPrompt', () => {
     expect(prompt).toContain('mars show <id>')
     expect(prompt).toContain('git rev-list --count main..<branch>')
   })
+
+  it('instructs the agent to check live status first and mentions no-action-needed', () => {
+    const prompt = buildRescueOperatorPrompt({
+      failedTaskId: 'mars-failed-01',
+      originId: 'mars-origin-01',
+      failureSignature: 'verify:typecheck',
+      arcMembers: [],
+    })
+
+    // The closing paragraph must mention the live-state check and all four actions
+    expect(prompt).toContain('mars show mars-origin-01')
+    expect(prompt).toMatch(/no-action-needed/)
+    expect(prompt).toMatch(/four permitted actions/i)
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -317,6 +348,16 @@ describe('parseRescueVerdict', () => {
     expect(parseRescueVerdict('')).toBeNull()
   })
 
+  it('parses a no-action-needed verdict', () => {
+    const text =
+      'Checked mars show mars-b13ff95e — origin is done (merged as 9f37c2a289fb).\n' +
+      '{"action":"no-action-needed","reasoning":"origin mars-b13ff95e is done, merged as 9f37c2a289fb"}'
+    const verdict = parseRescueVerdict(text)
+    expect(verdict).not.toBeNull()
+    expect(verdict!.action).toBe('no-action-needed')
+    expect(verdict!.reasoning).toContain('9f37c2a289fb')
+  })
+
   it('returns null for JSON with an invalid action value', () => {
     expect(parseRescueVerdict('{"action":"explode","reasoning":"bad"}')).toBeNull()
   })
@@ -352,12 +393,18 @@ describe('runRescueOperator — integration', () => {
     expect(verdict.supersedePrompt).toBe('Fix the real bug in auth.ts')
   })
 
-  it('asserts exactly one of the three actions fires (not multiple, not zero)', async () => {
-    const validActions: Array<RescueVerdict['action']> = ['restart', 'continue', 'supersede']
+  it('asserts exactly one of the four actions fires (not multiple, not zero)', async () => {
+    const validActions: Array<RescueVerdict['action']> = [
+      'restart',
+      'continue',
+      'supersede',
+      'no-action-needed',
+    ]
     const agentOutputs = [
       '{"action":"restart","reasoning":"r1"}',
       '{"action":"continue","reasoning":"r2"}',
       '{"action":"supersede","reasoning":"r3","supersedePrompt":"new"}',
+      '{"action":"no-action-needed","reasoning":"origin already done"}',
     ]
     for (const output of agentOutputs) {
       const worker = makeWorkerStub(output)
@@ -438,6 +485,97 @@ describe('runRescueOperator — integration', () => {
       { worker, cwd: '/override/path' },
     )
     expect(capturedCwd).toBe('/override/path')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// runRescueOperator — no-action-needed pre-run short-circuit
+//
+// Regression coverage for 2026-09-07: mars-87b7c958 was dispatched for arc
+// mars-b13ff95e which had already merged (9f37c2a289fb) four minutes earlier.
+// The rescue agent had no valid corrective action to take and FAILED with
+// done-with-unverifiable-merge/unclassified, raising a high-priority alert
+// for work that was already done.
+//
+// The fix: when `originId` + `checkOriginResolved` are supplied, runRescueOperator
+// probes live state BEFORE calling worker.run(). An already-resolved arc yields
+// no-action-needed immediately — worker never runs, no alert is raised.
+// ---------------------------------------------------------------------------
+
+describe('runRescueOperator — no-action-needed short-circuit', () => {
+  it('(a) returns no-action-needed without calling the worker when origin is done', async () => {
+    const runSpy = vi.fn()
+    const worker: Worker = {
+      config: WORKER_CONFIGS.RescueOperator,
+      runtime: 'headless',
+      run: runSpy as unknown as Worker['run'],
+    }
+
+    const checker: OriginResolvedChecker = async (_id) => ({
+      resolved: true,
+      evidence: 'origin mars-b13ff95e is done, merged as 9f37c2a289fb (tombstone: reason=merged)',
+    })
+
+    const verdict = await runRescueOperator(fakeTask(), {
+      worker,
+      originId: 'mars-b13ff95e',
+      checkOriginResolved: checker,
+    })
+
+    // Short-circuit must fire
+    expect(verdict.action).toBe('no-action-needed')
+    // Evidence should include the merge sha
+    expect(verdict.reasoning).toContain('9f37c2a289fb')
+    // Worker must NOT have been called — no alert, no restart/continue/supersede
+    expect(runSpy).not.toHaveBeenCalled()
+  })
+
+  it('(b) proceeds to normal worker execution when origin is still failed', async () => {
+    const agentOutput = '{"action":"restart","reasoning":"transient failure"}'
+    const worker = makeWorkerStub(agentOutput)
+
+    const checker: OriginResolvedChecker = async (_id) => ({ resolved: false })
+
+    const verdict = await runRescueOperator(fakeTask(), {
+      worker,
+      originId: 'mars-b13ff95e',
+      checkOriginResolved: checker,
+    })
+
+    // Normal worker path fires — restart verdict returned
+    expect(verdict.action).toBe('restart')
+    expect(verdict.reasoning).toBe('transient failure')
+  })
+
+  it('skips the pre-run check entirely when originId is not provided', async () => {
+    // No originId → checker is never consulted even if supplied
+    const checker: OriginResolvedChecker = vi.fn().mockResolvedValue({ resolved: true, evidence: 'should not be called' })
+
+    const agentOutput = '{"action":"continue","reasoning":"partial work"}'
+    const worker = makeWorkerStub(agentOutput)
+
+    const verdict = await runRescueOperator(fakeTask(), {
+      worker,
+      // originId intentionally omitted
+      checkOriginResolved: checker,
+    })
+
+    expect(verdict.action).toBe('continue')
+    expect(checker).not.toHaveBeenCalled()
+  })
+
+  it('skips the pre-run check entirely when checkOriginResolved is not provided', async () => {
+    // originId supplied but no checker → worker runs normally
+    const agentOutput = '{"action":"restart","reasoning":"transient"}'
+    const worker = makeWorkerStub(agentOutput)
+
+    const verdict = await runRescueOperator(fakeTask(), {
+      worker,
+      originId: 'mars-origin-01',
+      // checkOriginResolved intentionally omitted
+    })
+
+    expect(verdict.action).toBe('restart')
   })
 })
 
