@@ -837,6 +837,13 @@ const statusPillClass: Record<string, string> = {
 
 interface ChangesSectionProps {
   taskId: string
+  /**
+   * The task's current status — used to derive the right empty-state copy
+   * when the branch is gone. A `done` task shows "cleaned up after merging";
+   * a `dropped` task says it was dropped; a `failed` task says it failed.
+   * Omit (or pass undefined) for live tasks whose worktree is unexpectedly absent.
+   */
+  taskStatus?: string
   /** Optional: inject pre-loaded data (used in tests to skip the fetch). */
   changesData?: TaskChangesResponse | null
   projectId?: string
@@ -850,7 +857,7 @@ interface ChangesSectionProps {
   isUnsupported?: boolean
 }
 
-const ChangesSection = ({ taskId, changesData: injected, projectId, fetchImpl, isUnsupported: injectedUnsupported }: ChangesSectionProps) => {
+const ChangesSection = ({ taskId, taskStatus, changesData: injected, projectId, fetchImpl, isUnsupported: injectedUnsupported }: ChangesSectionProps) => {
   const [expandedFiles, setExpandedFiles] = useState<Set<string>>(new Set())
   const [copyDone, setCopyDone] = useState(false)
   const [restartLoading, setRestartLoading] = useState(false)
@@ -969,11 +976,18 @@ const ChangesSection = ({ taskId, changesData: injected, projectId, fetchImpl, i
       {isBranchGone ? (
         <div data-testid="changes-branch-gone" className="flex flex-col gap-1">
           <p className="font-mono text-label text-muted-foreground">
-            The branch was cleaned up after merging — the full diff is no longer available.
+            {taskStatus === 'dropped'
+              ? 'This task was dropped — its changes were not merged.'
+              : taskStatus === 'failed'
+              ? 'This task failed — its changes are no longer available.'
+              : taskStatus === 'done'
+              ? 'The branch was cleaned up after merging — the full diff is no longer available.'
+              : 'The work for this task is no longer on disk.'}
           </p>
           {landedSha != null ? (
             <p className="font-mono text-micro text-muted-foreground" data-testid="changes-branch-gone-sha">
-              Merge commit: <span className="text-primary">{landedSha.slice(0, 7)}</span>
+              {taskStatus === 'dropped' || taskStatus === 'failed' ? 'Commit: ' : 'Merge commit: '}
+              <span className="text-primary">{landedSha.slice(0, 7)}</span>
             </p>
           ) : null}
         </div>
@@ -1311,7 +1325,7 @@ export const TaskDetailBody = ({
 
       {/* h. Changes — per-file diff summary. Fetches live unless changesData was injected. */}
       {changesData !== null ? (
-        <ChangesSection taskId={task.id} changesData={changesData} isUnsupported={changesUnsupported} />
+        <ChangesSection taskId={task.id} taskStatus={task.status} changesData={changesData} isUnsupported={changesUnsupported} />
       ) : null}
 
       {/* i. Diagnostics — collapsed by default. */}

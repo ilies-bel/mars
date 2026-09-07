@@ -161,6 +161,7 @@ describe('TaskDetailBody – Changes section', () => {
   })
 
   it('renders a distinct branch-gone message (not "changed no files") for the branch-gone shape', () => {
+    // Default task status is 'done' — should say "cleaned up after merging".
     const html = renderBody(
       <TaskDetailBody task={makeTask()} changesData={BRANCH_GONE} />,
     )
@@ -174,6 +175,28 @@ describe('TaskDetailBody – Changes section', () => {
     expect(html).not.toContain('data-testid="changes-branch-gone-sha"')
     // No file rows
     expect(html).not.toContain('data-testid="file-row-')
+  })
+
+  it('shows a "dropped" message for a dropped task with branch-gone shape', () => {
+    const html = renderBody(
+      <TaskDetailBody task={makeTask({ status: 'dropped' })} changesData={BRANCH_GONE} />,
+    )
+    expect(html).toContain('data-testid="changes-branch-gone"')
+    expect(html).toContain('was dropped')
+    // Must NOT claim the task was merged
+    expect(html).not.toContain('cleaned up after merging')
+    expect(html).not.toContain('This task changed no files.')
+  })
+
+  it('shows a "failed" message for a failed task with branch-gone shape', () => {
+    const html = renderBody(
+      <TaskDetailBody task={makeTask({ status: 'failed' })} changesData={BRANCH_GONE} />,
+    )
+    expect(html).toContain('data-testid="changes-branch-gone"')
+    expect(html).toContain('This task failed')
+    // Must NOT claim the task was merged
+    expect(html).not.toContain('cleaned up after merging')
+    expect(html).not.toContain('This task changed no files.')
   })
 
   it('shows the merge commit sha when branch-gone includes a landedSha', () => {

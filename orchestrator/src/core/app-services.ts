@@ -1084,25 +1084,42 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
       const worktreePath = task.worktreePath
       const cwd = worktreePath ?? repoRoot
 
-      // Resolve HEAD of the task branch.
-      const headSha = await localGitVcs.revParse({ cwd, rev: 'HEAD' })
-      if (!headSha) return BRANCH_GONE
-      head = headSha
+      try {
+        // Resolve HEAD of the task branch.
+        const headSha = await localGitVcs.revParse({ cwd, rev: 'HEAD' })
+        if (!headSha) return BRANCH_GONE
+        head = headSha
 
-      // Resolve merge-base between the integration branch and this branch.
-      const mbResult = await execProbe(
-        resolveGitBin(),
-        ['merge-base', integrationBranch, branch],
-        { cwd },
-      )
-      if (mbResult.exitCode !== 0) {
-        // Branch may not yet share history with integration (e.g. fresh worktree
-        // before the first commit). Graceful empty result.
-        return BRANCH_GONE
+        // Resolve merge-base between the integration branch and this branch.
+        const mbResult = await execProbe(
+          resolveGitBin(),
+          ['merge-base', integrationBranch, branch],
+          { cwd },
+        )
+        if (mbResult.exitCode !== 0) {
+          // Branch may not yet share history with integration (e.g. fresh worktree
+          // before the first commit). Graceful empty result.
+          return BRANCH_GONE
+        }
+        const baseSha = mbResult.stdout.trim()
+        if (!baseSha) return BRANCH_GONE
+        base = baseSha
+      } catch {
+        // The working directory no longer exists — the worktree was removed while
+        // the task status record has not yet been updated to done/dropped. Return
+        // a typed branch-gone 200 instead of propagating a 500. Include the
+        // landed sha if a tombstone was written before the status record settled.
+        const stateDir = resolveContext().stateDir
+        const tombstonePath = resolvePath(stateDir, 'worktrees', `${taskId}.removed.json`)
+        try {
+          const raw = await readFile(tombstonePath, 'utf8')
+          const parsed = JSON.parse(raw) as Record<string, unknown>
+          const sha = typeof parsed['mergeCommitSha'] === 'string' ? parsed['mergeCommitSha'] : null
+          return sha ? { ...BRANCH_GONE, landedSha: sha } : BRANCH_GONE
+        } catch {
+          return BRANCH_GONE
+        }
       }
-      const baseSha = mbResult.stdout.trim()
-      if (!baseSha) return BRANCH_GONE
-      base = baseSha
     }
 
     const range = `${base}..${head}`
