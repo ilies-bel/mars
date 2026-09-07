@@ -464,6 +464,14 @@ function setupPhantomRepo(): { repoRoot: string; branch: string } {
   execFileSync('git', ['config', 'user.email', 'ci@test'], { cwd: repoRoot })
   execFileSync('git', ['config', 'user.name', 'CI'], { cwd: repoRoot })
   writeFileSync(join(repoRoot, 'README.md'), 'init')
+  // PGlite stores its data at <marsDir>.pglite (i.e. .mars.pglite/ here).
+  // Without a .gitignore, `git add -A` stages those files and a subsequent
+  // `git checkout <branch>` deletes them when switching back to main, which
+  // corrupts the open PGlite instance and causes "could not open file" errors.
+  // The .mars/ directory (tombstones, worktrees) must also be excluded so that
+  // `writeTombstone` files added after branch creation are not inadvertently
+  // staged by `git add -A` on the task branch.
+  writeFileSync(join(repoRoot, '.gitignore'), '.mars/\n.mars.pglite/\n')
   execFileSync('git', ['add', '-A'], { cwd: repoRoot })
   execFileSync('git', ['commit', '-m', 'initial', '--no-gpg-sign'], { cwd: repoRoot })
   // Normalise to 'main' regardless of the git default.
@@ -627,6 +635,111 @@ describe(
       expect(unknownRow?.payload['taskId']).toBe(taskId)
       // Must NOT raise a high-priority phantom-merge for an unknown outcome.
       expect(rows.filter((r) => r.kind === 'phantom-merge')).toHaveLength(0)
+    })
+
+    // Regression test for the false-positive phantom-merge bug:
+    // A checkpoint ref that is NOT patch-equivalent to the integration branch
+    // (git cherry would report '+') but whose touched paths ARE all present on
+    // the integration branch must yield outcome='landed' and raise NO row.
+    //
+    // This is the exact scenario that produced the four permanently-open false
+    // positives documented in the task brief: a periodic snapshot is by
+    // construction almost never patch-identical to what eventually merged
+    // (the coder kept editing; the branch was rebased; the merge may have
+    // squashed) even when the work clearly landed.
+    it('does not raise phantom-merge when checkpoint paths are present on main despite not being patch-equivalent', async () => {
+      const taskId = 'mars-pm-ckpt-content-match'
+      await seedDoneTask(client, taskId)
+
+      // Create a task branch with a "checkpoint" commit that adds taskFile.txt
+      // with content "checkpoint snapshot — not the final version".
+      execFileSync('git', ['checkout', '-b', `task/${taskId}`, 'main'], { cwd: repoRoot })
+      writeFileSync(join(repoRoot, `${taskId}.txt`), 'checkpoint snapshot — not the final version')
+      execFileSync('git', ['add', '-A'], { cwd: repoRoot })
+      execFileSync(
+        'git',
+        ['commit', '-m', `wip: ${taskId} mid-work snapshot`, '--no-gpg-sign'],
+        { cwd: repoRoot },
+      )
+      const checkpointSha = execFileSync('git', ['rev-parse', 'HEAD'], {
+        cwd: repoRoot,
+        encoding: 'utf8',
+      }).trim()
+
+      // Back on main, land the FINAL version of the same file — different content
+      // so git cherry reports '+' (not patch-equivalent) yet the path is present.
+      execFileSync('git', ['checkout', 'main'], { cwd: repoRoot })
+      writeFileSync(join(repoRoot, `${taskId}.txt`), 'final landed content — different from snapshot')
+      execFileSync('git', ['add', '-A'], { cwd: repoRoot })
+      execFileSync(
+        'git',
+        ['commit', '-m', `feat: ${taskId} final version`, '--no-gpg-sign'],
+        { cwd: repoRoot },
+      )
+
+      // Delete the task branch (simulating post-merge cleanup) and write the
+      // tombstone so the function under test picks it up.
+      execFileSync('git', ['branch', '-D', `task/${taskId}`], { cwd: repoRoot })
+      writeTombstone(repoRoot, taskId)
+
+      // Point the checkpoint ref at the mid-work snapshot — NOT the commit that
+      // actually landed on main.
+      execFileSync(
+        'git',
+        ['update-ref', `refs/mars/checkpoint/${taskId}-code-periodic`, checkpointSha],
+        { cwd: repoRoot },
+      )
+
+      const source = createConditionItemsSource({ getClient: () => client, repoRoot })
+      const rows = await source.derive({
+        kinds: new Set(['phantom-merge', 'phantom-merge-unknown']),
+      })
+
+      // Content-containment should detect that taskId.txt is present on main
+      // and yield outcome='landed' — no row of any kind should be raised.
+      expect(rows).toHaveLength(0)
+    })
+
+    it('raises phantom-merge naming missing paths when checkpoint paths are absent from main', async () => {
+      const taskId = 'mars-pm-ckpt-missing-paths'
+      await seedDoneTask(client, taskId)
+
+      // Create a task branch with a commit that adds a file that NEVER lands
+      // on main — the work genuinely did not land.
+      execFileSync('git', ['checkout', '-b', `task/${taskId}`, 'main'], { cwd: repoRoot })
+      writeFileSync(join(repoRoot, `${taskId}-unlanded.txt`), 'this file will not land on main')
+      execFileSync('git', ['add', '-A'], { cwd: repoRoot })
+      execFileSync(
+        'git',
+        ['commit', '-m', `feat: ${taskId} work`, '--no-gpg-sign'],
+        { cwd: repoRoot },
+      )
+      const checkpointSha = execFileSync('git', ['rev-parse', 'HEAD'], {
+        cwd: repoRoot,
+        encoding: 'utf8',
+      }).trim()
+
+      // Return to main WITHOUT committing the task file.
+      execFileSync('git', ['checkout', 'main'], { cwd: repoRoot })
+      execFileSync('git', ['branch', '-D', `task/${taskId}`], { cwd: repoRoot })
+      writeTombstone(repoRoot, taskId)
+
+      execFileSync(
+        'git',
+        ['update-ref', `refs/mars/checkpoint/${taskId}-code-periodic`, checkpointSha],
+        { cwd: repoRoot },
+      )
+
+      const source = createConditionItemsSource({ getClient: () => client, repoRoot })
+      const rows = await source.derive({
+        kinds: new Set(['phantom-merge', 'phantom-merge-unknown']),
+      })
+
+      const phantomRow = rows.find((r) => r.kind === 'phantom-merge')
+      expect(phantomRow).toBeDefined()
+      expect(phantomRow?.payload['taskId']).toBe(taskId)
+      // The body must name the missing path so the operator knows what to recover.
+      expect(phantomRow?.body).toContain(`${taskId}-unlanded.txt`)
     })
   },
 )

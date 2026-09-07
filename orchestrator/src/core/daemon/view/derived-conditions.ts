@@ -1037,11 +1037,11 @@ async function deriveSignatureWaveConditions(
  * the git probes only re-run when main advances.
  */
 
-// Cache: taskId → { mainSha: string; outcome }
+// Cache: taskId → { mainSha: string; outcome; missingPaths? }
 // Recomputed per task only when the integration branch SHA changes.
 const _phantomMergeOutcomeCache = new Map<
   string,
-  { mainSha: string; outcome: 'landed' | 'missing' | 'unknown' }
+  { mainSha: string; outcome: 'landed' | 'missing' | 'unknown'; missingPaths?: string[] }
 >()
 
 async function derivePhantomMergeConditions(
@@ -1097,8 +1097,13 @@ async function derivePhantomMergeConditions(
     // probes only run when main advances.
     const cached = _phantomMergeOutcomeCache.get(taskId)
     let outcome: 'landed' | 'missing' | 'unknown'
+    // Paths absent from the integration branch, named by the checkpoint
+    // content-containment check. Only populated when outcome === 'missing'
+    // via the checkpoint fallback; undefined for the branch path and cache hits.
+    let missingPaths: string[] | undefined
     if (cached && intSha !== '' && cached.mainSha === intSha) {
       outcome = cached.outcome
+      missingPaths = cached.missingPaths
     } else {
       // 1. Try the task branch via git cherry (patch-equivalence test).
       const branchName = `task/${taskId}`
@@ -1114,6 +1119,24 @@ async function derivePhantomMergeConditions(
         outcome = hasUnmerged ? 'missing' : 'landed'
       } else {
         // Branch absent — try checkpoint refs.
+        //
+        // NOTE: patch-equivalence (git cherry) is the wrong test for stale
+        // snapshots. A periodic checkpoint is almost never patch-identical to
+        // what eventually merged: the coder kept editing after the snapshot,
+        // the branch was rebased onto a moving main, and the merge step may
+        // have squashed. git cherry therefore reports '+' for essentially every
+        // task whose branch has been deleted, regardless of whether the work
+        // actually landed — the source of all four false-positive phantom-merge
+        // rows documented in this task.
+        //
+        // Content-containment is the correct question: "are the PATHS this
+        // checkpoint introduced still present on the integration branch?" A path
+        // that landed and was later modified on the integration branch still
+        // counts as landed. Deliberate trade-off: a false "missing" poisons the
+        // action queue permanently and erodes operator trust in every future
+        // phantom-merge row; a false "landed" at worst loses a diff that a
+        // `mars remerge` or the checkpoint ref can still recover. Under-alerting
+        // is recoverable; over-alerting is not.
         const checkpointGlob = `refs/mars/checkpoint/${taskId}-*`
         const refsProbe = spawnSync(
           'git',
@@ -1131,29 +1154,75 @@ async function derivePhantomMergeConditions(
             // No branch, no checkpoint refs — cannot determine landing status.
             outcome = 'unknown'
           } else {
-            // All checkpoint SHAs must be patch-present on the integration branch.
-            let allLanded = true
+            // Collect the union of all paths touched by all checkpoint refs,
+            // then verify each is present on the integration branch.
+            const accMissingPaths: string[] = []
+            let anyPathsFound = false
+
             for (const sha of shas) {
-              const cherryRef = spawnSync(
+              // Find the merge-base between the integration branch and this
+              // checkpoint so we know which paths the checkpoint introduced.
+              const mergeBaseProbe = spawnSync(
                 'git',
-                ['-C', repoRoot, 'cherry', intBranch, sha],
+                ['-C', repoRoot, 'merge-base', intBranch, sha],
                 { encoding: 'utf8', timeout: 5_000 },
               )
-              if (
-                cherryRef.status !== 0 ||
-                cherryRef.error ||
-                (cherryRef.stdout as string).split('\n').some((l: string) => l.startsWith('+'))
-              ) {
-                allLanded = false
-                break
+              if (mergeBaseProbe.status !== 0 || mergeBaseProbe.error) continue
+              const mergeBase = (mergeBaseProbe.stdout as string).trim()
+
+              // If merge-base === checkpoint SHA, the checkpoint commit is
+              // already reachable from (an ancestor of) the integration branch —
+              // its content is definitively present. No paths to probe.
+              if (mergeBase === sha) {
+                anyPathsFound = true
+                continue
+              }
+
+              // Paths introduced/modified by this checkpoint relative to where
+              // it diverged from the integration branch.
+              const diffProbe = spawnSync(
+                'git',
+                ['-C', repoRoot, 'diff', '--name-only', mergeBase, sha],
+                { encoding: 'utf8', timeout: 5_000 },
+              )
+              if (diffProbe.status !== 0 || diffProbe.error) continue
+
+              const paths = (diffProbe.stdout as string)
+                .trim()
+                .split('\n')
+                .filter((p: string) => p.length > 0)
+
+              if (paths.length > 0) anyPathsFound = true
+
+              for (const path of paths) {
+                // Skip paths we already know are missing (avoid duplicate probes).
+                if (accMissingPaths.includes(path)) continue
+                // Check if this path exists on the integration branch.
+                const catFileProbe = spawnSync(
+                  'git',
+                  ['-C', repoRoot, 'cat-file', '-e', `${intBranch}:${path}`],
+                  { encoding: 'utf8', timeout: 5_000 },
+                )
+                if (catFileProbe.status !== 0) {
+                  accMissingPaths.push(path)
+                }
               }
             }
-            outcome = allLanded ? 'landed' : 'missing'
+
+            if (!anyPathsFound) {
+              // All checkpoint refs produced empty diffs — treat as unknown.
+              outcome = 'unknown'
+            } else if (accMissingPaths.length === 0) {
+              outcome = 'landed'
+            } else {
+              outcome = 'missing'
+              missingPaths = accMissingPaths
+            }
           }
         }
       }
       if (intSha !== '') {
-        _phantomMergeOutcomeCache.set(taskId, { mainSha: intSha, outcome })
+        _phantomMergeOutcomeCache.set(taskId, { mainSha: intSha, outcome, missingPaths })
       }
     }
 
@@ -1197,6 +1266,13 @@ async function derivePhantomMergeConditions(
         `Task \`${taskId}\` was marked done with tombstone \`{reason: 'merged', mergeCommitSha: null}\`,`,
         `and its commits are NOT reachable from \`${intBranch}\` (checked branch \`task/${taskId}\` and checkpoint refs).`,
         '',
+        ...(missingPaths && missingPaths.length > 0
+          ? [
+              `**Paths absent from \`${intBranch}\`** (verified via checkpoint content-containment check):`,
+              missingPaths.map((p) => `  - \`${p}\``).join('\n'),
+              '',
+            ]
+          : []),
         `A null \`mergeCommitSha\` means the fast-forward did not advance the integration branch — ` +
           `the task is "done" but its commits may not have landed. This is the P3 bug ` +
           `(mars-59c9fdb0): a stale-merging-sweep eviction reset the branch while an old ` +
