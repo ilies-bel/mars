@@ -77,9 +77,33 @@ export interface KpiDriftProposalNotes {
    * Median weighted tokens per phase across arcs in the current window.
    * Keys are step/phase names (e.g. 'code', 'verify', 'setup'); values are
    * the median cache-weighted token cost for that phase across all arcs.
-   * Only populated for cost_per_arc_p50 regressions.
+   * Populated for cost_per_arc_p50 and cost_per_arc_p90 regressions.
    */
   phaseMedians?: Record<string, number>
+  /**
+   * Tail arcs driving a p90 regression — arcs whose cost is at or above the
+   * p90 percentile in the current window. Only populated for
+   * cost_per_arc_p90 regressions.
+   */
+  tailArcs?: Array<{
+    /** Task id of the arc. */
+    taskId: string
+    /** Total cache-weighted token cost of the arc. */
+    weightedTokens: number
+    /** Failure signature, if the arc ended in a failure. */
+    failureSignature?: string
+  }>
+  /**
+   * Cache-hit ratio (cacheReadTokens / totalInputTokens) per window,
+   * providing context on how caching behaviour changed between windows.
+   * Only populated for cost_per_arc_p50 and cost_per_arc_p90 regressions.
+   */
+  cacheHitRatio?: {
+    /** Cache-hit ratio in the current measurement window (0–1). */
+    current: number
+    /** Cache-hit ratio in the prior measurement window (0–1). */
+    prior: number
+  }
 }
 
 /**
