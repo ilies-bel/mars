@@ -52,11 +52,15 @@ function pct(sorted: readonly number[], p: number): number {
 export const kpiDrillCommand: Command = {
   path: 'kpi drill',
   summary: 'show per-arc cost breakdown ranked by total weighted tokens',
-  usage: `usage: mars kpi drill <${DRILL_KEYS.join('|')}> [--limit <n>]`,
+  usage: `usage: mars kpi drill <${DRILL_KEYS.join('|')}> [--limit <n>] [--tail]`,
   flags: [
     {
       syntax: '--limit <n>',
       description: `max arcs to display (default: ${DEFAULT_LIMIT})`,
+    },
+    {
+      syntax: '--tail',
+      description: 'show only arcs above the p90 cost threshold',
     },
   ],
   run: async (args, deps) => {
@@ -83,9 +87,17 @@ export const kpiDrillCommand: Command = {
     const result = await listKpiArcs(key, deps.store)
 
     // Sort descending by total weighted tokens, slice to limit.
-    const rows = [...result.arcs]
+    let rows = [...result.arcs]
       .sort((a, b) => (b.costTokens ?? 0) - (a.costTokens ?? 0))
       .slice(0, limit)
+
+    const isTail = args.flags['--tail'] !== undefined
+    let p90Cutoff = 0
+    if (isTail) {
+      const allCosts = result.arcs.map((a) => a.costTokens ?? 0).sort((a, b) => a - b)
+      p90Cutoff = pct(allCosts, 0.9)
+      rows = rows.filter((a) => (a.costTokens ?? 0) > p90Cutoff)
+    }
 
     // ── Header ───────────────────────────────────────────────────────────────
     const header =
@@ -126,7 +138,11 @@ export const kpiDrillCommand: Command = {
     // ── Footer ────────────────────────────────────────────────────────────────
     deps.out('')
     if (rows.length === 0) {
-      deps.out('no arcs in window')
+      deps.out(isTail ? 'no arcs above p90 threshold' : 'no arcs in window')
+    } else if (isTail) {
+      deps.out(
+        `p90 cutoff: ${fmtN(p90Cutoff)}  (${rows.length} arc${rows.length === 1 ? '' : 's'} above)`,
+      )
     } else {
       const totals = rows.map((a) => a.costTokens ?? 0).sort((a, b) => a - b)
       const p50 = pct(totals, 0.5)

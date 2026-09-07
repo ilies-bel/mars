@@ -226,6 +226,8 @@ export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   // Use before immediately re-adding a replacement blocker to avoid the race
   // where the task is dispatched between the unblock and the new block.
   '--keep-blocked',
+  // mars kpi drill --tail: show only arcs above the p90 cost threshold.
+  '--tail',
 ])
 
 // Short aliases are normalised to their long form before flag lookup.

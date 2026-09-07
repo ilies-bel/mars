@@ -314,3 +314,65 @@ describe('mars kpi drill — empty window', () => {
     expect(output).toContain('no arcs in window')
   })
 })
+
+describe('mars kpi drill --tail', () => {
+  let db: DbClient
+
+  beforeEach(async () => {
+    db = await getTestDb()
+    eventSeq = 0
+    vi.resetModules()
+
+    // 10 arcs with costs 100, 200, ..., 1000 (one code step each)
+    for (let i = 1; i <= 10; i++) {
+      const id = `tail-arc-${String(i).padStart(2, '0')}`
+      await insertDoneTask(db, id, `tail task ${i}`)
+      await insertStepEndedWithName(db, { taskId: id, stepName: 'code', inputTokens: i * 100 })
+    }
+  })
+
+  it('kpi drill --tail filters to p90+ arcs', async () => {
+    const deps = await loadDeps(db)
+    const fake = await makeFake()
+
+    const result = await run(['kpi', 'drill', 'cost_per_arc', '--tail'], { ...deps, daemon: fake })
+
+    expect(result.code).toBe(0)
+
+    // sorted costs: [100,200,...,1000]; n=10, p90 index = 0.9*9 = 8.1
+    // p90 = 900 + 0.1*(1000-900) = 910
+    // Only arc with cost 1000 > 910
+    const dataRows = result.out.filter((l) => l.includes('tail-arc-'))
+    expect(dataRows).toHaveLength(1)
+    expect(dataRows[0]).toContain('1000')
+    // The arc with cost 900 (tail-arc-09) must NOT appear
+    expect(dataRows[0]).not.toContain('tail-arc-09')
+
+    // Footer must state the p90 cutoff
+    const footer = result.out.find((l) => l.includes('p90 cutoff:'))
+    expect(footer).toBeDefined()
+    expect(footer).toContain('910')
+    expect(footer).toContain('1 arc above')
+  })
+
+  it('prints "no arcs above p90 threshold" when all arcs have identical cost', async () => {
+    // Use a fresh db with all arcs at the same cost (p90 == every value, none strictly above)
+    const freshDb = await getTestDb()
+    eventSeq = 0
+    vi.resetModules()
+    for (let i = 1; i <= 5; i++) {
+      const id = `same-arc-${i}`
+      await insertDoneTask(freshDb, id, `same task ${i}`)
+      await insertStepEndedWithName(freshDb, { taskId: id, stepName: 'code', inputTokens: 500 })
+    }
+
+    const deps = await loadDeps(freshDb)
+    const fake = await makeFake()
+
+    const result = await run(['kpi', 'drill', 'cost_per_arc', '--tail'], { ...deps, daemon: fake })
+
+    expect(result.code).toBe(0)
+    const output = result.out.join('\n')
+    expect(output).toContain('no arcs above p90 threshold')
+  })
+})
