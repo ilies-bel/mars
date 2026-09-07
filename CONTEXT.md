@@ -622,8 +622,8 @@ An action queue message in which Mars asks the operator to choose between course
 _Avoid_: prompt, question, approval item, choice item
 
 **Domain Flow**:
-One named business process inside a Domain Timeline, expressed as an ordered sequence of Domain Events.
-_Avoid_: flow, process, timeline
+The named, ordered sequence of Domain Events and Domain Policies describing the business behaviour one Arc changes; authored during planning, attached to that Arc, and frozen at merge.
+_Avoid_: flow, timeline, domain timeline, event storm
 
 **Domain Event**:
 A past-tense, business-meaningful fact that occurred in a target repository's domain; the unit a Domain Flow is a sequence of.
