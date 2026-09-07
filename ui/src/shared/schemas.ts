@@ -727,6 +727,12 @@ export const actionQueueGroupRowSchema = z.object({
   previewIds: z.array(z.string()).default([]),
   /** Full member rows — present for rendering the expanded list and bulk actions. */
   members: z.array(actionQueueItemSchema),
+  /**
+   * Kind's declared bulk-resolve verb — present when the kind declares one
+   * (see Recipe.bulkResolveVerb in action-queue-recipes.ts). Absent means
+   * only Snooze is offered on the group card.
+   */
+  bulkResolveVerb: alertVerbSchema.optional(),
 })
 
 /** A single action-queue item in its wire envelope. */
