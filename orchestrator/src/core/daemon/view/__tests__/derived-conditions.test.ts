@@ -744,3 +744,51 @@ describe(
   },
 )
 
+// ── gate-broken recipe: no UUID or CLI command in humanSummary (DEC-18) ─────────
+//
+// The gate-broken card has a "Restore gate" button and a "Copy restore command"
+// button. The body must carry only the intent — not the machine string
+// (UUID gate id or CLI command). This was a regression: the body used to end
+// with `Run \`mars verify-gate restore <uuid>\``, duplicating what the buttons
+// already provide and exposing a raw UUID on the card face.
+
+describe('gate-broken recipe — humanSummary', () => {
+  it('does not expose the gate UUID or CLI command when scope/name are present', () => {
+    const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i
+    const gateUuid = '98f6af73-da2f-44d0-9264-e1da2bcc493e'
+    const summary = recipeHumanSummary('gate-broken', {
+      gate: gateUuid,
+      scope: 'ui',
+      name: 'e2e-smoke',
+      required: false,
+      verdict: 'flaky-test',
+    })
+    // The UUID must not appear — the "Copy restore command" button is its home.
+    expect(summary).not.toMatch(UUID_RE)
+    // The human-readable identity must be used instead.
+    expect(summary).toContain('ui/e2e-smoke')
+    // The button carries the action; the body carries only the intent.
+    expect(summary).toContain('Restore it once the underlying failure is fixed')
+    // No CLI instruction should appear on the card face.
+    expect(summary).not.toContain('mars verify-gate restore')
+  })
+
+  it('does not expose the gate UUID even when scope/name fall back to gate', () => {
+    // When scope/name are absent, identity falls back to verdict || gate.
+    // Even in that case the CLI command must not appear.
+    const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i
+    const gateUuid = '98f6af73-da2f-44d0-9264-e1da2bcc493e'
+    const summary = recipeHumanSummary('gate-broken', {
+      gate: gateUuid,
+      scope: '',
+      name: '',
+      required: false,
+      verdict: 'flaky-test',
+    })
+    // verdict is present so identity = 'flaky-test', not the UUID.
+    expect(summary).not.toMatch(UUID_RE)
+    expect(summary).not.toContain('mars verify-gate restore')
+    expect(summary).toContain('Restore it once the underlying failure is fixed')
+  })
+})
+

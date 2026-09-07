@@ -802,20 +802,14 @@ const RECIPE_DEFINITIONS = {
         scope && name && !(scope === gate && name === gate)
           ? `${scope}/${name}`
           : verdict || gate
-      // The restore command is the exact verb needed — surface it so the operator
-      // does not have to guess that `mars verify-gate restore` even exists.
-      const restoreCmd = gate
-        ? `mars verify-gate restore ${gate}`
-        : 'mars verify-gate restore <id>'
       // A required gate that is quarantined silently disables a mandatory check:
       // every merge is proceeding without it. That is a headline fact, not a footnote.
       const requiredClause = required
         ? ` This is a required gate — while quarantined, every merge proceeds without this check.`
         : ''
-      return (
-        `The ${identity} gate is quarantined and not enforcing.${requiredClause}` +
-        ` Run \`${restoreCmd}\` once the underlying failure is fixed.`
-      )
+      // The "Copy restore command" button carries the exact CLI form; the body
+      // carries only the intent (DEC-18: no machine strings on card faces).
+      return `The ${identity} check is quarantined and not enforcing.${requiredClause} Restore it once the underlying failure is fixed.`
     },
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
