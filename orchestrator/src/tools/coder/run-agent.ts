@@ -35,6 +35,9 @@ import { recordSignals } from '../../core/lib/reflect-signals'
 import { resolveTaskDomains, fetchLessonsForTask } from '../../core/store/memory-packet-store'
 import { runWorkerWithSpan } from '../../core/lib/run-worker-with-span'
 import { composePrompt, resolveWorkerSystemPrompt } from '../../workflows/primitives/shared'
+import { getFlowByArcId } from '../../core/domain-flow/store'
+import { renderDomainFlow } from '../../core/domain-flow/render'
+import type { DbClient } from '../../core/lib/db'
 import { WorkflowTerminalError } from '../../core/lib/workflow-terminal-error'
 import { distillObservation } from '../../core/lib/distill/observation'
 import {
@@ -421,6 +424,11 @@ export const runAgent = async (
   }
 
   const fullTask = await store.getTask(taskId).catch(() => null)
+  // Load the Domain Flow for this Arc so the coder can see the operator-approved
+  // business behaviour. Best-effort: a load failure must never block dispatch.
+  const domainFlow = await getFlowByArcId(store as unknown as DbClient, originId).catch(
+    () => null,
+  )
   const domains = resolveTaskDomains({
     workflow: fullTask?.workflow ?? null,
     tags,
@@ -466,6 +474,7 @@ export const runAgent = async (
     false,
     null,
     fullTask?.workflow ?? null,
+    domainFlow ? renderDomainFlow(domainFlow) : null,
   )
   // Compose and render the restart checkpoint when this is a resume dispatch.
   // Best-effort: a composition failure must never block dispatch.

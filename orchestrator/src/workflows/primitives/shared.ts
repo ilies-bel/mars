@@ -589,6 +589,17 @@ export const composePrompt = (
    * commit-mandate prefix unchanged).
    */
   workflow: string | null = null,
+  /**
+   * Pre-rendered Domain Flow markdown for the Arc this task belongs to.
+   * When non-null and non-empty, a `## Domain Flow` section is injected after
+   * the index card and before the structured-task spec block, so the coder
+   * reads the operator-approved domain context before the implementation
+   * checklist.
+   *
+   * Defaults to `null` (backward-compatible: callers without a Domain Flow
+   * receive an unchanged prompt).
+   */
+  domainFlowRendered: string | null = null,
 ): string => {
   // Diagnose Chore short-circuit: the prompt arrives fully composed.
   if (kind === 'diagnose') return prompt.trim()
@@ -621,6 +632,12 @@ export const composePrompt = (
   // Index card immediately after orientation, before the structured-task spec.
   if (indexCard !== null && indexCard.trim().length > 0) {
     sections.push('## Index card\n\n<index_card>\n' + indexCard.trim() + '\n</index_card>')
+  }
+  // Domain Flow — injected after the index card and before the spec block so
+  // the coder reads the operator-approved business behaviour before the
+  // implementation checklist.
+  if (domainFlowRendered !== null && domainFlowRendered.trim().length > 0) {
+    sections.push('## Domain Flow\n\n' + domainFlowRendered.trim())
   }
   const specBlock = renderSpec(spec, taskId, gateSteps)
   if (specBlock !== null) sections.push(specBlock)
