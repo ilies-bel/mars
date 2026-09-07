@@ -497,6 +497,198 @@ describe('runSelfEvolveTrigger', () => {
     expect(failureProposal).toBeUndefined()
   })
 
+  // -------------------------------------------------------------------------
+  // Consumer slice: "Enrich p90 drift proposals with per-phase median breakdown"
+  // Same phaseMedians logic as the p50 enrichment test above, but triggered by
+  // a cost_per_arc_p90 regression instead of cost_per_arc_p50.
+  // -------------------------------------------------------------------------
+  it('enriches cost_per_arc_p90 proposal notes with phaseMedians', async () => {
+    // Three arcs with distinct per-phase costs — same values as the p50 test so
+    // the expected medians are identical (only the triggering KPI differs):
+    //   code:   [300, 400, 600]  → sorted median = 400
+    //   verify: [150, 200, 200]  → sorted median = 200
+    //   setup:  [ 50, 100, 100]  → sorted median = 100
+    phaseEnrichmentArcs = [
+      {
+        arcId: 'arc1', originTaskId: 'arc1', title: '', status: 'done', passed: true,
+        costTokens: 900, phaseBreakdown: { code: 600, verify: 200, setup: 100 },
+      },
+      {
+        arcId: 'arc2', originTaskId: 'arc2', title: '', status: 'done', passed: true,
+        costTokens: 700, phaseBreakdown: { code: 400, verify: 200, setup: 100 },
+      },
+      {
+        arcId: 'arc3', originTaskId: 'arc3', title: '', status: 'done', passed: true,
+        costTokens: 500, phaseBreakdown: { code: 300, verify: 150, setup: 50 },
+      },
+    ]
+
+    const ctx = await loadContext(repo)
+
+    // cost_per_arc_p90: 600 → 900 (+50%). cost_per_arc_p50 is null so only p90
+    // fires; failure_rate is null so it is excluded from drift detection.
+    await insertSnapshot(ctx.store, {
+      id: 'snap-prior',
+      takenAt: '2026-01-01T00:00:00Z',
+      failureRate: null,
+      costPerArcP50: null,
+      costPerArcP90: 600,
+    })
+    await insertSnapshot(ctx.store, {
+      id: 'snap-current',
+      takenAt: '2026-01-08T00:00:00Z',
+      failureRate: null,
+      costPerArcP50: null,
+      costPerArcP90: 900,
+    })
+
+    const result = await ctx.runSelfEvolveTrigger({ store: ctx.store })
+    expect(result.raised.length).toBeGreaterThanOrEqual(1)
+
+    const proposals = await ctx.listProposals({ source: 'reflection' })
+    const p90Proposal = proposals.find(p => p.title.includes('cost_per_arc_p90'))
+    expect(p90Proposal).toBeDefined()
+
+    const notesObj = JSON.parse(p90Proposal!.notes) as {
+      kpi: string
+      vector: Record<string, { prior: number; current: number }>
+      phaseMedians?: Record<string, number>
+    }
+    expect(notesObj).toHaveProperty('phaseMedians')
+    // code: [300, 400, 600] sorted → median = 400
+    // verify: [150, 200, 200] sorted → median = 200
+    // setup: [50, 100, 100] sorted → median = 100
+    expect(notesObj.phaseMedians).toEqual({ code: 400, verify: 200, setup: 100 })
+  })
+
+  // -------------------------------------------------------------------------
+  // Consumer slice: "Add tail-arc listing to p90 drift proposals"
+  // The consumer identifies arcs at-or-above the current p90 percentile and
+  // embeds them as notes.tailArcs so the operator sees the costliest arcs
+  // directly in the proposal.
+  // -------------------------------------------------------------------------
+  it('populates tailArcs in cost_per_arc_p90 proposal notes', async () => {
+    // Three arcs with distinct costTokens: [500, 700, 900].
+    // p90 of [500, 700, 900] ≈ 860, so arc-hi (900 tokens) is in the tail.
+    phaseEnrichmentArcs = [
+      {
+        arcId: 'arc-hi', originTaskId: 'task-hi', title: 'expensive arc',
+        status: 'done', passed: true,
+        costTokens: 900, phaseBreakdown: { code: 600, verify: 200, setup: 100 },
+      },
+      {
+        arcId: 'arc-mid', originTaskId: 'task-mid', title: '',
+        status: 'done', passed: true,
+        costTokens: 700, phaseBreakdown: { code: 400, verify: 200, setup: 100 },
+      },
+      {
+        arcId: 'arc-lo', originTaskId: 'task-lo', title: '',
+        status: 'done', passed: false,
+        costTokens: 500, phaseBreakdown: { code: 300, verify: 150, setup: 50 },
+      },
+    ]
+
+    const ctx = await loadContext(repo)
+
+    await insertSnapshot(ctx.store, {
+      id: 'snap-prior',
+      takenAt: '2026-01-01T00:00:00Z',
+      failureRate: null,
+      costPerArcP50: null,
+      costPerArcP90: 600,
+    })
+    await insertSnapshot(ctx.store, {
+      id: 'snap-current',
+      takenAt: '2026-01-08T00:00:00Z',
+      failureRate: null,
+      costPerArcP50: null,
+      costPerArcP90: 900,
+    })
+
+    const result = await ctx.runSelfEvolveTrigger({ store: ctx.store })
+    expect(result.raised.length).toBeGreaterThanOrEqual(1)
+
+    const proposals = await ctx.listProposals({ source: 'reflection' })
+    const p90Proposal = proposals.find(p => p.title.includes('cost_per_arc_p90'))
+    expect(p90Proposal).toBeDefined()
+
+    const notesObj = JSON.parse(p90Proposal!.notes) as {
+      kpi: string
+      vector: Record<string, { prior: number; current: number }>
+      tailArcs?: Array<{ taskId: string; weightedTokens: number; failureSignature?: string }>
+    }
+    expect(notesObj).toHaveProperty('tailArcs')
+    expect(Array.isArray(notesObj.tailArcs)).toBe(true)
+    // The highest-cost arc (task-hi, 900 tokens) must appear in the tail listing
+    const tailTaskIds = notesObj.tailArcs!.map(a => a.taskId)
+    expect(tailTaskIds).toContain('task-hi')
+    // Every entry must carry the required shape fields
+    for (const ta of notesObj.tailArcs!) {
+      expect(typeof ta.taskId).toBe('string')
+      expect(typeof ta.weightedTokens).toBe('number')
+    }
+  })
+
+  // -------------------------------------------------------------------------
+  // Consumer slice: "Add per-window cache-hit ratio to cost drift proposals"
+  // The consumer computes cacheReadTokens / totalInputTokens per window and
+  // embeds both values in notes.cacheHitRatio so the operator can see whether
+  // the cost drift is accompanied by a change in cache-hit behaviour.
+  // -------------------------------------------------------------------------
+  it('populates cacheHitRatio in cost_per_arc_p90 proposal notes', async () => {
+    phaseEnrichmentArcs = [
+      {
+        arcId: 'arc1', originTaskId: 'arc1', title: '', status: 'done', passed: true,
+        costTokens: 900, phaseBreakdown: { code: 600, verify: 200, setup: 100 },
+      },
+      {
+        arcId: 'arc2', originTaskId: 'arc2', title: '', status: 'done', passed: true,
+        costTokens: 700, phaseBreakdown: { code: 400, verify: 200, setup: 100 },
+      },
+      {
+        arcId: 'arc3', originTaskId: 'arc3', title: '', status: 'done', passed: true,
+        costTokens: 500, phaseBreakdown: { code: 300, verify: 150, setup: 50 },
+      },
+    ]
+
+    const ctx = await loadContext(repo)
+
+    await insertSnapshot(ctx.store, {
+      id: 'snap-prior',
+      takenAt: '2026-01-01T00:00:00Z',
+      failureRate: null,
+      costPerArcP50: null,
+      costPerArcP90: 600,
+    })
+    await insertSnapshot(ctx.store, {
+      id: 'snap-current',
+      takenAt: '2026-01-08T00:00:00Z',
+      failureRate: null,
+      costPerArcP50: null,
+      costPerArcP90: 900,
+    })
+
+    const result = await ctx.runSelfEvolveTrigger({ store: ctx.store })
+    expect(result.raised.length).toBeGreaterThanOrEqual(1)
+
+    const proposals = await ctx.listProposals({ source: 'reflection' })
+    const p90Proposal = proposals.find(p => p.title.includes('cost_per_arc_p90'))
+    expect(p90Proposal).toBeDefined()
+
+    const notesObj = JSON.parse(p90Proposal!.notes) as {
+      kpi: string
+      vector: Record<string, { prior: number; current: number }>
+      cacheHitRatio?: { current: number; prior: number }
+    }
+    expect(notesObj).toHaveProperty('cacheHitRatio')
+    const chr = notesObj.cacheHitRatio!
+    // Both ratios must be valid fractions in [0, 1]
+    expect(chr.current).toBeGreaterThanOrEqual(0)
+    expect(chr.current).toBeLessThanOrEqual(1)
+    expect(chr.prior).toBeGreaterThanOrEqual(0)
+    expect(chr.prior).toBeLessThanOrEqual(1)
+  })
+
   // driftThresholdPct: prove the value changes what gets raised.
   // With a threshold of 200% only a >200% drift fires; with 10% (default) a 50% drift fires.
   it('respects driftThresholdPct — a drift below the threshold is not raised', async () => {
