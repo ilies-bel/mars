@@ -66,6 +66,7 @@ vi.mock('@/hooks/useTasks', () => ({
 
 import { useScorerWorkflows } from '@/entities/watchtower/useScorerWorkflows'
 import { useLoopLedger } from '@/entities/watchtower/useLoopLedger'
+import { useTasks } from '@/hooks/useTasks'
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -201,5 +202,60 @@ describe('LoopLedgerPanel', () => {
       root.unmount()
     })
     document.body.removeChild(div)
+  })
+
+  it('renders task title and run id in separate elements: id carries muted styling and is not adjacent to the title text', async () => {
+    const HUMAN_TITLE = 'Fix blank action queue: teach the UI schema the new group/item union'
+
+    vi.mocked(useTasks).mockReturnValueOnce({
+      snapshot: {
+        columns: {
+          in_progress: [
+            {
+              id: 'run-001',
+              title: HUMAN_TITLE,
+              status: 'in_progress' as const,
+              role: 'builder' as const,
+              failed: false,
+              dropReason: null,
+              recoverySpawnedCount: 0,
+              priority: 1,
+              blockerTaskId: null,
+              spec: null,
+              createdAt: '2024-01-01T00:00:00.000Z',
+              updatedAt: '2024-01-01T00:00:00.000Z',
+            },
+          ],
+          backlog: [],
+          done: [],
+        },
+        counts: { inProgress: 1, todo: 0, done: 0 },
+      },
+      error: null,
+      connected: false,
+    })
+
+    const { LoopLedgerPanel } = await import('./LoopLedgerPanel')
+    const html = renderToStaticMarkup(<LoopLedgerPanel />)
+
+    // Both pieces of information must appear
+    expect(html).toContain(HUMAN_TITLE)
+    expect(html).toContain('run-001')
+
+    // The title and the run id must NOT be in the same text node.
+    // Locate where the title text ends and where the run id begins; between
+    // them there must be HTML structure (at least one tag boundary '>').
+    const afterTitle = html.indexOf(HUMAN_TITLE) + HUMAN_TITLE.length
+    const idStart = html.indexOf('run-001', afterTitle)
+    expect(idStart).toBeGreaterThan(afterTitle)
+    const between = html.slice(afterTitle, idStart)
+    // Must contain a closing '>' — i.e. there is a tag boundary separating them
+    expect(between).toMatch(/>/)
+    // Must NOT be that the title and id sit together with only whitespace
+    expect(between.trim()).not.toBe('')
+
+    // The run id must carry muted styling (visually subordinate to the title)
+    const idElementStart = html.lastIndexOf('<', idStart)
+    expect(html.slice(idElementStart, idStart)).toContain('muted-foreground')
   })
 })

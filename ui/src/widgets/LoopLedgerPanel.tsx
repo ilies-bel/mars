@@ -79,15 +79,17 @@ export const LoopLedgerPanel = () => {
               return (
                 <tr key={entry.runId}>
                   <td className="py-0.5 pr-2">
-                    <span className="text-foreground">{title}</span>
-                    {title !== entry.runId && (
-                      <span
-                        className="ml-1 font-mono text-micro text-muted-foreground/60"
-                        title={entry.runId}
-                      >
-                        {entry.runId}
-                      </span>
-                    )}
+                    <div className="flex flex-col">
+                      <span className="text-foreground">{title}</span>
+                      {title !== entry.runId && (
+                        <span
+                          className="font-mono text-micro text-muted-foreground/60"
+                          title={entry.runId}
+                        >
+                          {entry.runId}
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td className="py-0.5 pr-2" title={entry.scoredAt !== null ? formatAbsoluteDateTime(entry.scoredAt) : undefined}>
                     {entry.scoredAt !== null ? relativeTime(entry.scoredAt) : '—'}
