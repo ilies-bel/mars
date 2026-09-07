@@ -24,6 +24,7 @@ import {
   readLiveWorktreeLease,
   worktreeLeasePath,
   WorktreeLeaseHeldError,
+  type WorktreeLeaseHandle,
 } from '../worktree-lease'
 
 let root: string
@@ -70,18 +71,19 @@ describe('worktree lease', () => {
     expect(held.message).toContain('mars-holder')
     expect(held.message).toContain(worktreePath)
     expect(held.holder?.taskId).toBe('mars-holder')
+    // Initial pid is the daemon's (process.pid) until updatePid fires.
     expect(held.holder?.pid).toBe(process.pid)
   })
 
   it('frees the worktree for the next coder once released', async () => {
-    const release = await acquireWorktreeLease({ worktreePath, taskId: 'mars-first' })
+    const { release } = await acquireWorktreeLease({ worktreePath, taskId: 'mars-first' })
     await release()
 
     expect(await readLiveWorktreeLease(worktreePath)).toBeNull()
 
     const second = await acquireWorktreeLease({ worktreePath, taskId: 'mars-second' })
     expect((await readLiveWorktreeLease(worktreePath))?.taskId).toBe('mars-second')
-    await second()
+    await second.release()
   })
 
   it('reclaims a lease whose owning process is really gone', async () => {
@@ -106,7 +108,7 @@ describe('worktree lease', () => {
 
     expect(await readLiveWorktreeLease(worktreePath)).toBeNull()
 
-    const release = await acquireWorktreeLease({ worktreePath, taskId: 'mars-next' })
+    const { release } = await acquireWorktreeLease({ worktreePath, taskId: 'mars-next' })
     expect((await readLiveWorktreeLease(worktreePath))?.taskId).toBe('mars-next')
     await release()
   })
@@ -116,7 +118,7 @@ describe('worktree lease', () => {
 
     expect(await readLiveWorktreeLease(worktreePath)).toBeNull()
 
-    const release = await acquireWorktreeLease({ worktreePath, taskId: 'mars-next' })
+    const { release } = await acquireWorktreeLease({ worktreePath, taskId: 'mars-next' })
     expect((await readLiveWorktreeLease(worktreePath))?.taskId).toBe('mars-next')
     await release()
   })
@@ -136,12 +138,66 @@ describe('worktree lease', () => {
     const linked = join(root, 'linked-worktree')
     execFileSync('git', ['worktree', 'add', '-q', '-b', 'task/x', linked], { cwd: repo })
 
-    const release = await acquireWorktreeLease({ worktreePath: linked, taskId: 'mars-live' })
+    const { release } = await acquireWorktreeLease({ worktreePath: linked, taskId: 'mars-live' })
     execFileSync('git', ['worktree', 'remove', '--force', linked], { cwd: repo })
 
     expect(existsSync(linked)).toBe(false)
     expect(existsSync(worktreeLeasePath(linked))).toBe(true)
     expect(JSON.parse(readFileSync(worktreeLeasePath(linked), 'utf8')).taskId).toBe('mars-live')
     await release()
+  })
+
+  it('updatePid replaces the daemon pid with the coder subprocess pid', async () => {
+    // After acquisition, the lease holds the daemon's own pid. Once the coder
+    // subprocess starts, updatePid() replaces it with the subprocess's pid so
+    // readLiveWorktreeLease can detect a dead coder even when the daemon lives.
+    const { release, updatePid } = await acquireWorktreeLease({
+      worktreePath,
+      taskId: 'mars-update-pid',
+    })
+
+    // Initially holds the daemon pid.
+    const before = await readLiveWorktreeLease(worktreePath)
+    expect(before?.pid).toBe(process.pid)
+
+    // Simulate a known pid (we use process.pid here since it's alive; what
+    // matters is the file content, not liveness for THIS test).
+    const fakeCoder = process.pid + 1 // arbitrary non-daemon value
+    await updatePid(fakeCoder)
+    const after = JSON.parse(readFileSync(worktreeLeasePath(worktreePath), 'utf8'))
+    expect(after.pid).toBe(fakeCoder)
+    expect(after.taskId).toBe('mars-update-pid') // task id unchanged
+
+    await release()
+  })
+
+  it('a lease updated to a dead pid is treated as stale and released on read', async () => {
+    // This is the fix-8dec62b2 / mars-ad9fc5cb scenario:
+    //   1. Coder runs; lease holds the daemon's pid (always alive).
+    //   2. Coder subprocess dies; updatePid() records its real (now-dead) pid.
+    //   3. Recovery task reads the lease → pid is dead → stale → released.
+    //      No recovery budget consumed by a spurious occupancy refusal.
+    const { updatePid } = await acquireWorktreeLease({
+      worktreePath,
+      taskId: 'mars-crashed-coder',
+    })
+
+    // Spawn a process and wait for it to die, giving us a real dead pid.
+    const child = spawnSync(process.execPath, ['-e', ''])
+    expect(child.status).toBe(0)
+    const deadCoderPid = child.pid as number
+
+    await updatePid(deadCoderPid)
+
+    // A recovery task (or any next coder) must find no live lease.
+    expect(await readLiveWorktreeLease(worktreePath)).toBeNull()
+
+    // And must be able to acquire the freed tree.
+    const { release: releaseRecovery } = await acquireWorktreeLease({
+      worktreePath,
+      taskId: 'fix-recovery',
+    })
+    expect((await readLiveWorktreeLease(worktreePath))?.taskId).toBe('fix-recovery')
+    await releaseRecovery()
   })
 })

@@ -18,6 +18,7 @@ import {
   acquireWorktreeLease,
   readLiveWorktreeLease,
   WorktreeLeaseHeldError,
+  type WorktreeLeaseHandle,
 } from '../../core/lib/git/worktree-lease'
 import { cleanWorktreeIfNoCommitsAhead, selectVerifySteps } from '../../core/ports/verifier/verify-helpers'
 import { createWorker, pickWorkerForTags, Workers, type Worker } from '../../core/workers'
@@ -583,9 +584,17 @@ export const runAgent = async (
   //
   // The lease refuses rather than waits: a coder run lasts minutes to hours,
   // and blocking here would pin an implement semaphore slot for the duration.
-  let releaseWorktreeLease: (() => Promise<void>) | null = null
+  //
+  // The initial lease records the daemon's pid as a placeholder. Once the
+  // coder subprocess starts and we know its actual pid, we call
+  // leaseHandle.updatePid(coderPid) via the onPid wrapper below — so that
+  // readLiveWorktreeLease can detect a crashed coder even when the daemon
+  // stays alive. This resolves the incident where a stale lease held by the
+  // daemon's pid (always alive) permanently blocked the worktree after the
+  // coder subprocess had already died (fix-8dec62b2 / mars-ad9fc5cb).
+  let leaseHandle: WorktreeLeaseHandle | null = null
   try {
-    releaseWorktreeLease = await acquireWorktreeLease({ worktreePath, taskId, branch })
+    leaseHandle = await acquireWorktreeLease({ worktreePath, taskId, branch })
   } catch (leaseErr) {
     if (!(leaseErr instanceof WorktreeLeaseHeldError)) throw leaseErr
     await failWorktreeLeaseHeld(
@@ -639,7 +648,21 @@ export const runAgent = async (
             // switch from the bare wall-clock ceiling (no-PID path, case a) to the
             // alive-PID + heartbeat path (case b/c), preventing false ceiling kills
             // of legitimately long-running coders.
-            onPid: ctx.services.onPid,
+            //
+            // Also update the worktree lease with the coder subprocess's actual pid.
+            // The lease initially holds the daemon's pid as a placeholder; once we
+            // know the real coder pid, we overwrite it so readLiveWorktreeLease can
+            // detect a crashed coder even when the daemon is still alive. This is the
+            // fix for the permanent-occupation bug (fix-8dec62b2 / mars-ad9fc5cb).
+            onPid: (pid: number): void => {
+              leaseHandle?.updatePid(pid).catch((updateErr: unknown) => {
+                console.warn(
+                  `[code] task ${taskId}: lease pid update to ${pid} failed (non-fatal):`,
+                  updateErr instanceof Error ? updateErr.message : String(updateErr),
+                )
+              })
+              ctx.services.onPid?.(pid)
+            },
             externalAbort: ctx.signal,
           },
           traceStore: spanStore(trace),
@@ -768,6 +791,6 @@ export const runAgent = async (
   } finally {
     // Release on every exit path — a leaked lease would refuse every later
     // dispatch onto this worktree until the daemon process itself died.
-    if (releaseWorktreeLease !== null) await releaseWorktreeLease()
+    if (leaseHandle !== null) await leaseHandle.release()
   }
 }

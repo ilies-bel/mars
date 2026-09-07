@@ -38,7 +38,7 @@
  * into an alert, and never blocks anything. This one is machine-scoped,
  * measured in the length of one coder run, and its entire purpose is to block.
  */
-import { open, readFile, unlink } from 'node:fs/promises'
+import { open, readFile, unlink, writeFile } from 'node:fs/promises'
 import { isPidAlive } from './lock'
 
 /** The recorded holder of a worktree lease. */
@@ -126,6 +126,10 @@ export const readLiveWorktreeLease = async (
   }
 
   if (!isPidAlive(pid)) {
+    console.log(
+      `[worktree-lease] releasing stale lease on ${worktreePath}: ` +
+        `pid ${pid} (task ${record.taskId}) is no longer alive`,
+    )
     await unlink(path).catch(() => {})
     return null
   }
@@ -140,18 +144,67 @@ export const readLiveWorktreeLease = async (
 }
 
 /**
+ * Handle returned by {@link acquireWorktreeLease}.
+ *
+ * Two responsibilities:
+ *  - `release()` — relinquish the exclusive lease (ownership-checked).
+ *  - `updatePid(pid)` — swap the placeholder daemon pid for the coder's real
+ *    subprocess pid, so `readLiveWorktreeLease` can detect a dead coder even
+ *    when the daemon is still alive.
+ */
+export interface WorktreeLeaseHandle {
+  /**
+   * Release the exclusive lease. Ownership-checked: unlinks only when the
+   * lease file still records this task + pid, so a lease another process
+   * legitimately reclaimed after we were declared stale is never deleted out
+   * from under it.
+   */
+  release(): Promise<void>
+  /**
+   * Update the recorded pid to the coder's actual subprocess pid.
+   *
+   * Called once per coder dispatch, after the subprocess is spawned and its
+   * OS pid is known. The initial lease records `process.pid` (the daemon's
+   * pid) as a placeholder so the file exists and blocks concurrent acquires;
+   * this update replaces it with the pid of the actual coder process, so
+   * `readLiveWorktreeLease` can detect a dead coder and release the stale
+   * lease — even when the daemon is still alive.
+   *
+   * Best-effort: a write failure leaves the daemon's pid in the lease
+   * (conservative: a live daemon means a live holder). The `release` closure
+   * still cleans up on exit regardless.
+   */
+  updatePid(pid: number): Promise<void>
+}
+
+/**
  * Take the exclusive lease on `worktreePath`, or throw
  * {@link WorktreeLeaseHeldError} when a live coder already holds it.
  *
- * Returns the release closure. Release is ownership-checked: it unlinks only a
- * lease still recorded as ours, so a lease another process legitimately
- * reclaimed after we were declared stale is never deleted out from under it.
+ * Returns a {@link WorktreeLeaseHandle} with `release` and `updatePid`.
+ * Release is ownership-checked: it unlinks only a lease still recorded as
+ * ours, so a lease another process legitimately reclaimed after we were
+ * declared stale is never deleted out from under it.
+ *
+ * ## Why the initial pid is the daemon's
+ *
+ * At acquire time the coder subprocess has not yet been spawned — its pid is
+ * unknown. We write `process.pid` (the daemon's pid) as a placeholder that
+ * blocks concurrent acquires while the caller proceeds to spawn the coder.
+ * Once the subprocess pid is known, the caller MUST call `updatePid(coderPid)`
+ * so that a crashed coder can be detected as stale even when the daemon is
+ * still alive.
+ *
+ * If the coder runs in-process (no subprocess, `onPid` never fires), the
+ * daemon's pid stays in the lease. This is correct: the daemon being alive
+ * means the run is still ongoing, and a daemon crash makes `isPidAlive` return
+ * false, releasing the stale lease on the next read.
  */
 export const acquireWorktreeLease = async (args: {
   worktreePath: string
   taskId: string
   branch?: string | null
-}): Promise<() => Promise<void>> => {
+}): Promise<WorktreeLeaseHandle> => {
   const path = worktreeLeasePath(args.worktreePath)
 
   // Two attempts: the first EEXIST may be a stale lease that
@@ -161,7 +214,11 @@ export const acquireWorktreeLease = async (args: {
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
       const handle = await open(path, 'wx')
-      const lease: WorktreeLease = {
+      // Record the daemon's pid as a placeholder. The coder's real subprocess
+      // pid is not yet known. The caller must call updatePid(coderPid) once
+      // the subprocess starts so stale-lease detection works correctly even
+      // when the daemon stays alive after the coder crashes.
+      let lease: WorktreeLease = {
         taskId: args.taskId,
         branch: args.branch ?? null,
         pid: process.pid,
@@ -172,16 +229,41 @@ export const acquireWorktreeLease = async (args: {
       } finally {
         await handle.close()
       }
-      return async () => {
-        const current = await readLiveWorktreeLease(args.worktreePath)
-        if (
-          current !== null &&
-          (current.pid !== lease.pid || current.taskId !== lease.taskId)
-        ) {
+
+      const release = async (): Promise<void> => {
+        // Ownership check: only delete the file when it still records OUR
+        // task. If another process legitimately reclaimed a stale lease
+        // (our process was declared dead and the tree was reassigned), we
+        // must not delete their lease. Compare taskId only — not pid —
+        // because updatePid() changes the pid after acquisition and the
+        // release closure's captured `lease.pid` may already be stale.
+        let current: WorktreeLease | null = null
+        try {
+          current = await readLiveWorktreeLease(args.worktreePath)
+        } catch {
+          // If we can't read, unlink unconditionally — better to release
+          // than to strand the worktree.
+        }
+        if (current !== null && current.taskId !== args.taskId) {
           return
         }
         await unlink(path).catch(() => {})
       }
+
+      const updatePid = async (pid: number): Promise<void> => {
+        try {
+          lease = { ...lease, pid }
+          await writeFile(path, JSON.stringify(lease), 'utf8')
+        } catch (err) {
+          // Non-fatal: daemon's pid stays. The release closure cleans up on exit.
+          console.warn(
+            `[worktree-lease] updatePid(${pid}) for task ${args.taskId} failed (non-fatal):`,
+            err instanceof Error ? err.message : String(err),
+          )
+        }
+      }
+
+      return { release, updatePid }
     } catch (err: unknown) {
       if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err
       const holder = await readLiveWorktreeLease(args.worktreePath)
@@ -190,6 +272,6 @@ export const acquireWorktreeLease = async (args: {
     }
   }
 
-  // Unreachable: the loop either returns the release closure or throws.
+  // Unreachable: the loop either returns the handle or throws.
   throw new WorktreeLeaseHeldError(args.worktreePath, null)
 }

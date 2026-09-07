@@ -278,4 +278,84 @@ describe('runAgent — exclusive worktree lease', () => {
 
     expect(mockRunWorkerWithSpan).toHaveBeenCalledTimes(1)
   })
+
+  // ── (d) the coder's real subprocess pid is written into the lease ──────────
+  //
+  // This is the fix for fix-8dec62b2 / mars-ad9fc5cb: the daemon's pid was
+  // recorded instead of the coder's, so the lease always looked live (daemon
+  // is alive) even after the coder subprocess had died. By writing the real
+  // subprocess pid via the onPid wrapper, a dead coder is correctly detected
+  // as stale on the next read.
+
+  it('updates the lease to the coder subprocess pid when onPid fires', async () => {
+    // Use a fresh repo so we can inspect the sibling lease file.
+    const pidRepo = initRepoWithCommit()
+    afterEach(() => { rmSync(pidRepo, { recursive: true, force: true }) })
+
+    const fakePid = process.pid + 999 // arbitrary value distinct from process.pid
+
+    // Read the lease pid mid-run, immediately after the mock fires onPid.
+    let pidSeenInLease: number | undefined
+    mockRunWorkerWithSpan.mockImplementation(async (...args: unknown[]) => {
+      const runOptions = (args[0] as { runOptions?: { onPid?: (pid: number) => void } }).runOptions
+      // Fire onPid as a subprocess would.
+      runOptions?.onPid?.(fakePid)
+      // Give updatePid's async write a tick to settle.
+      await new Promise<void>((r) => setTimeout(r, 0))
+      try {
+        const { readFileSync } = await import('node:fs')
+        pidSeenInLease = JSON.parse(readFileSync(worktreeLeasePath(pidRepo), 'utf8')).pid
+      } catch {
+        // File absent (released early) — leave undefined.
+      }
+      return successResult()
+    })
+
+    await runAgent(makeCtx('test-id-pid', makeStore()), {
+      worktree: { path: pidRepo, branch: 'task/test-id' },
+    })
+
+    // The lease was updated to the coder's subprocess pid, not the daemon's.
+    expect(pidSeenInLease).toBe(fakePid)
+  })
+
+  it('a dead coder pid allows a recovery task to acquire the tree without budget cost', async () => {
+    // Scenario: fix-8dec62b2 / mars-ad9fc5cb.
+    //   1. Origin coder ran, registered its subprocess pid via onPid.
+    //   2. Coder subprocess died (pid is now dead).
+    //   3. A recovery task tries to run in the same worktree.
+    //      With the old code (daemon pid in lease, daemon always alive) → refused.
+    //      With the fix (dead coder pid in lease) → stale, released, succeeds.
+    const deadChild = spawnSync(process.execPath, ['-e', ''])
+    expect(deadChild.status).toBe(0)
+    const deadCoderPid = deadChild.pid as number
+
+    // Simulate the stale lease left by a dead coder subprocess.
+    writeFileSync(
+      worktreeLeasePath(repo),
+      JSON.stringify({
+        taskId: 'mars-ad9fc5cb', // the ORIGIN task, not the recovery
+        branch: 'task/mars-ad9fc5cb',
+        pid: deadCoderPid,       // coder's dead pid (NOT the daemon's pid)
+        acquiredAt: Date.now() - 120_000,
+      }),
+      'utf8',
+    )
+
+    // Recovery task runs in the same worktree (kind=fix reuses origin tree).
+    mockRunWorkerWithSpan.mockResolvedValue(successResult())
+
+    // Must not throw WorkflowTerminalError('worktree-lease-held') — the stale
+    // lease must be released on read, and the recovery must proceed normally.
+    await expect(
+      runAgent(makeCtx('fix-8dec62b2', makeStore()), {
+        worktree: { path: repo, branch: 'task/mars-ad9fc5cb' },
+      }),
+    ).resolves.toBeDefined()
+
+    expect(mockRunWorkerWithSpan).toHaveBeenCalledTimes(1)
+    // handleTaskFailureWithFixTask must NOT have been called — the recovery
+    // budget is untouched.
+    expect(mockHandleTaskFailureWithFixTask).not.toHaveBeenCalled()
+  })
 })
