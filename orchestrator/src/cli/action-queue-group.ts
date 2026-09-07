@@ -7,6 +7,14 @@
  * rows that are the only representative of their `(kind, signature)` bucket
  * — are passed through unchanged.
  *
+ * **Cause-key fallback.** When a row carries no `failureReasonCode` (e.g.
+ * rows raised by the proposal slicer), the grouping falls back to a *cause
+ * key* derived by normalising `humanDetail.errorExcerpt`: UUIDs, hex ids,
+ * file paths, standalone numbers, and punctuation runs are stripped and the
+ * result is lowercased. Two rows whose excerpts normalise to the same string
+ * are assumed to share a cause and are grouped together. Rows with neither a
+ * `failureReasonCode` nor a normalizable excerpt are never grouped.
+ *
  * The stdout contract (`id\tpriority\tkind\t[CLASS]\tsummary`) is preserved:
  * a group row occupies exactly one tab-separated line, with a synthetic id and
  * a summary that names the count, cause, time span, and preview entity ids.
@@ -28,7 +36,12 @@ export type ActionQueueGroupedRow =
       /** Synthetic stable id: `group:<kind>:<signature>`. */
       id: string
       kind: string
-      /** The shared `failureReasonCode` that defines this group. */
+      /**
+       * The key that defines this group. For `failureReasonCode`-based groups
+       * this is the code itself (e.g. `code/typecheck-error`). For cause-key
+       * groups (rows with no `failureReasonCode` but a normalizable
+       * `errorExcerpt`) this is a synthetic `__cause__:<normKey>` string.
+       */
       signature: string
       /** Total number of member rows. */
       count: number
@@ -73,10 +86,41 @@ function causeLabel(signature: string): string {
 
 // ── Grouping ──────────────────────────────────────────────────────────────────
 
+/** Max chars of the normalized excerpt key kept in the synthetic group id. */
+const NORM_KEY_MAX = 64
+
 /**
- * Group action-queue rows by `(kind, failureReasonCode)`.
+ * Strip variable tokens from a raw error excerpt to produce a stable cause
+ * key. UUIDs, long hex ids, file paths, standalone numbers (port numbers,
+ * exit codes, line numbers), and punctuation/whitespace runs are removed and
+ * the result is lowercased. Two excerpts that differ only in such variable
+ * tokens normalise to the same key and are placed in the same bucket.
+ */
+function normaliseExcerptKey(excerpt: string): string {
+  return excerpt
+    // Strip UUIDs before the generic hex strip so the boundary anchors fire.
+    .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '')
+    // Strip hex runs of 8+ chars (short ids, SHAs, …).
+    .replace(/\b[0-9a-f]{8,}\b/gi, '')
+    // Strip file-system paths (absolute or relative starting with /).
+    .replace(/\/[^\s,;)'"]+/g, '')
+    // Strip standalone numbers (exit codes, ports, line numbers, timestamps).
+    .replace(/\b\d+\b/g, '')
+    .toLowerCase()
+    // Collapse any remaining non-alpha characters to a single space.
+    .replace(/[^a-z]+/g, ' ')
+    .trim()
+    .slice(0, NORM_KEY_MAX)
+}
+
+/**
+ * Group action-queue rows by `(kind, failureReasonCode)`, with a fallback to
+ * `(kind, normalised errorExcerpt)` for rows that carry no `failureReasonCode`.
  *
- * - Rows with no `failureReasonCode` are always emitted as plain items.
+ * - Rows with a `failureReasonCode` are bucketed by that code.
+ * - Rows without a code but with a non-empty normalizable `errorExcerpt` are
+ *   bucketed by the normalised excerpt key (cause-key fallback).
+ * - Rows with neither are always emitted as plain items (ungrouped).
  * - A bucket of exactly one row becomes a plain item (no group wrapper).
  * - A bucket of two or more rows becomes one `group` row carrying the member
  *   list so callers can expand it or apply bulk actions.
@@ -84,38 +128,74 @@ function causeLabel(signature: string): string {
  *   bucket, so the caller's sort (priority → recency) is respected.
  */
 export function groupActionQueueRows(rows: ActionQueueRow[]): ActionQueueGroupedRow[] {
-  // Collect buckets in first-seen insertion order.
+  // ── Pass 1: assign each row to a bucket ────────────────────────────────────
+  //
+  // bucketKey  →  [rows in this bucket]
+  // metaBySig  →  { sig, label } — the presentation metadata for this bucket
+  //
   const buckets = new Map<string, ActionQueueRow[]>()
+  /** Presentation metadata keyed by bucket key. */
+  const meta = new Map<string, { sig: string; label: string }>()
   const ungrouped: ActionQueueRow[] = []
 
   for (const row of rows) {
-    const sig = row.failureReasonCode?.trim()
-    if (sig) {
-      const key = `${row.kind}\0${sig}`
+    const frc = row.failureReasonCode?.trim()
+    if (frc) {
+      // Primary path: failureReasonCode-based bucket.
+      const key = `sig\0${row.kind}\0${frc}`
       const bucket = buckets.get(key)
       if (bucket) {
         bucket.push(row)
       } else {
         buckets.set(key, [row])
+        meta.set(key, { sig: frc, label: causeLabel(frc) })
       }
     } else {
-      ungrouped.push(row)
+      // Fallback path: normalise errorExcerpt → cause key.
+      const excerpt = row.humanDetail.errorExcerpt?.trim() ?? ''
+      const normKey = excerpt ? normaliseExcerptKey(excerpt) : ''
+      if (normKey) {
+        const key = `exc\0${row.kind}\0${normKey}`
+        const bucket = buckets.get(key)
+        if (bucket) {
+          bucket.push(row)
+        } else {
+          buckets.set(key, [row])
+          // Use the first line of the raw excerpt (capped at 80 chars) as the
+          // cause label — more readable than the normalised token string.
+          const firstLine = excerpt.split('\n')[0]?.trim() ?? excerpt
+          const label = firstLine.length > 80 ? `${firstLine.slice(0, 77)}…` : firstLine
+          meta.set(key, { sig: `__cause__:${normKey}`, label })
+        }
+      } else {
+        ungrouped.push(row)
+      }
     }
   }
 
-  // Build the result in a two-pass approach: iterate the input once more to
-  // emit rows in their original priority-sorted order.
-  const emitted = new Set<string>() // bucket keys already emitted as a group
+  // ── Pass 2: emit rows in original input order ──────────────────────────────
+
+  const emitted = new Set<string>() // bucket keys already emitted
   const result: ActionQueueGroupedRow[] = []
 
   for (const row of rows) {
-    const sig = row.failureReasonCode?.trim()
-    if (!sig) continue // handled in the ungrouped pass below
-    const key = `${row.kind}\0${sig}`
+    const frc = row.failureReasonCode?.trim()
+    let key: string
+    if (frc) {
+      key = `sig\0${row.kind}\0${frc}`
+    } else {
+      const excerpt = row.humanDetail.errorExcerpt?.trim() ?? ''
+      const normKey = excerpt ? normaliseExcerptKey(excerpt) : ''
+      if (!normKey) continue // ungrouped; handled below
+      key = `exc\0${row.kind}\0${normKey}`
+    }
+
     if (emitted.has(key)) continue
     emitted.add(key)
 
     const members = buckets.get(key)!
+    const { sig, label } = meta.get(key)!
+
     if (members.length === 1) {
       result.push({ type: 'item', row: members[0]! })
       continue
@@ -133,7 +213,7 @@ export function groupActionQueueRows(rows: ActionQueueRow[]): ActionQueueGrouped
       kind: row.kind,
       signature: sig,
       count: members.length,
-      causeLabel: causeLabel(sig),
+      causeLabel: label,
       firstAt,
       lastAt,
       priority: highestPriority(members),
