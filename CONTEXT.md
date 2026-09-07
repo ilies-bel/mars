@@ -634,7 +634,7 @@ A reactive rule inside a Domain Flow of the form whenever a given Domain Event o
 _Avoid_: policy, reactor, rule
 
 **Pivotal Event**:
-A Domain Event that marks a phase change within a Domain Flow, and therefore a candidate boundary between bounded contexts in the target repository.
+A Domain Event marking a phase change within a Domain Flow, recorded as a signal of where a bounded-context boundary may lie rather than as a declared boundary.
 _Avoid_: milestone, phase marker
 
 **Hotspot**:
