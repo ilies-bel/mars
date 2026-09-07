@@ -457,9 +457,9 @@ export const StudioView = ({ taskId, timeline, stepPrompts, nowMs, fetchImpl }: 
             <h3 className="font-mono text-label uppercase tracking-[0.1em] text-muted-foreground">
               Run {runIdx + 1} of {runs.length}
             </h3>
-            <span className="break-all font-mono text-micro text-muted-foreground/70" title={run.runId}>
-              {run.runId}
-            </span>
+            {/* runId is a long internal string (e.g. scorer-bc1661fb-…); keep it
+                accessible on hover for support/debugging but off the face. */}
+            <span className="sr-only" title={run.runId}>{run.runId}</span>
             {run.endedAt === null ? (
               <span className="rounded border border-warn/40 bg-warn/5 px-1 font-mono text-micro text-warn">
                 in flight

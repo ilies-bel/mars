@@ -42,6 +42,12 @@ vi.mock('@/entities/watchtower/useAcceptScorer', () => ({
   useAcceptScorer: vi.fn(() => ({ accept: () => {}, isPending: false, error: null })),
 }))
 
+// LoopLedgerPanel now calls useTasks() to resolve run ids to task titles.
+// Provide an empty-snapshot mock so no QueryClientProvider is needed.
+vi.mock('@/hooks/useTasks', () => ({
+  useTasks: vi.fn(() => ({ snapshot: null, error: null, connected: false })),
+}))
+
 import { useKpis } from '@/entities/kpi/useKpis'
 
 const makeKpi = (overrides: Partial<Kpi> & { key: Kpi['key'] }): Kpi => ({

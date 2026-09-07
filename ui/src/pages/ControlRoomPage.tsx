@@ -36,6 +36,7 @@ import { useDispatchState, pauseReasonLabel } from '@/entities/operator/useDispa
 import { useFocusedProject } from '@/shared/useFocusedProject'
 import type { ActionQueueItem } from '@/shared/schemas'
 import { SectionLabel } from '@/widgets/primitives/DensityPrimitives'
+import { relativeTime, formatAbsoluteDateTime } from '@/shared/time'
 import { ErrorState } from '@/components/ErrorState'
 import { SkeletonList } from '@/components/Skeleton'
 import {
@@ -189,7 +190,7 @@ const LeversSection = () => {
               {isDispatchPaused && dispatch.reason && (
                 <p className="mt-1 font-mono text-micro text-muted-foreground/70">
                   Reason: {pauseReasonLabel(dispatch)}
-                  {dispatch.since ? ` · since ${new Date(dispatch.since).toLocaleTimeString()}` : ''}
+                  {dispatch.since ? ` · since ${relativeTime(dispatch.since)}` : ''}
                 </p>
               )}
             </div>
@@ -499,13 +500,13 @@ const GatesSection = () => {
                     {/* Show last pass when gate is currently passing */}
                     {!failing && gate.lastPassAt !== null && (
                       <p className="mt-0.5 font-mono text-micro text-success/60" data-testid="gate-last-pass">
-                        Last passed: {new Date(gate.lastPassAt).toLocaleString()}
+                        Last passed: <span title={formatAbsoluteDateTime(gate.lastPassAt)}>{relativeTime(gate.lastPassAt)}</span>
                       </p>
                     )}
                     {/* Show last failure as secondary detail when passing, or primary when failing */}
                     {gate.lastFailureAt !== null && (
                       <p className={`mt-0.5 font-mono text-micro ${failing ? 'text-error/60' : 'text-muted-foreground/40'}`} data-testid="gate-last-failure">
-                        Last failure: {new Date(gate.lastFailureAt).toLocaleString()}
+                        Last failure: <span title={formatAbsoluteDateTime(gate.lastFailureAt)}>{relativeTime(gate.lastFailureAt)}</span>
                       </p>
                     )}
                   </div>

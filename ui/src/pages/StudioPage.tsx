@@ -9,6 +9,7 @@
  */
 
 import { useEffect } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { useStudio } from '@/entities/studio/useStudio'
 import { StudioView } from '@/widgets/StudioView'
 import { FallbackSurface } from '@/components/FallbackSurface'
@@ -16,6 +17,9 @@ import { SkeletonBlock } from '@/components/Skeleton'
 import { setOpenTaskId } from '@/shared/openTaskId'
 import { taskHash } from '@/shared/routing'
 import { PageHeader } from '@/widgets/primitives/DensityPrimitives'
+import { taskSchema } from '@/shared/schemas'
+import { taskTitle } from '@/shared/promptTitle'
+import { useFocusedProject } from '@/shared/useFocusedProject'
 
 export interface StudioPageProps {
   /** Task id parsed from `#/studio/<taskId>`. */
@@ -33,12 +37,31 @@ export const StudioPage = ({ taskId, fetchImpl }: StudioPageProps) => {
     return () => setOpenTaskId(null)
   }, [taskId])
 
+  const { focusedProjectId: projectId } = useFocusedProject()
+  // Fetch the task to show its human title in the header.
+  // The data is typically already in the React Query cache from the task drawer
+  // that linked here, so this resolves instantly without a new network request.
+  const taskQuery = useQuery({
+    queryKey: ['task', taskId],
+    queryFn: async () => {
+      const f = fetchImpl ?? fetch
+      const res = await f(`/api/tasks/${encodeURIComponent(taskId)}`)
+      if (!res.ok) return null
+      const raw = (await res.json()) as { task: unknown }
+      const parsed = taskSchema.safeParse(raw.task)
+      return parsed.success ? parsed.data : null
+    },
+    enabled: projectId !== null,
+    retry: false,
+  })
+  const task = taskQuery.data ?? null
+
   const { timeline, isLoading, error } = useStudio(taskId, fetchImpl)
 
   return (
     <div data-testid="studio-page" className="flex h-full flex-col overflow-hidden bg-background">
       <PageHeader
-        title="Studio"
+        title={task ? taskTitle(task) : 'Studio'}
         subtitle={taskId}
         right={
           <a

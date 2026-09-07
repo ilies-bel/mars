@@ -225,8 +225,10 @@ const MultiSelect = <T extends string>({
 // Row render
 // ---------------------------------------------------------------------------
 
-const truncateId = (id: string): string =>
-  id.length > 12 ? `${id.slice(0, 8)}…${id.slice(-3)}` : id
+// Task IDs are short enough (≤13 chars for 'mars-XXXXXXXX') to show in full.
+// Eliding a mid-string ID (e.g. 'mars-c07…123') destroys its only value —
+// it can no longer be copied or searched — so we show the whole thing.
+const fullId = (id: string): string => id
 
 interface EventRowProps {
   event: TraceEvent
@@ -305,7 +307,7 @@ const EventRow = memo(({ event, now, fieldsExpanded, onToggleFields }: EventRowP
               onClick={(e) => e.stopPropagation()}
               className="shrink-0 font-mono text-micro text-muted-foreground hover:text-foreground hover:underline"
             >
-              {truncateId(effectiveTaskId)}
+              {fullId(effectiveTaskId)}
             </a>
           ) : null}
           {logLineSource && logLineSource !== callerSource ? (
@@ -625,7 +627,7 @@ const IncidentGroup = memo(({
           <span>▾</span>
           <span className={`uppercase font-semibold ${severityColor(worst)}`}>{worst}</span>
           <span className="rounded bg-primary/20 px-1 font-semibold">×{events.length}</span>
-          {taskId ? <span className="text-muted-foreground">{truncateId(taskId)}</span> : null}
+          {taskId ? <span className="text-muted-foreground">{fullId(taskId)}</span> : null}
           <span className="min-w-0 truncate">{summary}</span>
         </button>
         <div className="flex flex-col gap-1">
@@ -654,7 +656,7 @@ const IncidentGroup = memo(({
       <span className={`shrink-0 text-micro font-semibold uppercase ${severityColor(worst)}`}>{worst}</span>
       <span className="shrink-0 rounded bg-primary/20 px-1.5 font-mono text-micro font-semibold text-primary">×{events.length}</span>
       {taskId ? (
-        <span className="shrink-0 font-mono text-micro text-muted-foreground">{truncateId(taskId)}</span>
+        <span className="shrink-0 font-mono text-micro text-muted-foreground">{fullId(taskId)}</span>
       ) : null}
       <span className="min-w-0 truncate text-label text-muted-foreground">{summary}</span>
     </button>

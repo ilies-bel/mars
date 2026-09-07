@@ -2428,8 +2428,8 @@ export const TaskDetailDrawer = ({
         className="drawer-panel fixed inset-0 z-50 flex w-full flex-col border-primary/40 bg-background outline-none xl:inset-y-0 xl:left-auto xl:right-0 xl:w-[min(560px,100vw)] xl:border-l xl:shadow-2xl"
       >
       <header className="flex items-center justify-between border-b border-primary/40 px-4 py-3">
-        <h2 className="font-mono text-title uppercase tracking-wide text-primary">
-          Task {currentId}
+        <h2 className="min-w-0 flex-1 truncate font-mono text-title text-primary">
+          {readyTask ? taskTitle(readyTask) : 'Task'}
         </h2>
         <button
           type="button"

@@ -588,7 +588,8 @@ describe('ReflectionsPage', () => {
     const html = renderToStaticMarkup(<ReflectionsPage />)
 
     expect(html).toContain('data-testid="non-complete-notice"')
-    expect(html).toContain('pending')
+    // statusLabel() capitalises the first letter of status values.
+    expect(html).toContain('Pending')
     // Report sections must NOT appear
     expect(html).not.toContain('Dissonant Calls')
     expect(html).not.toContain('Verify Mismatches')

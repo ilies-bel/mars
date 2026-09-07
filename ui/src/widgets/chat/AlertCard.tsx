@@ -96,7 +96,9 @@ export const signatureFamilyPhrase = (sig: string | undefined): string | undefin
   const step = sig.split('/')[0]!
   if (SIGNATURE_FAMILY_PHRASES[step]) return SIGNATURE_FAMILY_PHRASES[step]
   const gate = step.split(':')[0]!
-  return SIGNATURE_FAMILY_PHRASES[gate]
+  // Try the bare family name with and without the trailing ':' sentinel the
+  // lookup table uses (e.g. 'verify:' matches 'verify' after stripping).
+  return SIGNATURE_FAMILY_PHRASES[gate] ?? SIGNATURE_FAMILY_PHRASES[gate + ':']
 }
 
 // ---------------------------------------------------------------------------

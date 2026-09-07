@@ -19,16 +19,35 @@ import { formatDuration } from './time'
  * Task Detail Drawer banner call it so the two surfaces can never drift.
  *
  * Examples:
- *   'verify:has-diff'  → 'has-diff (verify step)'
- *   'code:over-budget' → 'over-budget (code step)'
- *   'daemon-killed'    → 'daemon killed'
- *   'tool_timeout'     → 'tool timeout'
+ *   'verify:has-diff'        → 'has-diff (verify step)'
+ *   'verify:build/typecheck-error' → 'build (verify step)'
+ *   'verify/unclassified'    → 'Verification failed'
+ *   'setup/unclassified'     → 'Setup step failed'
+ *   'merge/unclassified'     → 'Merge step failed'
+ *   'code:over-budget'       → 'over-budget (code step)'
+ *   'daemon-killed'          → 'daemon killed'
+ *   'tool_timeout'           → 'tool timeout'
  */
 export const humanizeFailureCode = (code: string): string => {
+  // Step-family/error-class pattern without colon (e.g. 'verify/unclassified',
+  // 'setup/unclassified', 'merge/unclassified') — map family to plain English.
+  const slashIdx = code.indexOf('/')
   const colonIdx = code.indexOf(':')
+  if (slashIdx !== -1 && (colonIdx === -1 || slashIdx < colonIdx)) {
+    const family = code.slice(0, slashIdx)
+    const FAMILY_LABELS: Record<string, string> = {
+      verify: 'Verification failed',
+      setup: 'Setup step failed',
+      merge: 'Merge step failed',
+      code: 'Coding step failed',
+    }
+    return FAMILY_LABELS[family] ?? `${family.replace(/[_-]/g, ' ')} failed`
+  }
   if (colonIdx !== -1) {
     // 'verify:typecheck' → 'typecheck (verify step)'
-    return `${code.slice(colonIdx + 1)} (${code.slice(0, colonIdx)} step)`
+    // Strip any '/error-class' suffix from the substep before showing.
+    const substep = code.slice(colonIdx + 1).split('/')[0]!
+    return `${substep} (${code.slice(0, colonIdx)} step)`
   }
   // 'tool_timeout' → 'tool timeout'
   return code.replace(/[_-]/g, ' ')

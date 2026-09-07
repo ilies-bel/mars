@@ -40,7 +40,6 @@ import { CopyButton } from '@/components/CopyButton'
 import { parseReflectionDetailRoute, reflectionDetailHash, proposalHash } from '@/shared/routing'
 import { useHashRoute } from '@/shared/useHashRoute'
 import { formatAbsoluteDateTime } from '@/shared/time'
-import { truncateAtWord } from '@/shared/displayStrings'
 import { PageHeader, SectionLabel } from '@/widgets/primitives/DensityPrimitives'
 
 // ---------------------------------------------------------------------------
@@ -514,6 +513,14 @@ const statusClass = (status: string): string => {
   return 'text-error'
 }
 
+const statusLabel = (status: string): string => {
+  if (status === 'complete') return 'Complete'
+  if (status === 'pending') return 'Pending'
+  if (!status || status === 'unknown' || status === 'UNKNOWN') return 'In progress'
+  // Capitalise and replace underscores/hyphens with spaces
+  return status.charAt(0).toUpperCase() + status.slice(1).replace(/[_-]/g, ' ')
+}
+
 const ReflectionRow = ({ report }: ReflectionRowProps) => (
   <a
     href={reflectionDetailHash(report.originId, report.recordedAt)}
@@ -524,12 +531,12 @@ const ReflectionRow = ({ report }: ReflectionRowProps) => (
       <span className="font-mono text-label text-foreground truncate flex-1">
         {formatAbsoluteDateTime(report.recordedAt)}
       </span>
-      <span className={`font-mono text-micro uppercase ${statusClass(report.status)}`}>
-        {report.status}
+      <span className={`font-mono text-micro ${statusClass(report.status)}`}>
+        {statusLabel(report.status)}
       </span>
     </div>
     <div className="flex items-center gap-4 font-mono text-micro text-muted-foreground">
-      <span title={report.originId}>{truncateAtWord(report.originId, 20)}</span>
+      <span>{report.originId}</span>
       {report.dissonantCallCount > 0 && (
         <span className="text-error">{report.dissonantCallCount} dissonant</span>
       )}
@@ -673,8 +680,8 @@ export const ReflectionDetailView = ({ detail }: ReflectionDetailViewProps) => {
             <div className="font-mono text-body text-foreground break-all">{detail.originId}</div>
           </div>
           <div className="text-right shrink-0">
-            <div className={`font-mono text-label uppercase font-semibold ${statusClass(detail.status)}`}>
-              {detail.status}
+            <div className={`font-mono text-label font-semibold ${statusClass(detail.status)}`}>
+              {statusLabel(detail.status)}
             </div>
             <div className="font-mono text-micro text-muted-foreground">{formatAbsoluteDateTime(detail.recordedAt)}</div>
           </div>
@@ -684,7 +691,7 @@ export const ReflectionDetailView = ({ detail }: ReflectionDetailViewProps) => {
             data-testid="non-complete-notice"
             className="mt-3 border border-warn/30 bg-warn/5 p-2 font-mono text-label text-warn"
           >
-            This report has status <strong>{detail.status}</strong> — the full report body is not yet available.
+            This report has status <strong>{statusLabel(detail.status)}</strong> — the full report body is not yet available.
           </div>
         )}
       </div>
