@@ -44,6 +44,7 @@ import { PROBE_TIMEOUT_MS, probeMainTypecheck } from '../lib/git/operator-auto-c
 import { resolveVcs } from '../ports/vcs/registry.js'
 import type { MergeResult, MergeSpec } from '../ports/vcs/types.js'
 import { MergeAbortedError, DEFAULT_WATCHDOG_MS } from '../ports/vcs/errors.js'
+import { freezeFlow } from '../domain-flow/store.js'
 
 // ---------------------------------------------------------------------------
 // Local type aliases (formerly imported from lib/git/merge)
@@ -926,6 +927,18 @@ async function runMergeJob(
   }
 
   resolveMergeJob(job.taskId, result)
+
+  // Freeze the Domain Flow (if any) once a merge succeeds — makes it a
+  // permanent record of the domain reading at merge time. Best-effort:
+  // a missing flow is a silent no-op; try/catch swallows both "not found"
+  // and "already frozen" so this never fails the merge.
+  if (result.status === 'done') {
+    try {
+      await freezeFlow(resolveStateClient(), job.taskId)
+    } catch (_) {
+      // best-effort — a missing flow is fine
+    }
+  }
 }
 
 /**
