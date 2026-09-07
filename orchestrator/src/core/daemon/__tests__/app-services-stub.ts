@@ -75,7 +75,7 @@ export const stubAppServices = (
     commits: [] as [],
     gateChecks: null,
   }),
-  viewHotPaths: async ({ window }: { window: '7d' | '30d' | '90d'; group: 'file' | 'dir' }) => ({
+  viewHotPaths: async ({ window }: { window: '30d' | '90d' | 'all'; group: 'file' | 'dir' }) => ({
     paths: [],
     window,
     total: 0,

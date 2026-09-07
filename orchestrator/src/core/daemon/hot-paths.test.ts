@@ -5,10 +5,13 @@
  * tombstone-based task attribution end-to-end.
  *
  * Also covers:
- *   - default query params (window=7d, group=file)
- *   - custom window (30d, 90d) and group (dir)
+ *   - default query params (window=90d, group=file)
+ *   - custom window (30d, all) and group (dir)
  *   - task attribution via tombstone mergeCommitSha
  *   - the stub AppServices path (no real git repo)
+ *   - generated path exclusion
+ *   - window bound respected
+ *   - counts aggregate correctly up the directory tree
  */
 
 import { describe, expect, it, beforeAll, afterEach } from 'vitest'
@@ -73,7 +76,7 @@ const makeDeps = (
 // ── GET /view/hot-paths (stub path) ──────────────────────────────────────────
 
 describe('GET /view/hot-paths (stub AppServices)', () => {
-  it('returns 200 with empty paths from the stub', async () => {
+  it('returns 200 with empty paths from the stub (default window=90d)', async () => {
     const { startHttpServer } = await import('./http-server')
     const { port, close } = await startHttpServer(makeDeps())
     try {
@@ -81,7 +84,7 @@ describe('GET /view/hot-paths (stub AppServices)', () => {
       expect(res.status).toBe(200)
       const body = (await res.json()) as { paths: unknown[]; window: string; total: number }
       expect(body.paths).toEqual([])
-      expect(body.window).toBe('7d')
+      expect(body.window).toBe('90d')
       expect(body.total).toBe(0)
     } finally {
       await close()
@@ -102,27 +105,27 @@ describe('GET /view/hot-paths (stub AppServices)', () => {
     }
   })
 
-  it('falls back to window=7d and group=file for invalid params', async () => {
+  it('falls back to window=90d and group=file for invalid params', async () => {
     const { startHttpServer } = await import('./http-server')
     const { port, close } = await startHttpServer(makeDeps())
     try {
       const res = await fetch(`http://127.0.0.1:${port}/view/hot-paths?window=bogus&group=invalid`)
       expect(res.status).toBe(200)
       const body = (await res.json()) as { window: string }
-      expect(body.window).toBe('7d')
+      expect(body.window).toBe('90d')
     } finally {
       await close()
     }
   })
 
-  it('accepts window=90d', async () => {
+  it('accepts window=all', async () => {
     const { startHttpServer } = await import('./http-server')
     const { port, close } = await startHttpServer(makeDeps())
     try {
-      const res = await fetch(`http://127.0.0.1:${port}/view/hot-paths?window=90d`)
+      const res = await fetch(`http://127.0.0.1:${port}/view/hot-paths?window=all`)
       expect(res.status).toBe(200)
       const body = (await res.json()) as { window: string }
-      expect(body.window).toBe('90d')
+      expect(body.window).toBe('all')
     } finally {
       await close()
     }
@@ -148,15 +151,16 @@ describe('GET /view/hot-paths (real git repo via buildHotPathsView)', () => {
     git('git config user.email "test@example.com"')
     git('git config user.name "Test"')
 
-    // First commit — human author
-    writeFileSync(join(repoRoot, 'human.ts'), 'export const x = 1')
-    git('git add human.ts')
+    // First commit — human author (in orchestrator/src scope)
+    mkdirSync(join(repoRoot, 'orchestrator/src'), { recursive: true })
+    writeFileSync(join(repoRoot, 'orchestrator/src/human.ts'), 'export const x = 1')
+    git('git add orchestrator/src/human.ts')
     git('git commit -m "chore: human commit"')
 
     // Second commit — this will be the task's mergeCommitSha
-    mkdirSync(join(repoRoot, 'src'), { recursive: true })
-    writeFileSync(join(repoRoot, 'src/feature.ts'), 'export const y = 2')
-    git('git add src/feature.ts')
+    mkdirSync(join(repoRoot, 'orchestrator/src/feature'), { recursive: true })
+    writeFileSync(join(repoRoot, 'orchestrator/src/feature/index.ts'), 'export const y = 2')
+    git('git add orchestrator/src/feature/index.ts')
     git('git commit -m "feat(task): implement feature"')
     const taskSha = execSync('git rev-parse HEAD', { cwd: repoRoot }).toString().trim()
 
@@ -168,12 +172,12 @@ describe('GET /view/hot-paths (real git repo via buildHotPathsView)', () => {
     )
 
     const { buildHotPathsView } = await import('./view/hot-paths')
-    const result = await buildHotPathsView({ stateDir, repoRoot, window: '7d', group: 'file' })
+    const result = await buildHotPathsView({ stateDir, repoRoot, window: '90d', group: 'file' })
 
-    // human.ts and src/feature.ts should both appear
+    // orchestrator/src/human.ts and orchestrator/src/feature/index.ts should appear
     expect(result.paths.length).toBeGreaterThan(0)
 
-    const featurePath = result.paths.find((p) => p.path === 'src/feature.ts')
+    const featurePath = result.paths.find((p) => p.path === 'orchestrator/src/feature/index.ts')
     expect(featurePath).toBeDefined()
     if (featurePath) {
       expect(featurePath.tasks).toContain(taskId)
@@ -181,7 +185,7 @@ describe('GET /view/hot-paths (real git repo via buildHotPathsView)', () => {
       expect(featurePath.touchedByHumans).toBe(0)
     }
 
-    const humanPath = result.paths.find((p) => p.path === 'human.ts')
+    const humanPath = result.paths.find((p) => p.path === 'orchestrator/src/human.ts')
     expect(humanPath).toBeDefined()
     if (humanPath) {
       expect(humanPath.tasks).toEqual([])
@@ -194,7 +198,7 @@ describe('GET /view/hot-paths (real git repo via buildHotPathsView)', () => {
     const tmpRoot = mkdtempSync(resolve(tmpdir(), 'mars-hot-paths-dir-'))
     const repoRoot = join(tmpRoot, 'repo')
     const stateDir = join(tmpRoot, '.mars')
-    mkdirSync(join(repoRoot, 'src'), { recursive: true })
+    mkdirSync(join(repoRoot, 'orchestrator/src'), { recursive: true })
     mkdirSync(join(stateDir, 'worktrees'), { recursive: true })
 
     const git = (cmd: string) =>
@@ -204,19 +208,126 @@ describe('GET /view/hot-paths (real git repo via buildHotPathsView)', () => {
     git('git config user.email "t@t.com"')
     git('git config user.name "T"')
 
-    writeFileSync(join(repoRoot, 'src/a.ts'), '1')
-    writeFileSync(join(repoRoot, 'src/b.ts'), '2')
-    git('git add src/')
+    writeFileSync(join(repoRoot, 'orchestrator/src/a.ts'), '1')
+    writeFileSync(join(repoRoot, 'orchestrator/src/b.ts'), '2')
+    git('git add orchestrator/src/')
     git('git commit -m "feat: two files in src"')
 
     const { buildHotPathsView } = await import('./view/hot-paths')
-    const result = await buildHotPathsView({ stateDir, repoRoot, window: '7d', group: 'dir' })
+    const result = await buildHotPathsView({ stateDir, repoRoot, window: '90d', group: 'dir' })
 
-    const srcEntry = result.paths.find((p) => p.path === 'src')
+    const srcEntry = result.paths.find((p) => p.path === 'orchestrator/src')
     expect(srcEntry).toBeDefined()
     if (srcEntry) {
-      // Two files in src → changes = 2
+      // Two files in orchestrator/src → changes = 2
       expect(srcEntry.changes).toBe(2)
     }
+  })
+
+  // ── Churn computation tests ────────────────────────────────────────────────
+
+  it('excludes generated paths (dist/, *.generated.ts, lockfiles)', async () => {
+    const tmpRoot = mkdtempSync(resolve(tmpdir(), 'mars-hot-paths-excl-'))
+    const repoRoot = join(tmpRoot, 'repo')
+    const stateDir = join(tmpRoot, '.mars')
+    mkdirSync(join(repoRoot, 'orchestrator/src'), { recursive: true })
+    mkdirSync(join(repoRoot, 'dist'), { recursive: true })
+    mkdirSync(join(stateDir, 'worktrees'), { recursive: true })
+
+    const git = (cmd: string) => execSync(cmd, { cwd: repoRoot })
+    git('git init -b main')
+    git('git config user.email "t@t.com"')
+    git('git config user.name "T"')
+
+    // Commit a real source file, a generated file, a dist file, and a lockfile
+    writeFileSync(join(repoRoot, 'orchestrator/src/real.ts'), 'export const x = 1')
+    writeFileSync(join(repoRoot, 'orchestrator/src/gen.generated.ts'), '// generated')
+    writeFileSync(join(repoRoot, 'dist/bundle.js'), '// built')
+    writeFileSync(join(repoRoot, 'package-lock.json'), '{}')
+    git('git add .')
+    git('git commit -m "feat: mix of real and generated files"')
+
+    const { buildHotPathsView } = await import('./view/hot-paths')
+    const result = await buildHotPathsView({ stateDir, repoRoot, window: '90d', group: 'file' })
+
+    const paths = result.paths.map((p) => p.path)
+
+    // Real source file should appear
+    expect(paths).toContain('orchestrator/src/real.ts')
+
+    // Generated/vendored files must be excluded
+    expect(paths).not.toContain('orchestrator/src/gen.generated.ts')
+    expect(paths).not.toContain('dist/bundle.js')
+    expect(paths).not.toContain('package-lock.json')
+  })
+
+  it('respects the window bound — commits outside the window are excluded', async () => {
+    const tmpRoot = mkdtempSync(resolve(tmpdir(), 'mars-hot-paths-win-'))
+    const repoRoot = join(tmpRoot, 'repo')
+    const stateDir = join(tmpRoot, '.mars')
+    mkdirSync(join(repoRoot, 'orchestrator/src'), { recursive: true })
+    mkdirSync(join(stateDir, 'worktrees'), { recursive: true })
+
+    const git = (cmd: string) => execSync(cmd, { cwd: repoRoot })
+    git('git init -b main')
+    git('git config user.email "t@t.com"')
+    git('git config user.name "T"')
+
+    // Commit a file today (well within any window)
+    writeFileSync(join(repoRoot, 'orchestrator/src/recent.ts'), 'export const x = 1')
+    git('git add orchestrator/src/recent.ts')
+    git('git commit -m "feat: recent file"')
+
+    const { buildHotPathsView } = await import('./view/hot-paths')
+
+    // 30d window should include the recent commit
+    const result30d = await buildHotPathsView({
+      stateDir, repoRoot, window: '30d', group: 'file',
+    })
+    expect(result30d.paths.map((p) => p.path)).toContain('orchestrator/src/recent.ts')
+
+    // 'all' window should also include it (unbounded)
+    clearHotPathsCache()
+    const resultAll = await buildHotPathsView({
+      stateDir, repoRoot, window: 'all', group: 'file',
+    })
+    expect(resultAll.paths.map((p) => p.path)).toContain('orchestrator/src/recent.ts')
+  })
+
+  it('aggregates counts correctly up the directory tree when group=dir', async () => {
+    const tmpRoot = mkdtempSync(resolve(tmpdir(), 'mars-hot-paths-agg-'))
+    const repoRoot = join(tmpRoot, 'repo')
+    const stateDir = join(tmpRoot, '.mars')
+    mkdirSync(join(repoRoot, 'orchestrator/src/core'), { recursive: true })
+    mkdirSync(join(repoRoot, 'orchestrator/src/workers'), { recursive: true })
+    mkdirSync(join(stateDir, 'worktrees'), { recursive: true })
+
+    const git = (cmd: string) => execSync(cmd, { cwd: repoRoot })
+    git('git init -b main')
+    git('git config user.email "t@t.com"')
+    git('git config user.name "T"')
+
+    // 3 files in orchestrator/src/core
+    writeFileSync(join(repoRoot, 'orchestrator/src/core/a.ts'), '1')
+    writeFileSync(join(repoRoot, 'orchestrator/src/core/b.ts'), '2')
+    writeFileSync(join(repoRoot, 'orchestrator/src/core/c.ts'), '3')
+    // 1 file in orchestrator/src/workers
+    writeFileSync(join(repoRoot, 'orchestrator/src/workers/w.ts'), '4')
+    git('git add orchestrator/src/')
+    git('git commit -m "feat: multiple dirs"')
+
+    const { buildHotPathsView } = await import('./view/hot-paths')
+    const result = await buildHotPathsView({ stateDir, repoRoot, window: '90d', group: 'dir' })
+
+    // orchestrator/src/core should have 3 changes, workers should have 1
+    const coreEntry = result.paths.find((p) => p.path === 'orchestrator/src/core')
+    const workersEntry = result.paths.find((p) => p.path === 'orchestrator/src/workers')
+    expect(coreEntry?.changes).toBe(3)
+    expect(workersEntry?.changes).toBe(1)
+
+    // orchestrator/src/core should rank above orchestrator/src/workers
+    const coreIdx = result.paths.findIndex((p) => p.path === 'orchestrator/src/core')
+    const workersIdx = result.paths.findIndex((p) => p.path === 'orchestrator/src/workers')
+    expect(coreIdx).toBeLessThan(workersIdx)
   })
 })

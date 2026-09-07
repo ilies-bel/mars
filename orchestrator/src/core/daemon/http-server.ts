@@ -406,14 +406,14 @@ export interface HotPathEntry {
 /**
  * Wire shape returned by GET /view/hot-paths — ranked paths by change
  * frequency over a rolling window, plus a total count of distinct paths found
- * before the 50-entry cap.
+ * before the 60-entry cap.
  */
 export interface HotPathsResult {
-  /** Top-50 paths ranked by change count, most-changed first. */
+  /** Top-60 paths ranked by change count, most-changed first. */
   paths: HotPathEntry[]
   /** The window this aggregation covers. */
-  window: '7d' | '30d' | '90d'
-  /** Total distinct paths in the window (before the 50-entry cap). */
+  window: '30d' | '90d' | 'all'
+  /** Total distinct paths in the window (before the 60-entry cap). */
   total: number
 }
 

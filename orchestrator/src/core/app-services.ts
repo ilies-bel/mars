@@ -357,7 +357,7 @@ export interface AppServices {
   viewTaskChanges: (taskId: string) => Promise<TaskChangesResult>
   // ── hot paths — per-file/dir change frequency over a rolling window ──────────
   viewHotPaths: (opts: {
-    window: '7d' | '30d' | '90d'
+    window: '30d' | '90d' | 'all'
     group: 'file' | 'dir'
   }) => Promise<HotPathsResult>
   // ── primitives (facet of the Studio surface) ───────────────────────────────
