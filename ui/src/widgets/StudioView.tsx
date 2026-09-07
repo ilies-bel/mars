@@ -22,8 +22,8 @@
  *
  * Read-only projection throughout: only observed execution renders — no
  * speculative future steps, no invented status. An instance with no
- * recorded spans gets an explicit empty state naming the task and why
- * nothing renders (never a blank canvas or a spinner pretending to load).
+ * recorded spans gets an explicit empty state naming the task (never a
+ * blank canvas or a spinner pretending to load).
  */
 
 import { useEffect, useState } from 'react'

@@ -353,9 +353,9 @@ describe('ThreadSidebar – row scanability', () => {
     expect(html).toContain('2h')
   })
 
-  it('shows a chat icon (💬) for user-created threads', () => {
+  it('shows a chat icon (⊙) for user-created threads', () => {
     const html = renderSidebar([makeThread({ origin: null })])
-    expect(html).toContain('💬')
+    expect(html).toContain('⊙')
   })
 
   it('shows a neutral alert icon for alert threads with opaque row ids', () => {
@@ -366,7 +366,7 @@ describe('ThreadSidebar – row scanability', () => {
         alertResolved: false,
       }),
     ])
-    expect(html).toContain('🔔')
+    expect(html).toContain('◉')
   })
 
   it('does not infer a proposal icon from an opaque alert row id', () => {
@@ -377,7 +377,7 @@ describe('ThreadSidebar – row scanability', () => {
         alertResolved: false,
       }),
     ])
-    expect(html).toContain('🔔')
+    expect(html).toContain('◉')
   })
 
   it('shows derived title from first user message when thread title is empty', () => {

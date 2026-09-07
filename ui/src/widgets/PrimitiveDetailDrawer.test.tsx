@@ -268,14 +268,14 @@ describe('PrimitiveDetailDrawer — shell primitive (merge)', () => {
         detail={detail({ observedTools: [] })}
       />,
     )
-    expect(emptyHtml).toContain('No shell tools observed in the trace window yet.')
+    expect(emptyHtml).toContain('No shell tools')
   })
 
   it('shows the explicit empty state when no runs exist', () => {
     const emptyHtml = render(
       <PrimitiveDetailDrawer name="verify" onClose={() => {}} detail={detail()} />,
     )
-    expect(emptyHtml).toContain('No Step spans recorded in the trace window yet.')
+    expect(emptyHtml).toContain('No step spans')
   })
 })
 

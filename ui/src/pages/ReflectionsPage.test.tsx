@@ -393,7 +393,7 @@ describe('ReflectionsPage', () => {
     const html = renderToStaticMarkup(<ReflectionsPage />)
 
     expect(html).toContain('data-testid="empty-state"')
-    expect(html).toContain('No reflection reports yet')
+    expect(html).toContain('No reports')
     // Empty state must not contain the un-fillable <originId> placeholder
     expect(html).not.toContain('&lt;originId&gt;')
   })
@@ -968,7 +968,7 @@ describe('LeverGapCard — no apply control', () => {
     const html = renderToStaticMarkup(<LeverGapCard gap={gap} index={0} />)
 
     expect(html).toContain('data-testid="lever-gap-no-control-0"')
-    expect(html).toContain('No parameter controls this yet')
+    expect(html).toContain('Not configurable')
   })
 
   it('carries the "Lever Gap" label', () => {

@@ -72,7 +72,7 @@ describe('KpiIndexPage', () => {
   it('shows an explanatory empty-state message when there are no KPIs', () => {
     vi.mocked(useKpis).mockReturnValue({ data: [], isLoading: false, error: null })
     const html = renderToStaticMarkup(<KpiIndexPage />)
-    expect(html).toContain('No KPI data yet')
+    expect(html).toContain('No data.')
     expect(html).toContain('arcs complete')
   })
 

@@ -214,7 +214,7 @@ describe('WatchtowerSection Score trends', () => {
     expect(html).toContain('triage')
   })
 
-  it('renders "No scores yet" in Score trends when workflow list is empty', async () => {
+  it('renders the no-scores fallback in Score trends when workflow list is empty', async () => {
     vi.mocked(useScorerWorkflows).mockReturnValue({
       data: [],
       isLoading: false,
@@ -222,6 +222,6 @@ describe('WatchtowerSection Score trends', () => {
     })
     const { WatchtowerSection } = await import('./WatchtowerSection')
     const html = renderToStaticMarkup(<WatchtowerSection />)
-    expect(html).toContain('No scores yet')
+    expect(html).toContain('No scores.')
   })
 })

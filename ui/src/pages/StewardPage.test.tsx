@@ -395,7 +395,7 @@ describe('StewardPage', () => {
   it('shows inert empty state for workflow patches — says no callers, not nothing yet', () => {
     const html = renderToStaticMarkup(<StewardPage />)
     expect(html).toContain('built — no callers')
-    expect(html).toContain('inert, not')
+    expect(html).toContain('This lane cannot execute.')
     // Must NOT say "Nothing yet" (implies waiting)
     expect(html).not.toContain('Nothing yet')
   })

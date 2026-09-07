@@ -5,7 +5,7 @@
  * `useQuery` is mocked at the module boundary (the project's hook-mocking
  * convention) so each test drives a fixed query result synchronously inside
  * `renderToStaticMarkup`. This lets us cover:
- *   - The empty state ("No work has landed yet.")
+ *   - The empty state ("No landed work")
  *   - A populated list: title, relative date, recovery badge
  *   - Loading and error states
  *   - "new since you were away" divider above the oldest unseen entry
@@ -130,7 +130,7 @@ const render = (result: QueryResult, cursor?: ReleaseNotesCursor): string => {
 describe('ReleaseNotesModal – empty state', () => {
   it('shows the empty-state message when there are no landed arcs', () => {
     const html = render(empty())
-    expect(html).toContain('No work has landed yet.')
+    expect(html).toContain('No landed work')
     expect(html).not.toContain('data-testid="release-notes-list"')
   })
 })
@@ -173,7 +173,7 @@ describe('ReleaseNotesModal – loading state', () => {
     const html = render(LOADING)
     expect(html).toContain('aria-busy="true"')
     expect(html).not.toContain('data-testid="release-notes-list"')
-    expect(html).not.toContain('No work has landed yet.')
+    expect(html).not.toContain('No landed work')
   })
 })
 

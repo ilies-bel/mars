@@ -30,8 +30,7 @@ export const LiveParkedChip = () => {
       href={AWAITING_HUMAN_HREF}
       data-testid="live-parked-chip"
       aria-label={`${count} live task${count === 1 ? '' : 's'} parked awaiting your input`}
-      className="shrink-0 rounded-full bg-amber/15 px-2 py-0.5 font-mono text-micro leading-none transition-colors hover:opacity-80"
-      style={{ color: 'var(--color-amber)' }}
+      className="shrink-0 rounded-full bg-warn/15 px-2 py-0.5 font-mono text-micro leading-none text-warn transition-colors hover:opacity-80"
     >
       ◎&nbsp;{count} parked
     </a>

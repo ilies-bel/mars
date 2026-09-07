@@ -306,7 +306,7 @@ describe('StudioView', () => {
 
     expect(html).toContain('data-testid="studio-empty"')
     expect(html).toContain('task-empty')
-    expect(html).toContain('No step spans recorded')
+    expect(html).toContain('No step spans for')
     // Never a node or a spinner pretending to load.
     expect(html).not.toContain('data-testid="studio-node"')
   })

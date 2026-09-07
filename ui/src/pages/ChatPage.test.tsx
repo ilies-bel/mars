@@ -523,7 +523,7 @@ describe('HeroSuggestions – with alert', () => {
     const html = renderToStaticMarkup(
       createElement(HeroSuggestions, { alerts: [alert], onAlertClick: () => {}, onChipClick: () => {}, onWhatHappened: () => {} }),
     )
-    expect(html).toContain('⚠️')
+    expect(html).toContain('⚠')
   })
 
   it('shows the kind icon for a draft-proposal alert', () => {
@@ -531,7 +531,7 @@ describe('HeroSuggestions – with alert', () => {
     const html = renderToStaticMarkup(
       createElement(HeroSuggestions, { alerts: [alert], onAlertClick: () => {}, onChipClick: () => {}, onWhatHappened: () => {} }),
     )
-    expect(html).toContain('💡')
+    expect(html).toContain('◇')
   })
 
   it('keeps other open alerts available as compact conversation choices', () => {

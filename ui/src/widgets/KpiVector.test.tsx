@@ -124,7 +124,7 @@ describe('KpiVector', () => {
     vi.mocked(useKpis).mockReturnValue({ data: [], isLoading: false, error: null })
     const { KpiVector } = await import('./KpiVector')
     const html = renderToStaticMarkup(<KpiVector />)
-    expect(html).toContain('No KPI data yet')
+    expect(html).toContain('No data.')
     expect(html).toContain('arcs complete')
   })
 

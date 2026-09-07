@@ -244,7 +244,7 @@ describe('WatchtowerSection – empty state with no accepted scorers', () => {
     await settle()
 
     const text = container.textContent ?? ''
-    expect(text).toContain('No scores yet')
+    expect(text).toContain('No scores.')
 
     // No chart SVGs
     const svgs = container.querySelectorAll('svg[aria-label*="Score trend"]')
