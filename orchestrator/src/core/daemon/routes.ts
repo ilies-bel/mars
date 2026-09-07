@@ -101,6 +101,8 @@ import {
   removeVerifyGate,
   restoreVerifyGate,
 } from '../verify-gates'
+import { getFlowByArcId } from '../domain-flow/store'
+import { renderDomainFlow } from '../domain-flow/render'
 
 // ── Chat upload constants ─────────────────────────────────────────────────────
 
@@ -718,6 +720,29 @@ export const registerRoutes = (
             sendJson(res, 200, result)
           } else {
             sendJson(res, 404, { error: 'not_found', id })
+          }
+        })
+        .catch((err: unknown) => sendError(res, err))
+      return
+    }
+
+    // GET /view/domain-flow/:arcId — Domain Flow for an Arc.
+    // Returns { flow: DomainFlow, rendered: string } when a flow exists for the arc.
+    // Returns 404 { error: 'no flow' } when no flow has been recorded.
+    // Pure read; no draining gate.
+    if (req.method === 'GET' && req.url && req.url.startsWith('/view/domain-flow/')) {
+      const arcId = decodeURIComponent(req.url.slice('/view/domain-flow/'.length))
+      if (!arcId) {
+        sendJson(res, 400, { error: 'arcId is required' })
+        return
+      }
+      getFlowByArcId(resolveStateClient(), arcId)
+        .then((flow) => {
+          if (flow === null) {
+            sendJson(res, 404, { error: 'no flow' })
+          } else {
+            const rendered = renderDomainFlow(flow)
+            sendJson(res, 200, { flow, rendered })
           }
         })
         .catch((err: unknown) => sendError(res, err))
