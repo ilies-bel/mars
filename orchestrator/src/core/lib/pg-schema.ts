@@ -76,9 +76,6 @@ import { sep } from 'path'
 import type { DbClient, DbStatement } from './db.js'
 import { __execSchemaBatch } from './db.js'
 
-/** Bumped when the canonical DDL changes shape. */
-export const SCHEMA_VERSION = '0044'
-
 /**
  * The well-known `chat_threads` row that backs the main thread.
  *
@@ -2177,35 +2174,12 @@ const DDL: readonly string[] = [
 ]
 
 /**
- * Columns added to `tasks` via ALTER TABLE (net after any DROP COLUMN).
- * Used by the fast-path staleness probe in {@link ensureSchema}: a SELECT
- * naming all of these on every boot-with-fast-path catches the case where
- * DDL was added without bumping SCHEMA_VERSION (the 2026-09-04 incident).
- */
-const TASKS_ALTER_PROBE_COLS: readonly string[] = (() => {
-  const added = new Set<string>()
-  const dropped = new Set<string>()
-  const addRe = /ALTER TABLE (?:IF EXISTS )?tasks ADD COLUMN IF NOT EXISTS "?(\w+)"?/i
-  const dropRe = /ALTER TABLE (?:IF EXISTS )?tasks DROP COLUMN (?:IF EXISTS )?"?(\w+)"?/i
-  for (const stmt of DDL) {
-    const add = addRe.exec(stmt)
-    if (add) added.add(add[1])
-    const drop = dropRe.exec(stmt)
-    if (drop) dropped.add(drop[1])
-  }
-  for (const col of dropped) added.delete(col)
-  return [...added]
-})()
-
-/**
- * Stable SHA-256 prefix of the DDL array content. Changes whenever any DDL
- * statement changes, regardless of SCHEMA_VERSION. Tests compare this against
- * a checked-in fixture (`pg-schema.ddl.sha`) to catch DDL edits that forget
- * to bump the version (the 2026-09-04 incident pattern).
- *
- * To regenerate the fixture after a legitimate DDL+version bump:
- *   node -e "import('./src/core/lib/pg-schema.js').then(m => console.log(m.DDL_HASH))"
- * or just run the test; it prints the new hash in the failure message.
+ * Stable SHA-256 prefix of the DDL array content. This hash IS the schema
+ * version stored in `schema_migrations` — it changes automatically whenever
+ * any DDL statement is added, modified, or removed, so no human-maintained
+ * version number needs to be bumped. Two branches each adding a statement
+ * produce different hashes that both differ from the merged result, so the
+ * full DDL batch re-runs after a merge and both statements land.
  */
 export const DDL_HASH = createHash('sha256').update(DDL.join('\n')).digest('hex').slice(0, 16)
 
@@ -2412,7 +2386,7 @@ const schemaSeedStatements = (appliedAt: string): DbStatement[] => [
   {
     sql: `INSERT INTO schema_migrations (version, applied_at)
           VALUES (?, ?) ON CONFLICT (version) DO NOTHING`,
-    args: [SCHEMA_VERSION, appliedAt],
+    args: [DDL_HASH, appliedAt],
   },
 ]
 
@@ -2422,9 +2396,9 @@ export async function __reseedSchemaForTests(client: DbClient): Promise<void> {
 }
 
 /**
- * Applies the complete canonical schema (idempotent) and records
- * SCHEMA_VERSION in schema_migrations. Safe to run at every startup;
- * everything executes in one transaction (PostgreSQL DDL is transactional).
+ * Applies the complete canonical schema (idempotent) and records the current
+ * DDL_HASH in schema_migrations. Safe to run at every startup; everything
+ * executes in one transaction (PostgreSQL DDL is transactional).
  *
  * Concurrent callers are serialized by a PostgreSQL advisory lock so that
  * two interleaved `ensureSchema` batches cannot deadlock on the
@@ -2470,11 +2444,17 @@ export async function ensureSchema(client: DbClient): Promise<void> {
   }
   const runConditionKindPurge = !conditionKindPurgeDone.has(client)
 
-  // Fast path: if schema_migrations already records SCHEMA_VERSION, skip
-  // replaying the entire DDL array (~200 idempotent `CREATE TABLE IF NOT
+  // Fast path: if schema_migrations already records the current DDL_HASH,
+  // skip replaying the entire DDL array (~200 idempotent `CREATE TABLE IF NOT
   // EXISTS` / `ALTER TABLE ADD COLUMN IF NOT EXISTS` statements). Each of
   // those statements is correct but costs a round-trip to Postgres on every
   // daemon boot for no effect once the schema is current.
+  //
+  // The hash is derived from the DDL array content, so it changes automatically
+  // whenever any statement is added, modified, or removed — no manual bump
+  // is needed. A matching hash guarantees the DDL has not changed, which means
+  // no column can be absent (the staleness probe that existed before this change
+  // is no longer needed).
   //
   // First-boot case: schema_migrations does not exist yet, so the SELECT
   // throws "relation does not exist". We catch that and fall through to the
@@ -2487,40 +2467,16 @@ export async function ensureSchema(client: DbClient): Promise<void> {
   try {
     const { rows } = await client.execute(
       'SELECT 1 FROM schema_migrations WHERE version = ?',
-      [SCHEMA_VERSION],
+      [DDL_HASH],
     )
     skipDdl = rows.length > 0
   } catch {
     // schema_migrations does not exist yet — first boot; run full DDL below.
   }
 
-  // Fast-path staleness probe (guard for the 2026-09-04 incident).
-  //
-  // Even when schema_migrations already records SCHEMA_VERSION, a column added
-  // via ALTER TABLE may be absent on an existing database if DDL was updated
-  // without bumping the version — the fast path skips the whole DDL batch, so
-  // every query that touches the new column fails at runtime with no signal
-  // that the schema is stale.
-  //
-  // This probe selects all columns that are net-added to `tasks` via ALTER TABLE
-  // (computed at module load from the DDL array by TASKS_ALTER_PROBE_COLS).  The
-  // query touches 0 rows and costs one round-trip.  On failure it means a column
-  // is missing despite the version matching — fall back to the full DDL replay
-  // so the idempotent ALTER TABLE re-runs and adds the missing column.
-  if (skipDdl && TASKS_ALTER_PROBE_COLS.length > 0) {
-    try {
-      const quotedCols = TASKS_ALTER_PROBE_COLS.map((c) => `"${c}"`).join(', ')
-      await client.execute(`SELECT ${quotedCols} FROM tasks LIMIT 0`)
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      console.warn(`[schema] fast path stale (${msg}), replaying DDL`)
-      skipDdl = false
-    }
-  }
-
   if (skipDdl) {
-    // Schema is already at SCHEMA_VERSION. No advisory lock needed — none of
-    // these statements take an AccessExclusiveLock on `tasks`.
+    // Schema is already at the current DDL_HASH. No advisory lock needed —
+    // none of these statements take an AccessExclusiveLock on `tasks`.
     await __execSchemaBatch(client, [
       ...(runConditionKindPurge ? CONDITION_KIND_PURGE_ONCE : []),
       ...schemaSeedStatements(new Date().toISOString()),

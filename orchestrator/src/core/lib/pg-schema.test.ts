@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { __execSchemaBatch, __resetDbRegistryForTests, openDb, type DbClient } from './db.js'
 import {
@@ -8,7 +6,6 @@ import {
   IDENTITY_COLUMNS,
   SCHEMA_ADVISORY_LOCK_KEY,
   SCHEMA_TABLES,
-  SCHEMA_VERSION,
 } from './pg-schema.js'
 import { FIXTURE_TIMESTAMP_ENCODINGS } from './timestamp-encodings.js'
 
@@ -70,7 +67,7 @@ describe('ensureSchema', () => {
     const c = await freshSchemaClient()
     await ensureSchema(c)
     const r = await c.execute('SELECT version FROM schema_migrations')
-    expect(r.rows).toEqual([{ version: SCHEMA_VERSION }])
+    expect(r.rows).toEqual([{ version: DDL_HASH }])
   })
 
   it('takes fast path when schema is already at version (skips DDL, preserves data)', async () => {
@@ -84,7 +81,7 @@ describe('ensureSchema', () => {
     )
 
     // Second ensureSchema call should take the fast path (schema already at
-    // SCHEMA_VERSION) and leave the sentinel row intact.
+    // DDL_HASH) and leave the sentinel row intact.
     await ensureSchema(c)
 
     const rows = await c.execute(`SELECT id FROM tasks WHERE id = 'sentinel'`)
@@ -92,7 +89,7 @@ describe('ensureSchema', () => {
 
     // schema_migrations still has exactly one version row.
     const migRows = await c.execute('SELECT version FROM schema_migrations')
-    expect(migRows.rows).toEqual([{ version: SCHEMA_VERSION }])
+    expect(migRows.rows).toEqual([{ version: DDL_HASH }])
 
     await c.close()
   })
@@ -109,9 +106,9 @@ describe('ensureSchema', () => {
       ])
 
       // Simulate upgrading from the previous schema version: remove the current
-      // version record so ensureSchema sees "not yet at SCHEMA_VERSION" and
+      // version record so ensureSchema sees "not yet at DDL_HASH" and
       // replays the full DDL (which contains the conditional rename migration).
-      await c.execute('DELETE FROM schema_migrations WHERE version = ?', [SCHEMA_VERSION])
+      await c.execute('DELETE FROM schema_migrations WHERE version = ?', [DDL_HASH])
       await ensureSchema(c)
 
       const columns = await columnsOf(c, 'tasks')
@@ -337,7 +334,7 @@ describe('ensureSchema', () => {
       // Simulate upgrading from the previous schema version: remove the version
       // record so ensureSchema replays the full DDL (which contains the fold
       // migration for evaporated_at).
-      await c.execute('DELETE FROM schema_migrations WHERE version = ?', [SCHEMA_VERSION])
+      await c.execute('DELETE FROM schema_migrations WHERE version = ?', [DDL_HASH])
       await expect(ensureSchema(c)).resolves.toBeUndefined()
 
       const columns = await columnsOf(c, 'chat_threads')
@@ -378,14 +375,14 @@ describe('ensureSchema', () => {
       // Simulate upgrading from the previous schema version: remove the version
       // record so ensureSchema replays the full DDL (which contains the
       // conflict-detecting migration for evaporated_at).
-      await c.execute('DELETE FROM schema_migrations WHERE version = ?', [SCHEMA_VERSION])
+      await c.execute('DELETE FROM schema_migrations WHERE version = ?', [DDL_HASH])
       // The refusal is loud and names the ambiguity rather than picking a
       // winner. The DDL batch is one transaction, so nothing is half-applied:
       // the operator reconciles the two columns by hand and boots again.
       await expect(ensureSchema(c)).rejects.toThrow(/different timestamps/)
       // And it stays a refusal on every retry rather than eroding into a drop.
       // (Each retry also needs the version row absent to force full DDL.)
-      await c.execute('DELETE FROM schema_migrations WHERE version = ?', [SCHEMA_VERSION])
+      await c.execute('DELETE FROM schema_migrations WHERE version = ?', [DDL_HASH])
       await expect(ensureSchema(c)).rejects.toThrow(/different timestamps/)
     } finally {
       await c.close()
@@ -437,7 +434,7 @@ describe('ensureSchema', () => {
       await expect(ensureSchema(c)).resolves.toBeUndefined()
       await expect(ensureSchema(c)).resolves.toBeUndefined()
       expect((await c.execute('SELECT version FROM schema_migrations')).rows)
-        .toEqual([{ version: SCHEMA_VERSION }])
+        .toEqual([{ version: DDL_HASH }])
     } finally {
       await c.close()
     }
@@ -481,7 +478,7 @@ describe('ensureSchema', () => {
     // Simulate upgrading from the previous schema version: remove the version
     // record so ensureSchema replays the full DDL (which contains the
     // rejected → dismissed normalization UPDATE).
-    await c.execute('DELETE FROM schema_migrations WHERE version = ?', [SCHEMA_VERSION])
+    await c.execute('DELETE FROM schema_migrations WHERE version = ?', [DDL_HASH])
     await ensureSchema(c)
 
     const r = await c.execute(`SELECT status FROM proposals WHERE id = 'legacy-rejected'`)
@@ -502,7 +499,7 @@ describe('ensureSchema', () => {
       const r = await c.execute('SELECT version FROM schema_migrations')
       // Exactly one version row — the ON CONFLICT guard plus the advisory
       // lock's serialisation mean the row is written once.
-      expect(r.rows).toEqual([{ version: SCHEMA_VERSION }])
+      expect(r.rows).toEqual([{ version: DDL_HASH }])
     } finally {
       await c.close()
     }
@@ -941,7 +938,7 @@ describe('ensureSchema', () => {
       // Simulate upgrading from the previous schema version: remove the version
       // record so ensureSchema replays the full DDL (which contains the
       // timestamp-type migration for task_progress and task_transcripts).
-      await c.execute('DELETE FROM schema_migrations WHERE version = ?', [SCHEMA_VERSION])
+      await c.execute('DELETE FROM schema_migrations WHERE version = ?', [DDL_HASH])
       await ensureSchema(c)
 
       expect((await c.execute(`SELECT created_at FROM task_progress WHERE id = 'legacy-progress'`)).rows[0].created_at).toBe(1234)
@@ -1071,59 +1068,59 @@ describe('ensureSchema', () => {
     }
   })
 
-  // ── DDL-version coupling guard (done criterion 1) ────────────────────────
+  // ── Hash-derived versioning (replaces hand-maintained SCHEMA_VERSION) ──────
 
-  it('DDL_HASH matches the checked-in fixture — bump SCHEMA_VERSION when DDL changes', () => {
-    // This test catches the 2026-09-04 incident pattern: DDL was added to the
-    // array without bumping SCHEMA_VERSION, so the fast path skipped the new
-    // ALTER TABLE on every already-provisioned database, leaving the new column
-    // absent and causing runtime failures on every query that touched it.
+  it('DDL_HASH is a deterministic 16-char hex string derived from DDL content', () => {
+    // The version stored in schema_migrations is derived from the DDL array
+    // content — no human-maintained number to bump. Any change to the DDL array
+    // changes the hash automatically, so two parallel branches each adding a
+    // statement produce different hashes that both differ from the merged result.
     //
-    // How to fix a failure here:
-    //   1. echo '<new hash printed below>' > src/core/lib/pg-schema.ddl.sha
-    //   2. Bump SCHEMA_VERSION in pg-schema.ts (e.g. '0041' → '0042').
-    //   Omitting step 2 re-creates the incident.
-    const fixturePath = join(import.meta.dirname, 'pg-schema.ddl.sha')
-    const storedHash = readFileSync(fixturePath, 'utf8').trim()
-    expect(DDL_HASH, [
-      'DDL changed without updating the version-coupling fixture.',
-      `  Current DDL hash : ${DDL_HASH}`,
-      `  Stored hash      : ${storedHash}`,
-      'Fix:',
-      `  1. echo '${DDL_HASH}' > ${fixturePath}`,
-      '  2. Bump SCHEMA_VERSION in pg-schema.ts.',
-      '  Omitting step 2 re-creates the 2026-09-04 incident.',
-    ].join('\n')).toBe(storedHash)
+    // Format: 16 lowercase hex characters (first 64 bits of SHA-256).
+    expect(DDL_HASH).toMatch(/^[0-9a-f]{16}$/)
   })
 
-  // ── Fast-path staleness probe (done criterion 2) ─────────────────────────
+  it('ensureSchema records DDL_HASH as the schema version (hash-derived versioning)', async () => {
+    // After ensureSchema, the version row in schema_migrations must equal the
+    // current DDL_HASH. This verifies that the stored version is derived from
+    // DDL content rather than a hand-maintained constant.
+    const c = openDb(freshKey())
+    try {
+      await ensureSchema(c)
+      const r = await c.execute('SELECT version FROM schema_migrations')
+      expect(r.rows).toEqual([{ version: DDL_HASH }])
+    } finally {
+      await c.close()
+    }
+  })
 
-  it('falls back to full DDL replay when fast path would leave a declared column missing', async () => {
-    // Regression guard for the 2026-09-04 incident: commit 6c416c97f added
-    // `env_api_unreachable_attempts` via ALTER TABLE without bumping
-    // SCHEMA_VERSION. The fast path (schema_migrations already at version) then
-    // skipped the DDL batch on every already-provisioned database, and every
-    // query touching the column failed with "column does not exist".
+  it('full DDL replay re-adds a missing column when schema_migrations lacks the current hash', async () => {
+    // Verifies the core property of hash-derived versioning: when the stored
+    // schema version (an old hash) does not match the current DDL_HASH, the
+    // full DDL batch runs and any missing column is re-added.
     //
-    // This test verifies that ensureSchema detects the missing column via a
-    // cheap SELECT probe even when the schema_migrations row matches, and falls
-    // back to the full DDL replay so the idempotent ALTER TABLE restores it.
+    // This directly covers the 2026-09-04 incident pattern (DDL added without
+    // bumping the version), but now the version is the hash so it changes
+    // automatically — no human action required.
     const c = await freshSchemaClient()
     try {
-      // Drop the column that triggered the original incident, leaving the
-      // schema_migrations row intact so the fast path would normally fire.
+      // Simulate an old install: remove the current hash from schema_migrations
+      // and drop a column to produce a stale-schema state.
+      await c.execute('DELETE FROM schema_migrations WHERE version = ?', [DDL_HASH])
       await c.execute(`ALTER TABLE tasks DROP COLUMN env_api_unreachable_attempts`)
 
-      // This call should detect the missing column via the fast-path probe and
-      // replay the full DDL, including the ALTER TABLE that re-adds the column.
+      // ensureSchema sees the hash is absent → runs full DDL → re-adds the column.
       await ensureSchema(c)
 
-      // Column must be present again after the fallback replay.
       const cols = await columnsOf(c, 'tasks')
       expect(
         cols.has('env_api_unreachable_attempts'),
-        'env_api_unreachable_attempts still missing after fast-path probe fallback',
+        'env_api_unreachable_attempts missing after hash-triggered DDL replay',
       ).toBe(true)
+
+      // The new version row now records the current DDL_HASH.
+      const r = await c.execute('SELECT version FROM schema_migrations WHERE version = ?', [DDL_HASH])
+      expect(r.rows).toHaveLength(1)
     } finally {
       await c.close()
     }

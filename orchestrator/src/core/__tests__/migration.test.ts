@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { randomUUID } from 'node:crypto'
 
 import { openDb } from '../lib/db.js'
-import { ensureSchema, SCHEMA_VERSION } from '../lib/pg-schema.js'
+import { DDL_HASH, ensureSchema } from '../lib/pg-schema.js'
 import { loadVerifyGates } from '../verify-gates.js'
 
 describe('migration 0002 PostgreSQL cutover', () => {
@@ -12,7 +12,7 @@ describe('migration 0002 PostgreSQL cutover', () => {
       await ensureSchema(db)
       const version = await db.execute({
         sql: 'SELECT version FROM schema_migrations WHERE version = ?',
-        args: [SCHEMA_VERSION],
+        args: [DDL_HASH],
       })
       const tables = await db.execute(
         `SELECT table_name FROM information_schema.tables
@@ -41,14 +41,14 @@ describe('migration 0002 PostgreSQL cutover', () => {
     // binary) sees the old version → runs the full DDL → re-adds the column.
     const db = openDb(`pglite://verify-gates-timeout-min-${randomUUID()}`)
     try {
-      // 1. Bootstrap the full schema (all tables + SCHEMA_VERSION recorded).
+      // 1. Bootstrap the full schema (all tables + DDL_HASH recorded).
       await ensureSchema(db)
 
       // 2. Simulate an old install: remove the current schema version and drop
       //    the column to reproduce the state before timeout_min was added.
       await db.execute({
         sql: `DELETE FROM schema_migrations WHERE version = ?`,
-        args: [SCHEMA_VERSION],
+        args: [DDL_HASH],
       })
       await db.execute(`ALTER TABLE verify_gates DROP COLUMN timeout_min`)
       await db.execute({
@@ -59,7 +59,7 @@ describe('migration 0002 PostgreSQL cutover', () => {
       })
 
       // 3. Daemon restarts — runCompositionRootMigrations calls ensureSchema.
-      //    SCHEMA_VERSION is NOT in schema_migrations → full DDL runs → adds timeout_min.
+      //    DDL_HASH is NOT in schema_migrations → full DDL runs → adds timeout_min.
       await ensureSchema(db)
 
       // 4. First gate read after boot — must not throw
@@ -84,7 +84,7 @@ describe('migration 0002 PostgreSQL cutover', () => {
     //
     // Simulates a schema-0038 install: run ensureSchema, roll the version back
     // to '0038', and drop the evidence column. The next ensureSchema (the new
-    // binary with SCHEMA_VERSION = '0039') runs the full DDL and re-adds it.
+    // binary with DDL_HASH = '0039') runs the full DDL and re-adds it.
     const db = openDb(`pglite://verify-gates-evidence-${randomUUID()}`)
     try {
       // 1. Bootstrap the full schema.
@@ -94,7 +94,7 @@ describe('migration 0002 PostgreSQL cutover', () => {
       //    the evidence column to reproduce the state before it was added.
       await db.execute({
         sql: `DELETE FROM schema_migrations WHERE version = ?`,
-        args: [SCHEMA_VERSION],
+        args: [DDL_HASH],
       })
       await db.execute(`ALTER TABLE verify_gates DROP COLUMN evidence`)
       await db.execute({
@@ -105,7 +105,7 @@ describe('migration 0002 PostgreSQL cutover', () => {
       })
 
       // 3. Daemon restarts — runCompositionRootMigrations calls ensureSchema.
-      //    SCHEMA_VERSION ('0039') is NOT in schema_migrations → full DDL runs → adds evidence.
+      //    DDL_HASH ('0039') is NOT in schema_migrations → full DDL runs → adds evidence.
       await ensureSchema(db)
 
       // 4. First gate read after boot — must not throw
@@ -132,7 +132,7 @@ describe('migration 0002 PostgreSQL cutover', () => {
     // gate row (required=1) and has NOT yet applied schema 0040.
     const db = openDb(`pglite://verify-gates-required-migration-${randomUUID()}`)
     try {
-      // 1. Bootstrap the full schema (all tables + SCHEMA_VERSION recorded).
+      // 1. Bootstrap the full schema (all tables + DDL_HASH recorded).
       await ensureSchema(db)
 
       // 2. Insert the matching gate row as an existing install would have it.
@@ -150,15 +150,15 @@ describe('migration 0002 PostgreSQL cutover', () => {
       expect(before.rows[0]).toMatchObject({ required: 1 })
 
       // 4. Simulate the daemon restarting with the new binary (schema 0040
-      //    not yet recorded): remove SCHEMA_VERSION from schema_migrations so
+      //    not yet recorded): remove DDL_HASH from schema_migrations so
       //    ensureSchema runs the full DDL batch again.
       await db.execute({
         sql: `DELETE FROM schema_migrations WHERE version = ?`,
-        args: [SCHEMA_VERSION],
+        args: [DDL_HASH],
       })
 
       // 5. Daemon startup: runCompositionRootMigrations calls ensureSchema.
-      //    SCHEMA_VERSION is NOT in schema_migrations → full DDL runs → data
+      //    DDL_HASH is NOT in schema_migrations → full DDL runs → data
       //    migration sets required = 0 for the matching gate.
       await ensureSchema(db)
 
