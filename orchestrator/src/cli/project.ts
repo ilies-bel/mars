@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { addProject, loadProjectRegistry, removeProject } from '../registry/projects.js'
+import { addProject, loadProjectRegistry, pruneProjectRegistry, removeProject } from '../registry/projects.js'
 
 export async function projectAdd(args: { path: string; name?: string }): Promise<void> {
   const abs = resolve(args.path)
@@ -36,4 +36,15 @@ export function projectRemove(projectId: string): void {
   } else {
     console.log(`no such project: ${projectId}`)
   }
+}
+
+export function projectPrune(): void {
+  const result = pruneProjectRegistry()
+  if (result.removed === 0) {
+    console.log(`project prune: all ${result.before} entries are valid (repoRoot exists on disk)`)
+    console.log(`backup written to ${result.backupPath}`)
+    return
+  }
+  console.log(`project prune: removed ${result.removed} of ${result.before} entries (repoRoot missing from disk)`)
+  console.log(`backup written to ${result.backupPath}`)
 }

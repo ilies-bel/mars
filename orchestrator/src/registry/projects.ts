@@ -113,3 +113,41 @@ export function ensureProjectRegistered({
   if (existing) return existing
   return addProject({ repoRoot: abs, name })
 }
+
+export interface PruneResult {
+  /** Total entries before pruning. */
+  before: number
+  /** Entries removed because their repoRoot no longer exists on disk. */
+  removed: number
+  /** Path of the backup file written before pruning. */
+  backupPath: string
+}
+
+/**
+ * Remove registry entries whose repoRoot no longer exists on disk.
+ *
+ * A backup of the current file is written to `<registryPath>.bak-preclean-<ts>`
+ * before any modifications, matching the convention the operator has used
+ * for manual cleanups.
+ *
+ * @returns Counts and the backup path so callers can report what happened.
+ */
+export function pruneProjectRegistry(): PruneResult {
+  const filePath = registryPath()
+  const entries = loadProjectRegistry()
+  const before = entries.length
+
+  // Write backup before touching anything.
+  const backupPath = `${filePath}.bak-preclean-${Date.now()}`
+  fs.mkdirSync(path.dirname(filePath), { recursive: true })
+  fs.writeFileSync(backupPath, JSON.stringify(entries, null, 2))
+
+  const survivors = entries.filter((e) => fs.existsSync(e.repoRoot))
+  const removed = before - survivors.length
+
+  if (removed > 0) {
+    saveProjectRegistry(survivors)
+  }
+
+  return { before, removed, backupPath }
+}

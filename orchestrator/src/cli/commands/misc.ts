@@ -341,12 +341,23 @@ const projectRemoveCmd: Command = {
   },
 }
 
+const projectPruneCmd: Command = {
+  path: 'project prune',
+  summary: 'remove registry entries whose repoRoot no longer exists on disk',
+  usage: 'usage: mars project prune',
+  run: async () => {
+    const { projectPrune } = await import('../project.js')
+    projectPrune()
+    return { code: 0 }
+  },
+}
+
 const projectGroup: Command = {
   path: 'project',
   summary: 'project subcommands',
-  usage: 'usage: mars project <add|list|remove> ...',
+  usage: 'usage: mars project <add|list|remove|prune> ...',
   run: (_args, deps) => {
-    deps.err('usage: mars project <add|list|remove> ...')
+    deps.err('usage: mars project <add|list|remove|prune> ...')
     return { code: 1 }
   },
 }
@@ -656,6 +667,7 @@ export const miscCommands: readonly Command[] = [
   projectAddCmd,
   projectListCmd,
   projectRemoveCmd,
+  projectPruneCmd,
   projectGroup,
   observabilityPrune,
   observabilityGroup,
