@@ -435,6 +435,76 @@ describe('startBaselinePauseWatcher', () => {
     expect(checkFn).not.toHaveBeenCalled()
   })
 
+  it('re-runs the check when the SHA it evaluated against is no longer current', async () => {
+    /**
+     * Explicit regression guard for the "stale verdict" case documented in the
+     * 2026-09-07 incident report:
+     *
+     *   The daemon ran a baseline check at SHA A and recorded a "poisoned"
+     *   verdict. HEAD advanced to SHA B and SHA C while the daemon kept serving
+     *   the stale verdict — dispatch stayed paused as if SHA A were current,
+     *   even though SHA C was green.
+     *
+     * The watcher tracks the SHA it last checked against (`_lastObservedSha`).
+     * That SHA is the one the cached verdict was evaluated against. When the
+     * integration branch advances, `_lastObservedSha` diverges from the current
+     * SHA, the watcher detects this on the next tick, and re-runs the check —
+     * independent of any task completing.
+     */
+    const { createBaselineHealthChecker, startBaselinePauseWatcher } = await import(
+      '../../daemon/baseline-health.js'
+    )
+    const { createPauseController } = await import('../../daemon/pause-state.js')
+
+    let gateExitCode = 1
+    let currentSha = 'sha-at-verdict-time'
+
+    const pause = createPauseController()
+    const checker = createBaselineHealthChecker({
+      repoRoot: '/repo',
+      loadGates: async () => [makeGate()],
+      runGate: async (g) => ({ gate: g, exitCode: gateExitCode, stdout: '', stderr: 'broken' }),
+      pause,
+      computeDepFingerprint: vi.fn().mockResolvedValue(null),
+      runInstallProbe: vi.fn().mockResolvedValue({ exitCode: 0, stdout: '', stderr: '' }),
+    })
+
+    // Run the initial check: verdict = poisoned at 'sha-at-verdict-time'.
+    await checker.check()
+    expect(pause.get().paused).toBe(true)
+
+    // Start the watcher. On the first tick it observes 'sha-at-verdict-time'
+    // and records it as the SHA the current verdict was evaluated against.
+    const watcher = startBaselinePauseWatcher({
+      pause,
+      getIntegrationBranchSha: async () => currentSha,
+      checkBaseline: () => checker.check(),
+      intervalMs: 15,
+    })
+
+    // Let one tick fire so the watcher records 'sha-at-verdict-time' as known.
+    await new Promise((r) => setTimeout(r, 40))
+    // Dispatch should still be paused (SHA unchanged so far).
+    expect(pause.get().paused).toBe(true)
+
+    // Now the integration branch advances AND the gate is repaired.
+    gateExitCode = 0
+    currentSha = 'sha-after-fix'
+
+    // The watcher must detect the SHA advance and clear the pause.
+    try {
+      await vi.waitFor(
+        () => {
+          expect(pause.get().paused).toBe(false)
+        },
+        { timeout: 500 },
+      )
+      expect(checker.isBaselinePoisoned()).toBe(false)
+    } finally {
+      watcher.stop()
+    }
+  })
+
   it('does not re-run the check when the SHA has not changed', async () => {
     const { createBaselineHealthChecker, startBaselinePauseWatcher } = await import(
       '../../daemon/baseline-health.js'

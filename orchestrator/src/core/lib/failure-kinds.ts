@@ -279,6 +279,24 @@ const notEncodable = (reason: NonEncodableReason): StaticEncodability => ({
 export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
   (
     [
+      // ── setup/unclassified ───────────────────────────────────────────────
+      // Fires when the top-level setup step throws an internal orchestration
+      // invariant error — most commonly "no worktree available: call
+      // setupWorktree(ctx, ...) before verify/merge" — that no coder can fix.
+      // This is a pure infrastructure condition: no worktree was ever created,
+      // so there is nothing for a recovery Chore to reuse.  Marking it
+      // `environmental` routes it through the auto-restart path (up to
+      // MAX_ENV_RESTART_ATTEMPTS re-queues) rather than consuming the origin's
+      // single recovery slot on a doomed fix-task.
+      {
+        signature: 'setup/unclassified',
+        staticEncodable: notEncodable('environmental'),
+        warmTitle: 'The task setup step failed with an internal error',
+        verboseReason:
+          'The setup step encountered an internal orchestration error (e.g. a missing worktree reference or an invariant violation) before any coding work could start. This is an infrastructure condition, not a code defect — the task is automatically re-queued.',
+        actions: WORKTREE_MISSING_ACTIONS,
+      },
+
       // ── setup:install ────────────────────────────────────────────────────
       {
         signature: 'setup:install/install-frozen-lockfile',

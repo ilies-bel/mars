@@ -20,6 +20,31 @@ describe('FAILURE_KINDS registry', () => {
     expect(sigs).toContain('setup:install/install-missing-peer')
   })
 
+  it('classifies setup/unclassified as an environmental (infrastructure) error', () => {
+    /**
+     * When the top-level setup step throws an internal orchestration invariant
+     * error — the canonical case is "no worktree available: call
+     * setupWorktree(ctx, ...) before verify/merge" emitted by resolveWorktree
+     * in tools/context.ts — no coder can fix the condition: no worktree was
+     * ever created, so there is nothing for a recovery Chore to reuse.
+     *
+     * Registering setup/unclassified as environmental means handleTaskFailureWithFixTask
+     * routes it through the auto-restart path (envRestartCount++) instead of
+     * spawning a fix-task and decrementing the origin's single recovery slot.
+     *
+     * Incident: four tasks (mars-37403dbf, mars-d8c25d95, fix-84ffe6fe,
+     * mars-5bc47f92) burned their recovery budget on the infrastructure fault
+     * in a single episode on 2026-09-07.
+     */
+    expect(isEnvironmentalSignature('setup/unclassified')).toBe(true)
+    const kind = lookupFailureKind('setup/unclassified')
+    expect(kind).not.toBeNull()
+    expect(kind!.staticEncodable).toEqual({ encodable: false, reason: 'environmental' })
+    // warmTitle must never expose the raw signature in a user-facing field.
+    expect(kind!.warmTitle).not.toContain('setup/unclassified')
+    expect(kind!.verboseReason).toBeTruthy()
+  })
+
   it('contains an entry for code:no-edits-made/unclassified', () => {
     expect(FAILURE_KINDS.map((k) => k.signature)).toContain(
       'code:no-edits-made/unclassified',
