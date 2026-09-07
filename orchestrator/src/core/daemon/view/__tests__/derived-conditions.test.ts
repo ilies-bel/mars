@@ -443,3 +443,191 @@ describe(
   },
 )
 
+// ── derivePhantomMergeConditions — landing-verification paths ─────────────────
+//
+// These tests exercise the three outcomes of the git-based landing check:
+//
+//  1. 'landed'  — branch/checkpoint work is reachable from the integration
+//                 branch → no alert raised.
+//  2. 'missing' — surviving evidence shows commits NOT on the integration
+//                 branch → phantom-merge alert raised, naming the ref.
+//  3. 'unknown' — no branch and no checkpoint refs → phantom-merge-unknown
+//                 alert raised (lower priority, informational).
+//
+// Each test uses a unique task ID so the module-level outcome cache never
+// pollutes a sibling test.
+
+/** Create a minimal git repo, return its absolute path and the main branch name. */
+function setupPhantomRepo(): { repoRoot: string; branch: string } {
+  const repoRoot = mkdtempSync(join(tmpdir(), 'mars-phantom-'))
+  execFileSync('git', ['init', '-q'], { cwd: repoRoot })
+  execFileSync('git', ['config', 'user.email', 'ci@test'], { cwd: repoRoot })
+  execFileSync('git', ['config', 'user.name', 'CI'], { cwd: repoRoot })
+  writeFileSync(join(repoRoot, 'README.md'), 'init')
+  execFileSync('git', ['add', '-A'], { cwd: repoRoot })
+  execFileSync('git', ['commit', '-m', 'initial', '--no-gpg-sign'], { cwd: repoRoot })
+  // Normalise to 'main' regardless of the git default.
+  const currentBranch = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+  }).trim()
+  if (currentBranch !== 'main') {
+    execFileSync('git', ['branch', '-m', currentBranch, 'main'], { cwd: repoRoot })
+  }
+  mkdirSync(join(repoRoot, '.mars', 'worktrees'), { recursive: true })
+  return { repoRoot, branch: 'main' }
+}
+
+async function makePhantomClient(repoRoot: string): Promise<DbClient> {
+  const { openDb } = await import('../../../lib/db.js')
+  const { ensureSchema } = await import('../../../lib/pg-schema.js')
+  const client = openDb(join(repoRoot, '.mars'))
+  await ensureSchema(client)
+  return client
+}
+
+async function seedDoneTask(client: DbClient, taskId: string): Promise<void> {
+  await client.execute({
+    sql: `INSERT INTO tasks (id, prompt, status, created_at, updated_at)
+          VALUES (?, ?, 'done', NOW(), NOW())`,
+    args: [taskId, `task ${taskId}`],
+  })
+}
+
+function writeTombstone(repoRoot: string, taskId: string): void {
+  // Ensure the directory exists — openDb() may recreate .mars/ contents
+  // after setupPhantomRepo() creates worktrees/, so we guard here.
+  const worktreesDir = join(repoRoot, '.mars', 'worktrees')
+  mkdirSync(worktreesDir, { recursive: true })
+  const tombstone = {
+    taskId,
+    reason: 'merged',
+    mergeCommitSha: null,
+    removedAt: new Date().toISOString(),
+  }
+  writeFileSync(join(worktreesDir, `${taskId}.removed.json`), JSON.stringify(tombstone))
+}
+
+describe(
+  'derivePhantomMergeConditions — landing verification',
+  { timeout: 60_000 },
+  () => {
+    let repoRoot: string
+    let client: DbClient
+    const origIntBranch = process.env.INTEGRATION_BRANCH
+
+    beforeEach(async () => {
+      const setup = setupPhantomRepo()
+      repoRoot = setup.repoRoot
+      // Pin INTEGRATION_BRANCH to 'main' so integrationBranchName() resolves
+      // to the same name as the branch we create in git init above.
+      process.env.INTEGRATION_BRANCH = 'main'
+      vi.resetModules()
+      client = await makePhantomClient(repoRoot)
+    })
+
+    afterEach(async () => {
+      await client.close()
+      if (origIntBranch === undefined) {
+        delete process.env.INTEGRATION_BRANCH
+      } else {
+        process.env.INTEGRATION_BRANCH = origIntBranch
+      }
+      rmSync(repoRoot, { recursive: true, force: true })
+    })
+
+    it('does not raise phantom-merge when the task branch has 0 commits ahead of main', async () => {
+      const taskId = 'mars-pm-branch-clean'
+      await seedDoneTask(client, taskId)
+      writeTombstone(repoRoot, taskId)
+
+      // Create the task branch at the same commit as main — zero commits ahead.
+      execFileSync('git', ['branch', `task/${taskId}`], { cwd: repoRoot })
+
+      const source = createConditionItemsSource({ getClient: () => client, repoRoot })
+      const rows = await source.derive({
+        kinds: new Set(['phantom-merge', 'phantom-merge-unknown']),
+      })
+      expect(rows).toHaveLength(0)
+    })
+
+    it('does not raise phantom-merge when a checkpoint ref commit is reachable from main', async () => {
+      const taskId = 'mars-pm-ckpt-clean'
+      await seedDoneTask(client, taskId)
+      writeTombstone(repoRoot, taskId)
+
+      // Land the "task's" commit directly on main — the checkpoint SHA is on main.
+      writeFileSync(join(repoRoot, `${taskId}.txt`), 'landed content')
+      execFileSync('git', ['add', '-A'], { cwd: repoRoot })
+      execFileSync('git', ['commit', '-m', `feat: ${taskId}`, '--no-gpg-sign'], { cwd: repoRoot })
+      const landedSha = execFileSync('git', ['rev-parse', 'HEAD'], {
+        cwd: repoRoot,
+        encoding: 'utf8',
+      }).trim()
+
+      // Point a checkpoint ref at that already-landed SHA (no task branch).
+      execFileSync(
+        'git',
+        ['update-ref', `refs/mars/checkpoint/${taskId}-code-periodic`, landedSha],
+        { cwd: repoRoot },
+      )
+
+      const source = createConditionItemsSource({ getClient: () => client, repoRoot })
+      const rows = await source.derive({
+        kinds: new Set(['phantom-merge', 'phantom-merge-unknown']),
+      })
+      expect(rows).toHaveLength(0)
+    })
+
+    it('raises phantom-merge when the task branch has commits not on main', async () => {
+      const taskId = 'mars-pm-unlanded'
+      await seedDoneTask(client, taskId)
+
+      // Create a divergent commit on the task branch that never landed on main.
+      // IMPORTANT: write the tombstone AFTER returning to main — git checkout main
+      // removes files that were added only on the task branch from the working tree,
+      // and "git add -A" would stage the tombstone and commit it to the task branch.
+      execFileSync('git', ['checkout', '-b', `task/${taskId}`, '--no-track', 'main'], {
+        cwd: repoRoot,
+      })
+      writeFileSync(join(repoRoot, `${taskId}.txt`), 'unlanded work')
+      execFileSync('git', ['add', '-A'], { cwd: repoRoot })
+      execFileSync('git', ['commit', '-m', `feat: ${taskId} work`, '--no-gpg-sign'], {
+        cwd: repoRoot,
+      })
+      execFileSync('git', ['checkout', 'main'], { cwd: repoRoot })
+      // Write tombstone now — after returning to main so it survives in the worktree.
+      writeTombstone(repoRoot, taskId)
+
+      const source = createConditionItemsSource({ getClient: () => client, repoRoot })
+      const rows = await source.derive({
+        kinds: new Set(['phantom-merge', 'phantom-merge-unknown']),
+      })
+
+      const phantomRow = rows.find((r) => r.kind === 'phantom-merge')
+      expect(phantomRow).toBeDefined()
+      expect(phantomRow?.payload['taskId']).toBe(taskId)
+      // The body must name the task branch so the operator knows what to recover from.
+      expect(phantomRow?.body).toContain(`task/${taskId}`)
+    })
+
+    it('raises phantom-merge-unknown when no branch and no checkpoint refs survive', async () => {
+      const taskId = 'mars-pm-no-evidence'
+      await seedDoneTask(client, taskId)
+      writeTombstone(repoRoot, taskId)
+      // No branch and no checkpoint refs — nothing to verify against.
+
+      const source = createConditionItemsSource({ getClient: () => client, repoRoot })
+      const rows = await source.derive({
+        kinds: new Set(['phantom-merge', 'phantom-merge-unknown']),
+      })
+
+      const unknownRow = rows.find((r) => r.kind === 'phantom-merge-unknown')
+      expect(unknownRow).toBeDefined()
+      expect(unknownRow?.payload['taskId']).toBe(taskId)
+      // Must NOT raise a high-priority phantom-merge for an unknown outcome.
+      expect(rows.filter((r) => r.kind === 'phantom-merge')).toHaveLength(0)
+    })
+  },
+)
+
