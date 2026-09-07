@@ -318,4 +318,40 @@ describe('ControlRoomPage — Gates section run status', () => {
     // Both rows have a Retire button (two occurrences)
     expect(html.match(/data-testid="gate-retire-btn"/g)?.length).toBe(2)
   })
+
+  it('shows "passing" badge text for a currently-passing gate', () => {
+    const gate = makeGate({ lastFailureAt: 1000, lastPassAt: 2000 })
+    const html = renderControlRoom([gate])
+    // The badge inner text must say "passing" (not "failing")
+    expect(html).toContain('>passing<')
+    expect(html).not.toContain('>failing<')
+  })
+
+  it('shows "failing" badge text for a currently-failing gate', () => {
+    const gate = makeGate({ lastPassAt: 1000, lastFailureAt: 2000 })
+    const html = renderControlRoom([gate])
+    expect(html).toContain('>failing<')
+    expect(html).not.toContain('>passing<')
+  })
+
+  it('shows "Last passed:" label text for a currently-passing gate', () => {
+    const gate = makeGate({ lastFailureAt: 1000, lastPassAt: 2000 })
+    const html = renderControlRoom([gate])
+    expect(html).toContain('Last passed:')
+  })
+
+  it('shows "Last failure:" label text for a currently-failing gate', () => {
+    const gate = makeGate({ lastPassAt: null, lastFailureAt: 5000 })
+    const html = renderControlRoom([gate])
+    expect(html).toContain('Last failure:')
+  })
+
+  it('shows no badge and no run-date labels when the gate has never run', () => {
+    const gate = makeGate({ lastPassAt: null, lastFailureAt: null })
+    const html = renderControlRoom([gate])
+    expect(html).not.toContain('>passing<')
+    expect(html).not.toContain('>failing<')
+    expect(html).not.toContain('Last passed:')
+    expect(html).not.toContain('Last failure:')
+  })
 })

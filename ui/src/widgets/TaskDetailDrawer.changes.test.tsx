@@ -276,6 +276,28 @@ describe('TaskDetailBody – Changes section', () => {
     expect(html).not.toContain('data-testid="gate-checks-summary"')
   })
 
+  it('does not render gate checks summary when gateChecks is undefined (absent from response)', () => {
+    // When the API response omits gateChecks (older tasks), the section must
+    // not appear — undefined is treated the same as null by the ?? null coercion.
+    const html = renderBody(
+      <TaskDetailBody task={makeTask()} changesData={CHANGES_WITH_FILES} />,
+    )
+    expect(html).not.toContain('data-testid="gate-checks-summary"')
+  })
+
+  it('shows "Checks:" label when gate checks are present', () => {
+    const withGateChecks: TaskChangesResponse = {
+      ...CHANGES_WITH_FILES,
+      gateChecks: [
+        { name: 'typecheck', gateId: 'gate-1', passed: true, durationMs: null },
+      ],
+    }
+    const html = renderBody(
+      <TaskDetailBody task={makeTask()} changesData={withGateChecks} />,
+    )
+    expect(html).toContain('Checks:')
+  })
+
   it('does not render gate checks summary for branch-gone shape', () => {
     const html = renderBody(
       <TaskDetailBody task={makeTask()} changesData={BRANCH_GONE} />,
