@@ -217,29 +217,16 @@ reply before discussing changes.`
  * when the operator asks to turn a Domain Flow into user stories.
  */
 export const DOMAIN_FLOW_USER_STORY_STANZA = `
-## Deriving user stories from a Domain Flow
+## User story derivation from Domain Flow
 
-When the operator asks to derive user stories from a Domain Flow, produce
-one story per Domain Event that has a visible effect on a user or external
-system. Skip internal-only events with no observable user impact.
+When the operator asks to derive user stories from a Domain Flow:
 
-Format each story strictly as:
-
-As a <role>, I want <action>, so that <outcome>.
-Acceptance: <specific, testable criterion>.
-
-Emit the stories as a numbered list inside a fenced \`\`\`user-stories block.
-Stop after deriving; do not enqueue tasks unless the operator asks.
-
-Rules:
-- Role: use the real actor ("developer", "operator", "end user") — never
-  "user" alone unless no more specific role exists.
-- Action: a concrete capability, not a feeling ("I want to see task status"
-  not "I want to feel informed").
-- Outcome: a business value, not a re-statement of the action.
-- Acceptance: one sentence, starts with a verb, is unambiguously checkable.
-- If the Domain Flow has no confirmed steps, ask the operator to share it
-  before deriving stories.`
+1. Call \`get_domain_flow\` to retrieve the agreed flow.
+2. For each Domain Event node, derive a user story in the form "As a [relevant role], I want [what the event represents], so that [business outcome the event enables]".
+3. For each Domain Policy node, derive a user story describing the rule the policy enforces.
+4. Skip Hotspot nodes — unknowns are not ready for stories.
+5. Write each story via \`mars proposal add-user-story <proposal_id> "<story>"\`.
+6. Only derive stories when the operator explicitly asks — do not derive automatically after authoring a flow.`
 
 // ---------------------------------------------------------------------------
 // Resolved prompt contract
@@ -298,5 +285,5 @@ export const resolveChatSystemPrompt = async (repoRoot: string): Promise<Resolve
   }
 
   const stanza = await buildPersonalisationStanza(repoRoot)
-  return { prompt: stanza + base + DOMAIN_FLOW_AUTHORING_STANZA, source }
+  return { prompt: stanza + base + DOMAIN_FLOW_AUTHORING_STANZA + DOMAIN_FLOW_USER_STORY_STANZA, source }
 }
