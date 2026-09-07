@@ -640,3 +640,7 @@ _Avoid_: policy, reactor, rule
 **Pivotal Event**:
 A Domain Event that marks a phase change within a Domain Flow, and therefore a candidate boundary between bounded contexts in the target repository.
 _Avoid_: milestone, phase marker
+
+**Hotspot**:
+A recorded uncertainty, disagreement or risk attached to a point in a Domain Flow, carried in the Domain Timeline rather than resolved away.
+_Avoid_: unknown, open question, red sticky
