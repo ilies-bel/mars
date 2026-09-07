@@ -496,6 +496,13 @@ export const postRestoreVerifyGate = async (id: string, projectId?: string): Pro
   if (!r.ok) await throwMutationError(path, r)
 }
 
+/** Remove a verify gate (quarantine or permanent retire via DELETE). */
+export const deleteVerifyGate = async (id: string, projectId?: string): Promise<void> => {
+  const path = appendProject(`/api/verify-gates/${encodeURIComponent(id)}`, projectId)
+  const r = await fetch(`${BASE}${path}`, { method: 'DELETE' })
+  if (!r.ok) await throwMutationError(path, r)
+}
+
 /**
  * Fetch a cursor-paged slice of resolved action-queue rows (history).
  * Rows are newest-first by resolved_at. Pass the returned `nextCursor`

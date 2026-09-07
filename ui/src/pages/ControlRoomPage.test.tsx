@@ -296,4 +296,26 @@ describe('ControlRoomPage — Gates section run status', () => {
     const html = renderControlRoom([gate])
     expect(html).not.toContain('data-testid="quarantine-banner"')
   })
+
+  it('shows Quarantine button for active gates', () => {
+    const gate = makeGate({ state: 'active' })
+    const html = renderControlRoom([gate])
+    expect(html).toContain('data-testid="gate-quarantine-btn"')
+    expect(html).not.toContain('data-testid="gate-restore-btn"')
+  })
+
+  it('shows Restore button for quarantined gates (not Quarantine)', () => {
+    const gate = makeGate({ state: 'quarantined' })
+    const html = renderControlRoom([gate])
+    expect(html).toContain('data-testid="gate-restore-btn"')
+    expect(html).not.toContain('data-testid="gate-quarantine-btn"')
+  })
+
+  it('shows Retire button for every gate regardless of state', () => {
+    const active = makeGate({ id: 'gate-a', state: 'active' })
+    const quarantined = makeGate({ id: 'gate-q', state: 'quarantined' })
+    const html = renderControlRoom([active, quarantined])
+    // Both rows have a Retire button (two occurrences)
+    expect(html.match(/data-testid="gate-retire-btn"/g)?.length).toBe(2)
+  })
 })

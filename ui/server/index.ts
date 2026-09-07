@@ -948,6 +948,23 @@ export const startServer = async (
           }
         }
 
+        // DELETE /api/verify-gates/:id — remove or quarantine a verify gate.
+        // Proxied to the daemon's DELETE /verify-gates/:id.
+        {
+          const removeMatch =
+            req.method === 'DELETE'
+              ? path.match(/^\/api\/verify-gates\/([^/]+)$/)
+              : null
+          if (removeMatch && removeMatch[1]) {
+            const id = decodeURIComponent(removeMatch[1])
+            const r = await proxyDelete(
+              ctx.stateDir,
+              `/verify-gates/${encodeURIComponent(id)}`,
+            )
+            return jsonResponse(r.status, r.body)
+          }
+        }
+
         if (path === '/api/glossary' && req.method === 'GET') {
           const r = await proxyGet(ctx.stateDir, '/view/glossary')
           return jsonResponse(r.status, r.body)
