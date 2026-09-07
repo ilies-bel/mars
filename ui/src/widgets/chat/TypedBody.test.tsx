@@ -148,6 +148,33 @@ describe('TypedBody', () => {
 
     act(() => { root.unmount() })
   })
+
+  it('shows the new full body when a dedup update replaces one completed sentence with another', () => {
+    // Regression: the cap-change notice uses dedupKey='steward-runtime-tune', so
+    // the daemon updates chat_messages in-place when the cap changes again within
+    // the coalesce window. Before the fix TypedBody returned early on the
+    // revealed.has(id) branch without calling setShown(text), so the card stayed
+    // frozen at the first sentence even after the dedup update had replaced the
+    // stored body. Observed as truncation because the new longer sentence was
+    // mistaken for a partial of the old one at the same character offset.
+    vi.useFakeTimers()
+    const BODY_A = 'I bumped implement workers from 8 to 11 because the backlog was sustained.'
+    const BODY_B = 'I shed implement workers from 11 to 8 because host pressure was detected.'
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const root = createRoot(host)
+
+    // First delivery: animation completes and marks the id as revealed.
+    act(() => { root.render(<TypedBody id="notice-tune" text={BODY_A} />) })
+    act(() => { vi.advanceTimersByTime(5_000) })
+    expect(host.textContent).toBe(BODY_A) // sanity: first sentence fully shown
+
+    // Dedup update: same id, different full sentence (next cap change within the hour).
+    act(() => { root.render(<TypedBody id="notice-tune" text={BODY_B} />) })
+    expect(host.textContent).toBe(BODY_B) // must show the updated sentence, not the old one
+
+    act(() => { root.unmount() })
+  })
 })
 
 describe('ConversationTimeline reveal', () => {
@@ -210,5 +237,43 @@ describe('ConversationTimeline reveal', () => {
     expect(html).toContain('data-testid="notice-card-notice-1"')
     expect(html).not.toContain('data-testid="notice-card-reply-1"')
     expect(html).toContain('>Mars<')
+  })
+
+  it('shows the updated sentence when a dedup in-place update changes the notice body', () => {
+    // Regression: the steward runtime-tune notice uses a fixed dedupKey so the
+    // daemon updates the same chat_messages row whenever the cap changes again
+    // within the coalesce window. ConversationTimeline re-renders with the same
+    // entry id but a new content string. The full new sentence must appear in the
+    // DOM — not the old one and not a partial at the old body's character count.
+    vi.useFakeTimers()
+    const FIRST = 'I bumped implement workers from 8 to 11 because the backlog was sustained.'
+    const SECOND = 'I shed implement workers from 11 to 8 because host pressure was detected.'
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const root = createRoot(host)
+
+    // Initial render: notice-1 is in the backlog so it shows instantly.
+    act(() => {
+      root.render(
+        <ConversationTimeline
+          entries={[entry({ content: FIRST, segments: [{ type: 'text', text: FIRST }] })]}
+        />,
+      )
+    })
+    expect(host.textContent).toContain(FIRST)
+
+    // Dedup update: same id, new body. The timeline re-renders with the same
+    // entry id but updated content and segments.
+    act(() => {
+      root.render(
+        <ConversationTimeline
+          entries={[entry({ content: SECOND, segments: [{ type: 'text', text: SECOND }] })]}
+        />,
+      )
+    })
+    expect(host.textContent).toContain(SECOND)
+    expect(host.textContent).not.toContain(FIRST)
+
+    act(() => { root.unmount() })
   })
 })
