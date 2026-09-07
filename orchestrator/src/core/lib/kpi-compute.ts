@@ -771,6 +771,94 @@ export async function listCostPerArcArcs(
   })
 }
 
+/**
+ * Compute the aggregate cache-hit ratio across all step_ended trace events for
+ * done arcs in the given window.
+ *
+ * cache_hit_ratio = SUM(cacheReadTokens) / (SUM(inputTokens) + SUM(cacheReadTokens))
+ *
+ * Uses the same done_arcs CTE and three join paths (member-keyed, arc-keyed,
+ * origin-level Planner/Slicer) as computeCostPerArcDistribution so the
+ * population matches exactly. UNION deduplicates trace events that match
+ * multiple paths.
+ *
+ * Returns null when the denominator is zero (no trace events or all-zero
+ * cacheReadTokens + inputTokens across the window), or when the underlying
+ * store does not support the required SQL dialect (e.g. SQLite in tests).
+ */
+export async function computeWindowCacheHitRatio(
+  surface: TaskStore,
+  window: KpiWindow,
+): Promise<number | null> {
+  try {
+    const result = await surface.query({
+      sql: `WITH done_arcs AS (
+              SELECT COALESCE(origin_id, id) AS arc_id
+              FROM tasks
+              WHERE status IN ('done', 'failed')
+                AND updated_at >= ?
+                AND updated_at <= ?
+              GROUP BY COALESCE(origin_id, id)
+              HAVING MAX(CASE WHEN status = 'done' THEN 1 ELSE 0 END) = 1
+            ),
+            arc_te AS (
+              -- Path 1: trace event keyed by a member task id (normal dispatch path)
+              SELECT da.arc_id, te.id AS te_id,
+                     CAST(te.payload::jsonb #>> '{usageSignals,cacheReadTokens}' AS double precision) AS cache_read_tokens,
+                     CAST(te.payload::jsonb #>> '{usageSignals,inputTokens}'     AS double precision) AS input_tokens
+              FROM done_arcs da
+              JOIN tasks t ON COALESCE(t.origin_id, t.id) = da.arc_id
+              JOIN trace_events te ON te.task_id = t.id
+                AND te.kind = 'step_ended'
+                AND te.payload::jsonb ->> 'usageSignals' IS NOT NULL
+              UNION
+              -- Path 2: trace event keyed by the arc/origin id directly
+              SELECT da.arc_id, te.id AS te_id,
+                     CAST(te.payload::jsonb #>> '{usageSignals,cacheReadTokens}' AS double precision) AS cache_read_tokens,
+                     CAST(te.payload::jsonb #>> '{usageSignals,inputTokens}'     AS double precision) AS input_tokens
+              FROM done_arcs da
+              JOIN trace_events te ON te.task_id = da.arc_id
+                AND te.kind = 'step_ended'
+                AND te.payload::jsonb ->> 'usageSignals' IS NOT NULL
+              UNION
+              -- Path 3: origin-level trace event (Planner/Slicer steps: task_id IS NULL,
+              -- origin_id = arc_id). Same population as computeCostPerArcDistribution.
+              SELECT da.arc_id, te.id AS te_id,
+                     CAST(te.payload::jsonb #>> '{usageSignals,cacheReadTokens}' AS double precision) AS cache_read_tokens,
+                     CAST(te.payload::jsonb #>> '{usageSignals,inputTokens}'     AS double precision) AS input_tokens
+              FROM done_arcs da
+              JOIN trace_events te ON te.origin_id = da.arc_id
+                AND te.kind = 'step_ended'
+                AND te.payload::jsonb ->> 'usageSignals' IS NOT NULL
+            )
+            SELECT
+              SUM(cache_read_tokens) AS total_cache_read,
+              SUM(input_tokens)      AS total_input
+            FROM arc_te`,
+      args: [window.windowStart, window.windowEnd],
+    })
+
+    const row = result.rows[0] as unknown as {
+      total_cache_read: number | null
+      total_input: number | null
+    } | undefined
+
+    if (!row) return null
+
+    const totalCacheRead = row.total_cache_read ?? 0
+    const totalInput = row.total_input ?? 0
+    const denominator = totalInput + totalCacheRead
+
+    if (denominator <= 0) return null
+
+    return totalCacheRead / denominator
+  } catch {
+    // Gracefully return null when the store does not support the required
+    // SQL dialect (e.g. SQLite in unit tests lacks ::jsonb / trace_events).
+    return null
+  }
+}
+
 // ---------------------------------------------------------------------------
 // KPI regression proposal formatting
 //

@@ -307,15 +307,21 @@ export const runSelfEvolveTrigger = async (opts?: {
       vector: finding.vector,
     }
 
-    // Enrich cost_per_arc_p50 findings with per-phase median token breakdown.
-    // This lets the operator see which phase drove the regression without running
-    // a separate drill command.
-    if (finding.kpi === 'cost_per_arc_p50') {
-      const { listCostPerArcArcs } = await import('./kpi-compute.js')
+    // Enrich cost KPI findings (p50 and p90) with per-phase median token breakdown,
+    // tail-arc listing (p90 only), and aggregate cache-hit ratio for both windows.
+    //
+    // Phase medians help the operator see which phase drove the regression;
+    // tailArcs surfaces the costliest arcs for p90 without a separate drill;
+    // cacheHitRatio lets them distinguish 'cache degradation drove the regression'
+    // from 'arcs genuinely consumed more tokens'.
+    if (finding.kpi === 'cost_per_arc_p50' || finding.kpi === 'cost_per_arc_p90') {
       const currentWindow = {
         windowStart: persistedCurrent.window_start,
         windowEnd: persistedCurrent.window_end,
       }
+
+      // Per-phase median breakdown for both p50 and p90.
+      const { listCostPerArcArcs } = await import('./kpi-compute.js')
       const arcs = await listCostPerArcArcs(store, currentWindow)
       // Group per-arc phase costs by phase name
       const phaseGroups: Record<string, number[]> = {}
@@ -338,6 +344,33 @@ export const runSelfEvolveTrigger = async (opts?: {
             : sorted[mid]!
       }
       notesPayload.phaseMedians = phaseMedians
+
+      // Tail arcs: for p90, identify arcs at or above the current p90 threshold.
+      // These are the costliest arcs driving the regression, surfaced directly in
+      // the proposal so the operator can investigate without a separate drill.
+      if (finding.kpi === 'cost_per_arc_p90') {
+        const tailArcs = arcs
+          .filter(
+            (arc) => arc.costTokens !== undefined && arc.costTokens >= finding.currentValue,
+          )
+          .map((arc) => ({
+            taskId: arc.originTaskId,
+            weightedTokens: arc.costTokens!,
+          }))
+        notesPayload.tailArcs = tailArcs
+      }
+
+      // Cache-hit ratio: aggregate ratio for the current and prior windows.
+      const { computeWindowCacheHitRatio } = await import('./kpi-compute.js')
+      const priorWindow = {
+        windowStart: persistedPrior.window_start,
+        windowEnd: persistedPrior.window_end,
+      }
+      const [currentChr, priorChr] = await Promise.all([
+        computeWindowCacheHitRatio(store, currentWindow),
+        computeWindowCacheHitRatio(store, priorWindow),
+      ])
+      notesPayload.cacheHitRatio = { current: currentChr ?? 0, prior: priorChr ?? 0 }
     }
 
     const notes = JSON.stringify(notesPayload, null, 2)

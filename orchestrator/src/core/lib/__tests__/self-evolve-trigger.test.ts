@@ -284,10 +284,12 @@ describe('runSelfEvolveTrigger', () => {
     expect(p.status).toBe('draft')
     // Title must name the regressed KPI
     expect(p.title).toContain('failure_rate')
-    // Problem body contains the regressed delta
+    // Problem body contains the regressed delta.
+    // failure_rate is a rate KPI so formatKpiRegressionProblem renders values
+    // as percentages (0.10 → "10.0%", 0.25 → "25.0%") matching the KPI page.
     expect(p.problem).toContain('failure_rate')
-    expect(p.problem).toContain('0.1')   // priorValue
-    expect(p.problem).toContain('0.25')  // currentValue
+    expect(p.problem).toContain('10.0%')  // priorValue (0.10 × 100)
+    expect(p.problem).toContain('25.0%')  // currentValue (0.25 × 100)
     // Notes is a KpiDriftProposalNotes JSON blob; the vector is nested inside it
     const notesObj = JSON.parse(p.notes) as { vector: Record<string, { prior: number; current: number }> }
     expect(notesObj).toHaveProperty('vector')
