@@ -24,7 +24,20 @@ import { failureSignatureFamilySql } from './failure-signature.js'
 import { findOpenReflectionDraftForKpi, createProposal, appendProposalNotes } from '../proposals.js'
 import { loadDaemonConfig } from '../daemon/config.js'
 import { readKpiWindowComparison, type KpiSnapshot as PersistedSnapshot } from './kpi-snapshots.js'
+import { formatKpiRegressionProblem } from './kpi-compute.js'
 import { type DomainTaskStore as TaskStore, getDefaultTaskStore } from '../store/task-store-default.js'
+
+/**
+ * Maps drift-detector KPI keys to the corresponding sample-count column on a
+ * persisted KpiSnapshot. Used to include population in proposal bodies.
+ */
+const KPI_DRIFT_SAMPLE_COL: Partial<Record<string, keyof PersistedSnapshot>> = {
+  failure_rate: 'failure_rate_sample_count',
+  cost_per_arc_p50: 'cost_per_arc_sample_count',
+  cost_per_arc_p90: 'cost_per_arc_sample_count',
+  autonomous_completion_rate: 'autonomous_completion_rate_sample_count',
+  recovery_success_rate: 'recovery_success_rate_sample_count',
+}
 
 type SkipReason = 'disabled' | 'low-confidence' | 'duplicate' | 'below-threshold' | 'acknowledged'
 
@@ -242,11 +255,25 @@ export const runSelfEvolveTrigger = async (opts?: {
       continue
     }
 
-    const deltaSign = finding.deltaPct >= 0 ? '+' : ''
-    const title = `KPI regression: ${finding.kpi} drifted ${deltaSign}${finding.deltaPct.toFixed(1)}%`
-    const problem =
-      `KPI \`${finding.kpi}\` regressed by ${Math.abs(finding.deltaPct).toFixed(1)}% ` +
-      `(prior: ${finding.priorValue}, current: ${finding.currentValue}).`
+    // Derive window length and per-KPI population from the current snapshot so
+    // the proposal body states the same window and population as the KPI page.
+    const windowDays =
+      Math.round(
+        (Date.parse(persistedCurrent.window_end) - Date.parse(persistedCurrent.window_start)) /
+          (24 * 60 * 60 * 1000),
+      ) || 7
+    const sampleCol = KPI_DRIFT_SAMPLE_COL[finding.kpi]
+    const sampleCount = sampleCol
+      ? ((persistedCurrent as unknown as Record<string, number>)[sampleCol as string] ?? 0)
+      : 0
+
+    const { problem, title } = formatKpiRegressionProblem({
+      kpi: finding.kpi,
+      priorValue: finding.priorValue,
+      currentValue: finding.currentValue,
+      sampleCount,
+      windowDays,
+    })
     const solution = `Investigate root causes and address the regression in \`${finding.kpi}\`.`
     const notesPayload: KpiDriftProposalNotes = {
       kpi: finding.kpi,

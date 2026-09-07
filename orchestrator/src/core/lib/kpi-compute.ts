@@ -770,3 +770,90 @@ export async function listCostPerArcArcs(
     return arcRow
   })
 }
+
+// ---------------------------------------------------------------------------
+// KPI regression proposal formatting
+//
+// Shared between the self-evolve trigger (which authors proposal bodies) and
+// any future call sites so both surfaces agree on value representation.
+// ---------------------------------------------------------------------------
+
+/**
+ * KPI keys whose stored values are rates (fractions 0–1).
+ * These are rendered as percentages and the change is expressed in
+ * percentage points (pp) so the proposal body matches the KPI page.
+ */
+const RATE_KPI_KEYS = new Set([
+  'failure_rate',
+  'autonomous_completion_rate',
+  'recovery_success_rate',
+])
+
+export interface KpiRegressionFormatOptions {
+  /** The KPI key (e.g. 'failure_rate', 'cost_per_arc_p50'). */
+  kpi: string
+  /** Prior measured value: fraction (0–1) for rate KPIs, token count for cost KPIs. */
+  priorValue: number
+  /** Current measured value: fraction (0–1) for rate KPIs, token count for cost KPIs. */
+  currentValue: number
+  /** Number of arcs in the measurement population. */
+  sampleCount: number
+  /** Length of the measurement window in days. */
+  windowDays: number
+}
+
+export interface KpiRegressionFormatResult {
+  /** One-sentence problem statement for a draft proposal body. */
+  problem: string
+  /** Short title for a draft proposal. */
+  title: string
+}
+
+/**
+ * Format a KPI regression finding as human-readable proposal strings.
+ *
+ * Rate KPIs (failure_rate, autonomous_completion_rate, recovery_success_rate)
+ * store raw fractions (0–1); they are rendered as percentages and the change
+ * is expressed in percentage points (pp) — the same representation the KPI
+ * page uses, so both surfaces agree on the value, the direction, and the
+ * magnitude of the regression.
+ *
+ * Cost KPIs (cost_per_arc_p50 / p90) store raw cache-weighted token counts;
+ * they are rendered as rounded integers with a relative-change percentage.
+ *
+ * Both forms append the measurement window and population ("N arcs · last Nd")
+ * so a reader can judge significance without cross-referencing the KPI page.
+ */
+export function formatKpiRegressionProblem(
+  opts: KpiRegressionFormatOptions,
+): KpiRegressionFormatResult {
+  const { kpi, priorValue, currentValue, sampleCount, windowDays } = opts
+  const arcLabel = sampleCount === 1 ? '1 arc' : `${sampleCount} arcs`
+  const population = `${arcLabel} · last ${windowDays}d`
+
+  if (RATE_KPI_KEYS.has(kpi)) {
+    // Convert fractions to percentages; express the delta in pp.
+    const priorPct = priorValue * 100
+    const currentPct = currentValue * 100
+    const ppDelta = currentPct - priorPct
+    const ppSign = ppDelta >= 0 ? '+' : ''
+
+    const problem =
+      `KPI \`${kpi}\` regressed by ${Math.abs(ppDelta).toFixed(1)}pp ` +
+      `(prior: ${priorPct.toFixed(1)}%, current: ${currentPct.toFixed(1)}%) · ${population}.`
+    const title = `KPI regression: ${kpi} ${ppSign}${ppDelta.toFixed(1)}pp · ${population}`
+
+    return { problem, title }
+  }
+
+  // Cost KPI — raw cache-weighted token counts with a relative-change %.
+  const deltaPct = ((currentValue - priorValue) / Math.abs(priorValue)) * 100
+  const deltaSign = deltaPct >= 0 ? '+' : ''
+
+  const problem =
+    `KPI \`${kpi}\` regressed by ${Math.abs(deltaPct).toFixed(1)}% ` +
+    `(prior: ${Math.round(priorValue)} tokens, current: ${Math.round(currentValue)} tokens) · ${population}.`
+  const title = `KPI regression: ${kpi} ${deltaSign}${deltaPct.toFixed(1)}% · ${population}`
+
+  return { problem, title }
+}

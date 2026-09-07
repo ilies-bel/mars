@@ -10,6 +10,7 @@ import {
   computeAutonomousCompletionRate,
   computeCostPerArcDistribution,
   computeFailureRate,
+  formatKpiRegressionProblem,
   computeRecoverySuccessRate,
   listAutonomousArcs,
   listCostPerArcArcs,
@@ -1492,5 +1493,121 @@ describe('listCostPerArcArcs — excludePlannerSlicer option', () => {
     const psOnly = arcs.find((a) => a.arcId === 'lce-ps-arc')!
     expect(withSig.costTokens).toBeCloseTo(300, 10)
     expect(psOnly.costTokens).toBeUndefined()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 20. formatKpiRegressionProblem
+//
+// Verifies the proposal body formatter used by the self-evolve trigger agrees
+// with the KPI page's representation: percentages for rate KPIs, pp for the
+// delta, window and population stated.
+// ---------------------------------------------------------------------------
+
+describe('formatKpiRegressionProblem — rate KPIs render as pp', () => {
+  it('failure_rate: renders values as %, delta as pp, states window and population', () => {
+    const { problem, title } = formatKpiRegressionProblem({
+      kpi: 'failure_rate',
+      priorValue: 0.0123,
+      currentValue: 0.1318,
+      sampleCount: 165,
+      windowDays: 7,
+    })
+
+    // Prior and current rendered as percentages (×100), not raw fractions
+    expect(problem).toContain('1.2%')   // 0.0123 × 100 = 1.23 → "1.2%"
+    expect(problem).toContain('13.2%')  // 0.1318 × 100 = 13.18 → "13.2%"
+
+    // Delta expressed in pp, not the relative percentage change (would be ~968%)
+    expect(problem).toContain('pp')
+    expect(problem).not.toMatch(/9\d\d\.\d%/)   // no three-digit relative %
+
+    // Population and window appended
+    expect(problem).toContain('165 arcs')
+    expect(problem).toContain('last 7d')
+
+    // Title also uses pp and states the population
+    expect(title).toContain('pp')
+    expect(title).toContain('165 arcs')
+    expect(title).toContain('last 7d')
+  })
+
+  it('autonomous_completion_rate: same pp treatment', () => {
+    const { problem, title } = formatKpiRegressionProblem({
+      kpi: 'autonomous_completion_rate',
+      priorValue: 0.8,
+      currentValue: 0.6,
+      sampleCount: 50,
+      windowDays: 14,
+    })
+
+    expect(problem).toContain('80.0%')
+    expect(problem).toContain('60.0%')
+    expect(problem).toContain('20.0pp')   // |60 - 80| = 20pp
+    expect(problem).toContain('50 arcs')
+    expect(problem).toContain('last 14d')
+    expect(title).toContain('pp')
+  })
+
+  it('recovery_success_rate: pp rendering', () => {
+    const { problem } = formatKpiRegressionProblem({
+      kpi: 'recovery_success_rate',
+      priorValue: 0.9,
+      currentValue: 0.7,
+      sampleCount: 20,
+      windowDays: 7,
+    })
+
+    expect(problem).toContain('90.0%')
+    expect(problem).toContain('70.0%')
+    expect(problem).toContain('pp')
+    expect(problem).toContain('20 arcs')
+  })
+
+  it('singular "arc" when sampleCount === 1', () => {
+    const { problem } = formatKpiRegressionProblem({
+      kpi: 'failure_rate',
+      priorValue: 0.0,
+      currentValue: 1.0,
+      sampleCount: 1,
+      windowDays: 7,
+    })
+    expect(problem).toMatch(/\b1 arc\b/)
+    expect(problem).not.toContain('1 arcs')
+  })
+})
+
+describe('formatKpiRegressionProblem — cost KPIs render as token counts', () => {
+  it('cost_per_arc_p50: renders token values, not percentages', () => {
+    const { problem, title } = formatKpiRegressionProblem({
+      kpi: 'cost_per_arc_p50',
+      priorValue: 10000,
+      currentValue: 15000,
+      sampleCount: 30,
+      windowDays: 7,
+    })
+
+    expect(problem).toContain('tokens')
+    expect(problem).toContain('10000 tokens')
+    expect(problem).toContain('15000 tokens')
+    expect(problem).not.toContain('pp')    // no pp for cost KPIs
+    expect(problem).toContain('30 arcs')
+    expect(problem).toContain('last 7d')
+    expect(title).toContain('30 arcs')
+    expect(title).toContain('last 7d')
+  })
+
+  it('cost_per_arc_p90: relative % change stated', () => {
+    const { problem } = formatKpiRegressionProblem({
+      kpi: 'cost_per_arc_p90',
+      priorValue: 20000,
+      currentValue: 30000,
+      sampleCount: 10,
+      windowDays: 7,
+    })
+
+    // relative change = (30000 - 20000) / 20000 * 100 = 50.0%
+    expect(problem).toContain('50.0%')
+    expect(problem).toContain('tokens')
   })
 })
