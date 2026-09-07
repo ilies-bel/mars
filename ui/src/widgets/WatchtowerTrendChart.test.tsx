@@ -76,6 +76,12 @@ vi.mock('@/entities/watchtower/useLoopLedger', () => ({
   })),
 }))
 
+// LoopLedgerPanel calls useTasks to resolve run ids to human titles.
+// Mock it so these tests don't need a QueryClientProvider.
+vi.mock('@/hooks/useTasks', () => ({
+  useTasks: vi.fn(() => ({ snapshot: null, error: null, connected: false })),
+}))
+
 // WatchtowerSection now uses useScorerSuggestions and useAcceptScorer — mock
 // both so these tests don't need a QueryClientProvider or a live fetch.
 vi.mock('@/entities/watchtower/useScorerSuggestions', () => ({

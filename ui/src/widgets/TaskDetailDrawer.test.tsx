@@ -81,10 +81,23 @@ describe('TaskDetailDrawer – identity (same surface from both views)', () => {
     expect(html).toContain('role="dialog"')
   })
 
-  it('displays the task id in the drawer heading', () => {
-    const html = renderDrawer(
-      <TaskDetailDrawer taskId="mars-abc123" onClose={() => {}} />,
+  it('displays human title in the heading and keeps the task id as secondary text', () => {
+    // DEC-18: the heading now leads with the human title (from taskTitle()),
+    // not the raw machine id.  The id is still present as secondary text
+    // (copy-button label) so support and deep-link searches still work.
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    })
+    const t = fullTask({ id: 'mars-abc123', prompt: 'Fix the authentication bug' })
+    qc.setQueryData(['task', 'mars-abc123'], { kind: 'found', task: t })
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <TaskDetailDrawer taskId="mars-abc123" onClose={() => {}} />
+      </QueryClientProvider>,
     )
+    // Human title leads in the <h2> heading.
+    expect(html).toContain('Fix the authentication bug')
+    // Task id still present as secondary text (copy button label + aria-label).
     expect(html).toContain('mars-abc123')
   })
 
@@ -1013,15 +1026,25 @@ describe('TaskDetailDrawer – drill-in breadcrumb', () => {
     expect(html).toMatch(/<span[^>]*data-crumb-id="c"[^>]*class="[^"]*font-medium/)
   })
 
-  it('shows the current (last) trail id in the header, not the original prop', () => {
-    const html = renderDrawer(
-      <TaskDetailDrawer
-        taskId="c"
-        onClose={() => {}}
-        initialTrail={['a', 'b', 'c']}
-      />,
+  it('shows the human title of the current (last) trail id in the header, not the original prop', () => {
+    // DEC-18: the header leads with the human title of the CURRENT task ('c'),
+    // not the raw id.  Seeding query data for 'c' lets the component reach the
+    // 'ready' state under renderToStaticMarkup so the heading is filled.
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    })
+    qc.setQueryData(['task', 'c'], {
+      kind: 'found',
+      task: fullTask({ id: 'c', prompt: 'Current task c prompt' }),
+    })
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <TaskDetailDrawer taskId="c" onClose={() => {}} initialTrail={['a', 'b', 'c']} />
+      </QueryClientProvider>,
     )
-    expect(html).toContain('Task c')
+    // Heading shows 'c''s title — proves the LAST trail element drives the display,
+    // not the original 'a' (which has no seeded data and would show 'Task').
+    expect(html).toContain('Current task c prompt')
   })
 })
 
@@ -2696,8 +2719,27 @@ describe('TaskDetailDrawer – task mode (slice-3 regression)', () => {
 
 describe('TaskDetailDrawer – proposal mode (slice-3 no-regression)', () => {
   it('renders the dialog shell when the taskId is a proposal node id', () => {
-    const html = renderSlice3(<TaskDetailDrawer taskId="prop-x" onClose={() => {}} tasks={[slice3Task({ id: 'task-a', cluster: 'Done', parentProposalId: 'prop-x' })]} proposals={[slice3Proposal('prop-x', 'Feature Goal')]} />)
+    // DEC-18: header leads with the human title; the proposal id is preserved
+    // as secondary text (copy button) so support and deep-link searches work.
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } })
+    qc.setQueryData(['task', 'prop-x'], {
+      kind: 'found',
+      task: fullTask({ id: 'prop-x', prompt: 'Feature Goal' }),
+    })
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <TaskDetailDrawer
+          taskId="prop-x"
+          onClose={() => {}}
+          tasks={[slice3Task({ id: 'task-a', cluster: 'Done', parentProposalId: 'prop-x' })]}
+          proposals={[slice3Proposal('prop-x', 'Feature Goal')]}
+        />
+      </QueryClientProvider>,
+    )
     expect(html).toContain('data-testid="task-detail-drawer"')
+    // Human title leads in the heading.
+    expect(html).toContain('Feature Goal')
+    // Proposal id still present as secondary text (copy button).
     expect(html).toContain('prop-x')
   })
   it('step timeline renders arc spans when proposal-mode stepSpans prop is provided', () => {

@@ -58,6 +58,12 @@ vi.mock('@/entities/watchtower/useLoopLedger', () => ({
   })),
 }))
 
+// useTasks is used by LoopLedgerPanel to resolve run ids to human titles.
+// Mock it to avoid needing a QueryClientProvider in these tests.
+vi.mock('@/hooks/useTasks', () => ({
+  useTasks: vi.fn(() => ({ snapshot: null, error: null, connected: false })),
+}))
+
 import { useScorerWorkflows } from '@/entities/watchtower/useScorerWorkflows'
 import { useLoopLedger } from '@/entities/watchtower/useLoopLedger'
 
