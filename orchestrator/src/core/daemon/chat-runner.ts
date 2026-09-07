@@ -96,6 +96,17 @@ export interface AttachmentInfo {
 const IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
 const AUDIO_MIMES = new Set(['audio/mpeg', 'audio/mp4', 'audio/wav', 'audio/webm'])
 
+// ── Domain flow context ───────────────────────────────────────────────────────
+
+/**
+ * Look up the rendered Domain Flow for an Arc (task) id.
+ *
+ * Stub: returns null until the domain flow store lands from its own slice.
+ * When the store is available, replace this with the real `getFlowByArcId`
+ * import from the flow store module.
+ */
+const getFlowByArcId = async (_arcId: string): Promise<{ rendered: string } | null> => null
+
 // ── Parser ────────────────────────────────────────────────────────────────────
 
 const isObject = (v: unknown): v is Record<string, unknown> =>
@@ -1169,7 +1180,19 @@ export class ChatRunner {
       const subthreadInput = buildApiInput(
         transcript.filter((message) => message.context_scope !== 'main' && message.kind !== 'situation'),
       )
-      const input: ResponseInputItem[] = [...mainPrefix, ...subthreadInput]
+
+      // Inject the existing Domain Flow as a context_line prefix when this
+      // thread is scoped to a specific task. `getFlowByArcId` is a stub until
+      // the domain flow store lands; when it returns a flow the rendered text
+      // is prepended so the agent can re-render or update the flow without
+      // calling `get_domain_flow` explicitly.
+      const arcId = threadData.thread.terminal_entity_id ?? null
+      const existingFlow = arcId !== null ? await getFlowByArcId(arcId) : null
+      const flowContextItems: ResponseInputItem[] = existingFlow !== null
+        ? [{ type: 'message', role: 'user' as const, content: [{ type: 'input_text' as const, text: `[Domain Flow context for this task]\n${existingFlow.rendered}` }] }]
+        : []
+
+      const input: ResponseInputItem[] = [...mainPrefix, ...flowContextItems, ...subthreadInput]
       if (content.length > 0) {
         input.push({ type: 'message', role: 'user', content: [{ type: 'input_text', text: promptContent }] })
       }

@@ -182,35 +182,27 @@ export interface DomainFlow {
  * a proposal or Arc involves a significant change to business behaviour.
  */
 export const DOMAIN_FLOW_AUTHORING_STANZA = `
-## Domain Flows
+## Domain Flow authoring
 
-When shaping a proposal or grilling a new Arc, produce a Domain Flow for
-each significant change path — one flow per Arc. A Domain Flow is an
-ordered sequence of named Domain Events and Domain Policies that captures
-the business behaviour the change alters.
+When shaping or triaging a task whose change introduces, alters, or removes
+business behaviour, produce a Domain Flow by calling \`set_domain_flow\`.
 
-Emit flows in a fenced \`\`\`domain-flow block. Use this format strictly:
+Do not produce a flow for chores, build fixes, refactors, or changes with no
+business-domain effect.
 
-\`\`\`domain-flow
-title: <short phrase, e.g. "Task dispatch cycle">
-summary: <one paragraph>
+Naming: name each Domain Event in the operator's business language (e.g.
+"Order Confirmed", "Payment Captured"), not code identifiers.
 
-Event: <PascalCase verb-noun, e.g. "TaskEnqueued">
-  — <one sentence: what happened and what it signals>
+Structure: order nodes chronologically. Mark phase transitions as Pivotal
+Events (\`pivotal: true\`). Record anything you are unsure about as a Hotspot
+with a concrete question.
 
-Policy: <PascalCase noun-phrase, e.g. "DispatchGate">
-  triggers on: <Event name(s)>
-  — <what the policy does in response>
-\`\`\`
+Display: after calling \`set_domain_flow\`, include the \`rendered\` text from
+the tool response directly in your reply so the operator sees the flow inline.
 
-Rules:
-- Alternate Event → Policy → Event … naturally; policies may follow any
-  event they react to.
-- Keep flows to ≤ 10 steps. Stop when the operator confirms the flow.
-- Do not invent events or policies that your code search cannot support.
-  Name only what the change actually produces or reacts to.
-- One Domain Flow per Arc. Revise in place on operator feedback; do not
-  emit a second block while the first is unconfirmed.`
+Revisit: when entering a conversation about a task that already has a Domain
+Flow, call \`get_domain_flow\` first and include the rendered output in your
+reply before discussing changes.`
 
 // ---------------------------------------------------------------------------
 // Domain Flow → user story derivation stanza
@@ -306,5 +298,5 @@ export const resolveChatSystemPrompt = async (repoRoot: string): Promise<Resolve
   }
 
   const stanza = await buildPersonalisationStanza(repoRoot)
-  return { prompt: stanza + base, source }
+  return { prompt: stanza + base + DOMAIN_FLOW_AUTHORING_STANZA, source }
 }
