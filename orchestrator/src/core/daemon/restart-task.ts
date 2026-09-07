@@ -241,16 +241,71 @@ export const coreRestartTask = async (
   // branch unless told to keep it.
   const integrationBranch = integrationBranchName()
   const commitsAhead = await listUniqueCommitsAhead(branch, integrationBranch, repoRoot)
-  if (commitsAhead.length > 0 && !force) {
-    const { stdout } = await exec(
+
+  // Separate operator auto-commits from authored (coder or human) commits.
+  // Operator auto-commits — subjects beginning with this prefix — are
+  // machine-generated salvage checkpoints that hold no original content.
+  // They must not be counted as "work at risk": the stale-branch incident
+  // (mars-5bc47f92) had a branch with 2 operator auto-commits and 34 "files
+  // ahead" computed from a merge-base (three-dot) diff, producing a scary
+  // refusal for a branch whose unique contribution was nil.
+  const OPERATOR_AUTO_COMMIT_PREFIX = 'wip(operator): auto-committed to unblock merge of '
+  const authoredCommits = commitsAhead.filter(
+    (c) => !c.subject.startsWith(OPERATOR_AUTO_COMMIT_PREFIX),
+  )
+  const operatorAutoCommits = commitsAhead.filter(
+    (c) => c.subject.startsWith(OPERATOR_AUTO_COMMIT_PREFIX),
+  )
+
+  if (authoredCommits.length > 0 && !force) {
+    // Count files at risk using content containment rather than a merge-base
+    // (three-dot) diff. The three-dot diff overcounts: it replays every file
+    // that diverged since the merge-base, including files that have since
+    // landed on the integration branch independently. Content containment is
+    // precise: a file is only at risk when the path is absent from the
+    // integration tip entirely. This mirrors the phantom-merge derivation in
+    // derived-conditions.ts, which fell back to content containment for the
+    // same reason (git cherry is unreliable for stale, rebased branches).
+    let filesAtRiskCount = 0
+    const mergeBaseResult = await exec(
       'git',
-      ['diff', '--name-only', `${integrationBranch}...${branch}`],
+      ['merge-base', integrationBranch, branch],
       { cwd: repoRoot },
-    )
-    const filesAhead = stdout.split('\n').filter((path) => path.trim() !== '').length
+    ).catch(() => ({ stdout: '' }))
+    const mergeBase = mergeBaseResult.stdout.trim()
+    if (mergeBase) {
+      const diffResult = await exec(
+        'git',
+        ['diff', '--name-only', mergeBase, branch],
+        { cwd: repoRoot },
+      ).catch(() => ({ stdout: '' }))
+      const changedPaths = diffResult.stdout.split('\n').filter((p) => p.trim() !== '')
+      for (const filePath of changedPaths) {
+        // A file is at risk only when the path does not exist on the
+        // integration tip. If it exists there (even with different content),
+        // the substance has already been represented on the integration branch
+        // and is not lost by a restart.
+        const absent = await exec(
+          'git',
+          ['cat-file', '-e', `${integrationBranch}:${filePath}`],
+          { cwd: repoRoot },
+        ).then(() => false).catch(() => true)
+        if (absent) filesAtRiskCount++
+      }
+    }
+
+    const commitLines = authoredCommits
+      .map((c) => `  ${c.shortSha} ${c.subject}`)
+      .join('\n')
+    const autoCommitNote =
+      operatorAutoCommits.length > 0
+        ? ` (${operatorAutoCommits.length} operator auto-commit(s) not counted as authored work)`
+        : ''
+
     throw new RestartTaskError(
-      `refusing to restart task ${id}: branch ${branch} has ${commitsAhead.length} commit(s) ` +
-        `and ${filesAhead} file(s) ahead of ${integrationBranch} that restart would discard. ` +
+      `refusing to restart task ${id}: branch ${branch} has ${authoredCommits.length} authored commit(s)` +
+        ` and ${filesAtRiskCount} file(s) at risk that restart would discard${autoCommitNote}.\n` +
+        `Authored commits at risk:\n${commitLines}\n` +
         `Review or land the branch, or rerun with --force to discard it.`,
       'WRONG_STATUS',
     )

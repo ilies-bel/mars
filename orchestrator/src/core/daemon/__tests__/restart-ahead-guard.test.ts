@@ -100,7 +100,7 @@ describe('coreRestartTask — commits-ahead guard', () => {
 
     await expect(
       restart.coreRestartTask(task.id, new Set(['failed']), new InMemoryStore()),
-    ).rejects.toThrow(/1 commit\(s\) and 1 file\(s\).*--force/)
+    ).rejects.toThrow(/1 authored commit\(s\).*1 file\(s\) at risk[\s\S]*work commit — must survive restart[\s\S]*--force/)
 
     // The refusal happens before any worktree or branch cleanup.
     expect(branchExists(repo, branch)).toBe(true)
@@ -202,7 +202,7 @@ describe('coreRestartTask — commits-ahead guard', () => {
 
     await expect(
       restart.coreRestartTask(task.id, new Set(['failed']), new InMemoryStore()),
-    ).rejects.toThrow(/1 commit\(s\) and 1 file\(s\).*--force/)
+    ).rejects.toThrow(/1 authored commit\(s\).*1 file\(s\) at risk[\s\S]*live work — must survive restart via worktree path[\s\S]*--force/)
 
     // Branch and worktree both survive because the destructive path never ran.
     expect(branchExists(repo, branch)).toBe(true)
@@ -236,6 +236,174 @@ describe('coreRestartTask — commits-ahead guard', () => {
 
     // Zero commits ahead — the branch carries no work product and must be deleted
     expect(branchExists(repo, branch)).toBe(false)
+  })
+})
+
+/**
+ * Regression: operator auto-commits must not count as authored work.
+ *
+ * The incident (mars-5bc47f92): a stale branch had 2 commits, both
+ * `wip(operator): auto-committed to unblock merge of <task>`. The guard
+ * reported 34 "files ahead" via a three-dot (merge-base) diff and refused
+ * the restart, even though the branch held no real coder work. The fix:
+ *
+ * 1. Classify commits by subject prefix — operator auto-commits are excluded
+ *    from the "authored" count that gates the refusal.
+ * 2. Count at-risk files via content containment (two-dot + cat-file presence),
+ *    not the merge-base diff that overcounts diverged-but-already-landed files.
+ * 3. When authored commits DO exist, the message lists their subjects and notes
+ *    any operator auto-commits separately.
+ */
+describe('coreRestartTask — operator auto-commit classification', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    delete process.env.INTEGRATION_BRANCH
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  it('does not refuse when all commits are operator auto-commits (no authored work)', async () => {
+    const { q, restart } = await loadModules(repo)
+    const task = await q.enqueueTask('stale task', undefined, { skipTriage: true })
+    const branch = `task/${task.id}`
+
+    // Create the task branch with only operator auto-commits.
+    // These are the machine-generated salvage commits that the merge step
+    // creates when it sweeps operator dirt on the integration checkout.
+    execFileSync('git', ['checkout', '-b', branch], { cwd: repo })
+    writeFileSync(resolve(repo, 'operator-dirt.txt'), 'some operator dirt\n')
+    execFileSync('git', ['add', 'operator-dirt.txt'], { cwd: repo })
+    execFileSync('git', [
+      'commit',
+      '-m',
+      `wip(operator): auto-committed to unblock merge of mars-other-task`,
+    ], { cwd: repo })
+    execFileSync('git', ['checkout', 'main'], { cwd: repo })
+
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'failed', branch = ? WHERE id = ?`,
+      args: [branch, task.id],
+    })
+
+    // Must NOT refuse — all commits ahead are operator auto-commits, not
+    // authored coder work.
+    await expect(
+      restart.coreRestartTask(task.id, new Set(['failed']), new InMemoryStore()),
+    ).resolves.toBeDefined()
+
+    // Branch cleaned up (no authored work to protect).
+    expect(branchExists(repo, branch)).toBe(false)
+  })
+
+  it('refuses when authored commits exist and names their subjects', async () => {
+    const { q, restart } = await loadModules(repo)
+    const task = await q.enqueueTask('task with real work', undefined, { skipTriage: true })
+    const branch = `task/${task.id}`
+
+    execFileSync('git', ['checkout', '-b', branch], { cwd: repo })
+
+    // One operator auto-commit (should not count as authored work).
+    writeFileSync(resolve(repo, 'operator-dirt.txt'), 'operator dirt\n')
+    execFileSync('git', ['add', 'operator-dirt.txt'], { cwd: repo })
+    execFileSync('git', [
+      'commit',
+      '-m',
+      `wip(operator): auto-committed to unblock merge of mars-other-task`,
+    ], { cwd: repo })
+
+    // One real authored commit (should trigger the refusal).
+    writeFileSync(resolve(repo, 'real-work.ts'), 'export const x = 1\n')
+    execFileSync('git', ['add', 'real-work.ts'], { cwd: repo })
+    execFileSync('git', [
+      'commit',
+      '-m',
+      'feat(core): implement the critical algorithm',
+    ], { cwd: repo })
+
+    execFileSync('git', ['checkout', 'main'], { cwd: repo })
+
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'failed', branch = ? WHERE id = ?`,
+      args: [branch, task.id],
+    })
+
+    // Must refuse AND name the authored commit's subject.
+    await expect(
+      restart.coreRestartTask(task.id, new Set(['failed']), new InMemoryStore()),
+    ).rejects.toThrow(/feat\(core\): implement the critical algorithm/)
+
+    // Must also note the operator auto-commit separately.
+    await expect(
+      restart.coreRestartTask(task.id, new Set(['failed']), new InMemoryStore()),
+    ).rejects.toThrow(/1 operator auto-commit/)
+
+    // Counts only authored commits — 1, not 2.
+    await expect(
+      restart.coreRestartTask(task.id, new Set(['failed']), new InMemoryStore()),
+    ).rejects.toThrow(/1 authored commit/)
+
+    // Branch preserved.
+    expect(branchExists(repo, branch)).toBe(true)
+  })
+
+  it('files-at-risk count uses content containment, not merge-base diff', async () => {
+    // Reproduce the exact overcounting scenario from the incident:
+    //   - task branch has 1 authored commit adding a file already present on main
+    //   - main has since added many other files independently
+    //   - three-dot (merge-base) diff would report 6 files changed as "at risk"
+    //   - content containment correctly reports 0 files at risk because the
+    //     authored file's blob is identical to what's already on main
+    const { q, restart } = await loadModules(repo)
+    const task = await q.enqueueTask('stale task', undefined, { skipTriage: true })
+    const branch = `task/${task.id}`
+
+    // Remember the initial commit sha (this will be the task's branch point).
+    const initialSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo })
+      .toString()
+      .trim()
+
+    // Advance main with a shared file and 4 independent files.
+    writeFileSync(resolve(repo, 'shared.txt'), 'shared content\n')
+    for (let i = 0; i < 4; i++) {
+      writeFileSync(resolve(repo, `main-work-${i}.ts`), `export const v${i} = ${i}\n`)
+    }
+    execFileSync('git', ['add', '.'], { cwd: repo })
+    execFileSync('git', ['commit', '-m', 'chore: advance main independently'], { cwd: repo })
+
+    // Create the task branch from BEFORE main advanced (simulating a stale branch).
+    execFileSync('git', ['branch', branch, initialSha], { cwd: repo })
+    execFileSync('git', ['checkout', branch], { cwd: repo })
+
+    // Add one authored commit that introduces shared.txt with the SAME blob as main.
+    // The merge-base diff (three-dot) would include ALL 5 files that diverged from
+    // the initial commit (shared.txt + 4 main-work-*.ts). Content containment
+    // checks each path against the integration tip: shared.txt exists on main
+    // with the same blob → 0 files at risk.
+    writeFileSync(resolve(repo, 'shared.txt'), 'shared content\n')
+    execFileSync('git', ['add', 'shared.txt'], { cwd: repo })
+    execFileSync('git', [
+      'commit',
+      '-m',
+      'docs: add shared.txt (same blob already present on main)',
+    ], { cwd: repo })
+    execFileSync('git', ['checkout', 'main'], { cwd: repo })
+
+    await q.resolveQueueClient().execute({
+      sql: `UPDATE tasks SET status = 'failed', branch = ? WHERE id = ?`,
+      args: [branch, task.id],
+    })
+
+    // Must refuse (authored commit present) but report 0 files at risk:
+    // shared.txt's blob is already on main, so content containment finds nothing
+    // unique. A three-dot diff would wrongly have reported 5 files.
+    await expect(
+      restart.coreRestartTask(task.id, new Set(['failed']), new InMemoryStore()),
+    ).rejects.toThrow(/0 file\(s\) at risk/)
   })
 })
 
