@@ -119,6 +119,61 @@ export const autoCommitOperatorDirt = async (
     return { committed: false, reason: 'no tracked operator changes to commit' }
   }
 
+  // ── Staleness guard (defence-in-depth) ──────────────────────────────────
+  // If `baseSha` was recorded by a previous merge whose `reset --hard` was
+  // subsequently reverted (e.g. by an integration-gate failure), the checkout
+  // sits at an ancestor of baseSha while the recorded sha says otherwise. The
+  // diff(baseSha, worktree) then picks up files that baseSha introduced as
+  // "deleted" — committing them would silently revert the earlier merge.
+  //
+  // Detection: a file is stale when it changed in baseSha (baseSha^ → baseSha)
+  // but the working tree still matches baseSha^ (i.e. the file appears NEITHER
+  // in the operator diff since baseSha^ NOR in the working-tree as different
+  // from baseSha^). If ANY candidate file is stale, decline: parking is safe,
+  // a silent revert is not.
+  //
+  // If baseSha^ cannot be resolved (root commit, invalid ref, …) we skip the
+  // check rather than declining blindly — an unverifiable guard is better than
+  // a broken one.
+  const parentRef = `${baseSha}^`
+  const baseShaParentDiff = await execProbe(
+    git,
+    ['diff', '--name-only', '-z', parentRef, baseSha, '--'],
+    { cwd: repoRoot },
+    traceCtx,
+  )
+  if (baseShaParentDiff.exitCode === 0) {
+    const changedInBaseSha = new Set(namesFrom(baseShaParentDiff.stdout))
+    // Files whose working-tree content differs from baseSha^ (i.e. something
+    // changed since the parent). A file NOT in this set has working-tree
+    // content that matches baseSha^.
+    const parentToWorkingTree = await execProbe(
+      git,
+      ['diff', '--name-only', '-z', parentRef, '--'],
+      { cwd: repoRoot },
+      traceCtx,
+    )
+    if (parentToWorkingTree.exitCode === 0) {
+      const changedSinceParent = new Set(namesFrom(parentToWorkingTree.stdout))
+      // Stale = changed in baseSha AND working tree still matches baseSha^.
+      const staleFiles = files.filter(
+        (f) => changedInBaseSha.has(f) && !changedSinceParent.has(f),
+      )
+      if (staleFiles.length > 0) {
+        return {
+          committed: false,
+          reason:
+            `integration checkout is out of sync with ${baseSha.slice(0, 9)}: ` +
+            `${staleFiles.length} path(s) appear stale (working tree matches an ancestor ` +
+            `of baseSha, not baseSha itself) — refusing to auto-commit to avoid silently ` +
+            `reverting a previously merged commit ` +
+            `(${staleFiles.join(', ').slice(0, 200)})`,
+        }
+      }
+    }
+  }
+  // ─────────────────────────────────────────────────────────────────────────
+
   // A path the merge changed AND the operator edited cannot be resolved by
   // committing the working-tree side: that side does not contain the merged
   // change, so the commit would revert it. This needs a human, so decline and

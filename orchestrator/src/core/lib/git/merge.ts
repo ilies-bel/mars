@@ -1495,6 +1495,14 @@ export const mergeBranch = async ({
         if (resyncedWorkingTree) {
           try {
             await gexec(['reset', '--hard', finalIntegrationSha], repoRoot())
+            // Step 3 also wrote writeLastSyncedSha(finalTaskSha). Roll that
+            // back so the recorded sha stays consistent with the working tree
+            // we just reverted — without this, a subsequent merge reads sha
+            // finalTaskSha as "last synced" while the tree is actually at
+            // finalIntegrationSha, causing stale content to be mistaken for
+            // operator dirt and silently committed as a revert (the 2026-09-07
+            // data-loss incident).
+            writeLastSyncedSha(finalIntegrationSha)
           } catch (resetBackErr: unknown) {
             const m = resetBackErr instanceof Error ? resetBackErr.message : String(resetBackErr)
             output += `\n[merge:integration-gate] working-tree reset-back failed: ${m.slice(0, 300)}`
