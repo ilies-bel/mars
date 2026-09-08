@@ -8,9 +8,11 @@
  * file into a real commit that then failed the suite unconditionally.
  *
  * Acceptance criteria:
- *   a) a live lease held by ANOTHER task → the coder is never spawned, the
- *      task fails with the named `code:worktree-lease-held` signature, and the
- *      message names the holder so an operator can act
+ *   a) a live lease held by ANOTHER task → the coder is never spawned,
+ *      WorkflowTerminalError('worktree-lease-held') is thrown (the message
+ *      names the holder so an operator can act), and the task is RE-QUEUED
+ *      (not failed) so the recovery budget (ADR-0040: one fix-task per origin)
+ *      is not consumed on an attempt that never ran an agent.
  *   b) while a coder is running, a competing acquire on the same worktree is
  *      refused — and the lease is released once the run finishes
  *   c) a lease left behind by a dead process does not block the coder
@@ -206,13 +208,15 @@ describe('runAgent — exclusive worktree lease', () => {
     // The whole point: no second agent ever entered the tree.
     expect(mockRunWorkerWithSpan).not.toHaveBeenCalled()
 
-    const failure = mockUpdateTask.mock.calls.find(
-      (c: unknown[]) => (c[1] as { failureReason?: string }).failureReason,
+    // The task is RE-QUEUED (not failed) so the one recovery slot (ADR-0040)
+    // is not burned on an attempt that never ran. No failureReason is set.
+    const requeueCall = mockUpdateTask.mock.calls.find(
+      (c: unknown[]) => (c[1] as { status?: string }).status === 'queued',
     )
-    expect((failure?.[1] as { status: string }).status).toBe('failed')
-    expect((failure?.[1] as { failureReason: string }).failureReason).toBe(
-      'code:worktree-lease-held',
-    )
+    expect(requeueCall).toBeDefined()
+    const requeuePatch = requeueCall?.[1] as Record<string, unknown>
+    expect(requeuePatch?.failureReason).toBeUndefined()
+    expect(requeuePatch?.status).toBe('queued')
   })
 
   it('leaves the holder\'s lease intact after refusing', async () => {

@@ -9,11 +9,36 @@
  * swept the first coder's throwaway probe file into a real commit and HEAD
  * moved under a running agent mid-run.
  *
- * The lease is a sibling file `<worktreePath>.lease.json` holding the task id
- * and the OS pid of the process running the coder. Sibling, not inside the
- * tree, for the same reason the removal tombstone is a sibling: `git worktree
- * remove` deletes the directory wholesale, and a lease that vanishes with it
- * would be silently lost mid-hold.
+ * The lease is a sibling file `<worktreePath>.lease.json` holding the task id,
+ * the OS pid of the coder subprocess (`pid`), and the OS pid of the daemon
+ * that acquired the lease (`daemonPid`). Sibling, not inside the tree, for the
+ * same reason the removal tombstone is a sibling: `git worktree remove` deletes
+ * the directory wholesale, and a lease that vanishes with it would be silently
+ * lost mid-hold.
+ *
+ * ## Recorded pids and stale detection
+ *
+ * At acquisition time the coder subprocess has not yet been spawned, so the
+ * lease is written with `pid = process.pid` (the daemon's own pid) as a
+ * placeholder. Once the subprocess starts, the caller MUST call
+ * `updatePid(coderPid)` so the lease records the actual coder process.
+ *
+ * `daemonPid` is always the daemon's pid and never changes. It is the key to
+ * orphan detection:
+ *
+ *   - If `daemonPid` is dead the lease is stale — the daemon that spawned
+ *     the coder is gone. Even if `pid` (the coder subprocess) is still alive
+ *     with PPID=1 (adopted by launchd after the daemon exited), the coder is
+ *     an orphan: the daemon that can coordinate cleanup no longer exists, and
+ *     the worktree must be freed.
+ *   - If `daemonPid` is alive but `pid` is dead, the coder crashed while the
+ *     daemon was still running — the lease is stale and must be reclaimed.
+ *   - If both are alive the lease is live and another coder is legitimately
+ *     running in the tree.
+ *
+ * Old lease files written before `daemonPid` was introduced contain only
+ * `pid`. For backward compatibility, if `daemonPid` is absent, the check falls
+ * back to `pid` alone (old behaviour: stale only when `pid` is dead).
  *
  * Two properties matter and neither is provided by `acquireLock`
  * (`./lock.ts`, the `.merge.lock` primitive):
@@ -29,16 +54,14 @@
  *    the caller reports which task holds the tree (`mars task stop <id>`
  *    releases it early).
  *
- * A holder whose pid is dead is stale: the daemon that owned it (and therefore
- * the coder child it spawned) is gone, so the lease is reclaimed on read.
- *
  * NOT to be confused with the OPERATOR lease (`leaseOwner`/`leasedAt` on the
  * task row, `core/arc.ts` + `tools/human/await-human.ts`). That one records a
  * human owning a task parked at a manual step, is measured in hours, expires
  * into an alert, and never blocks anything. This one is machine-scoped,
  * measured in the length of one coder run, and its entire purpose is to block.
  */
-import { open, readFile, unlink, writeFile } from 'node:fs/promises'
+import { open, readFile, unlink } from 'node:fs/promises'
+import { writeFileSync } from 'node:fs'
 import { isPidAlive } from './lock'
 
 /** The recorded holder of a worktree lease. */
@@ -47,8 +70,33 @@ export interface WorktreeLease {
   taskId: string
   /** Branch the holder checked out, when known. */
   branch: string | null
-  /** OS pid of the process running the coder (the daemon, not the child). */
+  /**
+   * OS pid of the coder subprocess.
+   *
+   * Initially set to the daemon's own pid as a placeholder (the subprocess
+   * has not yet been spawned at acquire time). The caller MUST call
+   * `updatePid(coderPid)` once the subprocess starts to replace the
+   * placeholder with the actual coder pid, enabling dead-coder detection even
+   * while the daemon is alive.
+   *
+   * A dead `pid` means the coder subprocess has exited — the lease is stale
+   * and must be reclaimed.
+   */
   pid: number
+  /**
+   * OS pid of the daemon that acquired this lease.
+   *
+   * Set at acquisition time and never changed. Used for orphan detection: if
+   * the daemon is dead but `pid` (the coder subprocess) is still alive with
+   * PPID=1, the coder is an orphan — the daemon that can coordinate cleanup
+   * is gone, and the lease must be reclaimed. See module doc comment for the
+   * full stale-detection logic.
+   *
+   * Absent in lease files written by older daemons (before this field was
+   * introduced). Readers fall back to checking only `pid` when `daemonPid`
+   * is not present.
+   */
+  daemonPid?: number
   /** Epoch milliseconds at which the lease was taken. */
   acquiredAt: number
 }
@@ -86,10 +134,19 @@ export class WorktreeLeaseHeldError extends Error {
 /**
  * Read the lease on `worktreePath`, or `null` when the worktree is free.
  *
- * A lease file that is absent, unparseable, malformed, or owned by a dead pid
- * counts as free — and a stale one is unlinked here so the next acquire can
- * claim the tree. Reclaiming on read is what keeps a daemon crash from
- * stranding every worktree it held.
+ * A lease is considered stale — and is reclaimed (unlinked) — when:
+ *   - The file is absent, unparseable, or malformed.
+ *   - `daemonPid` is present and is dead: the daemon that spawned the coder
+ *     is gone. Even if `pid` (the coder) is still alive as an orphan (PPID=1),
+ *     the coordinating daemon is absent and the worktree must be freed.
+ *   - `pid` (the coder subprocess) is dead: the coder exited while the daemon
+ *     was still alive (normal exit or crash).
+ *
+ * Old lease files without `daemonPid` fall back to checking only `pid`.
+ *
+ * Reclaiming on read is what keeps a daemon crash from stranding every
+ * worktree it held — the first acquire attempt after the old daemon dies
+ * will silently free the stale lease.
  */
 export const readLiveWorktreeLease = async (
   worktreePath: string,
@@ -125,10 +182,33 @@ export const readLiveWorktreeLease = async (
     return null
   }
 
+  // ── Orphan detection: check the daemon pid first ─────────────────────────
+  // A live coder whose daemon is dead is an orphan (PPID=1). The daemon cannot
+  // coordinate cleanup, so we treat this lease as stale and free the worktree.
+  // Old leases without daemonPid skip this check and fall through to the pid
+  // check below (backward compat: stale only when pid is dead).
+  const daemonPid =
+    typeof record.daemonPid === 'number' &&
+    Number.isInteger(record.daemonPid) &&
+    record.daemonPid > 0
+      ? record.daemonPid
+      : null
+
+  if (daemonPid !== null && !isPidAlive(daemonPid)) {
+    console.log(
+      `[worktree-lease] releasing stale lease on ${worktreePath}: ` +
+        `daemon pid ${daemonPid} (task ${record.taskId}) is no longer alive` +
+        (isPidAlive(pid) ? ` (coder pid ${pid} is an orphan and will be swept at startup)` : ''),
+    )
+    await unlink(path).catch(() => {})
+    return null
+  }
+
+  // ── Coder-pid check: detect a dead coder even while the daemon lives ──────
   if (!isPidAlive(pid)) {
     console.log(
       `[worktree-lease] releasing stale lease on ${worktreePath}: ` +
-        `pid ${pid} (task ${record.taskId}) is no longer alive`,
+        `coder pid ${pid} (task ${record.taskId}) is no longer alive`,
     )
     await unlink(path).catch(() => {})
     return null
@@ -138,6 +218,7 @@ export const readLiveWorktreeLease = async (
     taskId: record.taskId,
     branch: typeof record.branch === 'string' ? record.branch : null,
     pid,
+    daemonPid: daemonPid ?? undefined,
     acquiredAt:
       typeof record.acquiredAt === 'number' ? record.acquiredAt : Date.now(),
   }
@@ -161,17 +242,19 @@ export interface WorktreeLeaseHandle {
    */
   release(): Promise<void>
   /**
-   * Update the recorded pid to the coder's actual subprocess pid.
+   * Update the recorded coder pid from the daemon-pid placeholder to the
+   * actual coder subprocess pid.
    *
    * Called once per coder dispatch, after the subprocess is spawned and its
    * OS pid is known. The initial lease records `process.pid` (the daemon's
-   * pid) as a placeholder so the file exists and blocks concurrent acquires;
-   * this update replaces it with the pid of the actual coder process, so
-   * `readLiveWorktreeLease` can detect a dead coder and release the stale
-   * lease — even when the daemon is still alive.
+   * pid) in BOTH `pid` and `daemonPid`. This update replaces `pid` with the
+   * coder subprocess pid so that `readLiveWorktreeLease` can detect a dead
+   * coder (via `pid`) even while the daemon stays alive — while `daemonPid`
+   * stays fixed at the daemon's pid for orphan detection (a coder whose
+   * daemon is dead is an orphan even if the coder process itself is alive).
    *
-   * Best-effort: a write failure leaves the daemon's pid in the lease
-   * (conservative: a live daemon means a live holder). The `release` closure
+   * Best-effort: a write failure leaves the daemon's pid in `pid` (which is
+   * conservative — a live daemon means a live holder). The `release` closure
    * still cleans up on exit regardless.
    */
   updatePid(pid: number): Promise<void>
@@ -186,19 +269,22 @@ export interface WorktreeLeaseHandle {
  * ours, so a lease another process legitimately reclaimed after we were
  * declared stale is never deleted out from under it.
  *
- * ## Why the initial pid is the daemon's
+ * ## Why both `pid` and `daemonPid` start as the daemon's pid
  *
  * At acquire time the coder subprocess has not yet been spawned — its pid is
- * unknown. We write `process.pid` (the daemon's pid) as a placeholder that
- * blocks concurrent acquires while the caller proceeds to spawn the coder.
+ * unknown. We write `process.pid` (the daemon's pid) as the placeholder for
+ * both fields so:
+ *   - `pid` blocks concurrent acquires while the caller proceeds to spawn.
+ *   - `daemonPid` is set once and never changed; it always identifies the
+ *     acquiring daemon for orphan detection after the daemon exits.
+ *
  * Once the subprocess pid is known, the caller MUST call `updatePid(coderPid)`
- * so that a crashed coder can be detected as stale even when the daemon is
- * still alive.
+ * to replace `pid` with the real subprocess pid. `daemonPid` stays unchanged.
  *
  * If the coder runs in-process (no subprocess, `onPid` never fires), the
- * daemon's pid stays in the lease. This is correct: the daemon being alive
+ * daemon's pid stays in both fields. This is correct: the daemon being alive
  * means the run is still ongoing, and a daemon crash makes `isPidAlive` return
- * false, releasing the stale lease on the next read.
+ * false for `daemonPid`, releasing the stale lease on the next read.
  */
 export const acquireWorktreeLease = async (args: {
   worktreePath: string
@@ -214,14 +300,16 @@ export const acquireWorktreeLease = async (args: {
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
       const handle = await open(path, 'wx')
-      // Record the daemon's pid as a placeholder. The coder's real subprocess
-      // pid is not yet known. The caller must call updatePid(coderPid) once
-      // the subprocess starts so stale-lease detection works correctly even
-      // when the daemon stays alive after the coder crashes.
+      // Record the daemon's pid as the placeholder for both `pid` and
+      // `daemonPid`. `pid` will be updated to the coder subprocess pid once it
+      // is known (via `updatePid`). `daemonPid` stays fixed at the daemon's
+      // pid for the lifetime of this lease so orphan detection can identify
+      // leases whose daemon is dead even if the coder process is still alive.
       let lease: WorktreeLease = {
         taskId: args.taskId,
         branch: args.branch ?? null,
         pid: process.pid,
+        daemonPid: process.pid,
         acquiredAt: Date.now(),
       }
       try {
@@ -252,8 +340,21 @@ export const acquireWorktreeLease = async (args: {
 
       const updatePid = async (pid: number): Promise<void> => {
         try {
+          // Update only the `pid` field (the coder subprocess). `daemonPid`
+          // stays fixed at process.pid (the acquiring daemon's pid) so orphan
+          // detection can identify this lease even after the daemon exits.
+          //
+          // writeFileSync is deliberate: the onPid callback that triggers this
+          // update does NOT await the returned Promise (it fires and forgets), so
+          // an async write leaves a window where the lease still shows the old
+          // daemon pid. Any reader that calls readLiveWorktreeLease while that
+          // window is open would see the daemon pid (always alive) and believe the
+          // lease is live. Synchronous I/O closes that window — the update is
+          // visible to any subsequent readLiveWorktreeLease call on the same
+          // event-loop tick. The file is tiny (< 256 bytes) so the sync cost is
+          // negligible compared to the coder subprocess lifetime.
           lease = { ...lease, pid }
-          await writeFile(path, JSON.stringify(lease), 'utf8')
+          writeFileSync(path, JSON.stringify(lease), 'utf8')
         } catch (err) {
           // Non-fatal: daemon's pid stays. The release closure cleans up on exit.
           console.warn(

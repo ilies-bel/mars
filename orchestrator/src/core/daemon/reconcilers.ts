@@ -718,6 +718,141 @@ const phantomInFlightSweep: Reconciler = {
 }
 
 /**
+ * Orphan coder kill sweep — terminate coder subprocesses that survived the
+ * daemon that spawned them. An orphan is a coder process whose `daemonPid`
+ * (recorded in the lease file at acquisition time and never changed) is dead
+ * but whose own `pid` is still alive — typically with PPID=1, adopted by
+ * launchd after the daemon exited.
+ *
+ * Must run BEFORE `requeue-stale-running` so that:
+ *   (a) Orphan coders are terminated before we try to re-queue the tasks they
+ *       still hold worktree leases for — otherwise a freshly-dispatched run
+ *       would hit `WorktreeLeaseHeldError` on its first `runAgent` call.
+ *   (b) The lease files are deleted so `readLiveWorktreeLease` returns `null`
+ *       on the next read, allowing clean dispatch.
+ *
+ * Applies only to leases that carry `daemonPid` (written by daemons that
+ * include this fix). Legacy lease files without `daemonPid` are skipped; their
+ * staleness is still detected by the `pid` liveness check in
+ * `readLiveWorktreeLease` once the coder exits naturally.
+ *
+ * Errors per-lease are swallowed (log + continue) so a transient signal
+ * failure never aborts the rest of the sweep.
+ */
+const orphanCoderKillSweep: Reconciler = {
+  name: 'orphan-coder-kill-sweep',
+  async run({ log }) {
+    try {
+      const { readdir, readFile, unlink } = await import('node:fs/promises')
+      const { join } = await import('node:path')
+      const { resolveContext } = await import('../context')
+      const { isPidAlive } = await import('../lib/lock')
+
+      const stateDir = resolveContext().stateDir
+      const worktreesDir = join(stateDir, 'worktrees')
+
+      let files: string[]
+      try {
+        files = await readdir(worktreesDir)
+      } catch {
+        // Worktrees directory may not exist on a fresh install.
+        return { orphanCoderKilledCount: 0 }
+      }
+
+      const leaseFiles = files.filter((f) => f.endsWith('.lease.json'))
+      let killedCount = 0
+
+      for (const leaseFile of leaseFiles) {
+        const leasePath = join(worktreesDir, leaseFile)
+        let raw: string
+        try {
+          raw = await readFile(leasePath, 'utf8')
+        } catch {
+          continue
+        }
+
+        let record: Record<string, unknown>
+        try {
+          record = JSON.parse(raw) as Record<string, unknown>
+        } catch {
+          continue
+        }
+
+        const pid = record['pid']
+        const daemonPid = record['daemonPid']
+        const taskId = record['taskId'] ?? '?'
+
+        // Only act on leases that carry the `daemonPid` field (new format).
+        // Old-format leases rely on the `pid` liveness check in
+        // `readLiveWorktreeLease`; we cannot infer orphan status from them.
+        if (
+          typeof pid !== 'number' ||
+          pid <= 0 ||
+          typeof daemonPid !== 'number' ||
+          daemonPid <= 0
+        ) {
+          continue
+        }
+
+        // Orphan: coder is alive but its daemon is dead.
+        if (!isPidAlive(daemonPid) && isPidAlive(pid)) {
+          log(
+            `[reconcile] orphan-coder-kill-sweep: task ${taskId} — coder pid ${pid} ` +
+              `is alive but daemon pid ${daemonPid} is dead (orphan); sending SIGTERM`,
+          )
+
+          try {
+            process.kill(pid, 'SIGTERM')
+          } catch {
+            // pid may have exited between the liveness check and the kill.
+          }
+
+          // Grace period: let the coder clean up its own state before SIGKILL.
+          const GRACE_MS = 3_000
+          const deadline = Date.now() + GRACE_MS
+          while (Date.now() < deadline) {
+            if (!isPidAlive(pid)) break
+            await new Promise((resolve) => setTimeout(resolve, 200))
+          }
+
+          if (isPidAlive(pid)) {
+            log(
+              `[reconcile] orphan-coder-kill-sweep: coder pid ${pid} (task ${taskId}) ` +
+                `did not exit within grace period; sending SIGKILL`,
+            )
+            try {
+              process.kill(pid, 'SIGKILL')
+            } catch {
+              // ignore
+            }
+          }
+
+          // Delete the stale lease file so the next dispatch can acquire it.
+          await unlink(leasePath).catch(() => {})
+
+          log(
+            `[reconcile] orphan-coder-kill-sweep: orphaned coder pid ${pid} ` +
+              `(task ${taskId}) terminated and lease released`,
+          )
+          killedCount++
+        }
+      }
+
+      if (killedCount > 0) {
+        log(
+          `[reconcile] orphan-coder-kill-sweep: terminated ${killedCount} orphaned coder(s)`,
+        )
+      }
+
+      return { orphanCoderKilledCount: killedCount }
+    } catch (err) {
+      log(`[reconcile] orphan-coder-kill-sweep failed: ${(err as Error).message}`)
+      return {}
+    }
+  },
+}
+
+/**
  * 5. Requeue stale-running — tasks that were `running` when the prior daemon
  *    died are re-queued from setup (no retry budget burn). Must run BEFORE
  *    reseed-dispatch so that orphaned 'running' rows are converted to 'queued'
@@ -1417,6 +1552,9 @@ export const RECONCILERS: readonly Reconciler[] = [
   failedCommitterActionQueue,
   orphanedFailedScan,
   queuedCommitterReseed,
+  // Kill orphaned coder processes BEFORE requeue-stale-running so that tasks
+  // whose worktree leases are held by orphans can be re-dispatched cleanly.
+  orphanCoderKillSweep,
   requeueStaleRunning,
   reseedDispatch,
   orphanSpanSweep,

@@ -273,19 +273,31 @@ export const runAgent = async (
   // below touches anything — is what keeps that attach from clobbering the
   // origin's live tree.
   const failWorktreeLeaseHeld = async (summary: string): Promise<never> => {
-    const leaseSignature = computeFailureSignature('code:worktree-lease-held', summary)
+    // Re-queue instead of failing: the worktree is currently occupied by
+    // another live coder, so the work has NOT been attempted. Marking the task
+    // `failed` would spend the one recovery slot (ADR-0040: exactly one fix-task
+    // per origin failure) on an attempt that never ran an agent, which is
+    // exactly wrong. Instead, set the task back to `queued` so the dispatcher
+    // retries once the occupant finishes or the daemon is restarted and the
+    // orphan-coder-kill-sweep removes the stale holder.
+    //
+    // Clearing branch/worktreePath/claudeSessionId mirrors the phantom-in-flight
+    // sweep so setup runs fresh on re-dispatch and allocates a clean worktree.
     await updateTask(
       taskId,
       {
-        status: 'failed',
-        error: summary,
-        failedPhase: 'code',
-        failureReason: 'code:worktree-lease-held',
-        failureSignature: leaseSignature,
-        failureReasonCode: leaseSignature,
+        status: 'queued',
+        branch: null,
+        worktreePath: null,
+        claudeSessionId: null,
+        error: null,
+        failedPhase: null,
       },
       store,
     )
+    // WorkflowTerminalError terminates this workflow run. The task is now
+    // `queued` (not `failed`), so the recovery-spawn subscriber does not
+    // spawn a fix-task and the recovery budget is preserved.
     throw new WorkflowTerminalError('worktree-lease-held', summary)
   }
 

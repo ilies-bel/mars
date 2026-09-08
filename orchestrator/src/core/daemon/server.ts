@@ -6787,6 +6787,65 @@ export const startDaemon = async (
       log(`force shutdown abandoning in-flight: ${entries}`)
     }
 
+    // ── Terminate live coder children ────────────────────────────────────────
+    // Abort every in-flight workflow's AbortController so that runAgent checks
+    // ctx.signal.aborted and exits cleanly (operator-stop path, no recovery
+    // task spawned). Then kill the underlying subprocess pids so a subprocess
+    // that ignores the abort signal still dies before the daemon exits — this
+    // prevents the orphan scenario described in the 2026-09-08 incident where
+    // coder pids survived the daemon restart with PPID=1 and held their
+    // worktree leases indefinitely.
+    {
+      const snapshot = tracker.inFlightSnapshot()
+      // Abort all in-flight abort controllers first so running workflows see
+      // ctx.signal.aborted = true when their subprocess exits.
+      for (const entry of snapshot) {
+        tracker.abort(entry.taskId)
+      }
+      // Collect subprocess pids from in-flight entries (set by runAgent via
+      // the onPid callback once the coder process is spawned).
+      const coderPids = snapshot
+        .map((e) => e.pid)
+        .filter((pid): pid is number => typeof pid === 'number')
+      if (coderPids.length > 0) {
+        log(
+          `[shutdown] sending SIGTERM to ${coderPids.length} live coder subprocess(es): ${coderPids.join(', ')}`,
+        )
+        for (const pid of coderPids) {
+          try {
+            process.kill(pid, 'SIGTERM')
+          } catch {
+            // Process already exited — not an error.
+          }
+        }
+        // Grace period: give coders time to flush their own writes before
+        // SIGKILL. The daemon will still exit (either after the in-flight drain
+        // below or immediately on force), so this is bounded.
+        const GRACE_MS = 5_000
+        const deadline = Date.now() + GRACE_MS
+        while (Date.now() < deadline) {
+          const anyAlive = coderPids.some((pid) => {
+            try {
+              process.kill(pid, 0)
+              return true
+            } catch {
+              return false
+            }
+          })
+          if (!anyAlive) break
+          await new Promise((r) => setTimeout(r, 200))
+        }
+        for (const pid of coderPids) {
+          try {
+            process.kill(pid, 'SIGKILL')
+          } catch {
+            // Already dead.
+          }
+        }
+        log(`[shutdown] coder subprocess(es) terminated`)
+      }
+    }
+
     if (!force) {
       // No timeout: a drain stop waits as long as the in-flight tasks need.
       // `mars daemon kill` is the escape hatch for stuck work.
