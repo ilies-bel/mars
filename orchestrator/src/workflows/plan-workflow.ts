@@ -11,6 +11,9 @@ import { type TraceEventStore } from '../core/lib/trace-events-store'
 import { nullTraceStore } from '../core/lib/run-tool'
 import { runWorkerWithSpan } from '../core/lib/run-worker-with-span'
 import { diagnoseClaudeFailure } from '../core/lib/claude-stream'
+import { upsertFlow } from '../core/domain-flow/store'
+import { resolveStateClient } from '../core/store/state-client'
+import { domainFlowContentSchema } from '../core/domain-flow/types'
 
 const planInputSchema = z.object({
   taskId: z.string(),
@@ -29,6 +32,22 @@ const plannerOutputSchema = z.object({
       }),
     )
     .max(10),
+  // Optional Domain Flow the planner authors alongside its suggestions.
+  // The planner OMITS this field (or provides empty nodes) when the change has
+  // no business-domain effect — a chore, a build fix, or a dependency bump
+  // should produce NO flow artefact. When present with at least one node, the
+  // workflow persists it through the shared upsertFlow / getFlowByArcId store
+  // (the same path used by the chat agent), validated by the shared schema.
+  //
+  // Trade-off note (Option a chosen over Option b): the flow is carried inside
+  // the planner's parsed JSON output rather than via a MCP tool call. The
+  // planner is a single-shot worker with a parsed JSON contract already — a
+  // tool round-trip buys revision capability the planner has no use for, and
+  // keeping the output shape as one well-typed parse keeps this path simple.
+  // The chat path (chat-mcp.ts → set_domain_flow tool) and this Planner path
+  // both call upsertFlow / getFlowByArcId from the same store module; no second
+  // implementation exists.
+  domainFlow: domainFlowContentSchema.optional(),
 })
 
 // The plan workflow reads the task and writes Proposal rows; the daemon
@@ -109,6 +128,16 @@ const planWorkflow = defineWorkflow<PlanInput, RunPlanResult, PlanServices>({
           solution: s.prompt,
           notes: s.rationale ?? '',
         })
+      }
+
+      // Persist Domain Flow when the planner authored one with at least one
+      // node. A change with no business-domain effect (chore/build fix/dep
+      // bump) produces NO flow — the planner signals this by omitting
+      // domainFlow or providing it with empty nodes. An empty-node flow must
+      // not be written; an absent domainFlow must not create a row.
+      const df = parsed.domainFlow
+      if (df && df.nodes.length > 0) {
+        await upsertFlow(resolveStateClient(), task.id, df.name, df.nodes)
       }
 
       return {
