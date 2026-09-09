@@ -236,9 +236,22 @@ export const CapRatchet = ({
 
       {/* Raw transitions — collapsed by default, available for exact sequence inspection */}
       {entries.length > 0 && (
-        <details className="mt-1">
-          <summary className="cursor-pointer text-micro text-muted-foreground hover:text-muted-foreground select-none">
-            <ChevronRight size={11} strokeWidth={2} aria-hidden="true" /> raw transitions
+        <details className="group mt-1">
+          {/* `flex list-none` is not cosmetic here. Tailwind's preflight sets
+              `svg { display: block }`, so inside a plain block <summary> the
+              Lucide chevron became a block and pushed "raw transitions" onto a
+              second line, with the UA's own disclosure marker left stranded
+              beside it. Every other <summary> in this file already uses this
+              shape; this one was the exception. min-h-6 keeps the control at a
+              24px target once it collapses back to one line. */}
+          <summary className="flex min-h-6 cursor-pointer list-none items-center gap-1 text-micro text-muted-foreground select-none hover:text-foreground">
+            <ChevronRight
+              size={11}
+              strokeWidth={2}
+              aria-hidden="true"
+              className="shrink-0 transition-transform group-open:rotate-90"
+            />
+            raw transitions
           </summary>
           <div className="mt-1 flex flex-wrap items-center gap-1 text-label text-muted-foreground">
             <span className="text-muted-foreground">{baseline}</span>
@@ -250,6 +263,93 @@ export const CapRatchet = ({
             ))}
           </div>
         </details>
+      )}
+    </div>
+  )
+}
+
+/** How many acknowledgments stay expanded before the rest fold away. */
+const ACK_PREVIEW = 6
+
+type Ack = StewardView['runtimeTuning']['acks'][number]
+
+const AckCard = ({ ack, testid }: { ack: Ack; testid?: string }) => (
+  <div
+    className="rounded border border-success/20 bg-success/[0.03] px-3 py-2"
+    data-testid={testid}
+  >
+    <p className="text-label text-foreground">{ack.text}</p>
+    <time className="text-micro text-muted-foreground">
+      {formatAbsoluteDateTime(ack.timestamp)}
+    </time>
+  </div>
+)
+
+/**
+ * Summarises the whole acknowledgment set in one line, then shows the most
+ * recent few in full with the remainder behind a disclosure.
+ *
+ * Direction comes from `ack.pair` ({from, to}), never from the sentence: the
+ * prose is the Steward's to word, and a regex over it would quietly stop
+ * counting the day that wording changed.
+ */
+const AckLog = ({ acks }: { acks: Ack[] }) => {
+  const paired = acks.filter((a) => a.pair !== null)
+  const bumps = paired.filter((a) => a.pair!.to > a.pair!.from).length
+  const sheds = paired.filter((a) => a.pair!.to < a.pair!.from).length
+  const levels = paired.flatMap((a) => [a.pair!.from, a.pair!.to])
+  const lo = levels.length > 0 ? Math.min(...levels) : null
+  const hi = levels.length > 0 ? Math.max(...levels) : null
+
+  const recent = acks.slice(0, ACK_PREVIEW)
+  const earlier = acks.slice(ACK_PREVIEW)
+
+  return (
+    <div className="space-y-2">
+      <div className="eyebrow text-muted-foreground">
+        Steward acknowledgments ({acks.length})
+      </div>
+
+      {acks.length === 0 ? (
+        <p className="text-micro text-muted-foreground">No acknowledgments yet.</p>
+      ) : (
+        <>
+          {paired.length > 0 && (
+            <p className="text-micro text-muted-foreground" data-testid="steward-ack-summary">
+              {`${bumps} bump${bumps === 1 ? '' : 's'}, ${sheds} shed${sheds === 1 ? '' : 's'}`}
+              {lo !== null && hi !== null && lo !== hi
+                ? `, holding between ${lo} and ${hi} workers.`
+                : '.'}
+            </p>
+          )}
+
+          {recent.map((ack, i) => (
+            <AckCard
+              key={ack.timestamp}
+              ack={ack}
+              testid={i === 0 ? 'steward-ack-latest' : undefined}
+            />
+          ))}
+
+          {earlier.length > 0 && (
+            <details className="group">
+              <summary className="flex min-h-6 cursor-pointer list-none items-center gap-1 text-micro text-muted-foreground select-none hover:text-foreground">
+                <ChevronRight
+                  size={11}
+                  strokeWidth={2}
+                  aria-hidden="true"
+                  className="shrink-0 transition-transform group-open:rotate-90"
+                />
+                {`${earlier.length} earlier`}
+              </summary>
+              <div className="mt-2 space-y-2">
+                {earlier.map((ack) => (
+                  <AckCard key={ack.timestamp} ack={ack} />
+                ))}
+              </div>
+            </details>
+          )}
+        </>
       )}
     </div>
   )
@@ -301,28 +401,22 @@ const RuntimeTuningLane = ({ data }: { data: StewardView['runtimeTuning'] }) => 
         liveCap={liveCap}
       />
 
-      {/* Acks — Steward's own first-person voice, newest first */}
-      <div className="space-y-2">
-        <div className="eyebrow text-muted-foreground">
-          Steward acknowledgments ({acks.length})
-        </div>
-        {acks.length === 0 ? (
-          <p className="text-micro text-muted-foreground">No acknowledgments yet.</p>
-        ) : (
-          acks.map((ack, i) => (
-            <div
-              key={ack.timestamp}
-              className="rounded border border-success/20 bg-success/[0.03] px-3 py-2"
-              data-testid={i === 0 ? 'steward-ack-latest' : undefined}
-            >
-              <p className="text-label text-foreground">{ack.text}</p>
-              <time className="text-micro text-muted-foreground">
-                {formatAbsoluteDateTime(ack.timestamp)}
-              </time>
-            </div>
-          ))
-        )}
-      </div>
+      {/* Acks — Steward's own first-person voice, newest first.
+       *
+       * This rendered all 200 as equal cards: roughly twelve thousand pixels
+       * of scroll in which "I bumped implement workers from 5 to 6 because the
+       * backlog was sustained." appeared verbatim dozens of times. Every row
+       * was individually readable and the list as a whole said nothing — you
+       * could not learn from it how often the Steward acts, which way, or
+       * within what range, without scrolling all of it and counting.
+       *
+       * Two readings, so two treatments. The shape of the whole set is one
+       * computed line (classified from `pair`, not by parsing the prose, so it
+       * cannot drift from the copy). Recent behaviour is the newest few, in
+       * full. Everything else is kept, in order, one disclosure away — nothing
+       * is dropped, it just stops competing with the answer.
+       */}
+      <AckLog acks={acks} />
     </article>
   )
 }
