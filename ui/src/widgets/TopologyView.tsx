@@ -573,7 +573,10 @@ const TopologyViewInner = ({
   }
 
   return (
-    <main className="relative flex min-h-0 flex-1 overflow-hidden bg-background" onDoubleClick={onWrapperDoubleClick}>
+    <main className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-background" onDoubleClick={onWrapperDoubleClick}>
+      {/* Canvas area. Everything that floats over the graph lives in here, so
+          the status bar below can never be painted on top of a node. */}
+      <div className="relative min-h-0 flex-1">
       <div
         role="img"
         className="dag-canvas absolute inset-0 h-full w-full"
@@ -631,14 +634,19 @@ const TopologyViewInner = ({
           <span className="shrink-0 opacity-50">· Esc to collapse</span>
         </div>
       )}
-      {/* One backed panel, bottom-left.
+      </div>
+      {/* Status bar, NOT an overlay.
        *
-       * The legend, the navigation hint and the minimap were three unbacked
-       * overlays stacked into the same bottom-right corner, painted straight
-       * onto the dot grid at ~2.4:1 with the hint partly under the minimap.
-       * The minimap keeps that corner; the two text overlays merge into a
-       * single readable card on the opposite side, clear of the zoom controls. */}
-      <div className="pointer-events-none absolute bottom-3 left-12 z-10 flex flex-col gap-1.5 rounded-md border border-border bg-surface/95 px-2.5 py-2 shadow-[var(--shadow-e2)]">
+       * This was one backed panel floating at bottom-left of the canvas, and
+       * being 420x93 it covered a whole task card outright — measured at 100%
+       * of that node's area. Worse, it is pointer-events-none, so the card
+       * underneath could not even be reached by dragging the panel away.
+       *
+       * Out of the canvas and onto its own row it cannot occlude anything, and
+       * a single line reads as chrome rather than as a sticker on the graph.
+       * The minimap and zoom controls keep their corners; they are controls,
+       * they are small, and they sit where a graph UI is expected to put them. */}
+      <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 border-t border-border bg-surface px-3 py-1.5">
         <div className="flex items-center gap-2.5 text-micro text-muted-foreground">
           {LEGEND_ITEMS.map((item) => (
             <span key={item.label} className="inline-flex items-center gap-1.5">
@@ -647,24 +655,27 @@ const TopologyViewInner = ({
             </span>
           ))}
         </div>
-        {emphasized.edges.length === 0 && (
-          /* A dot grid of disconnected cards reads as "the graph failed to
-           * draw". It has not: a recovery edge is internal to its arc's card,
-           * so a snapshot where nothing blocks anything ACROSS arcs genuinely
-           * has no line to draw. Say so rather than leaving it ambiguous. */
-          <p className="text-micro text-muted-foreground" data-testid="topo-no-edges">
-            No dependencies between active arcs.
-          </p>
-        )}
-        <p className="text-label leading-relaxed text-muted-foreground">
-          scroll = zoom · drag = pan
-          <br />
+        {/* text-label, not text-micro: the navigation hint was pinned to 12px
+            by an earlier AA-contrast fix (TopologyView.test.tsx) and that
+            decision still holds — this is the one line a first-time user has
+            to read to know the canvas is interactive. */}
+        <span className="text-label text-muted-foreground">scroll = zoom · drag = pan</span>
+        <span className="text-label text-muted-foreground">
           {hintText ? (
             <span className="font-medium text-foreground">{hintText}</span>
           ) : (
             'click card = open · click task = details · esc = collapse'
           )}
-        </p>
+        </span>
+        {emphasized.edges.length === 0 && (
+          /* A dot grid of disconnected cards reads as "the graph failed to
+           * draw". It has not: a recovery edge is internal to its arc's card,
+           * so a snapshot where nothing blocks anything ACROSS arcs genuinely
+           * has no line to draw. Say so rather than leaving it ambiguous. */
+          <p className="ml-auto text-micro text-muted-foreground" data-testid="topo-no-edges">
+            No dependencies between active arcs.
+          </p>
+        )}
       </div>
     </main>
   )
