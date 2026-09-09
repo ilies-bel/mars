@@ -318,8 +318,16 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
  * The list is short and matches whole words only. A false positive just makes
  * a safe button quieter; a false negative is the failure that costs work.
  */
-const isDestructiveAction = (label: string): boolean =>
-  /\b(restart|purge|drop|delete|retire|discard|wipe|remove|abort|reset)\b/i.test(label)
+const isDestructiveAction = (label: string): boolean => {
+  // `restart` means two different things and only one of them destroys work.
+  // `restart-daemon` ("Restart engine") bounces the daemon process: in-flight
+  // tasks re-queue and nothing is lost, and on the daemon-drift card it is the
+  // RECOMMENDED action — the copy directly above the button says "you need to
+  // restart the engine". Painting that in the stop colour makes the button
+  // argue with the sentence. `restart` on a TASK is the destructive one.
+  if (/\brestart[-_]?daemon\b|restart engine/i.test(label)) return false
+  return /\b(restart|purge|drop|delete|retire|discard|wipe|remove|abort|reset)\b/i.test(label)
+}
 
 // Restart is destructive (wipes worktree + branch, discarding commits) — it
   // requires an explicit in-app confirm step before dispatching, rather than
@@ -398,6 +406,21 @@ const isDestructiveAction = (label: string): boolean =>
   // humanSummary || title falls back to the sole headline.
   const goal = item.operatorGoal ?? null
   const headline = !goal ? (item.humanSummary || item.title) : null
+  // An advisory is not a name, and the title slot is for names.
+  //
+  // Several kinds put a full recommendation in humanSummary — "N tasks all
+  // failed the same way — this points to a shared environmental cause, not
+  // individual task bugs. Fix the root cause to unblock all of them." Rendered
+  // at 17px semibold that template became the loudest thing on the inbox, and
+  // two sig-wave cards showed the SAME sentence twice, outranking every row
+  // that had a real subject. So "what needs you" was answered by whichever row
+  // shouted, and the shouting rows were boilerplate.
+  //
+  // Shape, not kind, is the reliable test: a title is a noun phrase, an
+  // advisory is one or more sentences. This does not rewrite any copy — the
+  // text is the daemon's — it just stops promoting prose into the name slot.
+  const headlineIsAdvisory =
+    headline !== null && (headline.length > 88 || /[.!?]\s/.test(headline))
   const kindLabel = KIND_LABEL[item.kind] ?? item.kind.replace(/-/g, ' ')
   const kindIcon = kindIconNode(item.kind)
   const kindTone = KIND_TONE[item.kind] ?? 'neutral'
@@ -571,7 +594,13 @@ const isDestructiveAction = (label: string): boolean =>
         </>
       ) : (
         headline && (
-          <p className="mb-1 text-section font-semibold leading-snug text-foreground">
+          <p
+            className={
+              headlineIsAdvisory
+                ? 'mb-1 text-body leading-relaxed text-foreground'
+                : 'mb-1 text-section font-semibold leading-snug text-foreground'
+            }
+          >
             {headline}
           </p>
         )
