@@ -36,9 +36,9 @@ const COLORS = [
   'bg-dark', 'surface-dark', 'fg-dark', 'muted-dark', 'border-dark',
   'accent-on-dark',
   // state
-  'error', 'warn', 'success',
+  'error', 'warn', 'warn-on-dark', 'success',
   // brand palette
-  'flame', 'amber', 'iron', 'ochre', 'basalt', 'rust', 'dune', 'ice',
+  'flame', 'amber', 'iron', 'ochre', 'basalt', 'rust', 'dune', 'ice', 'teal',
   'dust', 'night', 'trace-mars',
   // task status
   'status-queued', 'status-running', 'status-verifying', 'status-blocked',

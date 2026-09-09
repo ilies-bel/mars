@@ -182,6 +182,13 @@
   --color-status-queued:    var(--color-basalt);
   --color-status-running:   var(--color-flame);
   --color-status-verifying: var(--color-teal);   /* amber was 1.95:1 on light */
+
+  /* Status colours are ground-specific. --color-warn (#92400E) is tuned for the
+   * cream ground at 6.4:1 and collapses to 2.4:1 on the dark chrome, so the
+   * topbar needs its own caution hue: amber is 8.0:1 there. Same meaning,
+   * correct ground — the light-ground twin of the same mistake that had
+   * status-verifying rendering amber at 1.95:1 on cream. */
+  --color-warn-on-dark: var(--color-amber);
   --color-status-blocked:   var(--color-ochre);
   --color-status-failed:    var(--color-iron);
   --color-status-dropped:   var(--color-iron);

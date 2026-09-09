@@ -31,7 +31,11 @@ export const LiveParkedChip = () => {
       href={AWAITING_HUMAN_HREF}
       data-testid="live-parked-chip"
       aria-label={`${count} live task${count === 1 ? '' : 's'} parked awaiting your input`}
-      className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-full bg-warn/15 px-2.5 text-micro font-medium text-warn transition-colors duration-[var(--dur-fast)] hover:bg-warn/25"
+      /* This chip lives in the DARK topbar. --color-warn (#92400E) is tuned
+         for the cream ground (6.4:1) and measures 2.4:1 on #251812;
+         --color-warn-on-dark is the dark-chrome caution hue at 8.0:1. Same
+         meaning, correct ground. */
+      className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-full bg-warn-on-dark/15 px-2.5 text-micro font-medium text-warn-on-dark transition-colors duration-[var(--dur-fast)] hover:bg-warn-on-dark/25"
     >
       <PauseCircle size={12} strokeWidth={2} aria-hidden="true" />
       {count} parked
