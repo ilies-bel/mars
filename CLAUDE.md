@@ -692,6 +692,21 @@ recovery-spawn path itself.
   attribution silently comes out wrong. Treat a backgrounded vitest run that
   returns exit 0 with an empty or truncated log as UNKNOWN, not a pass —
   re-run in the foreground with `--outputFile`.
+  **`numFailedTests: 0` alone is not sufficient to declare a green run.**
+  A source file with a parse error (e.g. invalid JSX inside a comment) causes
+  vitest to silently skip collecting every test that transitively imports it —
+  those tests disappear from `numTotalTests` without incrementing
+  `numFailedTests`, so the run looks green with 61 missing tests. Always
+  check **all three** signals from the JSON output file:
+  1. `success === true` — top-level boolean covering both assertion failures
+     and collection errors; this is the single authoritative pass/fail signal.
+  2. `numFailedTests === 0` — confirms no collected test asserted a failure.
+  3. No entries with a non-empty `message` field in `testResults[]` —
+     collection/parse errors are recorded there even when `success` is true
+     on older vitest versions.
+  If `success` is `false` while `numFailedTests` is `0`, suspect a collection
+  failure. Inspect `testResults[].message` and check for TypeScript parse
+  errors (`tsc --noEmit`) in recently changed files.
 - **The RTK shell hook silently drops the `run` subcommand from `npx vitest
   run` (no file arguments given).** It rewrites `npx vitest run
   --reporter=json --outputFile=...` to `rtk vitest --reporter=json
