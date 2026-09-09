@@ -22,7 +22,7 @@
  */
 
 import type { ActionQueueRow } from './action-queue'
-import { lookupFailureKind } from '../../lib/failure-kinds'
+import { resolveFailureKind } from '../../lib/failure-kinds'
 import { getGroupBulkVerb, type RecipeVerb } from '../../lib/action-queue-recipes'
 import { isActionQueueKind } from '../../lib/action-queue-kinds'
 
@@ -81,14 +81,21 @@ function highestPriority(rows: ActionQueueRow[]): 'high' | 'normal' | 'low' {
 /**
  * Derive a plain-language cause label for a failure signature.
  *
- * 1. Looks up the registered FailureKind for the exact signature.
- * 2. Falls back to the error-class slug (the portion after the first `/`).
+ * Resolution order (most-informative first):
+ * 1. Registered FailureKind.warmTitle for the exact signature.
+ * 2. Step-family fallback phrase from `resolveFailureKind` — raw step ids and
+ *    error-class slugs (`unclassified`, `done-with-unverifiable-merge`) must
+ *    never appear on the face of a grouped row.
+ * 3. Signatures ending in `/unclassified` append "— cause not identified" so
+ *    operators can distinguish "Mars diagnosed this" from "no pattern matched".
+ *
+ * The group ROW ID (`group:failed:code/unclassified`) intentionally keeps the
+ * slug — that is an address operators paste, not prose they read.
  */
 function causeLabel(signature: string): string {
-  const kind = lookupFailureKind(signature)
-  if (kind?.warmTitle) return kind.warmTitle
-  const slash = signature.indexOf('/')
-  return slash >= 0 ? signature.slice(slash + 1) : signature
+  const label = resolveFailureKind(signature, '').warmTitle
+  if (signature.endsWith('/unclassified')) return `${label} — cause not identified`
+  return label
 }
 
 // ── Grouping ──────────────────────────────────────────────────────────────────

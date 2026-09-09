@@ -895,6 +895,21 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
         recipe: null,
         actions: DEFAULT_ACTIONS,
       },
+      // ── done-with-unverifiable-merge ──────────────────────────────────────
+      // Raised by arc.ts when a task is marked done but the merge commit could
+      // not be confirmed reachable from the integration branch (branch deleted,
+      // sha unreachable). The work is likely already on the branch; this is an
+      // infrastructure observation, not a code defect. No recipe: the operator
+      // must inspect the branch and decide whether to re-merge or purge.
+      {
+        signature: 'done-with-unverifiable-merge',
+        staticEncodable: notEncodable('environmental'),
+        warmTitle: 'Merged, but the merge could not be verified',
+        verboseReason:
+          'The task was marked done but the merge commit could not be confirmed reachable from the integration branch — the branch may have been deleted or the sha became unreachable. Inspect the branch to confirm the work landed, then purge or re-merge as appropriate.',
+        recipe: null,
+        actions: WORKTREE_MISSING_ACTIONS,
+      },
       // ── orchestration:main-committer-still-dirty ───────────────────────────
       // Raised when the post-verify clean check finds the integration branch
       // still dirty after the main-committer task ran. This is an orchestration
