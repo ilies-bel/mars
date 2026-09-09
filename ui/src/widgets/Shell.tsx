@@ -53,8 +53,16 @@ interface NavGroup {
  *
  *   Inbox     — what is waiting on me?          Needs You, Proposals, Chat
  *   Activity  — what is the system doing?       Progress, Events
- *   Insight   — how well is it doing it?        KPI, Studio, Reflections, Steward
- *   (footer)  — what can I change?              Control Room
+ *   Insight   — how well is it doing it?        KPI, Studio, Reflections
+ *   Control   — what can I change?              Control Room, Steward
+ *
+ * Steward sat in Insight until the round-9 review, and it does not belong
+ * there: Insight is three read-only analysis surfaces, and Steward publishes
+ * an autonomous agent's trigger rules, its baseline and its ceiling, and the
+ * live worker count it is moving. It is a control surface. Worse, Control Room
+ * already prints that same live cap ("CONCURRENCY CAPS implement 6 …") — so
+ * the thing that MOVES the number sat under Insight while the thing that
+ * DISPLAYS it sat in the footer, two groups apart.
  *
  * Nothing is collapsed and nothing is hidden: all ten destinations are visible
  * at rest, which is the point — a queue you have to expand to see is a queue
@@ -88,7 +96,6 @@ export const SHELL_NAV_GROUPS: NavGroup[] = [
       { route: 'kpi', label: 'KPI', href: '#/kpi', icon: TrendingUp },
       { route: 'studio', label: 'Studio', href: '#/studio', icon: FlaskConical },
       { route: 'reflections', label: 'Reflections', href: '#/reflections', icon: Sparkles },
-      { route: 'steward', label: 'Steward', href: '#/steward', icon: ShieldCheck },
     ],
   },
   {
@@ -101,6 +108,7 @@ export const SHELL_NAV_GROUPS: NavGroup[] = [
         href: '#/control',
         icon: SlidersHorizontal,
       },
+      { route: 'steward', label: 'Steward', href: '#/steward', icon: ShieldCheck },
     ],
   },
 ]
@@ -314,10 +322,15 @@ export const ShellSidebar = ({
         ))}
       </div>
 
+      {/* The footer group carries its own label, the same as the three above
+          it. Without one it read as "settings" — an orphan pinned to the floor
+          — rather than as the group that answers "what can I change?", which
+          is a question with two answers now, not one. */}
       {footer.length > 0 && (
         <div className="mt-4 border-t border-border-dark/70 pt-3">
           {footer.map((group) => (
             <div key={group.label} className="flex flex-col gap-px">
+              <p className="eyebrow px-4 pb-1.5 text-muted-dark">{group.label}</p>
               {group.entries.map((entry) => (
                 <NavItem
                   key={entry.label}

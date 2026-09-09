@@ -11,8 +11,12 @@ void _typeProbe
 // ---------------------------------------------------------------------------
 
 describe('tabs – default', () => {
-  it('topology (DAG) tab is selected by default on page load', () => {
-    expect(DEFAULT_TAB).toBe('topology')
+  it('Board is selected by default on page load', () => {
+    // Topology held this slot until the round-9 review. It is a node-link
+    // diagram, and on a live repo it draws thirteen nodes and zero edges above
+    // its own footer reading "No dependencies between active arcs" — all the
+    // machinery of a graph, none of the payoff.
+    expect(DEFAULT_TAB).toBe('board')
   })
 })
 
@@ -26,8 +30,8 @@ describe('tabs – entries', () => {
     expect(TABS).toContain('topology')
   })
 
-  it('topology appears before board in the strip (topology is the default)', () => {
-    expect(TABS.indexOf('topology')).toBeLessThan(TABS.indexOf('board'))
+  it('board appears before topology in the strip (the default leads)', () => {
+    expect(TABS.indexOf('board')).toBeLessThan(TABS.indexOf('topology'))
   })
 })
 

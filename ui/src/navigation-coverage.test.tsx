@@ -129,12 +129,21 @@ describe('Navigation coverage — sidebar entries', () => {
     expect(icons).not.toContain('◆')
   })
 
-  it('Steward and Studio are in the Insight group', () => {
+  it('Insight holds the read-only analysis surfaces, and only those', () => {
     const insight = SHELL_NAV_GROUPS.find((g) => g.label === 'Insight')
     expect(insight).toBeDefined()
-    const insightRoutes = insight!.entries.map((e) => e.route)
-    expect(insightRoutes).toContain('steward')
-    expect(insightRoutes).toContain('studio')
+    expect(insight!.entries.map((e) => e.route)).toEqual(['kpi', 'studio', 'reflections'])
+  })
+
+  it('Steward sits with Control, because it is a control surface', () => {
+    // Steward publishes an autonomous agent's trigger rules, its baseline and
+    // ceiling, and the live worker count it is moving — and Control Room
+    // already prints that same cap. The thing that MOVES the number used to
+    // sit under Insight while the thing that DISPLAYS it sat two groups away
+    // in the footer.
+    const control = SHELL_NAV_GROUPS.find((g) => g.label === 'Control')
+    expect(control).toBeDefined()
+    expect(control!.entries.map((e) => e.route)).toContain('steward')
   })
 
   // Regression: Events / Reflections / Steward / Studio used to sit behind a

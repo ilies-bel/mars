@@ -171,10 +171,11 @@ export const ProgressPage = () => {
 
   // Resolve the initial active tab:
   //   1. Explicit ?view= param in the URL (shareable links are always honoured)
-  //   2. DEFAULT_TAB ('topology')
+  //   2. DEFAULT_TAB ('board')
   //
-  // Topology is the landing view. Board and Hot-paths are available via the tab
-  // strip. The tab is NOT persisted to localStorage — a per-session tab choice
+  // Board is the landing view; Topology and Hot-paths are available via the
+  // tab strip. See DEFAULT_TAB in shared/tabs.ts for why Topology gave up the
+  // slot. The tab is NOT persisted to localStorage — a per-session tab choice
   // is not worth overriding the primary view of the page.
   const [activeTab, setActiveTab] = useState<Tab>(
     () => readExplicitViewFromUrl() ?? DEFAULT_TAB,

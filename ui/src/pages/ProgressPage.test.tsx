@@ -182,9 +182,22 @@ function between(html: string, startId: string, endId: string): string {
   return e === -1 ? html.slice(s) : html.slice(s, e)
 }
 
-function from(html: string, startId: string): string {
+/**
+ * The markup of ONE stat, bounded by the next `data-testid` after it.
+ *
+ * This used to slice to the end of the document, which happened to work only
+ * because the last stat was followed by the Topology canvas — markup with no
+ * bare `>0<` in it. The moment the landing tab became Board, whose columns
+ * legitimately render `>0<` for an empty column, `expect(...).not.toContain('>0<')`
+ * started failing on markup a thousand elements away from the stat it was
+ * about. An assertion whose scope is "everything after here" is not an
+ * assertion about a stat.
+ */
+function statSection(html: string, startId: string): string {
   const s = html.indexOf(`data-testid="${startId}"`)
-  return s === -1 ? '' : html.slice(s)
+  if (s === -1) return ''
+  const next = html.indexOf('data-testid=', s + 12)
+  return next === -1 ? html.slice(s) : html.slice(s, next)
 }
 
 describe('ProgressPage – header stats', () => {
@@ -207,7 +220,7 @@ describe('ProgressPage – header stats', () => {
     try {
       const html = renderToStaticMarkup(<ProgressPage />)
       const inProgressSection = between(html, 'stat-in-progress', 'stat-done')
-      const failedSection = from(html, 'stat-failed')
+      const failedSection = statSection(html, 'stat-failed')
       // IN PROGRESS derives from byCluster['In progress'].length — must be 1, not 0
       expect(inProgressSection).toContain('>1<')
       expect(inProgressSection).not.toContain('>0<')
@@ -251,7 +264,7 @@ describe('ProgressPage – header stats', () => {
     try {
       const html = renderToStaticMarkup(<ProgressPage />)
       const doneSection = between(html, 'stat-done', 'stat-failed')
-      const failedSection = from(html, 'stat-failed')
+      const failedSection = statSection(html, 'stat-failed')
       // Failed count (2) appears in the FAILED section
       expect(failedSection).toContain('>2<')
       // DONE must not show 2 (the failed count) — it shows 0
@@ -277,7 +290,7 @@ describe('ProgressPage – header stats', () => {
     }))
     try {
       const html = renderToStaticMarkup(<ProgressPage />)
-      const failedSection = from(html, 'stat-failed')
+      const failedSection = statSection(html, 'stat-failed')
       // One origin failure — the failed recovery must not inflate the count to 2.
       expect(failedSection).toContain('>1<')
       expect(failedSection).not.toContain('>2<')
@@ -295,7 +308,7 @@ describe('ProgressPage – header stats', () => {
     try {
       const html = renderToStaticMarkup(<ProgressPage />)
       const doneSection = between(html, 'stat-done', 'stat-failed')
-      const failedSection = from(html, 'stat-failed')
+      const failedSection = statSection(html, 'stat-failed')
       expect(doneSection).toContain('>0<')
       expect(failedSection).toContain('>0<')
     } finally {
@@ -325,11 +338,23 @@ describe('ProgressPage – search zero-state not shown on initial load', () => {
 // Landing view + removed proposal filter
 // ---------------------------------------------------------------------------
 
-describe('ProgressPage – Topology is the landing view', () => {
-  it('opens on Topology when the URL does not name a view', () => {
+describe('ProgressPage – Board is the landing view', () => {
+  it('opens on Board when the URL does not name a view', () => {
+    // Topology held this slot until the round-9 review: on a live repo it drew
+    // thirteen nodes and ZERO edges above its own footer reading "No
+    // dependencies between active arcs" — the canvas, zoom controls and
+    // minimap of a graph with nothing to connect, while the page's real
+    // headline sat at 14px in a corner.
     const html = renderToStaticMarkup(<ProgressPage />)
-    const topologyTab = html.slice(html.indexOf('data-testid="tab-topology"') - 120)
-    expect(topologyTab.slice(0, 200)).toContain('aria-selected="true"')
+    const boardTab = html.slice(html.indexOf('data-testid="tab-board"') - 120)
+    expect(boardTab.slice(0, 200)).toContain('aria-selected="true"')
+  })
+
+  it('leaves Topology available, unselected, one click away', () => {
+    const html = renderToStaticMarkup(<ProgressPage />)
+    const topologyTab = html.slice(html.indexOf('data-testid="tab-topology"') - 120, html.indexOf('data-testid="tab-topology"') + 50)
+    expect(topologyTab).toContain('data-testid="tab-topology"')
+    expect(topologyTab).not.toContain('aria-selected="true"')
   })
 
   it('no longer renders the proposal filter', () => {
@@ -447,19 +472,17 @@ describe('ProgressPage – hot paths tab', () => {
     expect(html).toContain('Hot paths')
   })
 
-  it('hot-paths tab is not selected by default (topology is)', () => {
+  it('hot-paths tab is not selected by default (Board is)', () => {
     const html = renderToStaticMarkup(<ProgressPage />)
-    // Topology tab must be the selected one
-    const topologyIdx = html.indexOf('data-testid="tab-topology"')
+    const boardIdx = html.indexOf('data-testid="tab-board"')
     const hotPathsIdx = html.indexOf('data-testid="tab-hot-paths"')
-    expect(topologyIdx).toBeGreaterThan(-1)
+    expect(boardIdx).toBeGreaterThan(-1)
     expect(hotPathsIdx).toBeGreaterThan(-1)
-    // aria-selected="true" appears before topology's testid (it's in the same element)
-    const topologyBtn = html.slice(topologyIdx - 200, topologyIdx + 50)
-    expect(topologyBtn).toContain('aria-selected="true"')
+    // aria-selected="true" sits on the same element as board's testid
+    expect(html.slice(boardIdx - 200, boardIdx + 50)).toContain('aria-selected="true"')
   })
 
-  it('hot-paths section is not visible when topology tab is active (default)', () => {
+  it('hot-paths section is not visible on the default tab', () => {
     const html = renderToStaticMarkup(<ProgressPage />)
     expect(html).not.toContain('data-testid="hot-paths-section"')
   })

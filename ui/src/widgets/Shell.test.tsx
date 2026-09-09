@@ -115,15 +115,19 @@ describe('SHELL_NAV_GROUPS', () => {
     expect(labels).toEqual(['Progress', 'Events'])
   })
 
-  it('Insight group contains KPI, Studio, Reflections and Steward', () => {
+  it('Insight group contains KPI, Studio and Reflections', () => {
     const labels = groupNamed('Insight')?.entries.map((e) => e.label)
-    expect(labels).toEqual(['KPI', 'Studio', 'Reflections', 'Steward'])
+    expect(labels).toEqual(['KPI', 'Studio', 'Reflections'])
   })
 
-  it('Control is the pinned footer group and holds Control Room', () => {
+  it('Control is the pinned footer group and holds both levers surfaces', () => {
+    // Steward joined it: Insight is three read-only analysis surfaces, and
+    // Steward publishes an agent's trigger rules, its baseline and ceiling,
+    // and the live worker count it is moving. Control Room already prints
+    // that same cap, so the two belong in one group.
     const control = groupNamed('Control')
     expect(control?.footer).toBe(true)
-    expect(control?.entries.map((e) => e.label)).toEqual(['Control Room'])
+    expect(control?.entries.map((e) => e.label)).toEqual(['Control Room', 'Steward'])
   })
 
   // Regression: the old shape hid Events / Reflections / Steward / Studio behind
@@ -135,8 +139,8 @@ describe('SHELL_NAV_GROUPS', () => {
     }
   })
 
-  it('Steward has a sidebar entry in the Insight group', () => {
-    const steward = groupNamed('Insight')?.entries.find((e) => e.label === 'Steward')
+  it('Steward has a sidebar entry in the Control group', () => {
+    const steward = groupNamed('Control')?.entries.find((e) => e.label === 'Steward')
     expect(steward).toBeDefined()
     expect(steward?.href).toBe('#/steward')
     expect(steward?.route).toBe('steward')

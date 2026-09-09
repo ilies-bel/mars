@@ -22,7 +22,7 @@ describe('decodeProgressState', () => {
 
   it('returns defaults when there is no query string', () => {
     const state = decodeProgressState('#/progress')
-    expect(state.view).toBe('topology')
+    expect(state.view).toBe('board')
     expect(state.query).toBe('')
     expect(state.proposal).toBeNull()
   })
@@ -31,8 +31,8 @@ describe('decodeProgressState', () => {
     expect(decodeProgressState('#/progress?view=board').view).toBe('board')
   })
 
-  it('falls back to topology for an unknown view value', () => {
-    expect(decodeProgressState('#/progress?view=bogus').view).toBe('topology')
+  it('falls back to the default tab for an unknown view value', () => {
+    expect(decodeProgressState('#/progress?view=bogus').view).toBe('board')
   })
 
   it('decodes search query', () => {
@@ -64,7 +64,7 @@ describe('decodeProgressState', () => {
   it('silently ignores the legacy recency param', () => {
     // The recency param no longer exists; old URLs with it should not throw.
     const state = decodeProgressState('#/progress?recency=7d')
-    expect(state.view).toBe('topology')
+    expect(state.view).toBe('board')
   })
 })
 
@@ -78,12 +78,12 @@ describe('encodeProgressState', () => {
   })
 
   it('encodes a non-default view', () => {
-    const state: ProgressUrlState = { ...defaultProgressUrlState(), view: 'board' }
-    expect(encodeProgressState(state)).toContain('view=board')
+    const state: ProgressUrlState = { ...defaultProgressUrlState(), view: 'topology' }
+    expect(encodeProgressState(state)).toContain('view=topology')
   })
 
-  it('omits the view param for the default topology tab', () => {
-    const state: ProgressUrlState = { ...defaultProgressUrlState(), view: 'topology' }
+  it('omits the view param for the default tab', () => {
+    const state: ProgressUrlState = { ...defaultProgressUrlState(), view: 'board' }
     expect(encodeProgressState(state)).not.toContain('view=')
   })
 
@@ -122,7 +122,7 @@ describe('encodeProgressState', () => {
   })
 
   it('starts with ? when any param is present', () => {
-    const state: ProgressUrlState = { ...defaultProgressUrlState(), view: 'board' }
+    const state: ProgressUrlState = { ...defaultProgressUrlState(), view: 'topology' }
     expect(encodeProgressState(state)).toMatch(/^\?/)
   })
 })

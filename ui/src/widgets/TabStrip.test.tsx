@@ -30,10 +30,10 @@ describe('TabStrip', () => {
     expect(html).toContain('aria-selected="true"')
   })
 
-  it('Topology is listed before Board in the strip (topology is the default)', () => {
+  it('Board is listed before Topology in the strip (the default leads)', () => {
     const html = renderToStaticMarkup(
       <TabStrip active="topology" onSelect={() => undefined} />,
     )
-    expect(html.indexOf('tab-topology')).toBeLessThan(html.indexOf('tab-board'))
+    expect(html.indexOf('tab-board')).toBeLessThan(html.indexOf('tab-topology'))
   })
 })
