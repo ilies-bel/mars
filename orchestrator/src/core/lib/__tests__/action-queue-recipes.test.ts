@@ -186,9 +186,10 @@ describe('gate-broken humanSummary', () => {
     expect(result).not.toMatch(/gate aaaa-bbbb-cccc-dddd-eeee\b/)
   })
 
-  it('names the mars verify-gate restore command with the gate id', () => {
+  it('does NOT embed the restore command in the summary (DEC-18: no machine strings on card faces)', () => {
     const result = humanSummary('gate-broken', makePayload())
-    expect(result).toContain('mars verify-gate restore aaaa-bbbb-cccc-dddd-eeee')
+    // The exact CLI form lives in the copy verb's `hint` field, not the prose.
+    expect(result).not.toContain('mars verify-gate restore')
   })
 
   it('states the gate is quarantined (current state), not that it keeps failing', () => {

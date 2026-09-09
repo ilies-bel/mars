@@ -657,7 +657,21 @@ const RECIPE_DEFINITIONS = {
           : { ageMinutes: p.ageMinutes ?? 0 }),
       }
     },
-    verbs: [],
+    verbs: (ctx) => {
+      const situation = awaitingHumanSituation(ctx.payload)
+      if (situation !== 'lease-park') return []
+      const p = ctx.payload as Partial<LeaseParkPayload>
+      const step = str(p.stepName)
+      if (step === 'merge-gate') {
+        return [
+          { op: 'approve-step', label: 'Approve and merge', style: 'primary' as const },
+          { op: 'abort-release', label: 'Abort without merging', style: 'destructive' as const },
+        ]
+      }
+      return [
+        { op: 'approve-step', label: 'Mark step done', style: 'primary' as const },
+      ]
+    },
   },
 
   // ── Verification ──────────────────────────────────────────────────────────
