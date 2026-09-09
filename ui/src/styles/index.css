@@ -75,11 +75,11 @@
 
 @theme {
   /* ── Mars neutral ramp (warm browns, 50–900) ── */
-  --color-neutral-50:  #FBF7F2;
-  --color-neutral-100: #F5EDE4;
-  --color-neutral-200: #E5D9CB;
-  --color-neutral-300: #D1BFAB;
-  --color-neutral-400: #A89684;
+  --color-neutral-50:  #FCFAF7;
+  --color-neutral-100: #F7F3EE;
+  --color-neutral-200: #E8E1D8;
+  --color-neutral-300: #D4C9BB;
+  --color-neutral-400: #A99C8C;
   --color-neutral-500: #7A6B5C;
   --color-neutral-600: #574A3F;
   --color-neutral-700: #3A2C24;
@@ -87,22 +87,22 @@
   --color-neutral-900: #1A0F0A;
 
   /* ── Mars semantic light tokens ── */
-  --color-bg:        #F5EDE4;   /* neutral-100 */
+  --color-bg:        #F7F3EE;   /* neutral-100 */
   --color-surface:   #FFFFFF;
-  --color-panel:     #FBF7F2;   /* neutral-50  */
+  --color-panel:     #FCFAF7;   /* neutral-50  */
   --color-fg:        #1A0F0A;   /* neutral-900 */
   --color-muted:     #705F50;   /* was #7A6B5C (neutral-500) — darkened for 4.9:1 on bg */
-  --color-border:    #E5D9CB;   /* neutral-200 */
+  --color-border:    #E8E1D8;   /* neutral-200 */
 
   /* ── Mars brand aliases ── */
-  --color-dust:      #F5EDE4;   /* mars-dust  */
+  --color-dust:      #F7F3EE;   /* mars-dust  */
   --color-night:     #1A0F0A;   /* mars-night */
 
   /* ── Dark-surface tokens (DAG / SVG views + Shell chrome) ── */
   --color-bg-dark:      #1A0F0A;   /* darkest shell ground (neutral-900) */
   --color-surface-dark: #251812;   /* card/panel surface on dark chrome (neutral-800) */
-  --color-fg-dark:      #F5EDE4;   /* active/heading text on dark chrome */
-  --color-muted-dark:   #A89684;   /* secondary/muted text on dark chrome (neutral-400) */
+  --color-fg-dark:      #F7F3EE;   /* active/heading text on dark chrome */
+  --color-muted-dark:   #A99C8C;   /* secondary/muted text on dark chrome (neutral-400) */
   --color-border-dark:  #3A2820;   /* borders and dividers on dark chrome */
 
   /* ── Brand palette ── */
@@ -168,16 +168,108 @@
   /* Brand highlight for non-status accent text/surfaces (was raw flame). */
   --color-highlight: var(--color-flame);
 
-  /* ── Type scale — 4 tokenised steps ──
-   * micro  10px  data-dense counters, badges, chip labels (floor — nothing below this)
-   * label  12px  metadata rows, secondary mono labels
-   * body   13px  primary body copy, most UI prose
-   * title  14px  section headings, prominent action text
-   * Line-heights are mono-aware: slightly looser on condensed mono glyphs. */
-  --text-micro: 0.625rem;    /* 10px */
-  --text-label: 0.75rem;     /* 12px */
-  --text-body:  0.8125rem;   /* 13px */
-  --text-title: 0.875rem;    /* 14px */
+  /* Accent for dark chrome (sidebar, topbar). --color-highlight is flame
+   * (#9A4F00) which is near-invisible on the dark shell, which is why call
+   * sites used to reach for an inline style={{ color: 'var(--color-amber)' }}
+   * to dodge the token lint. This is that colour, promoted to a semantic
+   * token so components can say text-accent-on-dark and stay lint-clean.
+   * 8.3:1 on --color-surface-dark. */
+  --color-accent-on-dark: var(--color-amber);
+
+  /* ── Type scale — 8 tokenised steps ──────────────────────────────────────
+   * Every step carries its own line-height and letter-spacing. Small text
+   * gets slightly positive tracking (counteracts the optical tightening of
+   * small glyphs); display text gets negative tracking (large type set at
+   * default tracking reads loose and amateur). This pairing is the single
+   * clearest typographic difference between an internal tool and a product.
+   *
+   * micro   11px  chip labels, counters, dense metadata  (FLOOR — never below)
+   * label   12px  metadata rows, secondary labels
+   * body    13px  primary body copy, most UI prose
+   * title   14px  card titles, prominent action text
+   * section 15px  subsection headings
+   * heading 18px  panel / page-section headings
+   * display 22px  page titles
+   * metric  28px  KPI figures and other single-glance numbers
+   *
+   * NOTE: micro was 10px. 10px is below the legibility floor of every major
+   * design system (Apple HIG 11, Material 11) and it was the most-used size
+   * in the app (614 call sites), so raising it lifts the whole product.
+   * ---------------------------------------------------------------------- */
+  --text-micro: 0.6875rem;                 /* 11px */
+  --text-micro--line-height: 1.0909;
+  --text-micro--letter-spacing: 0.01em;
+
+  --text-label: 0.75rem;                   /* 12px */
+  --text-label--line-height: 1.3333;
+  --text-label--letter-spacing: 0.005em;
+
+  --text-body: 0.8125rem;                  /* 13px */
+  --text-body--line-height: 1.5385;
+  --text-body--letter-spacing: 0em;
+
+  --text-title: 0.875rem;                  /* 14px */
+  --text-title--line-height: 1.4286;
+  --text-title--letter-spacing: -0.005em;
+
+  --text-section: 0.9375rem;               /* 15px */
+  --text-section--line-height: 1.4;
+  --text-section--letter-spacing: -0.01em;
+
+  --text-heading: 1.125rem;                /* 18px */
+  --text-heading--line-height: 1.3333;
+  --text-heading--letter-spacing: -0.015em;
+
+  --text-display: 1.375rem;                /* 22px */
+  --text-display--line-height: 1.2727;
+  --text-display--letter-spacing: -0.021em;
+
+  --text-metric: 1.75rem;                  /* 28px */
+  --text-metric--line-height: 1.1429;
+  --text-metric--letter-spacing: -0.025em;
+
+  /* ── Motion ──────────────────────────────────────────────────────────────
+   * Durations and easings were previously hardcoded per component (150ms,
+   * 160ms, 180ms, 200ms, 260ms all appeared). Three durations and three
+   * curves cover every interaction in the app; using them consistently is
+   * what makes motion read as one system rather than as many accidents.
+   *
+   * --ease-out    decelerating; the default for anything entering or settling
+   * --ease-in-out symmetric; for state toggles that reverse
+   * --ease-spring slight overshoot; reserved for drawers/modals (iOS curve)
+   * ---------------------------------------------------------------------- */
+  --dur-instant: 90ms;
+  --dur-fast:    140ms;
+  --dur-base:    200ms;
+  --dur-slow:    280ms;
+
+  --ease-out:    cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.45, 0, 0.55, 1);
+  --ease-spring: cubic-bezier(0.32, 0.72, 0, 1);
+
+  /* ── Elevation ───────────────────────────────────────────────────────────
+   * A five-step shadow ramp, all tinted with the warm ink (#1A0F0A) rather
+   * than neutral black so shadows sit inside the palette instead of greying
+   * it. Each step pairs a tight contact shadow with a wider ambient one —
+   * a single blurred shadow always reads as a cheap drop shadow.
+   * ---------------------------------------------------------------------- */
+  --shadow-e1: 0 1px 2px rgba(26, 15, 10, 0.05),
+               0 1px 3px rgba(26, 15, 10, 0.035);
+  --shadow-e2: 0 1px 2px rgba(26, 15, 10, 0.05),
+               0 3px 8px rgba(26, 15, 10, 0.05);
+  --shadow-e3: 0 2px 4px rgba(26, 15, 10, 0.05),
+               0 6px 16px rgba(26, 15, 10, 0.07);
+  --shadow-e4: 0 4px 8px rgba(26, 15, 10, 0.06),
+               0 12px 28px rgba(26, 15, 10, 0.10);
+  --shadow-e5: 0 8px 16px rgba(26, 15, 10, 0.08),
+               0 24px 56px rgba(26, 15, 10, 0.16);
+
+  /* Spacing unit pinned to 3.5px — the value 0.25rem resolved to under the
+   * old 14px root. Holding it constant is what lets the root font-size be
+   * corrected to 16px without reflowing every padding, gap and size utility
+   * in the app. Tailwind derives p-*, m-*, gap-*, w-*, h-*, size-* and
+   * space-* from this. */
+  --spacing: 0.21875rem;
 
   --font-sans: "Inter", "Inter Fallback", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", "JetBrains Mono Fallback", ui-monospace, SFMono-Regular, monospace;
@@ -209,7 +301,7 @@
    * var(--border), so referencing var(--color-border) here would make both
    * variables self-referential and invalid (borders collapse to currentColor
    * ink). Source the raw neutral instead — same #E5D9CB value. */
-  --border: var(--color-neutral-200);         /* #E5D9CB */
+  --border: var(--color-neutral-200);         /* #E8E1D8 */
   --input: var(--color-neutral-200);
   --ring: var(--color-flame);                /* #9A4F00 — matches :focus-visible */
   --radius: 0.5rem;                          /* rounded-lg */
@@ -265,13 +357,32 @@
   outline-color: var(--color-amber);
 }
 
+/* Root font-size is the browser default (16px) so that every rem-based token
+ * renders at its documented value. This used to be pinned to 14px, which
+ * silently rescaled the ENTIRE design system to 87.5%: --text-body, commented
+ * "13px", actually painted 11.4px, and every documented px figure in this file
+ * was a lie. Layout geometry is preserved by pinning --spacing below, so this
+ * corrects the type scale without moving a single padding or gap value.
+ *
+ * body inherits --text-body explicitly; before, unstyled text picked up the
+ * bare 14px root, which is why prose and chrome disagreed by a pixel in places
+ * no component was choosing a size. */
 html, body, #root {
   height: 100%;
   margin: 0;
   background: var(--color-bg);
   color: var(--color-fg);
   font-family: var(--font-sans);
-  font-size: 14px;
+  font-size: var(--text-body);
+  line-height: 1.5385;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "cv05" 1, "cv11" 1;
+}
+
+html {
+  font-size: 100%;
 }
 
 @keyframes mars-pulse {

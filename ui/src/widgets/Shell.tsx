@@ -1,5 +1,17 @@
-import { useState } from 'react'
 import type { ReactNode } from 'react'
+import type { LucideIcon } from 'lucide-react'
+import {
+  Activity,
+  FlaskConical,
+  Inbox,
+  Lightbulb,
+  MessagesSquare,
+  ShieldCheck,
+  SlidersHorizontal,
+  Sparkles,
+  TrendingUp,
+  Workflow,
+} from 'lucide-react'
 import { useCounts } from '@/entities/counts/useCounts'
 import { resolvePageRoute } from '@/shared/routing'
 import type { RouteName } from '@/shared/routing'
@@ -17,65 +29,78 @@ interface NavEntry {
   route: RouteName
   label: string
   href: string
-  icon: string
+  icon: LucideIcon
 }
 
 interface NavGroup {
   label: string
-  /** Shown as a one-line muted subtitle under the group label. */
-  description?: string
   entries: NavEntry[]
-  /** When true the group is collapsible; collapsed by default. */
-  collapsible?: boolean
+  /**
+   * Renders pinned to the bottom of the sidebar, below a divider, instead of
+   * in the scrolling stack. Used for levers, which are a different job from
+   * the three reading groups above them.
+   */
+  footer?: boolean
 }
 
 /**
- * Four-group sidebar navigation: Decide → Watch → Tune → Advanced.
- * Ten entries total. Advanced is collapsed by default, and auto-expands
- * when the active route is one of its own (steward, studio, events, reflections).
+ * Sidebar navigation, clustered by operator intent rather than by subsystem.
  *
- * Glyph rules:
- *   - Every icon is unique; the wordmark glyph (◆) is not reused here.
- *   - 'proposals' links to the dedicated #/proposals page.
- *   - 'studio' links to #/studio (the Studio index of recent scored runs);
- *     drilling into a task opens #/studio/<taskId>; Advanced auto-expands on both.
- *   - 'triage' ("Needs You") is the default landing page and carries the
- *     pending-decision badge.
- *   - 'steward' (#/steward) has a sidebar entry under Advanced.
+ * The previous shape had a four-entry "Advanced" junk drawer that hid 40% of
+ * the app behind a disclosure triangle — Events, Reflections, Steward and
+ * Studio are not advanced, they answer a different question from the rest.
+ * Regrouping by the question each page answers removes the drawer entirely:
+ *
+ *   Inbox     — what is waiting on me?          Needs You, Proposals, Chat
+ *   Activity  — what is the system doing?       Progress, Events
+ *   Insight   — how well is it doing it?        KPI, Studio, Reflections, Steward
+ *   (footer)  — what can I change?              Control Room
+ *
+ * Nothing is collapsed and nothing is hidden: all ten destinations are visible
+ * at rest, which is the point — a queue you have to expand to see is a queue
+ * you stop checking.
+ *
+ * Icon rules:
+ *   - Lucide throughout. The previous Unicode geometric glyphs (◉ ⌥ ◈ ⊙ ⌂ ◧
+ *     ⌬ ⚑ ◎ ⊞) had no shared stroke weight, no optical alignment, and font-
+ *     dependent rendering. The wordmark keeps its ◆ as a deliberate mark.
+ *   - Every icon is unique and semantically motivated.
  */
 export const SHELL_NAV_GROUPS: NavGroup[] = [
   {
-    label: 'Decide',
-    description: 'things waiting on you',
+    label: 'Inbox',
     entries: [
-      { route: 'triage', label: 'Needs You', href: '#/triage', icon: '◉' },
-      { route: 'proposals', label: 'Proposals', href: '#/proposals', icon: '⌥' },
+      { route: 'triage', label: 'Needs You', href: '#/triage', icon: Inbox },
+      { route: 'proposals', label: 'Proposals', href: '#/proposals', icon: Lightbulb },
+      { route: 'chat', label: 'Chat', href: '#/chat', icon: MessagesSquare },
     ],
   },
   {
-    label: 'Watch',
-    description: 'what is running and what landed',
+    label: 'Activity',
     entries: [
-      { route: 'progress', label: 'Progress', href: '#/progress', icon: '◈' },
-      { route: 'chat', label: 'Chat', href: '#/chat', icon: '⊙' },
+      { route: 'progress', label: 'Progress', href: '#/progress', icon: Workflow },
+      { route: 'events', label: 'Events', href: '#/events', icon: Activity },
     ],
   },
   {
-    label: 'Tune',
-    description: 'levers and health',
+    label: 'Insight',
     entries: [
-      { route: 'control', label: 'Control Room', href: '#/control', icon: '⌂' },
-      { route: 'kpi', label: 'KPI', href: '#/kpi', icon: '◧' },
+      { route: 'kpi', label: 'KPI', href: '#/kpi', icon: TrendingUp },
+      { route: 'studio', label: 'Studio', href: '#/studio', icon: FlaskConical },
+      { route: 'reflections', label: 'Reflections', href: '#/reflections', icon: Sparkles },
+      { route: 'steward', label: 'Steward', href: '#/steward', icon: ShieldCheck },
     ],
   },
   {
-    label: 'Advanced',
-    collapsible: true,
+    label: 'Control',
+    footer: true,
     entries: [
-      { route: 'events', label: 'Events', href: '#/events', icon: '⌬' },
-      { route: 'reflections', label: 'Reflections', href: '#/reflections', icon: '⚑' },
-      { route: 'steward', label: 'Steward', href: '#/steward', icon: '◎' },
-      { route: 'studio', label: 'Studio', href: '#/studio', icon: '⊞' },
+      {
+        route: 'control',
+        label: 'Control Room',
+        href: '#/control',
+        icon: SlidersHorizontal,
+      },
     ],
   },
 ]
@@ -98,9 +123,7 @@ const ShellTopbar = ({ hash }: ShellTopbarProps) => {
       : (() => {
           const route = resolvePageRoute(hash)
           for (const group of SHELL_NAV_GROUPS) {
-            const entry = group.entries.find(
-              (e) => e.route === route,
-            )
+            const entry = group.entries.find((e) => e.route === route)
             if (entry)
               return [
                 { label: group.label, href: null },
@@ -111,12 +134,9 @@ const ShellTopbar = ({ hash }: ShellTopbarProps) => {
         })()
 
   return (
-    <header className="col-span-2 flex h-10 items-center gap-3 border-b border-border-dark bg-surface-dark px-4">
-      {/* Wordmark */}
-      <span
-        className="shrink-0 font-mono text-body font-semibold tracking-wide"
-        style={{ color: 'var(--color-amber)' }}
-      >
+    <header className="col-span-2 flex h-12 items-center gap-3 border-b border-border-dark bg-surface-dark pl-4 pr-5">
+      {/* Wordmark — the one place the geometric mark is still used, as a mark. */}
+      <span className="flex shrink-0 items-center gap-1.5 text-title font-semibold tracking-tight text-accent-on-dark">
         ◆ mars
       </span>
 
@@ -135,23 +155,23 @@ const ShellTopbar = ({ hash }: ShellTopbarProps) => {
             {crumbs.map((crumb, i) => (
               <span key={i} className="flex shrink-0 items-center gap-1.5">
                 {i > 0 && (
-                  <span className="font-mono text-label text-muted-dark/40" aria-hidden="true">
-                    ›
+                  <span className="text-label text-muted-dark/40" aria-hidden="true">
+                    /
                   </span>
                 )}
                 {crumb.href ? (
                   <a
                     href={crumb.href}
-                    className="font-mono text-label text-muted-dark hover:text-fg-dark"
+                    className="rounded text-label text-muted-dark transition-colors duration-[var(--dur-fast)] hover:text-fg-dark"
                   >
                     {crumb.label}
                   </a>
                 ) : i === crumbs.length - 1 ? (
                   // Terminal (active page): brightest on-dark text so it reads as the current location
-                  <span className="font-mono text-label text-fg-dark">{crumb.label}</span>
+                  <span className="text-label font-medium text-fg-dark">{crumb.label}</span>
                 ) : (
                   // Non-terminal without href (e.g. group label): muted
-                  <span className="font-mono text-label text-muted-dark">{crumb.label}</span>
+                  <span className="text-label text-muted-dark">{crumb.label}</span>
                 )}
               </span>
             ))}
@@ -166,9 +186,10 @@ const ShellTopbar = ({ hash }: ShellTopbarProps) => {
           <span
             data-testid="sse-reconnecting-pill"
             aria-label="Live updates paused — reconnecting to the daemon"
-            className="shrink-0 rounded-full bg-muted-dark/15 px-2 py-0.5 font-mono text-micro leading-none text-muted-dark"
+            className="flex shrink-0 items-center gap-1.5 rounded-full bg-muted-dark/15 px-2.5 py-1 text-micro leading-none text-muted-dark"
           >
-            ⊘ live updates paused
+            <span className="size-1.5 rounded-full bg-muted-dark" aria-hidden="true" />
+            live updates paused
           </span>
         )}
         <DispatchPausedChip />
@@ -190,121 +211,127 @@ interface ShellSidebarProps {
    * Lets operators and the chat agent reconcile the badge count at a glance.
    */
   badgeAriaLabel?: string
-  /**
-   * Controls whether the collapsible Advanced group is expanded.
-   * Defaults to false (collapsed). Passed explicitly so tests can use
-   * renderToStaticMarkup without needing localStorage or useState.
-   */
-  advancedExpanded?: boolean
-  /** Called when the user clicks the Advanced group toggle. */
-  onAdvancedToggle?: () => void
+}
+
+/** One nav row. Extracted so the scrolling groups and the footer share it exactly. */
+const NavItem = ({
+  entry,
+  isActive,
+  badge,
+  badgeAriaLabel,
+}: {
+  entry: NavEntry
+  isActive: boolean
+  badge?: number
+  badgeAriaLabel?: string
+}) => {
+  const Icon = entry.icon
+  return (
+    <a
+      href={entry.href}
+      aria-current={isActive ? 'page' : undefined}
+      className={[
+        // A filled, rounded, inset row — the Linear/Cursor pattern. The old
+        // treatment was a full-bleed row with a 2px right border, which reads
+        // as a table selection rather than as a navigation target.
+        'group relative mx-2 flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-label',
+        'transition-colors duration-[var(--dur-fast)] ease-[var(--ease-out)]',
+        isActive
+          ? 'bg-accent-on-dark/12 font-medium text-accent-on-dark'
+          : 'text-muted-dark hover:bg-fg-dark/6 hover:text-fg-dark',
+      ].join(' ')}
+    >
+      {/* Active marker — a short rail inside the pill's left padding. Kept
+          inside the row (not bled to the sidebar edge) so it cannot be clipped
+          by the nav's overflow context. */}
+      {isActive && (
+        <span
+          aria-hidden="true"
+          className="absolute left-0 top-1/2 h-3.5 w-0.5 -translate-y-1/2 rounded-r-full bg-accent-on-dark"
+        />
+      )}
+      <Icon
+        size={15}
+        strokeWidth={isActive ? 2.25 : 1.75}
+        className="shrink-0 transition-opacity duration-[var(--dur-fast)]"
+        aria-hidden="true"
+      />
+      <span className="truncate">{entry.label}</span>
+      {badge !== undefined && badge > 0 && (
+        <span
+          aria-label={badgeAriaLabel ?? `${badge > 99 ? '99+' : badge} decisions pending`}
+          className="ml-auto min-w-[20px] animate-badge-pulse rounded-full px-1.5 py-0.5 text-center text-micro font-semibold leading-none tabular-nums text-white"
+        >
+          {badge > 99 ? '99+' : badge}
+        </span>
+      )}
+    </a>
+  )
 }
 
 /**
- * Dark 200 px sidebar with four labelled groups and ten nav entries.
+ * Dark sidebar with three intent-clustered groups and a pinned Control footer.
  *
- * Exported for direct testing with controlled props — the badge count,
- * active route, and Advanced-group expansion state are passed in rather than
- * fetched inside the component, keeping it a pure render function suitable
- * for `renderToStaticMarkup` tests.
+ * Exported for direct testing with controlled props — the badge count and
+ * active route are passed in rather than fetched inside the component, keeping
+ * it a pure render function suitable for `renderToStaticMarkup` tests.
  *
- * Active-route rules:
- *   - Every entry is active when entry.route === activeRoute. No exceptions.
- *   - Studio and Steward are in the Advanced group; pass advancedExpanded=true
- *     to see their entries and their active highlight.
- *   - The Shell wrapper auto-expands Advanced when activeRoute is 'studio' or
- *     'steward', so the highlight is always visible in the full shell.
+ * Active-route rule: an entry is active when entry.route === activeRoute. There
+ * are no exceptions and nothing is hidden behind a disclosure, so the active
+ * highlight is always on screen.
  */
 export const ShellSidebar = ({
   activeRoute,
   decisionBadge,
   badgeAriaLabel,
-  advancedExpanded = false,
-  onAdvancedToggle,
-}: ShellSidebarProps) => (
-  <nav
-    aria-label="Main navigation"
-    className="flex flex-col overflow-y-auto border-r border-border-dark bg-bg-dark pt-2 pb-4"
-  >
-    {SHELL_NAV_GROUPS.map((group) => {
-      const isCollapsible = group.collapsible === true
-      const isExpanded = isCollapsible ? advancedExpanded : true
+}: ShellSidebarProps) => {
+  const scrolling = SHELL_NAV_GROUPS.filter((g) => g.footer !== true)
+  const footer = SHELL_NAV_GROUPS.filter((g) => g.footer === true)
 
-      return (
-        <div key={group.label} className="mb-1">
-          {isCollapsible ? (
-            <button
-              onClick={onAdvancedToggle}
-              aria-expanded={isExpanded}
-              className="flex w-full items-center justify-between px-3 pb-1 pt-2"
-            >
-              <p className="font-mono text-micro uppercase tracking-widest text-muted-dark">
-                {group.label}
-              </p>
-              <span
-                className={[
-                  'font-mono text-micro text-muted-dark/60 transition-transform duration-200',
-                  isExpanded ? 'rotate-180' : '',
-                ].join(' ')}
-                aria-hidden="true"
-              >
-                ▾
-              </span>
-            </button>
-          ) : (
-            <div className="px-3 pb-1 pt-2">
-              <p className="font-mono text-micro uppercase tracking-widest text-muted-dark">
-                {group.label}
-              </p>
-              {group.description && (
-                <p className="mt-0.5 font-mono text-micro text-muted-dark/40">
-                  {group.description}
-                </p>
-              )}
-            </div>
-          )}
-          {isExpanded &&
-            group.entries.map((entry) => {
-              // Every entry highlights when its route matches the active route.
-              // Studio and Steward are in Advanced; Shell auto-expands Advanced
-              // when those routes are active so the highlight is always visible.
-              const isActive: boolean = entry.route === activeRoute
-
-              const showBadge = entry.route === 'triage' && decisionBadge > 0
-
-              return (
-                <a
+  return (
+    <nav
+      aria-label="Main navigation"
+      className="flex flex-col overflow-y-auto border-r border-border-dark bg-bg-dark pb-3 pt-3"
+    >
+      <div className="flex-1">
+        {scrolling.map((group) => (
+          <div key={group.label} className="mb-4 last:mb-0">
+            <p className="px-4 pb-1.5 text-micro font-semibold uppercase tracking-[0.09em] text-muted-dark/60">
+              {group.label}
+            </p>
+            <div className="flex flex-col gap-px">
+              {group.entries.map((entry) => (
+                <NavItem
                   key={entry.label}
-                  href={entry.href}
-                  aria-current={isActive ? 'page' : undefined}
-                  className={[
-                    'group relative flex items-center gap-2 px-3 py-[5px] font-mono text-label transition-all duration-150 ease-out hover:bg-surface-dark hover:text-fg-dark',
-                    isActive
-                      ? 'border-r-2 border-highlight bg-highlight/20'
-                      : 'text-muted-dark',
-                  ].join(' ')}
-                  style={isActive ? { color: 'var(--color-amber)' } : undefined}
-                >
-                  <span className="w-3.5 text-center text-body opacity-70 transition-opacity duration-150 ease-out group-hover:opacity-100" aria-hidden="true">
-                    {entry.icon}
-                  </span>
-                  {entry.label}
-                  {showBadge && (
-                    <span
-                      aria-label={badgeAriaLabel ?? `${decisionBadge > 99 ? '99+' : decisionBadge} decisions pending`}
-                      className="ml-auto min-w-[18px] animate-badge-pulse rounded-full px-1.5 py-0.5 text-center font-mono text-micro font-medium leading-none text-white"
-                    >
-                      {decisionBadge > 99 ? '99+' : decisionBadge}
-                    </span>
-                  )}
-                </a>
-              )
-            })}
+                  entry={entry}
+                  isActive={entry.route === activeRoute}
+                  badge={entry.route === 'triage' ? decisionBadge : undefined}
+                  badgeAriaLabel={badgeAriaLabel}
+                />
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {footer.length > 0 && (
+        <div className="mt-4 border-t border-border-dark/70 pt-3">
+          {footer.map((group) => (
+            <div key={group.label} className="flex flex-col gap-px">
+              {group.entries.map((entry) => (
+                <NavItem
+                  key={entry.label}
+                  entry={entry}
+                  isActive={entry.route === activeRoute}
+                />
+              ))}
+            </div>
+          ))}
         </div>
-      )
-    })}
-  </nav>
-)
+      )}
+    </nav>
+  )
+}
 
 // ── Shell ─────────────────────────────────────────────────────────────────────
 
@@ -317,14 +344,12 @@ interface ShellProps {
  * Persistent shell that wraps every page.
  *
  * Renders a CSS grid:
- *   columns  200 px sidebar | 1 fr content
- *   rows     40 px topbar   | 1 fr body
+ *   columns  224 px sidebar | 1 fr content
+ *   rows     48 px topbar   | 1 fr body
  *
  * The topbar spans both columns (col-span-2). Shell fills the remaining flex
  * height of its parent (flex-1 min-h-0).
  */
-const ADVANCED_LS_KEY = 'shell-advanced-expanded'
-
 export const Shell = ({ hash, children }: ShellProps) => {
   // Badge = the canonical "needs you" count from the unified counts endpoint.
   // This is the single source of truth shared by the sidebar badge, board
@@ -335,46 +360,18 @@ export const Shell = ({ hash, children }: ShellProps) => {
   const { needsYou: decisionBadge } = useCounts()
   const activeRoute = resolvePageRoute(hash)
 
-  const [advancedExpanded, setAdvancedExpanded] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem(ADVANCED_LS_KEY) === 'true'
-    } catch {
-      return false
-    }
-  })
-
-  const handleAdvancedToggle = () => {
-    setAdvancedExpanded((prev) => {
-      const next = !prev
-      try {
-        localStorage.setItem(ADVANCED_LS_KEY, String(next))
-      } catch {
-        // localStorage may be blocked in private browsing — silently ignore
-      }
-      return next
-    })
-  }
-
   const badgeAriaLabel: string | undefined =
     decisionBadge > 0
       ? `${decisionBadge > 99 ? '99+' : decisionBadge} decisions pending`
       : undefined
 
-  // Auto-expand the Advanced group when the active route is one of its routes
-  // (steward, studio) so the highlighted entry is always visible regardless of
-  // the user's localStorage preference. Does not persist the expansion state.
-  const effectiveAdvancedExpanded =
-    advancedExpanded || activeRoute === 'steward' || activeRoute === 'studio'
-
   return (
-    <div className="grid min-h-0 flex-1 grid-cols-[200px_1fr] grid-rows-[40px_1fr]">
+    <div className="grid min-h-0 flex-1 grid-cols-[224px_1fr] grid-rows-[48px_1fr]">
       <ShellTopbar hash={hash} />
       <ShellSidebar
         activeRoute={activeRoute}
         decisionBadge={decisionBadge}
         badgeAriaLabel={badgeAriaLabel}
-        advancedExpanded={effectiveAdvancedExpanded}
-        onAdvancedToggle={handleAdvancedToggle}
       />
       {/* The banner sits above the page content rather than above the topbar so
           it reads as a statement about what is on screen: everything under it

@@ -1,3 +1,7 @@
+import { Chip, type ChipTone } from '@/components/Chip'
+import { ArrowRight, Search } from 'lucide-react'
+import { ActionButton } from '@/components/ActionButton'
+import { PageHeader } from '@/components/PageHeader'
 /**
  * TriagePage — "Action Queue" ranked triage view.
  *
@@ -146,21 +150,21 @@ const KIND_LABEL: Record<ActionQueueKind, string> = {
   'phantom-merge-unknown': 'phantom merge?',
 }
 
-/** Badge text + border tint per kind. */
-const KIND_CHIP_CLASS: Record<string, string> = {
-  failed: 'text-error border-error/40',
-  'daemon-killed': 'text-error border-error/40',
-  'arc-failed': 'text-error border-error/40',
-  'baseline-broken': 'text-error border-error/40',
-  'stale-queued': 'text-warn border-warn/40',
-  'stale-worktree': 'text-warn border-warn/40',
-  'dirty-integration': 'text-warn border-warn/40',
-  'daemon-code-drift': 'text-warn border-warn/40',
-  'signature-storm': 'text-warn border-warn/40',
-  'phantom-merge': 'text-warn border-warn/40',
-  'phantom-merge-unknown': 'text-warn border-warn/40',
-  'awaiting-validation': 'text-trace-mars border-trace-mars/40',
-  'draft-proposal': 'text-success border-success/40',
+/** Semantic chip tone per kind — consumed by the shared <Chip> primitive. */
+const KIND_TONE: Record<string, ChipTone> = {
+  failed: 'error',
+  'daemon-killed': 'error',
+  'arc-failed': 'error',
+  'baseline-broken': 'error',
+  'stale-queued': 'warn',
+  'stale-worktree': 'warn',
+  'dirty-integration': 'warn',
+  'daemon-code-drift': 'warn',
+  'signature-storm': 'warn',
+  'phantom-merge': 'warn',
+  'phantom-merge-unknown': 'warn',
+  'awaiting-validation': 'trace',
+  'draft-proposal': 'success',
 }
 
 // ── Action kind sets ──────────────────────────────────────────────────────────
@@ -222,7 +226,7 @@ const TriageClusterRow = ({ kind, count, latestAt }: TriageClusterRowProps) => {
   const age = relativeTime(latestAt)
   const kindLabel = (KIND_LABEL as Record<string, string | undefined>)[kind] ?? kind.replace(/-/g, ' ')
   const kindIcon = KIND_ICON[kind] ?? '•'
-  const chipClass = KIND_CHIP_CLASS[kind] ?? 'text-muted-foreground border-border'
+  const kindTone = KIND_TONE[kind] ?? 'neutral'
   const isDraftProposal = kind === 'draft-proposal'
 
   return (
@@ -231,15 +235,9 @@ const TriageClusterRow = ({ kind, count, latestAt }: TriageClusterRowProps) => {
     >
       {/* Top row: kind chip + age */}
       <div className="mb-1.5 flex items-center gap-2">
-        <span
-          className={[
-            'inline-flex items-center gap-1 rounded border border-border px-1.5 py-0.5 font-mono text-micro leading-none',
-            chipClass,
-          ].join(' ')}
-        >
-          <span className="opacity-60">{kindIcon}</span>
+        <Chip tone={kindTone} icon={kindIcon}>
           {kindLabel}
-        </span>
+        </Chip>
         <span className="ml-auto font-mono text-micro text-muted-foreground">
           {age}
         </span>
@@ -362,8 +360,7 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
   const headline = !goal ? (item.humanSummary || item.title) : null
   const kindLabel = KIND_LABEL[item.kind] ?? item.kind.replace(/-/g, ' ')
   const kindIcon = KIND_ICON[item.kind] ?? '•'
-  const chipClass =
-    KIND_CHIP_CLASS[item.kind] ?? 'text-muted-foreground border-border'
+  const kindTone = KIND_TONE[item.kind] ?? 'neutral'
   const isChatOnly = CHAT_ONLY_KINDS.has(item.kind)
   const isTaskRecovery = TASK_RECOVERY_KINDS.has(item.kind)
   const isRecoveryExhausted = isTaskRecovery && item.recoveryExhausted
@@ -460,26 +457,12 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
     >
       {/* Top row: kind chip + priority badge + age */}
       <div className="mb-1.5 flex items-center gap-2">
-        <span
-          className={[
-            'inline-flex items-center gap-1 rounded border border-border px-1.5 py-0.5 font-mono text-micro leading-none',
-            chipClass,
-          ].join(' ')}
-        >
-          <span className="opacity-60">{kindIcon}</span>
+        <Chip tone={kindTone} icon={kindIcon}>
           {kindLabel}
-        </span>
-        {item.priority === 'high' && (
-          <span className="rounded bg-error/15 px-1.5 py-0.5 font-mono text-micro font-medium leading-none text-error">
-            ↑ high
-          </span>
-        )}
-        {item.priority === 'normal' && (
-          <span className="rounded bg-warn/10 px-1.5 py-0.5 font-mono text-micro leading-none text-warn">
-            normal
-          </span>
-        )}
-        <span className="ml-auto font-mono text-micro text-muted-foreground">
+        </Chip>
+        {item.priority === 'high' && <Chip tone="error">high</Chip>}
+        {item.priority === 'normal' && <Chip tone="neutral">normal</Chip>}
+        <span className="ml-auto text-micro tabular-nums text-muted-foreground">
           {age}
         </span>
       </div>
@@ -489,11 +472,11 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
           set is shown for this task, chosen by ENTITY_GROUP_KIND_RANK. */}
       {extraBadges && extraBadges.length > 0 && (
         <div className="mb-1.5 flex flex-wrap items-center gap-1" data-testid="triage-entity-badges">
-          <span className="font-mono text-micro text-muted-foreground">also:</span>
+          <span className="text-micro text-muted-foreground">also</span>
           {extraBadges.map((badgeKind) => (
             <span
               key={badgeKind}
-              className="rounded border border-border px-1.5 py-0.5 font-mono text-micro leading-none text-muted-foreground"
+              className="rounded-full bg-foreground/6 px-1.5 py-0.5 text-micro font-medium leading-[1.4] text-muted-foreground"
               data-testid={`triage-entity-badge-${badgeKind}`}
             >
               {(KIND_LABEL as Record<string, string | undefined>)[badgeKind] ?? badgeKind.replace(/-/g, ' ')}
@@ -511,19 +494,19 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
       {goal ? (
         <>
           <p
-            className="mb-0.5 text-title font-medium leading-snug text-foreground line-clamp-2"
+            className="mb-1 text-section font-semibold leading-snug text-foreground line-clamp-2"
             data-testid="triage-goal"
           >
             {goal.split('\n')[0]?.trim()}
           </p>
           <p
-            className="font-mono text-micro text-muted-foreground"
+            className="text-label text-muted-foreground"
             data-testid="triage-title-subhead"
           >
             {signatureFamilyPhrase(item.humanDetail?.failureSignature) ?? item.title}
           </p>
           {item.humanSummary && (
-            <p className="mt-0.5 font-mono text-micro text-muted-foreground/70 line-clamp-1">
+            <p className="mt-1 text-label leading-relaxed text-muted-foreground/85 line-clamp-2">
               {item.humanSummary}
             </p>
           )}
@@ -533,7 +516,7 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
               className="mt-1.5"
               data-testid="triage-output-disclosure"
             >
-              <pre className="max-h-28 overflow-y-auto rounded bg-primary/10 p-1.5 font-mono text-micro text-primary/80 whitespace-pre-wrap break-all">
+              <pre className="max-h-28 overflow-y-auto rounded-md border border-border/60 bg-background p-2 font-mono text-micro leading-relaxed text-muted-foreground whitespace-pre-wrap break-all">
                 {[
                   item.humanDetail?.failureSignature
                     ? `signature: ${item.humanDetail.failureSignature}`
@@ -548,7 +531,7 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
         </>
       ) : (
         headline && (
-          <p className="mb-0.5 text-title font-medium leading-snug text-foreground">
+          <p className="mb-1 text-section font-semibold leading-snug text-foreground">
             {headline}
           </p>
         )
@@ -569,7 +552,7 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
       {hasResolvableTask(item) && (
         <a
           href={taskHash(item.entityId, 'triage')}
-          className="mb-2 block font-mono text-micro text-primary transition-colors hover:text-foreground hover:underline"
+          className="mb-2 inline-flex w-fit items-center gap-1 rounded text-label font-medium text-primary transition-colors duration-[var(--dur-fast)] hover:text-foreground hover:underline"
           data-testid="triage-entity-link"
           title={item.entityId}
         >
@@ -587,21 +570,16 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
                 Decision buttons are NEVER hidden behind disclosure — they are the
                 primary CTA for their card type (Enable, Skip, Dismiss, …). */}
             {item.decisions.slice(0, 3).map((d) => (
-              <button
+              <ActionButton
                 key={d.label}
+                variant="primary"
                 disabled={pending !== null}
+                pending={pending === d.label}
                 onClick={() => void handleDecision(d)}
-                className={
-                  d.style === 'destructive'
-                    ? 'rounded border border-error/40 bg-error/5 px-2 py-1 font-mono text-micro text-error transition-colors hover:bg-error/10 disabled:opacity-50'
-                    : d.style === 'primary'
-                    ? 'rounded border border-highlight/60 bg-highlight/10 px-2 py-1 font-mono text-micro font-medium text-highlight transition-colors hover:bg-highlight/20 disabled:opacity-50'
-                    : 'rounded border border-primary/30 bg-primary/10 px-2 py-1 font-mono text-micro font-medium text-primary transition-colors hover:bg-primary/20 disabled:opacity-50'
-                }
                 data-testid={`triage-decision-${d.label}`}
               >
-                {pending === d.label ? '…' : d.label}
-              </button>
+                {d.label}
+              </ActionButton>
             ))}
 
             {/* Recipe verb buttons. For task-recovery rows, copy verbs have
@@ -614,25 +592,25 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
             {mainVerbs
               .filter((v) => !item.decisions.some((d) => d.label === v.label))
               .map((verb) => (
-              <button
+              <ActionButton
                 key={verb.op === 'copy' ? `copy-${verb.label}` : verb.op}
                 disabled={pending !== null}
+                pending={pending === verb.op}
                 onClick={() => void handleVerb(verb.op, verb.hint)}
-                className={
+                size={verb.op === 'copy' ? 'sm' : 'md'}
+                variant={
                   verb.style === 'destructive'
-                    ? 'rounded border border-error/40 bg-error/5 px-2 py-1 font-mono text-micro text-error transition-colors hover:bg-error/10 disabled:opacity-50'
+                    ? 'danger'
                     : verb.style === 'primary'
-                    ? 'rounded border border-highlight/60 bg-highlight/10 px-2 py-1 font-mono text-micro font-medium text-highlight transition-colors hover:bg-highlight/20 disabled:opacity-50'
-                    : verb.op === 'copy'
-                    ? 'rounded border border-border px-1.5 py-0.5 font-mono text-micro text-muted-foreground transition-colors hover:bg-border/40 hover:text-foreground disabled:opacity-50'
-                    : verb.style === 'snooze'
-                    ? 'rounded px-2 py-1 font-mono text-micro text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50'
-                    : 'rounded border border-border px-2 py-1 font-mono text-micro text-foreground transition-colors hover:bg-border/40 hover:text-foreground disabled:opacity-50'
+                      ? 'primary'
+                      : verb.style === 'snooze' || verb.op === 'copy'
+                        ? 'ghost'
+                        : 'secondary'
                 }
                 data-testid={`triage-verb-${verb.op}`}
               >
-                {pending === verb.op ? '…' : verb.label}
-              </button>
+                {verb.label}
+              </ActionButton>
             ))}
 
             {/* Recovery-exhausted carry-forward panel — only for task-recovery
@@ -909,8 +887,7 @@ export const TriageCauseGroupRow = ({
     (KIND_LABEL as Record<string, string | undefined>)[group.kind] ??
     group.kind.replace(/-/g, ' ')
   const kindIcon = KIND_ICON[group.kind] ?? '•'
-  const chipClass =
-    KIND_CHIP_CLASS[group.kind] ?? 'text-muted-foreground border-border'
+  const kindTone = KIND_TONE[group.kind] ?? 'neutral'
 
   // Cause label: prefer server-computed causeLabel (HR-3), then the local
   // signatureFamilyPhrase mapping, then fall back to the slug portion after
@@ -984,18 +961,12 @@ export const TriageCauseGroupRow = ({
         >
           {expanded ? '▾' : '▸'}
         </button>
-        <span
-          className={[
-            'inline-flex items-center gap-1 rounded border border-border px-1.5 py-0.5 font-mono text-micro leading-none',
-            chipClass,
-          ].join(' ')}
-        >
-          <span className="opacity-60">{kindIcon}</span>
+        <Chip tone={kindTone} icon={kindIcon}>
           {kindLabel}
-        </span>
-        <span className="rounded bg-primary/10 px-1.5 py-0.5 font-mono text-micro font-medium leading-none text-primary">
+        </Chip>
+        <Chip tone="info" className="tabular-nums">
           {group.count}×
-        </span>
+        </Chip>
         <span className="flex-1 text-label font-medium leading-snug text-foreground">
           {label}
         </span>
@@ -1231,57 +1202,60 @@ export const TriagePage = () => {
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-background">
-      {/* Header strip */}
-      <div className="flex shrink-0 items-center border-b border-border px-5 py-3.5 shadow-sm">
-        <h1 className="font-mono text-title font-semibold text-foreground">
-          Needs You
-        </h1>
-        {needsYouCount > 0 && (
-          <span
-            aria-label={
-              needsYouCount === 1
-                ? '1 item needs attention'
-                : `${needsYouCount} items need attention`
-            }
-            className="ml-2.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full border border-primary/20 bg-primary/15 px-1.5 font-mono text-micro font-medium leading-none text-primary"
+      <PageHeader
+        title="Needs You"
+        count={needsYouCount}
+        countLabel={
+          needsYouCount === 1
+            ? '1 item needs attention'
+            : `${needsYouCount} items need attention`
+        }
+        actions={
+          <a
+            href="#/chat"
+            className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-label text-muted-foreground transition-colors duration-[var(--dur-fast)] hover:bg-foreground/5 hover:text-foreground"
           >
-            {needsYouCount}
-          </span>
-        )}
-        <a
-          href="#/chat"
-          className="ml-auto font-mono text-micro text-muted-foreground transition-colors hover:text-foreground"
-        >
-          Chat →
-        </a>
-      </div>
-
-      {/* Search + kind filter toolbar — always visible so the operator can
-          narrow a 35-row wall without scrolling first. */}
-      <div className="flex shrink-0 gap-2 border-b border-border px-4 py-2">
-        <input
-          type="search"
-          placeholder="Search…"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          className="flex-1 rounded border border-border bg-background px-2 py-1 font-mono text-micro text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/50"
-          data-testid="triage-search"
-        />
-        <select
-          value={kindFilter}
-          onChange={(e) => setKindFilter(e.target.value)}
-          className="rounded border border-border bg-background px-2 py-1 font-mono text-micro text-foreground focus:outline-none focus:ring-1 focus:ring-primary/50"
-          data-testid="triage-kind-filter"
-        >
-          <option value="">All kinds</option>
-          {availableKinds.map((k) => (
-            <option key={k} value={k}>
-              {(KIND_LABEL as Record<string, string | undefined>)[k] ??
-                k.replace(/-/g, ' ')}
-            </option>
-          ))}
-        </select>
-      </div>
+            Open in Chat
+            <ArrowRight size={13} strokeWidth={1.75} aria-hidden="true" />
+          </a>
+        }
+        /* Search + kind filter — always visible so the operator can narrow a
+           35-row wall without scrolling first. */
+        toolbar={
+          <>
+            <div className="relative flex-1">
+              <Search
+                size={13}
+                strokeWidth={1.75}
+                aria-hidden="true"
+                className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground"
+              />
+              <input
+                type="search"
+                placeholder="Search the queue…"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="h-7 w-full rounded-md border border-border bg-background pl-7.5 pr-2.5 text-label text-foreground shadow-[var(--shadow-e1)] transition-[border-color,box-shadow] duration-[var(--dur-fast)] placeholder:text-muted-foreground/70 focus:border-highlight/50 focus:outline-none focus:ring-2 focus:ring-highlight/15"
+                data-testid="triage-search"
+              />
+            </div>
+            <select
+              value={kindFilter}
+              onChange={(e) => setKindFilter(e.target.value)}
+              className="h-7 shrink-0 rounded-md border border-border bg-surface px-2 text-label text-foreground shadow-[var(--shadow-e1)] transition-colors duration-[var(--dur-fast)] hover:bg-background focus:border-highlight/50 focus:outline-none focus:ring-2 focus:ring-highlight/15"
+              data-testid="triage-kind-filter"
+            >
+              <option value="">All kinds</option>
+              {availableKinds.map((k) => (
+                <option key={k} value={k}>
+                  {(KIND_LABEL as Record<string, string | undefined>)[k] ??
+                    k.replace(/-/g, ' ')}
+                </option>
+              ))}
+            </select>
+          </>
+        }
+      />
 
       {/* Ranked list */}
       <div className="flex-1 overflow-y-auto">

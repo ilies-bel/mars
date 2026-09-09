@@ -2,8 +2,8 @@
  * Navigation coverage — every app route is reachable from the sidebar.
  *
  * Asserts:
- *   1. Steward (#/steward) has a sidebar entry in the Advanced group.
- *   2. Studio (#/studio/<id>) has a sidebar entry in the Advanced group.
+ *   1. Steward (#/steward) has a sidebar entry in the Insight group.
+ *   2. Studio (#/studio/<id>) has a sidebar entry in the Insight group.
  *   3. Every full-page RouteName is represented in SHELL_NAV_GROUPS.
  *   4. The reflections RunStateBanner does not concatenate two sentences
  *      without a space (the ".Run manually" defect pattern).
@@ -129,12 +129,19 @@ describe('Navigation coverage — sidebar entries', () => {
     expect(icons).not.toContain('◆')
   })
 
-  it('Steward and Studio are in the Advanced (collapsible) group', () => {
-    const advanced = SHELL_NAV_GROUPS.find((g) => g.collapsible)
-    expect(advanced).toBeDefined()
-    const advancedRoutes = advanced!.entries.map((e) => e.route)
-    expect(advancedRoutes).toContain('steward')
-    expect(advancedRoutes).toContain('studio')
+  it('Steward and Studio are in the Insight group', () => {
+    const insight = SHELL_NAV_GROUPS.find((g) => g.label === 'Insight')
+    expect(insight).toBeDefined()
+    const insightRoutes = insight!.entries.map((e) => e.route)
+    expect(insightRoutes).toContain('steward')
+    expect(insightRoutes).toContain('studio')
+  })
+
+  // Regression: Events / Reflections / Steward / Studio used to sit behind a
+  // collapsible "Advanced" drawer, so 40% of the app was one extra click and
+  // one act of curiosity away. Every destination is visible at rest now.
+  it('no group is collapsible', () => {
+    expect(SHELL_NAV_GROUPS.some((g) => 'collapsible' in g)).toBe(false)
   })
 })
 
