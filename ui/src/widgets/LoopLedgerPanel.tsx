@@ -67,12 +67,12 @@ export const LoopLedgerPanel = () => {
         <table className="w-full text-body">
           <thead>
             <tr className="eyebrow text-left text-muted-foreground">
-              <th className="pb-1 pr-2">Run</th>
-              <th className="pb-1 pr-2">Scored at</th>
-              <th className="pb-1 pr-2">Score</th>
-              <th className="pb-1 pr-2">Recorded</th>
-              <th className="pb-1 pr-2">Suggest</th>
-              <th className="pb-1">Review</th>
+              <th className="whitespace-nowrap pb-1 pr-2">Run</th>
+              <th className="whitespace-nowrap pb-1 pr-2">Scored at</th>
+              <th className="whitespace-nowrap pb-1 pr-2">Score</th>
+              <th className="whitespace-nowrap pb-1 pr-2">Recorded</th>
+              <th className="whitespace-nowrap pb-1 pr-2">Suggest</th>
+              <th className="whitespace-nowrap pb-1">Review</th>
             </tr>
           </thead>
           <tbody>

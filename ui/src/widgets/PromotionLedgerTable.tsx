@@ -19,8 +19,11 @@ const fmtScore = (n: number | null): string => (n === null ? '–' : n.toFixed(2
  * Clicking any row toggles an inline evidence panel underneath that
  * pretty-prints the full ledger entry as JSON.
  *
- * The <thead> is always rendered so the table box stays the same size while
- * loading — only <tbody> is gated behind isLoading / empty-state checks.
+ * The <thead> stays rendered while LOADING, so the table box does not change
+ * size when rows arrive. It is NOT rendered when the ledger is genuinely
+ * empty: five column headers standing over the words "No promotions yet" is a
+ * scaffold pretending to be data, and it made the panel read as broken rather
+ * than as empty.
  */
 export const PromotionLedgerTable = ({ workflow }: Props) => {
   const { entries, isLoading, error } = usePromotionLedger(workflow)
@@ -34,15 +37,29 @@ export const PromotionLedgerTable = ({ workflow }: Props) => {
       return next
     })
 
+  // Genuinely empty is a different state from loading: there are no rows
+  // coming, so there is no layout shift to protect against and no reason to
+  // draw a header for columns that will never be filled.
+  if (!isLoading && !error && entries.length === 0) {
+    return <p className="text-body text-muted-foreground">No promotions yet</p>
+  }
+  if (error) {
+    return (
+      <p role="alert" className="text-body text-error">
+        Couldn&apos;t load promotions
+      </p>
+    )
+  }
+
   return (
     <table className="w-full text-body">
       <thead>
         <tr className="eyebrow text-left text-muted-foreground">
-          <th className="pb-1 pr-2">Timestamp</th>
-          <th className="pb-1 pr-2">Workflow</th>
-          <th className="pb-1 pr-2">Decision</th>
-          <th className="pb-1 pr-2">Versions</th>
-          <th className="pb-1">Scores</th>
+          <th className="whitespace-nowrap pb-1 pr-2">Timestamp</th>
+          <th className="whitespace-nowrap pb-1 pr-2">Workflow</th>
+          <th className="whitespace-nowrap pb-1 pr-2">Decision</th>
+          <th className="whitespace-nowrap pb-1 pr-2">Versions</th>
+          <th className="whitespace-nowrap pb-1">Scores</th>
         </tr>
       </thead>
       <tbody>
@@ -51,14 +68,6 @@ export const PromotionLedgerTable = ({ workflow }: Props) => {
             <td colSpan={5}>
               <SkeletonList rows={3} rowClassName="h-5 w-full mb-1" label="Loading promotions" />
             </td>
-          </tr>
-        ) : error ? (
-          <tr>
-            <td colSpan={5} role="alert" className="py-1 text-error">Couldn't load promotions</td>
-          </tr>
-        ) : entries.length === 0 ? (
-          <tr>
-            <td colSpan={5} className="py-1 text-muted-foreground">No promotions yet</td>
           </tr>
         ) : (
           entries.map((entry) => (
