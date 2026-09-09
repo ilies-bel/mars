@@ -978,10 +978,14 @@ const ThreadItem = ({ thread, isSelected, onSelect, onRename, indented = false, 
               }
               title={armed ? 'Click again to delete permanently' : 'Delete thread'}
               className={[
-                'ml-1 flex-none rounded px-1 font-mono text-micro leading-none transition-opacity',
+                // Unarmed it is an icon-only control, so it gets an explicit
+                // 24x24 box (WCAG 2.5.8) rather than the ~15x11 a "×" glyph's
+                // type metrics produced. Armed it widens to carry the word,
+                // because the two-step confirm has to be legible.
+                'ml-1 inline-flex h-6 flex-none items-center justify-center rounded transition-opacity',
                 armed
-                  ? 'bg-error/20 text-error opacity-100'
-                  : 'text-muted-foreground opacity-0 hover:text-error group-hover:opacity-100 focus:opacity-100',
+                  ? 'w-auto px-1.5 eyebrow bg-error/20 text-error opacity-100'
+                  : 'w-6 text-muted-foreground opacity-0 hover:bg-error/10 hover:text-error group-hover:opacity-100 focus:opacity-100',
               ].join(' ')}
               onClick={(e) => {
                 e.stopPropagation()
@@ -993,7 +997,7 @@ const ThreadItem = ({ thread, isSelected, onSelect, onRename, indented = false, 
                 }
               }}
             >
-              {armed ? 'delete?' : '×'}
+              {armed ? 'delete?' : <XIcon size={13} strokeWidth={2} aria-hidden="true" />}
             </button>
           )}
         </>

@@ -978,8 +978,9 @@ export const TriageCauseGroupRow = ({
         <button
           type="button"
           aria-expanded={expanded}
+          aria-label={expanded ? `Collapse ${kindLabel} group` : `Expand ${kindLabel} group`}
           onClick={() => setExpanded((e) => !e)}
-          className="shrink-0 font-mono text-micro text-muted-foreground transition-colors hover:text-foreground"
+          className="-ml-1 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground"
           data-testid="cause-group-toggle"
         >
           {expanded ? (
