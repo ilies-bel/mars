@@ -1,7 +1,7 @@
 import { useCounts } from '@/entities/counts/useCounts'
 import { SelectField } from '@/components/SelectField'
 import { Chip, type ChipTone } from '@/components/Chip'
-import { AlertTriangle, Archive, ArrowRight, ChevronDown, ChevronRight, Circle, CircleDashed, Clock, FileText, Gauge, GitBranch, HelpCircle, PowerOff, RefreshCw, Search, SearchX, ShieldAlert, ShieldX, Sparkles, Undo2, UserCheck, XCircle, Zap } from 'lucide-react'
+import { AlertTriangle, Archive, ArrowRight, ChevronDown, ChevronRight, Circle, CircleDashed, Clock, FileText, Gauge, GitBranch, HelpCircle, MessageSquare, MoreHorizontal, PowerOff, RefreshCw, Search, SearchX, ShieldAlert, ShieldX, Sparkles, Undo2, UserCheck, XCircle, Zap } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { ActionButton, ActionLink } from '@/components/ActionButton'
 import { PageHeader } from '@/widgets/primitives/DensityPrimitives'
@@ -747,10 +747,10 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
               href={chatHref}
               title="Open chat thread"
               aria-label="Open chat thread"
-              className="rounded p-1 text-muted-foreground transition-colors hover:text-foreground"
+              className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground"
               data-testid="triage-chat"
             >
-              ⊙
+              <MessageSquare size={13} strokeWidth={2} aria-hidden="true" />
             </a>
 
             {/* More ⋯ — disclosure that hides Restart (and copy verbs) */}
@@ -762,9 +762,9 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
                 aria-expanded={moreOpen}
                 aria-label="More actions"
                 data-testid="triage-more-toggle"
-                className="rounded px-1.5 py-1 font-mono text-micro text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+                className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground disabled:opacity-50"
               >
-                ⋯
+                <MoreHorizontal size={14} strokeWidth={2} aria-hidden="true" />
               </button>
               {/* Dropdown — always in the DOM; invisible+pointer-events-none
                   when closed so the DOM query in tests still finds elements. */}
