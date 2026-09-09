@@ -134,6 +134,10 @@ export const WatchtowerTrendChart = ({
   }
 
   const latest = scores.length > 0 ? scores[scores.length - 1] : null
+  // One phrase, used by both the visible header and the aria-label. Written
+  // twice, they drifted immediately: the header singularised and the label
+  // did not, so a screen reader heard "over 1 runs".
+  const runCount = `${scores.length} run${scores.length === 1 ? '' : 's'}`
 
   return (
     <div className="flex flex-col gap-1 min-h-[104px]">
@@ -150,7 +154,7 @@ export const WatchtowerTrendChart = ({
               {latest.toFixed(2)}
             </span>
             <span className="text-micro tabular-nums text-muted-foreground">
-              {`/ 1.00 · ${scores.length} run${scores.length === 1 ? '' : 's'}`}
+              {`/ 1.00 · ${runCount}`}
             </span>
           </span>
         )}
@@ -191,7 +195,7 @@ export const WatchtowerTrendChart = ({
            * of a stroke under that stretch; vector-effect pins stroke width to
            * device pixels, so the line stays 1.5px in every direction. */
           preserveAspectRatio="none"
-          aria-label={`Score trend for ${workflow}: latest ${latest?.toFixed(2) ?? "none"} of 1.00 over ${scores.length} runs${p90 !== null ? `, p90 ${p90.toFixed(2)}` : ""}`}
+          aria-label={`Score trend for ${workflow}: latest ${latest?.toFixed(2) ?? "none"} of 1.00 over ${runCount}${p90 !== null ? `, p90 ${p90.toFixed(2)}` : ""}`}
         >
           <defs>
             <linearGradient id={`trendfill-${workflow}`} x1="0" y1="0" x2="0" y2="1">

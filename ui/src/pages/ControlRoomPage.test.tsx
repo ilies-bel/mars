@@ -727,3 +727,96 @@ describe('ControlRoomPage — HOT PATH section', () => {
     expect(html).toContain('data-testid="hot-path-empty"')
   })
 })
+
+
+// ---------------------------------------------------------------------------
+// Gate status must not be conveyed by colour alone (WCAG 1.4.1)
+//
+// This was a 6px dot whose only difference between pass and fail was red vs
+// green: same size, same rounded-full shape. The sr-only label satisfied 1.1.1
+// for a screen-reader user but gave a sighted reader with a colour deficiency
+// nothing, and a hover tooltip is no answer to "which of these twelve broke".
+// ---------------------------------------------------------------------------
+
+describe('ControlRoomPage — gate status is shape-differentiated', () => {
+  beforeEach(() => {
+    mockUseDispatchState.mockReturnValue({ paused: false, reason: null, since: null, detail: null })
+    mockUseActionQueue.mockReturnValue({ items: [], serverGroups: [], error: null, isPending: false })
+    mockUseProgress.mockReturnValue(emptyProgressState())
+    mockUseHotPaths.mockReturnValue({ data: undefined, isLoading: true, error: null })
+  })
+
+  const gate = (overrides: Partial<import('@/shared/api').VerifyGate> = {}): import('@/shared/api').VerifyGate => ({
+    id: 'gate-1', scope: '.', name: 'typecheck', cmd: 'npx', args: ['tsc', '--noEmit'],
+    required: true, tier: 'task', source: 'human', createdAt: 1000, state: 'active',
+    quarantinedAt: null, lastFailureAt: null, timeoutMin: null, lastPassAt: null,
+    ...overrides,
+  })
+
+  it('draws a passing gate as a check, not merely a green shape', () => {
+    const html = renderControlRoom([gate({ lastPassAt: 2000, lastFailureAt: 1000 })])
+    expect(html).toContain('lucide-check')
+    expect(html).not.toContain('lucide-x')
+  })
+
+  it('draws a failing gate as an X, not merely a red shape', () => {
+    const html = renderControlRoom([gate({ lastPassAt: 1000, lastFailureAt: 2000 })])
+    expect(html).toContain('lucide-x')
+  })
+
+  it('gives pass and fail visibly different glyphs, so the list survives greyscale', () => {
+    const passing = renderControlRoom([gate({ id: 'g-pass', lastPassAt: 2000, lastFailureAt: 1000 })])
+    const failing = renderControlRoom([gate({ id: 'g-fail', lastPassAt: 1000, lastFailureAt: 2000 })])
+    expect(passing).toContain('lucide-check')
+    expect(passing).not.toContain('lucide-x')
+    expect(failing).toContain('lucide-x')
+    expect(failing).not.toContain('lucide-check')
+  })
+
+  it('announces a never-run gate instead of rendering a silent grey mark', () => {
+    // This branch previously had a title attribute and no sr-only text at all,
+    // so a never-run gate announced nothing whatsoever.
+    const html = renderControlRoom([gate({ lastPassAt: null, lastFailureAt: null })])
+    expect(html).toContain('data-testid="gate-status-never-run"')
+    expect(html).toContain('never run')
+    expect(html).toContain('lucide-circle')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Gate row actions recede until the row is engaged
+//
+// The comment in the source claimed a hover reveal that no code implemented:
+// every row shipped both buttons at full strength, half of them a destructive
+// Retire in the stop colour, on a page whose job is to report gate health.
+// ---------------------------------------------------------------------------
+
+describe('ControlRoomPage — gate row actions', () => {
+  beforeEach(() => {
+    mockUseDispatchState.mockReturnValue({ paused: false, reason: null, since: null, detail: null })
+    mockUseActionQueue.mockReturnValue({ items: [], serverGroups: [], error: null, isPending: false })
+    mockUseProgress.mockReturnValue(emptyProgressState())
+    mockUseHotPaths.mockReturnValue({ data: undefined, isLoading: true, error: null })
+  })
+
+  const gate = (overrides: Partial<import('@/shared/api').VerifyGate> = {}): import('@/shared/api').VerifyGate => ({
+    id: 'gate-1', scope: '.', name: 'typecheck', cmd: 'npx', args: ['tsc', '--noEmit'],
+    required: true, tier: 'task', source: 'human', createdAt: 1000, state: 'active',
+    quarantinedAt: null, lastFailureAt: null, timeoutMin: null, lastPassAt: null,
+    ...overrides,
+  })
+
+  it('wraps the actions in the reveal-on-hover container', () => {
+    const html = renderControlRoom([gate()])
+    expect(html).toContain('row-actions')
+    expect(html).toContain('row-actions-host')
+  })
+
+  it('keeps the actions mounted, so they stay in the tab order', () => {
+    // opacity, not display:none — a removed button cannot be tabbed to and its
+    // removal would reflow the row on hover.
+    const html = renderControlRoom([gate()])
+    expect(html).toContain('data-testid="gate-quarantine-btn"')
+    expect(html).toContain('data-testid="gate-retire-btn"')
+  })
+})

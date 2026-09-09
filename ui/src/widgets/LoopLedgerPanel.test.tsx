@@ -259,3 +259,111 @@ describe('LoopLedgerPanel', () => {
     expect(html.slice(idElementStart, idStart)).toContain('muted-foreground')
   })
 })
+
+// ---------------------------------------------------------------------------
+// Dormant-stage columns
+//
+// A loop stage that has not run for ANY visible row contributes a column of
+// em-dashes — N rows of nothing competing for width with the rows that say
+// something. Those columns are dropped, but dropping alone is lossy (a missing
+// column reads as "this stage does not exist" rather than "it has not run"),
+// so a caption must name them.
+// ---------------------------------------------------------------------------
+
+describe('LoopLedgerPanel — dormant stage columns', () => {
+  beforeEach(() => {
+    vi.mocked(useScorerWorkflows).mockReturnValue({
+      data: WORKFLOWS,
+      isLoading: false,
+      error: null,
+    })
+  })
+
+  it('drops a column no visible row has reached, and names it in a caption', async () => {
+    // Neither entry has a suggestion or a review.
+    vi.mocked(useLoopLedger).mockReturnValue({
+      entries: [makeEntry('run-001', false, false), makeEntry('run-002', false, false)],
+      isLoading: false,
+      error: null,
+    })
+    const { LoopLedgerPanel } = await import('./LoopLedgerPanel')
+    const html = renderToStaticMarkup(<LoopLedgerPanel />)
+
+    const headerRow = html.slice(html.indexOf('<thead'), html.indexOf('</thead>'))
+    expect(headerRow).not.toContain('Suggest')
+    expect(headerRow).not.toContain('Review')
+    // Stages that DID run keep their columns.
+    expect(headerRow).toContain('Score')
+    expect(headerRow).toContain('Recorded')
+
+    // Nothing is silently lost: the caption says which stages are missing.
+    expect(html).toContain('Not reached yet in this window: Suggest, Review.')
+  })
+
+  it('keeps a column when at least one row has reached that stage', async () => {
+    vi.mocked(useLoopLedger).mockReturnValue({
+      entries: [makeEntry('run-001', true, false), makeEntry('run-002', false, false)],
+      isLoading: false,
+      error: null,
+    })
+    const { LoopLedgerPanel } = await import('./LoopLedgerPanel')
+    const html = renderToStaticMarkup(<LoopLedgerPanel />)
+
+    const headerRow = html.slice(html.indexOf('<thead'), html.indexOf('</thead>'))
+    expect(headerRow).toContain('Suggest')
+    expect(headerRow).not.toContain('Review')
+    expect(html).toContain('Not reached yet in this window: Review.')
+  })
+
+  it('emits no caption when every stage has data', async () => {
+    vi.mocked(useLoopLedger).mockReturnValue({
+      entries: [makeEntry('run-001', true, true)],
+      isLoading: false,
+      error: null,
+    })
+    const { LoopLedgerPanel } = await import('./LoopLedgerPanel')
+    const html = renderToStaticMarkup(<LoopLedgerPanel />)
+    expect(html).not.toContain('Not reached yet')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Drill-in to Studio
+//
+// This panel and #/studio list the same runs from the same endpoint. Before,
+// neither reached the other: the ledger could tell you the loop stalled and
+// then leave you to find that run by hand.
+// ---------------------------------------------------------------------------
+
+describe('LoopLedgerPanel — Studio drill-in', () => {
+  beforeEach(() => {
+    vi.mocked(useScorerWorkflows).mockReturnValue({
+      data: WORKFLOWS,
+      isLoading: false,
+      error: null,
+    })
+    vi.mocked(useLoopLedger).mockReturnValue({
+      entries: ENTRIES,
+      isLoading: false,
+      error: null,
+    })
+  })
+
+  it('links each run to its Studio page', async () => {
+    const { LoopLedgerPanel } = await import('./LoopLedgerPanel')
+    const html = renderToStaticMarkup(<LoopLedgerPanel />)
+    expect(html).toContain('href="#/studio/run-001"')
+    expect(html).toContain('href="#/studio/run-002"')
+  })
+
+  it('gives the link a hover affordance, not colour alone', async () => {
+    // The link inherits body colour by design (a table of 50 permanently
+    // underlined rows is worse), so discoverability has to come from the hover
+    // state. Without it the drill-in only announces itself to a cursor that is
+    // already on top of it.
+    const { LoopLedgerPanel } = await import('./LoopLedgerPanel')
+    const html = renderToStaticMarkup(<LoopLedgerPanel />)
+    const anchor = html.slice(html.indexOf('<a href="#/studio/run-001"'))
+    expect(anchor.slice(0, 400)).toContain('hover:underline')
+  })
+})

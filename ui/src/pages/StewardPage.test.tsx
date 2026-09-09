@@ -468,3 +468,119 @@ describe('StewardPage', () => {
     expect(html).toContain('claude-sonnet-5')
   })
 })
+
+
+// ---------------------------------------------------------------------------
+// Acknowledgment log — summary, preview, disclosure
+//
+// This rendered every acknowledgment as an equal card: with 200 of them, some
+// twelve thousand pixels of scroll in which the same sentence appeared dozens
+// of times. Each row was readable and the list as a whole said nothing — you
+// could not learn how often the Steward acts, which way, or within what range
+// without scrolling all of it and counting.
+// ---------------------------------------------------------------------------
+
+const ack = (from: number, to: number, day: number) => ({
+  text: `I ${to > from ? 'bumped' : 'shed'} implement workers from ${from} to ${to}.`,
+  timestamp: `2026-02-${String(day).padStart(2, '0')}T00:00:00Z`,
+  pair: { from, to },
+})
+
+const withAcks = (acks: ReturnType<typeof ack>[]) => {
+  const base = makeStewardView()
+  return { ...base, runtimeTuning: { ...base.runtimeTuning, acks } }
+}
+
+describe('StewardPage — acknowledgment log', () => {
+  beforeEach(() => {
+    vi.mocked(useStewardView).mockReturnValue({
+      data: withAcks([
+        ack(4, 5, 1), ack(5, 6, 2), ack(6, 4, 3),
+        ack(4, 5, 4), ack(5, 6, 5), ack(6, 4, 6),
+        ack(4, 5, 7), ack(5, 6, 8),
+      ]),
+      isLoading: false,
+      error: null,
+    } as ReturnType<typeof useStewardView>)
+  })
+
+  it('states the shape of the whole set in one line', () => {
+    const html = renderToStaticMarkup(<StewardPage />)
+    // 6 bumps (4→5, 5→6 ×3 each pattern), 2 sheds (6→4), levels span 4..6.
+    expect(html).toContain('data-testid="steward-ack-summary"')
+    expect(html).toContain('6 bumps, 2 sheds')
+    expect(html).toContain('holding between 4 and 6 workers')
+  })
+
+  it('classifies direction from the structured pair, not from the sentence', () => {
+    // The prose is the Steward's to word. A regex over it would quietly stop
+    // counting the day the wording changed, so the copy here is deliberately
+    // uninformative while the pairs are not.
+    const html = renderToStaticMarkup(<StewardPage />)
+    vi.mocked(useStewardView).mockReturnValue({
+      data: withAcks([
+        { text: 'Adjusted capacity.', timestamp: '2026-03-01T00:00:00Z', pair: { from: 2, to: 9 } },
+        { text: 'Adjusted capacity.', timestamp: '2026-03-02T00:00:00Z', pair: { from: 9, to: 2 } },
+      ]),
+      isLoading: false,
+      error: null,
+    } as ReturnType<typeof useStewardView>)
+    const opaque = renderToStaticMarkup(<StewardPage />)
+    expect(html).toContain('6 bumps, 2 sheds')
+    expect(opaque).toContain('1 bump, 1 shed')
+    expect(opaque).toContain('holding between 2 and 9 workers')
+  })
+
+  it('singularises the counts', () => {
+    vi.mocked(useStewardView).mockReturnValue({
+      data: withAcks([ack(4, 5, 1), ack(5, 4, 2)]),
+      isLoading: false,
+      error: null,
+    } as ReturnType<typeof useStewardView>)
+    const html = renderToStaticMarkup(<StewardPage />)
+    expect(html).toContain('1 bump, 1 shed')
+    expect(html).not.toContain('1 bumps')
+    expect(html).not.toContain('1 sheds')
+  })
+
+  it('folds everything past the preview behind a disclosure that counts it', () => {
+    const html = renderToStaticMarkup(<StewardPage />)
+    // 8 acks, 6 previewed → 2 earlier.
+    expect(html).toContain('2 earlier')
+  })
+
+  it('keeps every acknowledgment — the disclosure hides, it does not drop', () => {
+    const html = renderToStaticMarkup(<StewardPage />)
+    // All eight timestamps are still in the markup, just not all expanded.
+    for (const day of [1, 2, 3, 4, 5, 6, 7, 8]) {
+      const stamp = formatAbsoluteDateTime(`2026-02-0${day}T00:00:00Z`)
+      expect(html, `ack for day ${day} missing`).toContain(stamp)
+    }
+  })
+
+  it('adds no disclosure when everything already fits in the preview', () => {
+    vi.mocked(useStewardView).mockReturnValue({
+      data: withAcks([ack(4, 5, 1), ack(5, 6, 2)]),
+      isLoading: false,
+      error: null,
+    } as ReturnType<typeof useStewardView>)
+    const html = renderToStaticMarkup(<StewardPage />)
+    expect(html).not.toContain('earlier')
+  })
+
+  it('keeps the newest acknowledgment first and marked', () => {
+    const html = renderToStaticMarkup(<StewardPage />)
+    expect(html).toContain('data-testid="steward-ack-latest"')
+  })
+
+  it('says so plainly when there is nothing to summarise', () => {
+    vi.mocked(useStewardView).mockReturnValue({
+      data: withAcks([]),
+      isLoading: false,
+      error: null,
+    } as ReturnType<typeof useStewardView>)
+    const html = renderToStaticMarkup(<StewardPage />)
+    expect(html).toContain('No acknowledgments yet.')
+    expect(html).not.toContain('data-testid="steward-ack-summary"')
+  })
+})

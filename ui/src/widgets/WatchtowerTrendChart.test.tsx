@@ -229,3 +229,66 @@ describe('WatchtowerSection Score trends', () => {
     expect(html).toContain('No scores.')
   })
 })
+
+
+// ---------------------------------------------------------------------------
+// Scale, current value, and the p90 reference
+//
+// A polyline on an unlabelled box shows movement but not magnitude: a reader
+// cannot tell 0.82 from 0.28, and the dashed rule was the one mark on the
+// chart whose meaning was unrecoverable from the picture.
+// ---------------------------------------------------------------------------
+
+describe('WatchtowerTrendChart — scale and current value', () => {
+  beforeEach(() => {
+    vi.mocked(useScorerTrend).mockReturnValue(trendState())
+  })
+
+  it('states the latest score as a fraction so the 0..1 scale needs no axis', async () => {
+    const { WatchtowerTrendChart } = await import('./WatchtowerTrendChart')
+    const html = renderToStaticMarkup(<WatchtowerTrendChart workflow="task" />)
+    // The API returns points NEWEST-FIRST and the component reverses them for
+    // left-to-right reading, so the latest score is POINTS[0] — 0.60, not 0.80.
+    expect(html).toContain('0.60')
+    expect(html).toContain('/ 1.00')
+  })
+
+  it('states how many samples the trend is drawn from', async () => {
+    const { WatchtowerTrendChart } = await import('./WatchtowerTrendChart')
+    const html = renderToStaticMarkup(<WatchtowerTrendChart workflow="task" />)
+    expect(html).toContain('3 runs')
+  })
+
+  it('singularises the sample count so a lone point does not read "1 runs"', async () => {
+    vi.mocked(useScorerTrend).mockReturnValue(
+      trendState({ points: [POINTS[0]] }),
+    )
+    const { WatchtowerTrendChart } = await import('./WatchtowerTrendChart')
+    const html = renderToStaticMarkup(<WatchtowerTrendChart workflow="task" />)
+    expect(html).toContain('1 run')
+    expect(html).not.toContain('1 runs')
+  })
+
+  it('labels the p90 reference line with its value', async () => {
+    const { WatchtowerTrendChart } = await import('./WatchtowerTrendChart')
+    const html = renderToStaticMarkup(<WatchtowerTrendChart workflow="task" />)
+    expect(html).toContain('p90 0.85')
+  })
+
+  it('omits the p90 label when there is no p90 to reference', async () => {
+    vi.mocked(useScorerTrend).mockReturnValue(trendState({ p90: null }))
+    const { WatchtowerTrendChart } = await import('./WatchtowerTrendChart')
+    const html = renderToStaticMarkup(<WatchtowerTrendChart workflow="task" />)
+    expect(html).not.toContain('p90 ')
+  })
+
+  it('carries the same reading in the aria-label, not only in the visual gutter', async () => {
+    const { WatchtowerTrendChart } = await import('./WatchtowerTrendChart')
+    const html = renderToStaticMarkup(<WatchtowerTrendChart workflow="task" />)
+    const label = /aria-label="([^"]*Score trend[^"]*)"/.exec(html)?.[1] ?? ''
+    expect(label).toContain('0.60')
+    expect(label).toContain('1.00')
+    expect(label).toContain('3 runs')
+    expect(label).toContain('p90 0.85')
+  })
+})
