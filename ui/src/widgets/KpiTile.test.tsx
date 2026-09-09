@@ -319,3 +319,81 @@ describe('KpiTile low-confidence', () => {
     expect(html).not.toContain('kpi-tile--low-confidence')
   })
 })
+
+// ---------------------------------------------------------------------------
+// One grammar across the row
+//
+// The five tiles were written twice: four from the /api/kpis vector, one
+// fetching its own window. The copies drifted into mutually exclusive
+// grammars — four said "✕ Bad · last 7d" (verdict and window, no movement),
+// the fifth said "↑ $0.79 dearer" (movement, no verdict and no window). Read
+// across, the row answered two different questions and supported neither
+// comparison. Both facts are available for all five, so all five state both.
+// ---------------------------------------------------------------------------
+
+describe('KpiTile — verdict and movement, in one order', () => {
+  it('states the band verdict and the window', () => {
+    const html = renderToStaticMarkup(
+      <KpiTile kpi={kpi({ key: 'failure_rate', currentValue: 0.036, delta: 0.036 })} />,
+    )
+    expect(html).toContain('Warn · last 7d')
+  })
+
+  it('states the movement the vector already carried and the tile used to discard', () => {
+    const html = renderToStaticMarkup(
+      <KpiTile kpi={kpi({ key: 'failure_rate', currentValue: 0.036, delta: 0.015 })} />,
+    )
+    // A rate's change is in percentage points, never percent: 0.015 is 1.5 pts,
+    // not "1.5%", which would read as a relative change of a different size.
+    expect(html).toContain('1.5 pts higher')
+  })
+
+  it('names what the delta was measured against, which is not "7d ago"', () => {
+    // kpi.delta is this window minus the PREVIOUS window
+    // (readKpiWindowComparison takes the last snapshot ending at or before the
+    // current window's start). The cost tile, which compares two days inside
+    // one window, says "since 7d ago" instead — the two must not claim the
+    // same comparison.
+    const html = renderToStaticMarkup(
+      <KpiTile kpi={kpi({ key: 'failure_rate', currentValue: 0.036, delta: 0.015 })} />,
+    )
+    expect(html).toContain('vs previous 7d')
+  })
+
+  it('points the arrow the way the VALUE moved, so it agrees with the sparkline', () => {
+    // A rising failure rate is bad, but the arrow still points up: it reports
+    // the number's direction. The colour reports the verdict.
+    const worse = renderToStaticMarkup(
+      <KpiTile kpi={kpi({ key: 'failure_rate', currentValue: 0.05, delta: 0.02 })} />,
+    )
+    expect(worse).toContain('lucide-arrow-up')
+    expect(worse).toContain('text-error')
+
+    const better = renderToStaticMarkup(
+      <KpiTile kpi={kpi({ key: 'failure_rate', currentValue: 0.01, delta: -0.02 })} />,
+    )
+    expect(better).toContain('lucide-arrow-down')
+    expect(better).toContain('text-success')
+  })
+
+  it('colours by improvement direction, not by which way the number went', () => {
+    // recovery_success_rate is higher-is-better, so the same up arrow that is
+    // red on failure_rate is green here.
+    const html = renderToStaticMarkup(
+      <KpiTile kpi={kpi({ key: 'recovery_success_rate', currentValue: 0.95, delta: 0.1 })} />,
+    )
+    expect(html).toContain('lucide-arrow-up')
+    expect(html).toContain('text-success')
+  })
+
+  it('says nothing about movement when there was none', () => {
+    // delta 0 is the daemon's way of saying it could not compare the windows
+    // (either side low-confidence). An arrow there would invent a measurement.
+    const html = renderToStaticMarkup(
+      <KpiTile kpi={kpi({ key: 'failure_rate', currentValue: 0.036, delta: 0 })} />,
+    )
+    expect(html).not.toContain('lucide-arrow-up')
+    expect(html).not.toContain('lucide-arrow-down')
+    expect(html).toContain('Warn · last 7d')
+  })
+})

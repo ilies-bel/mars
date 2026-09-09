@@ -1,24 +1,31 @@
-import { ArrowDown, ArrowUp } from 'lucide-react'
 import { SkeletonBlock } from '@/components/Skeleton'
+import { kpiBand } from '@/entities/kpi/bands'
 import { useCostPerMergedTask } from '@/entities/kpi/useCostPerMergedTask'
 import { kpiHash } from '@/shared/routing'
-import { Sparkline } from './Sparkline'
+import { KpiTileShell } from './KpiTileShell'
 
 const usdFormatter = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' })
 
+/** The window this tile fetches, and the window its copy has to name. */
+const WINDOW_DAYS = 7
+
 /**
- * KPI tile for cost-per-merged-task. Fetches its own 7-day window independently
- * of the main /api/kpis vector because the data shape (daily trend + USD values)
+ * KPI tile for cost-per-merged-task. Fetches its own window independently of
+ * the main /api/kpis vector because the data shape (daily trend + USD values)
  * differs from the existing four KPIs.
  *
- * Shows: title, mini sparkline, current $/merge, and a 7-day delta arrow.
+ * Fetching separately is the reason this tile drifted into its own grammar —
+ * it stated a delta where the other four stated a verdict, so a row of five
+ * tiles answered two different questions. The presentation now comes from
+ * KpiTileShell, which both callers share and neither can opt out of; only the
+ * fetch stays separate.
  */
 export const CostPerMergedTaskTile = () => {
-  const { data, isLoading, error } = useCostPerMergedTask(7)
+  const { data, isLoading, error } = useCostPerMergedTask(WINDOW_DAYS)
 
   if (isLoading) {
     return (
-      <SkeletonBlock className="w-full min-h-[120px] rounded border border-border" />
+      <SkeletonBlock className="w-full min-h-[132px] rounded border border-border" />
     )
   }
 
@@ -30,7 +37,7 @@ export const CostPerMergedTaskTile = () => {
       <a
         href={kpiHash('cost-per-merged-task')}
         data-testid="cost-per-merged-task-error"
-        className="flex w-full min-h-[120px] flex-col items-center justify-center rounded border border-error/40 bg-card px-4 py-2 text-center font-mono text-body text-error no-underline hover:bg-error/5"
+        className="flex w-full min-h-[132px] flex-col items-center justify-center rounded border border-error/40 bg-card px-4 py-2 text-center font-mono text-body text-error no-underline hover:bg-error/5"
         aria-label="Cost / merged task failed to load"
       >
         Cost / merged task: failed to load
@@ -60,61 +67,32 @@ export const CostPerMergedTaskTile = () => {
 
   // Compare against the earliest PRICED day, so the delta measures a real
   // change rather than the boundary between "no pricing" and "pricing".
+  // Compare against the earliest PRICED day, so the delta measures a real
+  // change rather than the boundary between "no pricing" and "pricing".
   const priorValue = priced.length >= 2 ? priced[0].avgCostPerMerge : null
   const delta = priorValue !== null ? currentValue - priorValue : 0
-  // The arrow points the way the VALUE moved, not the way the verdict moved.
-  //
-  // It used to be an improvement arrow, borrowed from kpiDriftDirection /
-  // KpiDetailPage (up = Improved for a lower-is-better metric). That put three
-  // signals in one tile pointing two ways: a sparkline visibly descending, an
-  // up arrow, and the word "cheaper" — and the arrow was the loudest of the
-  // three. The old comment here conceded the clash and hoped the adjacent word
-  // would resolve it; on screen it does not, because the arrow is rendered
-  // inside the same span as a dollar amount, and "↑ $1.41" reads as "up $1.41"
-  // before any word arrives to undo it.
-  //
-  // Note also what the improvement reading cost: it made the arrow redundant.
-  // Improvement is already carried twice, by the colour and by
-  // "cheaper"/"dearer". Only a value-direction arrow contributes something the
-  // tile does not otherwise state, and it agrees with the sparkline 8px above.
-  // So: improved (cost fell) = ArrowDown + "cheaper" + success; regressed =
-  // ArrowUp + "dearer" + error. Direction, magnitude and verdict, each said
-  // once, none contradicting another.
-  //
-  // This deliberately diverges from KpiDetailPage's arrow convention. That
-  // convention is fine where it lives — there is no sparkline beside it to
-  // argue with.
-  const showArrow = Math.abs(delta) >= 0.001
-  const isImproved = delta < 0
-  const DeltaArrow = isImproved ? ArrowDown : ArrowUp
-  const deltaWord = isImproved ? 'cheaper' : 'dearer'
-  const deltaClass = isImproved ? 'text-success' : 'text-error'
 
   const sparklinePoints = trend.map((p) => p.avgCostPerMerge)
 
   return (
-    <a
+    <KpiTileShell
       href={kpiHash('cost-per-merged-task')}
-      className="flex w-full min-h-[120px] flex-col items-center justify-between rounded border border-border bg-card px-4 py-2 font-mono no-underline hover:bg-foreground/5"
-      aria-label="View Cost / merged task details"
-    >
-      <span className="eyebrow flex h-6 items-center text-center text-muted-foreground">
-        Cost / merged task
-      </span>
-      <Sparkline points={sparklinePoints} />
-      <div className="flex flex-col items-center gap-0.5">
-        <span className="text-heading font-semibold text-foreground">
-          {usdFormatter.format(currentValue)}
-        </span>
-        {showArrow && (
-          <span className={`flex items-center gap-1 text-micro ${deltaClass}`}>
-            <DeltaArrow size={11} strokeWidth={2.5} aria-hidden="true" />
-            <span>
-              {usdFormatter.format(Math.abs(delta))} {deltaWord}
-            </span>
-          </span>
-        )}
-      </div>
-    </a>
+      label="Cost / merged task"
+      value={usdFormatter.format(currentValue)}
+      band={kpiBand('cost-per-merged-task', currentValue)}
+      windowDays={WINDOW_DAYS}
+      points={sparklinePoints}
+      trend={
+        priorValue === null
+          ? null
+          : {
+              delta,
+              formatted: usdFormatter.format(Math.abs(delta)),
+              lowerIsBetter: true,
+              comparison: `since ${WINDOW_DAYS}d ago`,
+            }
+      }
+      ariaLabel="View Cost / merged task details"
+    />
   )
 }

@@ -104,13 +104,20 @@ describe('CostPerMergedTaskTile — delta arrow', () => {
   // the colour and by "cheaper"/"dearer", so an improvement arrow added no
   // information while adding a way to be wrong.
   //
-  // Now: cost fell → ArrowDown + "cheaper" + success; cost rose → ArrowUp +
-  // "dearer" + error. Direction from the arrow, magnitude from the figure,
-  // verdict from the word and colour — each said once. KpiDetailPage keeps its
-  // own convention; it has no sparkline beside it to contradict.
-  it('shows a down arrow with "cheaper" when cost improved (decreased)', () => {
+  // Now: cost fell → ArrowDown + "lower" + success; cost rose → ArrowUp +
+  // "higher" + error. Direction from the arrow, magnitude from the figure,
+  // verdict from the colour — each said once. KpiDetailPage keeps its own
+  // convention; it has no sparkline beside it to contradict.
+  //
+  // "cheaper"/"dearer" became "lower"/"higher" when the five tiles were put on
+  // one shell. Those words were a third statement of the verdict the colour
+  // already carried, and only this tile — the one measuring money — could say
+  // them at all, so the row read in two grammars. The unit-neutral pair says
+  // the one thing the arrow says, which is what the reader needs to pair the
+  // figure with the sparkline beside it.
+  it('shows a down arrow when the value fell', () => {
     // cost went from $3.00 to $1.50 → the value FELL, so the arrow points down;
-    // "cheaper" and the success colour carry the verdict.
+    // the success colour carries the verdict.
     // The arrow is a Lucide icon, not a "↓" character, so assert the icon.
     mockUseCost.mockReturnValue({
       data: makeTrend(7, 3.0, 1.5),
@@ -120,12 +127,13 @@ describe('CostPerMergedTaskTile — delta arrow', () => {
     const html = renderToStaticMarkup(<CostPerMergedTaskTile />)
     expect(html).toContain('lucide-arrow-down')
     expect(html).not.toContain('lucide-arrow-up')
-    expect(html).toContain('cheaper')
+    expect(html).toContain('lower')
+    expect(html).toContain('text-success')
   })
 
-  it('shows an up arrow with "dearer" when cost regressed (increased)', () => {
+  it('shows an up arrow when the value rose', () => {
     // cost went from $1.00 to $2.00 → the value ROSE, so the arrow points up;
-    // "dearer" and the error colour carry the verdict.
+    // the error colour carries the verdict.
     mockUseCost.mockReturnValue({
       data: makeTrend(7, 1.0, 2.0),
       isLoading: false,
@@ -134,7 +142,37 @@ describe('CostPerMergedTaskTile — delta arrow', () => {
     const html = renderToStaticMarkup(<CostPerMergedTaskTile />)
     expect(html).toContain('lucide-arrow-up')
     expect(html).not.toContain('lucide-arrow-down')
-    expect(html).toContain('dearer')
+    expect(html).toContain('higher')
+    expect(html).toContain('text-error')
+  })
+
+  it('names the window it actually compared against', () => {
+    // This tile compares the first and last priced day INSIDE its own window.
+    // The four vector tiles compare this window against the PREVIOUS one. Both
+    // were about to read "than 7d ago", which is false for the vector and
+    // would have been invisible.
+    mockUseCost.mockReturnValue({
+      data: makeTrend(7, 1.0, 2.0),
+      isLoading: false,
+      error: null,
+    })
+    const html = renderToStaticMarkup(<CostPerMergedTaskTile />)
+    expect(html).toContain('since 7d ago')
+    expect(html).not.toContain('vs previous')
+  })
+
+  it('states a verdict band, the same fact its four neighbours state', () => {
+    // The row is read across, not tile by tile. Four tiles saying "Bad · last
+    // 7d" beside a fifth saying only "$0.79 dearer" invited a comparison the
+    // row could not support: nothing said whether $4.02 was acceptable.
+    mockUseCost.mockReturnValue({
+      data: makeTrend(7, 1.0, 2.0),
+      isLoading: false,
+      error: null,
+    })
+    const html = renderToStaticMarkup(<CostPerMergedTaskTile />)
+    // $2.00 sits in the warn band (good < $1, bad > $5).
+    expect(html).toContain('Warn · last 7d')
   })
 
   it('omits the delta arrow when cost is unchanged', () => {

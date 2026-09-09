@@ -1,7 +1,8 @@
 import type { Kpi, KpiKey } from '@/entities/kpi/types'
+import { KPI_IMPROVEMENT_DIRECTION } from '@/entities/kpi/types'
 import { kpiBand, kpiBandCue } from '@/entities/kpi/bands'
 import { kpiHash } from '@/shared/routing'
-import { Sparkline } from './Sparkline'
+import { KpiTileShell } from './KpiTileShell'
 
 const KPI_LABELS: Record<KpiKey, string> = {
   cost_per_arc: 'Cost per Arc',
@@ -48,6 +49,24 @@ export function formatKpiValue(key: KpiKey, value: number): string {
 }
 
 
+/**
+ * Format a CHANGE in a KPI, unsigned, in the metric's own unit.
+ *
+ * A rate's change is stated in percentage points, not percent: failure rate
+ * moving 3.6% → 5.1% is "1.5 pts", never "1.5%", which would read as a
+ * relative change of a different size.
+ */
+export function formatKpiDelta(key: KpiKey, delta: number): string {
+  const magnitude = Math.abs(delta)
+  if (key === 'cost-per-merged-task') return usdFormatter.format(magnitude)
+  if (key === 'cost_per_arc') {
+    if (magnitude >= 1_000_000) return `${(magnitude / 1_000_000).toFixed(1)}M tok`
+    if (magnitude >= 1000) return `${(magnitude / 1000).toFixed(1)}k tok`
+    return `${Math.round(magnitude)} tok`
+  }
+  return `${(magnitude * 100).toFixed(1)} pts`
+}
+
 interface KpiTileProps {
   kpi: Kpi
 }
@@ -59,7 +78,7 @@ export const KpiTile = ({ kpi }: KpiTileProps) => {
     return (
       <a
         href={kpiHash(kpi.key)}
-        className="kpi-tile kpi-tile--low-confidence flex w-full min-h-[120px] flex-col items-center justify-center rounded border border-border bg-card px-4 py-2 font-mono text-muted-foreground text-body no-underline hover:bg-foreground/5"
+        className="kpi-tile kpi-tile--low-confidence flex w-full min-h-[132px] flex-col items-center justify-center rounded border border-border bg-card px-4 py-2 font-mono text-muted-foreground text-body no-underline hover:bg-foreground/5"
         aria-label={`View ${label} details`}
       >
         {label}: insufficient samples
@@ -68,31 +87,23 @@ export const KpiTile = ({ kpi }: KpiTileProps) => {
   }
 
   const band = kpiBand(kpi.key, kpi.currentValue)
-  const cue = kpiBandCue(band)
-  const seriesPoints = (kpi.series ?? []).map((p) => p.value)
+  const windowDays = kpi.windowDays ?? 7
 
   return (
-    <a
+    <KpiTileShell
       href={kpiHash(kpi.key)}
-      title={KPI_DESCRIPTIONS[kpi.key]}
-      className="flex w-full min-h-[120px] flex-col items-center justify-between rounded border border-border bg-card px-4 py-2 font-mono no-underline hover:bg-foreground/5"
-      aria-label={`View ${label} details — ${cue.label}`}
-    >
-      {/* Fixed two-line box (h-6 = 2 x the 11px eyebrow's 12px leading). The row
-          is a grid of tiles laid out with justify-between, so a label that
-          wrapped — "Autonomous completion" did — pushed its own sparkline,
-          value and status row down and broke alignment with the four tiles
-          beside it. Reserving the space makes one-line and two-line labels
-          occupy the same height. */}
-      <span className="eyebrow flex h-6 items-center text-center text-muted-foreground">{label}</span>
-      <Sparkline points={seriesPoints} />
-      <div className="flex flex-col items-center gap-0.5">
-        <span className="text-heading font-semibold text-foreground">{formatKpiValue(kpi.key, kpi.currentValue)}</span>
-        <span className={`flex items-center gap-1 text-micro ${cue.colorClass}`}>
-          <cue.Icon size={11} strokeWidth={2.5} aria-hidden="true" />
-          <span>{cue.label} · last {kpi.windowDays ?? 7}d</span>
-        </span>
-      </div>
-    </a>
+      label={label}
+      value={formatKpiValue(kpi.key, kpi.currentValue)}
+      band={band}
+      windowDays={windowDays}
+      points={(kpi.series ?? []).map((p) => p.value)}
+      trend={{
+        delta: kpi.delta,
+        formatted: formatKpiDelta(kpi.key, kpi.delta),
+        lowerIsBetter: KPI_IMPROVEMENT_DIRECTION[kpi.key] === 'lower-is-better',
+        comparison: `vs previous ${windowDays}d`,
+      }}
+      ariaLabel={`View ${label} details — ${kpiBandCue(band).label}`}
+    />
   )
 }
