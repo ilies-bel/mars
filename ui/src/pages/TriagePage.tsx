@@ -45,7 +45,7 @@ import { describeFeedFailure } from '@/shared/feedFailure'
 import { postDecision, snoozeActionQueueItem } from '@/shared/api'
 import { relativeTime } from '@/shared/time'
 import { dispatchAlertVerb } from '@/widgets/chat/alertVerbs'
-import { signatureFamilyPhrase } from '@/widgets/chat/AlertCard'
+import { signatureFamilyPhrase, causeGroupPhrase } from '@/shared/causePhrase'
 import { CollapsibleSection } from '@/components/CollapsibleSection'
 import { useFocusedProjectId } from '@/shared/useFocusedProject'
 import { defaultAqUrlState, encodeAqState } from '@/shared/actionQueueUrlState'
@@ -101,6 +101,19 @@ const kindIconNode = (kind: string) => {
  * face (DEC-18). The three `?? kind.replace(/-/g, ' ')` fallbacks at the
  * render sites are defence-in-depth for kinds that arrive from the daemon at
  * runtime after the build was cut.
+ *
+ * A label here has to be readable by someone who has never read this file, and
+ * it has to use the same word for a thing as the card body printed underneath
+ * it. Four did neither and were changed:
+ *
+ *   'sig wave'     → 'shared cause'   the body says "a shared environmental cause"
+ *   'storm'        → 'failure storm'  "storm" alone names no subject
+ *   'daemon drift' → 'engine update'  the body says "an update is available for
+ *                                     the background engine"
+ *   'daemon died'  → 'engine crashed' same word for the same thing
+ *
+ * "daemon" is an implementation word that appears nowhere in the copy an
+ * operator reads; the UI calls it the background engine everywhere else.
  */
 const KIND_LABEL: Record<ActionQueueKind, string> = {
   // ── condition kinds ──────────────────────────────────────────────────────
@@ -109,10 +122,10 @@ const KIND_LABEL: Record<ActionQueueKind, string> = {
   'stale-queued-summary': 'stale summary',
   'gate-broken': 'gate broken',
   'subscriber-stalled': 'stalled',
-  'signature-storm': 'storm',
-  'signature-wave': 'sig wave',
-  'daemon-died': 'daemon died',
-  'daemon-code-drift': 'daemon drift',
+  'signature-storm': 'failure storm',
+  'signature-wave': 'shared cause',
+  'daemon-died': 'engine crashed',
+  'daemon-code-drift': 'engine update',
   'baseline-broken': 'baseline broken',
   'stale-worktree': 'worktree',
   'phantom-task': 'phantom',
@@ -1000,15 +1013,12 @@ export const TriageCauseGroupRow = ({
   const kindIcon = kindIconNode(group.kind)
   const kindTone = KIND_TONE[group.kind] ?? 'neutral'
 
-  // Cause label: prefer server-computed causeLabel (HR-3), then the local
-  // signatureFamilyPhrase mapping, then fall back to the slug portion after
-  // the first `/` (matches the CLI's causeLabel fallback).
-  const label =
-    group.causeLabel ??
-    signatureFamilyPhrase(group.signature) ??
-    (group.signature.includes('/')
-      ? group.signature.split('/').slice(1).join('/')
-      : group.signature)
+  // Cause sentence for the face of the row. See causeGroupPhrase: the mapped
+  // phrase wins over the daemon's `causeLabel`, which is usually the raw
+  // failure slug, and anything left over is de-slugified rather than printed
+  // verbatim. This row was the last surface still putting `unclassified` and
+  // `done-with-unverifiable-merge` in front of an operator.
+  const label = causeGroupPhrase(group.signature, group.causeLabel)
 
   // Primary bulk verb: use the kind's recipe-declared bulkResolveVerb (HR-3).
   // A kind that declares none shows only Snooze — no invented action.
@@ -1061,8 +1071,13 @@ export const TriageCauseGroupRow = ({
       className="mars-card rounded-lg bg-card px-4 py-3"
       data-testid="cause-group-row"
     >
-      {/* Header: toggle + kind chip + count + cause label + bulk action */}
-      <div className="flex items-center gap-2">
+      {/* Header: toggle + blast radius + kind chip + cause sentence + bulk action.
+          The count leads and is set in the row's largest type. One cause
+          holding seventeen tasks used to render as a `17×` info chip on the
+          thinnest row on the page, while a single failed task got a card ten
+          times its height — visual weight ran exactly opposite to blast
+          radius, so the most consequential row was the easiest to skip. */}
+      <div className="flex items-center gap-2.5">
         <button
           type="button"
           aria-expanded={expanded}
@@ -1077,11 +1092,19 @@ export const TriageCauseGroupRow = ({
             <ChevronRight size={12} strokeWidth={2} aria-hidden="true" />
           )}
         </button>
+        <span
+          className="flex shrink-0 items-baseline gap-1"
+          data-testid="cause-group-count"
+        >
+          <span className="text-base font-semibold tabular-nums leading-none text-foreground">
+            {group.count}
+          </span>
+          <span className="text-micro text-muted-foreground">
+            {group.count === 1 ? 'task' : 'tasks'}
+          </span>
+        </span>
         <Chip tone={kindTone} icon={kindIcon}>
           {kindLabel}
-        </Chip>
-        <Chip tone="info" className="tabular-nums">
-          {group.count}×
         </Chip>
         <span className="flex-1 text-label font-medium leading-snug text-foreground">
           {label}

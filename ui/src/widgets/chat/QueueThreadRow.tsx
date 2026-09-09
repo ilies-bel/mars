@@ -12,7 +12,7 @@ import { isTaskFailureActionQueueKind, type ActionDescriptor, type ActionQueueIt
 import { kindBadgeLabel, whyNowText } from '@/shared/actionQueueDetail'
 import { relativeTime, formatAbsoluteDateTime } from '@/shared/time'
 import { draftRowHeadline } from './queueThreads'
-import { signatureFamilyPhrase } from './AlertCard'
+import { signatureFamilyPhrase } from '@/shared/causePhrase'
 
 // ---- Shared row helpers ----
 

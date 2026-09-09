@@ -11,7 +11,8 @@
  * `detail.errorExcerpt` field when `operatorGoal` is present.
  */
 
-import { AlertCard, signatureFamilyPhrase } from '@/widgets/chat/AlertCard'
+import { AlertCard } from '@/widgets/chat/AlertCard'
+import { signatureFamilyPhrase } from '@/shared/causePhrase'
 import { isTaskFailureActionQueueKind, hasResolvableTask } from '@/shared/schemas'
 import type { ActionQueueItem, AlertVerb } from '@/shared/schemas'
 

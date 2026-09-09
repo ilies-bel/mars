@@ -66,11 +66,6 @@ vi.mock('@/shared/time', () => ({
   relativeTime: () => 'just now',
 }))
 
-vi.mock('@/widgets/chat/AlertCard', () => ({
-  signatureFamilyPhrase: (sig: string | undefined) =>
-    sig ? `[${sig}]` : null,
-}))
-
 vi.mock('@/shared/schemas', async () => {
   const actual = await vi.importActual<typeof import('@/shared/schemas')>('@/shared/schemas')
   return actual
@@ -314,15 +309,75 @@ describe('TriageCauseGroupRow', () => {
     expect(group.members).toHaveLength(5)
   })
 
-  it('shows the count badge in the header (not expanded)', () => {
+  it('leads with the blast radius, in the row\u2019s largest type', () => {
     const group = makeGroup(19)
     act(() => {
       root.render(<TriageCauseGroupRow group={group} />)
     })
 
-    expect(container.textContent).toContain('19×')
-    // Group members are collapsed — individual member rows absent from DOM
+    const count = container.querySelector('[data-testid="cause-group-count"]')
+    expect(count).not.toBeNull()
+    expect(count!.textContent).toBe('19tasks')
+
+    // The number itself, not the whole span, carries the size. A cause holding
+    // nineteen tasks rendered as a `19\u00d7` info chip on the thinnest row on
+    // the page while one failed task got a card ten times its height: visual
+    // weight ran opposite to blast radius. The number must be set larger than
+    // the body copy beside it, or the fix is cosmetic only.
+    const numeral = count!.firstElementChild!
+    expect(numeral.textContent).toBe('19')
+    expect(numeral.className).toContain('text-base')
+    expect(numeral.className).toContain('tabular-nums')
+
+    // Group members are collapsed \u2014 individual member rows absent from DOM
     const memberRows = container.querySelector('[data-testid="cause-group-members"]')
     expect(memberRows).toBeNull()
+  })
+
+  it('singularises the unit for a one-member group', () => {
+    const group = makeGroup(1)
+    act(() => {
+      root.render(<TriageCauseGroupRow group={group} />)
+    })
+    expect(
+      container.querySelector('[data-testid="cause-group-count"]')!.textContent,
+    ).toBe('1task')
+  })
+
+  it('never prints a raw slug on the face of the row', () => {
+    // The daemon's `causeLabel` is frequently the failure slug itself. This row
+    // preferred it over the mapped phrase, so a live queue showed
+    // `unclassified` and `done-with-unverifiable-merge` verbatim on three
+    // cards \u2014 the one surface still breaking the rule the rest of the UI
+    // follows (DEC-18: slugs live behind the disclosure, never on the face).
+    const group = {
+      ...makeGroup(7),
+      kind: 'failed',
+      signature: 'code/unclassified',
+      causeLabel: 'unclassified',
+    }
+    act(() => {
+      root.render(<TriageCauseGroupRow group={group} />)
+    })
+
+    const text = container.textContent ?? ''
+    expect(text).toContain('Coding step failed \u2014 cause not identified')
+    expect(text).not.toContain('unclassified')
+  })
+
+  it('de-slugifies a cause the phrase table does not know', () => {
+    const group = {
+      ...makeGroup(3),
+      kind: 'failed',
+      signature: 'done-with-unverifiable-merge',
+      causeLabel: 'done-with-unverifiable-merge',
+    }
+    act(() => {
+      root.render(<TriageCauseGroupRow group={group} />)
+    })
+
+    const text = container.textContent ?? ''
+    expect(text).toContain('Merged, but the merge could not be verified')
+    expect(text).not.toContain('done-with-unverifiable-merge')
   })
 })

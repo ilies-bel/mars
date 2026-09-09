@@ -1,4 +1,4 @@
-import { ChevronRight } from 'lucide-react'
+import { ArrowDown, ArrowUp, ChevronRight, Minus } from 'lucide-react'
 /**
  * StewardPage — what the Steward is wired to do and what it has actually done.
  *
@@ -273,17 +273,53 @@ const ACK_PREVIEW = 6
 
 type Ack = StewardView['runtimeTuning']['acks'][number]
 
-const AckCard = ({ ack, testid }: { ack: Ack; testid?: string }) => (
-  <div
-    className="rounded border border-success/20 bg-success/[0.03] px-3 py-2"
-    data-testid={testid}
-  >
-    <p className="text-label text-foreground">{ack.text}</p>
-    <time className="text-micro text-muted-foreground">
-      {formatAbsoluteDateTime(ack.timestamp)}
-    </time>
-  </div>
-)
+/**
+ * One acknowledgment, as a row rather than a card.
+ *
+ * Every acknowledgment used to render in the same tinted success box with the
+ * sentence on one line and the timestamp on a second — so a raise and a cut
+ * were typographically indistinguishable, and reading a run of six meant
+ * reading six near-identical sentences word by word to find the two that went
+ * the other way. The Steward's whole job is oscillation; the one thing the log
+ * has to make scannable is direction.
+ *
+ * The arrow, the tone and the screen-reader word all come from `ack.pair`
+ * ({from, to}) — never from the sentence. The prose is the Steward's to word
+ * and a regex over it would quietly stop classifying the day that wording
+ * changed. `pair === null` means the daemon sent no levels, so the row shows a
+ * neutral dash rather than guessing a direction.
+ *
+ * Direction is never carried by colour alone (WCAG 1.4.1): the arrow is a
+ * distinct shape per direction and an `sr-only` verb states it outright.
+ */
+const AckCard = ({ ack, testid }: { ack: Ack; testid?: string }) => {
+  const pair = ack.pair
+  const dir = pair === null ? 'flat' : pair.to > pair.from ? 'up' : pair.to < pair.from ? 'down' : 'flat'
+  const Icon = dir === 'up' ? ArrowUp : dir === 'down' ? ArrowDown : Minus
+  const tone =
+    dir === 'up' ? 'text-success' : dir === 'down' ? 'text-warn' : 'text-muted-foreground'
+  const spoken = dir === 'up' ? 'raised' : dir === 'down' ? 'lowered' : 'unchanged'
+
+  return (
+    <div
+      className="flex items-baseline gap-2 border-b border-border/50 py-1.5 last:border-b-0"
+      data-testid={testid}
+      data-direction={dir}
+    >
+      <Icon
+        size={12}
+        strokeWidth={2.5}
+        aria-hidden="true"
+        className={`relative top-px shrink-0 ${tone}`}
+      />
+      <span className="sr-only">{spoken}:</span>
+      <p className="flex-1 text-label text-foreground">{ack.text}</p>
+      <time className="shrink-0 text-micro tabular-nums text-muted-foreground">
+        {formatAbsoluteDateTime(ack.timestamp)}
+      </time>
+    </div>
+  )
+}
 
 /**
  * Summarises the whole acknowledgment set in one line, then shows the most
@@ -306,30 +342,37 @@ const AckLog = ({ acks }: { acks: Ack[] }) => {
 
   return (
     <div className="space-y-2">
-      <div className="eyebrow text-muted-foreground">
-        Steward acknowledgments ({acks.length})
+      {/* The header states what the log adds up to instead of naming a noun and
+          a total. "Steward acknowledgments (200)" made the reader scroll two
+          hundred rows to learn the only thing the section is for: whether the
+          cap is oscillating, in which direction, and between what bounds. */}
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+        <span className="eyebrow text-muted-foreground">Steward acknowledgments</span>
+        {paired.length > 0 && (
+          <span className="text-micro text-muted-foreground" data-testid="steward-ack-summary">
+            {`${bumps} bump${bumps === 1 ? '' : 's'}, ${sheds} shed${sheds === 1 ? '' : 's'}`}
+            {lo !== null && hi !== null && lo !== hi
+              ? `, holding between ${lo} and ${hi} workers.`
+              : '.'}
+          </span>
+        )}
       </div>
 
       {acks.length === 0 ? (
         <p className="text-micro text-muted-foreground">No acknowledgments yet.</p>
       ) : (
         <>
-          {paired.length > 0 && (
-            <p className="text-micro text-muted-foreground" data-testid="steward-ack-summary">
-              {`${bumps} bump${bumps === 1 ? '' : 's'}, ${sheds} shed${sheds === 1 ? '' : 's'}`}
-              {lo !== null && hi !== null && lo !== hi
-                ? `, holding between ${lo} and ${hi} workers.`
-                : '.'}
-            </p>
-          )}
-
-          {recent.map((ack, i) => (
-            <AckCard
-              key={ack.timestamp}
-              ack={ack}
-              testid={i === 0 ? 'steward-ack-latest' : undefined}
-            />
-          ))}
+          {/* No gap between rows: each carries its own hairline rule, and an
+              8px gap on top of a rule reads as a list of boxes again. */}
+          <div>
+            {recent.map((ack, i) => (
+              <AckCard
+                key={ack.timestamp}
+                ack={ack}
+                testid={i === 0 ? 'steward-ack-latest' : undefined}
+              />
+            ))}
+          </div>
 
           {earlier.length > 0 && (
             <details className="group">
@@ -342,7 +385,7 @@ const AckLog = ({ acks }: { acks: Ack[] }) => {
                 />
                 {`${earlier.length} earlier`}
               </summary>
-              <div className="mt-2 space-y-2">
+              <div className="mt-1">
                 {earlier.map((ack) => (
                   <AckCard key={ack.timestamp} ack={ack} />
                 ))}

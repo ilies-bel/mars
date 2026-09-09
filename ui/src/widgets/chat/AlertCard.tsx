@@ -27,6 +27,7 @@ import { snoozeActionQueueItem, restoreSnoozedItem, postDecision } from '@/share
 import { dispatchAlertVerb, verbButtonClass } from './alertVerbs'
 import type { AlertHumanDetail, AlertVerb, Decision } from '@/shared/schemas'
 import { taskHash, proposalHash } from '@/shared/routing'
+import { signatureFamilyPhrase } from '@/shared/causePhrase'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -50,46 +51,6 @@ const SNOOZE_PRESETS: { value: SnoozePreset; label: string }[] = [
   { value: 'tomorrow-morning', label: 'Tomorrow morning' },
   { value: 'next-week', label: 'Next week' },
 ]
-
-// ---------------------------------------------------------------------------
-// Signature family → plain phrase mapping (DEC-18: slugs stay behind disclosure)
-// ---------------------------------------------------------------------------
-
-/**
- * Map a failure signature (e.g. "merge:hard-timeout") to a plain English phrase
- * shown as the secondary headline on task-failure cards.
- * Exact match is tried first; on miss, only the family prefix before ":" is used.
- * Raw slugs must NEVER appear on the face of the card — only behind the
- * "Technical details" disclosure.
- */
-const SIGNATURE_FAMILY_PHRASES: Record<string, string> = {
-  'merge:hard-timeout': 'Could not be merged — the merge step timed out',
-  'merge:conflict':     'Could not be merged — there were conflicts',
-  'merge:dirty-main':   'Could not be merged — the integration branch was dirty',
-  'merge:crashed':      'Merge failed inside Mars (internal error)',
-  merge:               'Could not be merged',
-  'verify:has-diff':   'Verification failed — the branch has uncommitted changes',
-  'verify:dirty-main': 'Verification failed — integration branch was dirty',
-  verify:             'Verification failed',
-  'code:timeout':     'Coding step timed out',
-  code:              'Coding step failed',
-  'setup:':           'Setup step failed',
-  setup:             'Setup step failed',
-}
-
-export const signatureFamilyPhrase = (sig: string | undefined): string | undefined => {
-  if (!sig) return undefined
-  if (SIGNATURE_FAMILY_PHRASES[sig]) return SIGNATURE_FAMILY_PHRASES[sig]
-  // Signatures can carry an error-class suffix after '/' (e.g. 'merge:crashed/unclassified').
-  // Strip the error-class first so 'merge:crashed' is matched before falling
-  // back to the bare gate-family prefix before ':'.
-  const step = sig.split('/')[0]!
-  if (SIGNATURE_FAMILY_PHRASES[step]) return SIGNATURE_FAMILY_PHRASES[step]
-  const gate = step.split(':')[0]!
-  // Try the bare family name with and without the trailing ':' sentinel the
-  // lookup table uses (e.g. 'verify:' matches 'verify' after stripping).
-  return SIGNATURE_FAMILY_PHRASES[gate] ?? SIGNATURE_FAMILY_PHRASES[gate + ':']
-}
 
 // ---------------------------------------------------------------------------
 // Verify output tail

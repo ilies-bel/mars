@@ -1143,9 +1143,30 @@ describe('TriagePage – kind chip never renders a raw machine slug', () => {
   it('daemon-died renders its mapped label on the chip face', () => {
     mockItems.mockReturnValue([makeItem('daemon-died')])
     const html = renderToStaticMarkup(<TriagePage />)
-    expect(html).toContain('daemon died')
+    // "engine crashed", not "daemon died": the card body underneath calls it
+    // the background engine, and "daemon" is an implementation word that
+    // appears nowhere else in the copy an operator reads.
+    expect(html).toContain('engine crashed')
+    expect(html).not.toContain('daemon died')
     // Raw hyphenated slug must not appear on the card face
     expect(html).not.toMatch(/>\s*daemon-died\s*</)
+  })
+
+  it('names the background engine the same way the chip and the body do', () => {
+    // A chip reading "daemon drift" over a body reading "an update is available
+    // for the background engine" makes the reader work out that the two nouns
+    // are one thing. The label and the copy have to agree.
+    mockItems.mockReturnValue([makeItem('daemon-code-drift')])
+    const html = renderToStaticMarkup(<TriagePage />)
+    expect(html).toContain('engine update')
+    expect(html).not.toContain('daemon drift')
+  })
+
+  it('names a repeat-failure wave in words, not in the abbreviation', () => {
+    mockItems.mockReturnValue([makeItem('signature-wave')])
+    const html = renderToStaticMarkup(<TriagePage />)
+    expect(html).toContain('shared cause')
+    expect(html).not.toContain('sig wave')
   })
 
   it('verify-uncovered renders its mapped label on the chip face', () => {

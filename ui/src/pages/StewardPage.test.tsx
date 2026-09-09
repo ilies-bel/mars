@@ -573,6 +573,62 @@ describe('StewardPage — acknowledgment log', () => {
     expect(html).toContain('data-testid="steward-ack-latest"')
   })
 
+  it('marks each row with its direction, from the pair and not the prose', () => {
+    // Every acknowledgment used to render in the same tinted box, so a raise
+    // and a cut were typographically identical and finding the two rows that
+    // went the other way meant reading six near-identical sentences word by
+    // word. The Steward's whole subject is oscillation.
+    const html = renderToStaticMarkup(<StewardPage />)
+    expect(html).toContain('data-direction="up"')
+    expect(html).toContain('data-direction="down"')
+  })
+
+  it('classifies the row direction from the pair even when the prose says nothing', () => {
+    vi.mocked(useStewardView).mockReturnValue({
+      data: withAcks([
+        { text: 'Adjusted capacity.', timestamp: '2026-03-01T00:00:00Z', pair: { from: 2, to: 9 } },
+        { text: 'Adjusted capacity.', timestamp: '2026-03-02T00:00:00Z', pair: { from: 9, to: 2 } },
+      ]),
+      isLoading: false,
+      error: null,
+    } as ReturnType<typeof useStewardView>)
+    const html = renderToStaticMarkup(<StewardPage />)
+    // Same sentence on both rows; only `pair` distinguishes them.
+    expect(html).toContain('data-direction="up"')
+    expect(html).toContain('data-direction="down"')
+  })
+
+  it('states the direction in words, so it is never carried by colour alone', () => {
+    // WCAG 1.4.1: a green arrow and an amber arrow differ in shape as well as
+    // hue, and the verb is spoken outright for anyone who sees neither.
+    const html = renderToStaticMarkup(<StewardPage />)
+    expect(html).toContain('raised:')
+    expect(html).toContain('lowered:')
+  })
+
+  it('shows a neutral row rather than guessing when the daemon sent no levels', () => {
+    vi.mocked(useStewardView).mockReturnValue({
+      data: withAcks([
+        { text: 'Adjusted capacity.', timestamp: '2026-03-01T00:00:00Z', pair: null },
+      ]),
+      isLoading: false,
+      error: null,
+    } as ReturnType<typeof useStewardView>)
+    const html = renderToStaticMarkup(<StewardPage />)
+    expect(html).toContain('data-direction="flat"')
+    expect(html).toContain('unchanged:')
+    expect(html).not.toContain('data-direction="up"')
+    expect(html).not.toContain('data-direction="down"')
+  })
+
+  it('puts the verdict in the header instead of a noun and a total', () => {
+    // "Steward acknowledgments (200)" made the reader scroll two hundred rows
+    // to learn the only thing the section is for.
+    const html = renderToStaticMarkup(<StewardPage />)
+    expect(html).toContain('Steward acknowledgments')
+    expect(html).not.toContain('Steward acknowledgments (')
+  })
+
   it('says so plainly when there is nothing to summarise', () => {
     vi.mocked(useStewardView).mockReturnValue({
       data: withAcks([]),
