@@ -366,7 +366,44 @@ export const Shell = ({ hash, children }: ShellProps) => {
       : undefined
 
   return (
-    <div className="grid min-h-0 flex-1 grid-cols-[224px_1fr] grid-rows-[48px_1fr]">
+    <div className="relative grid min-h-0 flex-1 grid-cols-[224px_1fr] grid-rows-[48px_1fr]">
+      {/* Thirteen tab stops stood between the keyboard and the first control on
+          the page — the project switcher, the parked-task chip, the bell, then
+          all ten nav links, on every route, every time. The chrome is
+          identical on each one, so a keyboard user re-traversed the same
+          thirteen stops to reach different content.
+
+          Invisible until focused, then a real, visible target. `sr-only`
+          alone would have made it a stop that sighted keyboard users cannot
+          see, which is worse than not having it.
+
+          Deliberately NOT `sr-only` + `not-sr-only`: those two toggle
+          `position` in the same Tailwind layer, and this link is a child of
+          the shell's grid — the moment it went `static` it would claim a grid
+          cell and shove the topbar out of it. It stays absolute throughout and
+          moves out of view instead, which has no such failure mode.
+
+          `focus:`, not `focus-visible:`. The link sits off-screen at all
+          times and has no pointer surface, so the only way to focus it is the
+          keyboard — the distinction `focus-visible` exists to draw cannot
+          arise here, and Chromium withholds `:focus-visible` in enough
+          situations that relying on it risks a skip link that is focused and
+          still invisible. Measured as exactly that before the change:
+          opacity 0, 56px above the viewport, while it held focus. */}
+      <a
+        href="#page-content"
+        data-testid="skip-link"
+        onClick={(e) => {
+          // The app routes on `location.hash`, so an href of "#page-content"
+          // would be read as a route change and land on the fallback view.
+          // Move focus directly and leave the hash alone.
+          e.preventDefault()
+          document.getElementById('page-content')?.focus()
+        }}
+        className="absolute left-3 top-2 z-50 -translate-y-16 rounded border border-border bg-card px-3 py-2 text-label font-medium text-foreground no-underline opacity-0 transition focus:translate-y-0 focus:opacity-100"
+      >
+        Skip to content
+      </a>
       <ShellTopbar hash={hash} />
       <ShellSidebar
         activeRoute={activeRoute}
@@ -378,7 +415,17 @@ export const Shell = ({ hash, children }: ShellProps) => {
           is stale. It renders nothing while the daemon is healthy. */}
       <div className="flex min-h-0 flex-col overflow-hidden">
         <DaemonDownBanner />
-        <div className="min-h-0 flex-1 overflow-hidden">{children}</div>
+        {/* A real <main>: the app had no landmark at all, so "jump to main
+            content" was unavailable to screen-reader users by any route.
+            tabIndex={-1} makes it a programmatic focus target for the skip
+            link without adding a tab stop of its own. */}
+        <main
+          id="page-content"
+          tabIndex={-1}
+          className="min-h-0 flex-1 overflow-hidden focus:outline-none"
+        >
+          {children}
+        </main>
       </div>
     </div>
   )

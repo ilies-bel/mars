@@ -455,3 +455,54 @@ describe('Shell — SSE reconnecting pill', () => {
     mockSseConnected = true  // restore default
   })
 })
+
+// ---------------------------------------------------------------------------
+// Reaching the page from the keyboard
+//
+// Thirteen tab stops stood between a keyboard user and the first control on
+// the page — project switcher, parked-task chip, bell, then all ten nav links
+// — and the chrome is identical on every route, so the same thirteen were
+// re-traversed to reach different content. There was also no <main> at all,
+// so "jump to main content" was unavailable to a screen reader by any route.
+// ---------------------------------------------------------------------------
+
+describe('Shell — keyboard entry to the page', () => {
+  it('offers a skip link before anything else in the tab order', () => {
+    const html = renderToStaticMarkup(<Shell hash="#/triage">page</Shell>)
+    const skip = html.indexOf('data-testid="skip-link"')
+    expect(skip).toBeGreaterThan(-1)
+    // Source order is tab order here: nothing focusable may precede it.
+    const firstNav = html.indexOf('<a', html.indexOf('<nav'))
+    expect(skip).toBeLessThan(firstNav)
+  })
+
+  it('wraps the page in a <main> the skip link can target', () => {
+    const html = renderToStaticMarkup(<Shell hash="#/triage">page</Shell>)
+    expect(html).toContain('<main')
+    expect(html).toContain('id="page-content"')
+    // tabIndex -1 so it is a programmatic focus target and not a tab stop.
+    expect(html).toContain('tabindex="-1"')
+  })
+
+  it('reveals the skip link on plain :focus, not on :focus-visible', () => {
+    // The link is off-screen at all times and has no pointer surface, so the
+    // distinction focus-visible exists to draw cannot arise — and Chromium
+    // withholds :focus-visible often enough that relying on it produced a
+    // skip link that held focus while sitting 56px above the viewport at
+    // opacity 0. Measured as exactly that before the change.
+    const html = renderToStaticMarkup(<Shell hash="#/triage">page</Shell>)
+    expect(html).toContain('focus:opacity-100')
+    expect(html).not.toContain('focus-visible:opacity-100')
+  })
+
+  it('stays absolutely positioned so it cannot claim a grid cell', () => {
+    // sr-only/not-sr-only toggle `position` in one Tailwind layer. The link is
+    // a child of the shell's grid: the moment it went static it would take a
+    // cell and push the topbar out of it.
+    const html = renderToStaticMarkup(<Shell hash="#/triage">page</Shell>)
+    const tag = html.slice(html.indexOf('data-testid="skip-link"'))
+    const cls = tag.slice(tag.indexOf('class="'), tag.indexOf('>'))
+    expect(cls).toContain('absolute')
+    expect(cls).not.toContain('sr-only')
+  })
+})

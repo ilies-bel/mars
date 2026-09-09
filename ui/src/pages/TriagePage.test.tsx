@@ -1325,3 +1325,32 @@ describe('TriageRow – done-with-unmerged-commits does NOT offer Continue (task
     expect(container.querySelector('[data-testid="triage-verb-restart"]')).not.toBeNull()
   })
 })
+
+// ---------------------------------------------------------------------------
+// Toolbar controls have to say what they are
+//
+// The search field and the kind filter are the two controls a keyboard or
+// screen-reader user reaches first on this page, and neither had an
+// accessible name (WCAG 4.1.2, Level A). The input announced as "edit text,
+// blank"; the select fell back to concatenating every option, so its name was
+// "All kinds awaiting engine update proposal…".
+// ---------------------------------------------------------------------------
+
+describe('TriagePage – the toolbar controls are named', () => {
+  it('names the search field, which a placeholder does not do', () => {
+    // A placeholder is announced as a hint on some engines and not at all on
+    // others, and it disappears the moment anything is typed.
+    mockItems.mockReturnValue([makeItem('failed')])
+    const html = renderToStaticMarkup(<TriagePage />)
+    const input = html.slice(html.indexOf('data-testid="triage-search"') - 600)
+    expect(input.slice(0, input.indexOf('data-testid="triage-search"'))).toContain(
+      'aria-label="Search the queue"',
+    )
+  })
+
+  it('names the kind filter, so it is not read as a list of its own options', () => {
+    mockItems.mockReturnValue([makeItem('failed')])
+    const html = renderToStaticMarkup(<TriagePage />)
+    expect(html).toContain('aria-label="Filter by kind"')
+  })
+})

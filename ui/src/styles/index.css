@@ -701,18 +701,28 @@ html {
       background-color 160ms ease-out,
       transform 160ms ease-out;
   }
-  /* A row under the pointer answers with a warm tint and a firmer edge. That
-   * is a scanning aid and it costs nothing if the row is inert. No transform,
-   * so a list never jitters as the cursor crosses it. */
+  /* A card under the pointer firms its edge. That is a SCANNING cue — "the
+   * pointer is on this one" — and it is honest on an inert card, because an
+   * edge does not read as a button. No transform, so a list never jitters as
+   * the cursor crosses it.
+   *
+   * The warm ground tint that used to sit here is gone. Filling a card is how
+   * this UI says "target", and it said it on every card while none of them
+   * were: measured across Triage, Control Room and KPI, every card is a plain
+   * <div> reporting `cursor: auto`, and the ones that respond to a click
+   * respond on a button inside them. (The tint never actually landed here
+   * either — `bg-card` sits in @layer utilities and outranks @layer base — so
+   * removing it changes nothing on screen. It was a trap waiting for whoever
+   * fixed the cascade.) Filling is now `.mars-card--interactive`'s to do. */
   .mars-card:hover {
     border-color: color-mix(in srgb, var(--color-border) 90%, transparent);
-    background-color: color-mix(in srgb, var(--color-panel) 60%, var(--color-surface));
   }
   /* The ELEVATION step is reserved for a card you can actually pick up. A
    * queue row whose buttons are the only interactive parts was lifting on
    * hover while reporting `cursor: default` — it looked clickable and wasn't. */
   a.mars-card:hover,
   button.mars-card:hover,
+  .mars-card--interactive:hover,
   .mars-card[role="button"]:hover,
   .mars-card[class*="cursor-pointer"]:hover {
     box-shadow: var(--shadow-e3);
@@ -956,16 +966,30 @@ html {
 }
 
 /* ── Card hover tint ────────────────────────────────────────────────────────
- * `.mars-card:hover` lives in `@layer base` and was setting a warm tint that
- * never appeared: every card also carries the `bg-card` utility, and
- * `@layer utilities` outranks `@layer base` outright. Measured result was a
- * hover that moved only the border alpha (0.55 → 0.9) while the ground stayed
- * pure white — half a hover.
+ * A hover tint is a promise that the thing under the pointer is a target.
  *
- * Unlayered so it actually lands, but excluded when a card declares its own
- * `hover:bg-*`, so a deliberate per-card override still wins.
+ * Every `.mars-card` used to take one, and almost none of them are targets:
+ * measured across Triage, Control Room and KPI, every card is a plain <div>
+ * with `cursor: auto`, and the ones that respond to a click respond on a
+ * button INSIDE them, not on the card. So the whole page lit up under the
+ * pointer and nothing lit up was clickable — the reader learns to distrust
+ * the cue, and then misses it where it is real. (The tint was also barely
+ * visible, ~0.6% of a background lift, so it read as a rendering artefact
+ * rather than as feedback.)
+ *
+ * Now it is opt-in, and opting in also commits the card to a pointer cursor,
+ * so the two halves of the promise cannot come apart again. Hover feedback on
+ * the buttons, links and rows that ARE targets is unaffected — those declare
+ * their own `hover:*` utilities and always did.
+ *
+ * Unlayered so it lands at all: `@layer utilities` outranks `@layer base`
+ * outright, and every card also carries `bg-card`. Excluded when a card
+ * declares its own `hover:bg-*`, so a deliberate per-card override still wins.
  * ---------------------------------------------------------------------------*/
-.mars-card:hover:not([class*="hover:bg-"]) {
+.mars-card--interactive {
+  cursor: pointer;
+}
+.mars-card--interactive:hover:not([class*="hover:bg-"]) {
   background-color: color-mix(in srgb, var(--color-panel) 45%, var(--color-surface));
 }
 

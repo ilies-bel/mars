@@ -1376,6 +1376,12 @@ export const TriagePage = () => {
               />
               <input
                 type="search"
+                /* A placeholder is not an accessible name: it is announced as a
+                   hint on some engines, not at all on others, and it vanishes
+                   the moment anything is typed. This field had no name at all
+                   (WCAG 4.1.2, Level A) — a screen reader announced "edit
+                   text, blank". */
+                aria-label="Search the queue"
                 placeholder="Search the queue…"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
@@ -1384,6 +1390,11 @@ export const TriagePage = () => {
               />
             </div>
             <SelectField
+              /* Without this the select's accessible name is the concatenation
+                 of every option — "All kinds awaiting engine update
+                 proposal…" — which is what an unlabelled <select> falls back
+                 to and is worse than silence. */
+              aria-label="Filter by kind"
               value={kindFilter}
               onChange={(e) => setKindFilter(e.target.value)}
               data-testid="triage-kind-filter"
