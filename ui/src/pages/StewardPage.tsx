@@ -729,7 +729,10 @@ const GateHealthLane = ({
                             : ''}{' '}
                           after failing repeatedly.
                         </p>
-                        <CollapsibleSection label="Technical details">
+                        <CollapsibleSection
+                          label="Technical details"
+                          srLabel={`Technical details of the quarantine for ${gate.scope !== '.' ? `${gate.scope}: ` : ''}${gate.name}`}
+                        >
                           <p>Signature: {gate.quarantineSignature ?? 'Unavailable'}</p>
                         </CollapsibleSection>
                         <button
@@ -755,7 +758,10 @@ const GateHealthLane = ({
                           Last failed
                           {gate.lastFailureAt !== null ? ` on ${formatAbsoluteDateTime(gate.lastFailureAt)}` : ''}.
                         </p>
-                        <CollapsibleSection label="Technical details">
+                        <CollapsibleSection
+                          label="Technical details"
+                          srLabel={`Technical details of the last failure of ${gate.scope !== '.' ? `${gate.scope}: ` : ''}${gate.name}`}
+                        >
                           {gate.lastFailureSignature !== null && <p>Signature: {gate.lastFailureSignature}</p>}
                           {gate.lastFailureOriginId !== null && <p>Origin task: {gate.lastFailureOriginId}</p>}
                         </CollapsibleSection>

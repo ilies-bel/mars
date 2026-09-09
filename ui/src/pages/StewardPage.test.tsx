@@ -584,3 +584,45 @@ describe('StewardPage — acknowledgment log', () => {
     expect(html).not.toContain('data-testid="steward-ack-summary"')
   })
 })
+
+
+// ---------------------------------------------------------------------------
+// Disclosure triggers must be tellable apart by name
+//
+// Every verify gate renders up to two "Technical details" disclosures. On the
+// live page that is nine identical accessible names: a screen-reader user
+// tabbing through hears "Technical details, collapsed" nine times with nothing
+// to say which gate each belongs to (WCAG 2.4.6 / 4.1.2). Visually each is
+// anchored by the gate above it, which is why a purely visual audit misses it.
+// ---------------------------------------------------------------------------
+
+describe('StewardPage — gate disclosures are individually named', () => {
+  it('names each gate disclosure after its gate, without changing the visible label', () => {
+    vi.mocked(useStewardView).mockReturnValue({
+      data: makeStewardView(),
+      isLoading: false,
+      error: null,
+    } as ReturnType<typeof useStewardView>)
+    const html = renderToStaticMarkup(<StewardPage />)
+
+    const labels = [...html.matchAll(/aria-label="(Technical details[^"]*)"/g)].map((m) => m[1])
+
+    // The fixture's quarantined gate carries both a quarantine signature and a
+    // last failure, so it renders exactly two disclosures. Asserting the count
+    // keeps this test falsifiable: without it, a change that stopped emitting
+    // aria-labels entirely would pass on an empty array.
+    expect(labels).toHaveLength(2)
+
+    // Every accessible name is distinct...
+    expect(new Set(labels).size).toBe(labels.length)
+
+    // ...and each names its gate rather than stopping at the generic phrase.
+    for (const l of labels) {
+      expect(l).not.toBe('Technical details')
+      expect(l).toContain('typecheck')
+    }
+
+    // The visible text stays short — the two names are allowed to differ.
+    expect(html).toContain('Technical details</summary>')
+  })
+})
