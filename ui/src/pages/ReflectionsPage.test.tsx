@@ -248,6 +248,103 @@ describe('ReflectionsPage', () => {
     expect(html).toContain('1 verify mismatch')
   })
 
+  // -------------------------------------------------------------------------
+  // The row states what the reflection FOUND
+  //
+  // It used to lead with the RECORDED DATE in the largest type on the line,
+  // then a mono id, then a run of unlabelled chips. A date is the one fact
+  // about a report that cannot tell you whether to open it, and every row had
+  // one — so 76 rows were sorted and led by the only field that never varies
+  // in kind, and a report with nothing in it carried the same weight as one
+  // with two dissonant calls.
+  //
+  // The list payload has no written summary (that lives on the detail
+  // endpoint), but its counts already answer the question the index is for.
+  // -------------------------------------------------------------------------
+
+  it('leads each row with the verdict, not the date', () => {
+    const html = renderToStaticMarkup(<ReflectionsPage />)
+    // Scope to ONE row: the page also prints a date in its run-state banner,
+    // and an unscoped indexOf('2026') finds that one instead.
+    const rowStart = html.indexOf('data-testid="reflection-row-abc123"')
+    const rowEnd = html.indexOf('data-testid="reflection-row-def456"')
+    expect(rowStart).toBeGreaterThan(-1)
+    expect(rowEnd).toBeGreaterThan(rowStart)
+    const row = html.slice(rowStart, rowEnd)
+
+    const verdictIdx = row.indexOf('data-testid="reflection-verdict"')
+    const dateIdx = row.indexOf('2026')
+    expect(verdictIdx).toBeGreaterThan(-1)
+    expect(dateIdx).toBeGreaterThan(-1)
+    expect(verdictIdx).toBeLessThan(dateIdx)
+  })
+
+  it('names the findings in descending severity', () => {
+    // A dissonant call — an agent contradicting itself — outranks a gate
+    // disagreeing with it, which outranks thrashing.
+    const html = renderToStaticMarkup(<ReflectionsPage />)
+    expect(html).toContain('2 dissonant calls, 1 verify mismatch')
+  })
+
+  it('says plainly when a reflection found nothing', () => {
+    // Previously a report with zero findings rendered a row of absent chips —
+    // visually identical to one whose findings simply had not loaded.
+    vi.mocked(useQuery)
+      .mockReset()
+      .mockReturnValueOnce(
+        mockQueryResult({
+          data: makeListResponse({
+            reports: [
+              {
+                originId: 'quiet',
+                recordedAt: '2026-01-15T10:00:00Z',
+                status: 'complete',
+                totalToolCalls: 8,
+                dissonantCallCount: 0,
+                verifyMismatchCount: 0,
+                thrashingPatternCount: 0,
+                verdictResult: { saved: 0, absorbed: 0, dropped: 0 },
+              },
+            ],
+          }),
+        }),
+      )
+      .mockReturnValueOnce(mockQueryResult({ data: undefined }))
+
+    const html = renderToStaticMarkup(<ReflectionsPage />)
+    expect(html).toContain('Nothing flagged')
+  })
+
+  it('says a partial run did not finish rather than reporting no findings', () => {
+    // "Nothing flagged" on a run that crashed would be a statement about the
+    // work when it is really a statement about the reflection.
+    vi.mocked(useQuery)
+      .mockReset()
+      .mockReturnValueOnce(
+        mockQueryResult({
+          data: makeListResponse({
+            reports: [
+              {
+                originId: 'partial',
+                recordedAt: '2026-01-15T10:00:00Z',
+                status: 'partial',
+                totalToolCalls: 0,
+                dissonantCallCount: 0,
+                verifyMismatchCount: 0,
+                thrashingPatternCount: 0,
+                verdictResult: { saved: 0, absorbed: 0, dropped: 0 },
+              },
+            ],
+          }),
+        }),
+      )
+      .mockReturnValueOnce(mockQueryResult({ data: undefined }))
+
+    const html = renderToStaticMarkup(<ReflectionsPage />)
+    expect(html).toContain('Did not finish')
+    expect(html).not.toContain('Nothing flagged')
+  })
+
   it('shows 1 thrashing pattern count in list row when present', () => {
     const html = renderToStaticMarkup(<ReflectionsPage />)
     expect(html).toContain('1 thrashing')

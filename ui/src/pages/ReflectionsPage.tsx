@@ -542,38 +542,93 @@ const statusLabel = (status: string): string => {
   return status.charAt(0).toUpperCase() + status.slice(1).replace(/[_-]/g, ' ')
 }
 
-const ReflectionRow = ({ report }: ReflectionRowProps) => (
-  <a
-    href={reflectionDetailHash(report.originId, report.recordedAt)}
-    data-testid={`reflection-row-${report.originId}`}
-    className="flex flex-col gap-1 border border-border bg-card p-3 hover:border-border hover:bg-card/80 transition-colors"
-  >
-    <div className="flex items-center gap-2">
-      <span className="text-label text-foreground truncate flex-1">
-        {formatAbsoluteDateTime(report.recordedAt)}
+/**
+ * What the reflection FOUND, in one phrase.
+ *
+ * The list payload carries counts only — the written summary lives on the
+ * detail endpoint, so an index cannot quote it without fetching 76 records.
+ * But the counts already answer the question the index exists to answer:
+ * is there anything in here worth reading?
+ *
+ * Dissonant calls outrank verify mismatches (an agent contradicting itself is
+ * worse than a gate disagreeing with it), which outrank thrashing.
+ */
+const reflectionVerdict = (
+  report: DeepReflectionSummary,
+): { text: string; tone: string } => {
+  if (report.status !== 'complete') {
+    return { text: 'Did not finish', tone: 'text-muted-foreground' }
+  }
+  const parts: string[] = []
+  if (report.dissonantCallCount > 0) {
+    parts.push(`${report.dissonantCallCount} dissonant call${report.dissonantCallCount === 1 ? '' : 's'}`)
+  }
+  if (report.verifyMismatchCount > 0) {
+    parts.push(
+      `${report.verifyMismatchCount} verify mismatch${report.verifyMismatchCount === 1 ? '' : 'es'}`,
+    )
+  }
+  if (report.thrashingPatternCount > 0) {
+    parts.push(`${report.thrashingPatternCount} thrashing pattern${report.thrashingPatternCount === 1 ? '' : 's'}`)
+  }
+  if (parts.length === 0) return { text: 'Nothing flagged', tone: 'text-muted-foreground' }
+  const tone = report.dissonantCallCount > 0 ? 'text-error' : 'text-warn'
+  return { text: parts.join(', '), tone }
+}
+
+/**
+ * One reflection, as a row that states what it found.
+ *
+ * The row used to lead with the RECORDED DATE in the largest type on the line,
+ * then a mono id, then a run of unlabelled chips. A date is the one fact about
+ * a report that cannot tell you whether to open it, and every row had one, so
+ * the index was 76 rows sorted by the only field that never varies in kind.
+ * Three "0 tool calls / Partial" rows carried the same visual weight as a
+ * 1,302-call arc with two dissonant calls in it.
+ *
+ * The verdict leads now, the subject follows, and the date and the volume drop
+ * to a meta line. Nothing new is fetched — the counts were already here.
+ */
+const ReflectionRow = ({ report }: ReflectionRowProps) => {
+  const verdict = reflectionVerdict(report)
+  return (
+    <a
+      href={reflectionDetailHash(report.originId, report.recordedAt)}
+      data-testid={`reflection-row-${report.originId}`}
+      className="mars-card mars-card--interactive flex flex-col gap-0.5 rounded-lg bg-card px-3.5 py-2.5"
+    >
+      <div className="flex items-baseline gap-2">
+        <span
+          className={`min-w-0 flex-1 truncate text-label font-medium ${verdict.tone}`}
+          data-testid="reflection-verdict"
+        >
+          {verdict.text}
+        </span>
+        {report.status !== 'complete' && (
+          <span className={`shrink-0 text-micro ${statusClass(report.status)}`}>
+            {statusLabel(report.status)}
+          </span>
+        )}
+      </div>
+      <span className="truncate font-mono text-micro text-muted-foreground" title={report.originId}>
+        {report.originId}
       </span>
-      <span className={`text-micro ${statusClass(report.status)}`}>
-        {statusLabel(report.status)}
-      </span>
-    </div>
-    <div className="flex items-center gap-4 text-label text-muted-foreground">
-      <span className="font-mono">{report.originId}</span>
-      {report.dissonantCallCount > 0 && (
-        <span className="text-error">{report.dissonantCallCount} dissonant</span>
-      )}
-      {report.verifyMismatchCount > 0 && (
-        <span className="text-warn">{report.verifyMismatchCount} verify mismatch{report.verifyMismatchCount !== 1 ? 'es' : ''}</span>
-      )}
-      {report.thrashingPatternCount > 0 && (
-        <span>{report.thrashingPatternCount} thrashing</span>
-      )}
-      <span>{report.totalToolCalls.toLocaleString()} tool call{report.totalToolCalls !== 1 ? 's' : ''}</span>
-      {report.verdictResult.saved > 0 && (
-        <span className="text-muted-foreground">{report.verdictResult.saved} saved</span>
-      )}
-    </div>
-  </a>
-)
+      <div className="flex items-baseline gap-2 text-micro text-muted-foreground">
+        <span className="tabular-nums">{formatAbsoluteDateTime(report.recordedAt)}</span>
+        <span aria-hidden="true">·</span>
+        <span className="tabular-nums">
+          {report.totalToolCalls.toLocaleString()} tool call{report.totalToolCalls === 1 ? '' : 's'}
+        </span>
+        {report.verdictResult.saved > 0 && (
+          <>
+            <span aria-hidden="true">·</span>
+            <span className="tabular-nums">{report.verdictResult.saved} saved as proposals</span>
+          </>
+        )}
+      </div>
+    </a>
+  )
+}
 
 // ---------------------------------------------------------------------------
 // Detail view

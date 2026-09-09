@@ -100,7 +100,7 @@ import { readAqStateFromUrl, writeAqStateToUrl } from '@/shared/actionQueueUrlSt
 import { taskHash } from '@/shared/routing'
 import { linkifyTaskIds } from '@/shared/linkifyTaskIds'
 import { formatDuration } from '@/shared/time'
-import { resolveMediaKind, fileMediaKind, smartTitle } from './chatPageUtils'
+import { resolveMediaKind, fileMediaKind, smartTitle, threadListTitle } from './chatPageUtils'
 import { ChatGreeting } from '@/widgets/chat/ChatGreeting'
 import { ConversationTimeline } from '@/widgets/chat/ConversationTimeline'
 import { CompactionNotice } from '@/widgets/chat/CompactionNotice'
@@ -403,7 +403,7 @@ export const FeedbackControls = ({ messageId, feedback, onFeedbackChange }: Feed
         hasRating ? '' : 'opacity-0 focus-within:opacity-100 group-hover:opacity-100',
       ].join(' ')}
     >
-      <div className="flex items-center gap-1">
+      <div className="flex items-start gap-1">
         <button
           type="button"
           aria-pressed={localRating === 'up'}
@@ -869,7 +869,12 @@ const ThreadItem = ({ thread, isSelected, onSelect, onRename, indented = false, 
     setEditing(false)
   }
 
+  // `title` is the full stored title — used for renaming, for aria-labels and
+  // as the hover tooltip. `listTitle` is the NAME shown in the row: for an
+  // alert thread the stored title is the alert's whole advisory sentence, and
+  // the row gives it 98px. See threadListTitle.
   const title = smartTitle(thread.title, thread.firstUserMessage)
+  const listTitle = threadListTitle(thread.title, thread.firstUserMessage)
 
   // Action-queue ids are opaque persisted ids, not `kind:entity` strings. A
   // thread therefore cannot infer a kind from alertItemId; alert threads use a
@@ -886,7 +891,7 @@ const ThreadItem = ({ thread, isSelected, onSelect, onRename, indented = false, 
   return (
     <div
       className={[
-        'group flex flex-col rounded py-1.5 cursor-pointer transition-colors',
+        'group relative flex flex-col rounded py-1.5 cursor-pointer transition-colors',
         // Selected: flame left-border accent + white card surface (no structural indent border).
         // Unselected: subtle indent rule for subthread hierarchy.
         isSelected
@@ -932,28 +937,23 @@ const ThreadItem = ({ thread, isSelected, onSelect, onRename, indented = false, 
           >
             {typeIcon}
           </span>
-          <span className="min-w-0 flex-1 truncate font-mono text-label">{title}</span>
-          {kindChip === 'alert' && (
-            <span
-              className="shrink-0 rounded bg-error/15 px-1.5 py-0.5 text-micro font-medium text-error"
-              data-testid="thread-kind-chip-alert"
-            >
-              alert
-            </span>
-          )}
-          {kindChip === 'decision' && (
-            <span
-              className="shrink-0 rounded bg-status-blocked/15 px-1.5 py-0.5 text-micro font-medium text-status-blocked"
-              data-testid="thread-kind-chip-decision"
-            >
-              decision
-            </span>
-          )}
-          {thread.updatedAt && (
-            <span className="ml-1 flex-none font-mono text-micro text-muted-foreground">
-              {formatRelative(new Date(thread.updatedAt).getTime())}
-            </span>
-          )}
+          {/* Two lines, not one truncated line. Measured before this change:
+              98px of width for 944px and 1343px of text — 10% and 7% visible —
+              and no `title` attribute, so hover revealed nothing either. Two
+              threads rendered as "A task got s…" and could not be told apart.
+
+              The kind chip and the timestamp moved to a meta line below, where
+              they cost the name nothing. On this row they were taking 53 of
+              the 218px available and the `alert` chip was saying, in words,
+              what the ◉ beside it already says — it carries title="Alert" and
+              aria-label="alert". */}
+          <span
+            className="min-w-0 flex-1 text-label leading-snug line-clamp-2"
+            title={title}
+            data-testid="thread-list-title"
+          >
+            {listTitle}
+          </span>
           {thread.attentionStatus === 'ready' && (
             <span
               data-testid="ready-badge"
@@ -982,10 +982,15 @@ const ThreadItem = ({ thread, isSelected, onSelect, onRename, indented = false, 
                 // 24x24 box (WCAG 2.5.8) rather than the ~15x11 a "×" glyph's
                 // type metrics produced. Armed it widens to carry the word,
                 // because the two-step confirm has to be legible.
-                'ml-1 inline-flex h-6 flex-none items-center justify-center rounded transition-opacity',
+                // Unarmed the control is invisible until the row is hovered,
+                // but `w-6 flex-none` was reserving its 24px from the thread
+                // NAME at all times — width spent on nothing, on every row,
+                // permanently. Out of the flow until it is armed; the row is
+                // `relative` so it anchors here.
+                'inline-flex h-6 items-center justify-center rounded transition-opacity',
                 armed
-                  ? 'w-auto px-1.5 eyebrow bg-error/20 text-error opacity-100'
-                  : 'w-6 text-muted-foreground opacity-0 hover:bg-error/10 hover:text-error group-hover:opacity-100 focus:opacity-100',
+                  ? 'ml-1 w-auto flex-none px-1.5 eyebrow bg-error/20 text-error opacity-100'
+                  : 'absolute right-1.5 top-1.5 w-6 bg-card/90 text-muted-foreground opacity-0 hover:bg-error/10 hover:text-error group-hover:opacity-100 focus:opacity-100',
               ].join(' ')}
               onClick={(e) => {
                 e.stopPropagation()
@@ -1003,6 +1008,35 @@ const ThreadItem = ({ thread, isSelected, onSelect, onRename, indented = false, 
         </>
       )}
       </div>
+      {/* Meta line — what the row IS and when it last moved, below the name
+          rather than competing with it for the same 218px. Indented to the
+          name's left edge (the 12px icon plus its 4px gap + 2px) so the row
+          reads as one block. */}
+      {!editing && (kindChip !== null || thread.updatedAt) && (
+        <div className="mt-0.5 flex items-center gap-1.5 pl-[18px]">
+          {kindChip === 'alert' && (
+            <span
+              className="rounded bg-error/15 px-1.5 py-0.5 text-micro font-medium text-error"
+              data-testid="thread-kind-chip-alert"
+            >
+              alert
+            </span>
+          )}
+          {kindChip === 'decision' && (
+            <span
+              className="rounded bg-status-blocked/15 px-1.5 py-0.5 text-micro font-medium text-status-blocked"
+              data-testid="thread-kind-chip-decision"
+            >
+              decision
+            </span>
+          )}
+          {thread.updatedAt && (
+            <span className="font-mono text-micro tabular-nums text-muted-foreground">
+              {formatRelative(new Date(thread.updatedAt).getTime())}
+            </span>
+          )}
+        </div>
+      )}
       {showObjective && !editing && (
         <p
           data-testid="subthread-objective"
@@ -2451,6 +2485,10 @@ export const ThreadSidebar = ({
   // Split into live (< 7d) and archived (> 7d or explicit archivedAt) blocks.
   const allThreads = sortByUrgencyThenAge(filterSidebarThreads(data ?? [], filters, forkFilter))
   const liveThreads = allThreads.filter((t) => !isArchived(t))
+  // Whether forking has ever been used here. The fork filters are hidden until
+  // it has: a filter for a thing that does not exist is a control that can
+  // only ever return nothing.
+  const anyForks = (data ?? []).some((t) => t.parentThreadId != null)
   const archivedThreads = allThreads.filter((t) => isArchived(t))
   // Stale untitled: live threads with no user-visible title older than 48 h.
   const staleUntitledThreads = liveThreads.filter((t) => isStaleUntitled(t))
@@ -2553,29 +2591,39 @@ export const ThreadSidebar = ({
           </div>
         )}
 
-        <div className="mt-2 border-t border-border px-2 pt-2" aria-label="Archive fork filters">
-          <button
-            type="button"
-            data-testid="forks-of-thread-filter"
-            aria-pressed={forkFilter.parentThreadId === selectedId}
-            disabled={selectedId === null}
-            className="mr-1 rounded-full px-2 py-0.5 font-mono text-micro text-muted-foreground transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 aria-pressed:font-medium aria-pressed:text-foreground"
-            onClick={() => onForkFilterChange(
-              forkFilter.parentThreadId === selectedId ? {} : { parentThreadId: selectedId ?? undefined },
-            )}
-          >
-            Forks of this thread
-          </button>
-          <button
-            type="button"
-            data-testid="forked-only-filter"
-            aria-pressed={forkFilter.hasParent === true}
-            className="rounded-full px-2 py-0.5 font-mono text-micro text-muted-foreground transition-colors hover:text-foreground aria-pressed:font-medium aria-pressed:text-foreground"
-            onClick={() => onForkFilterChange(forkFilter.hasParent ? {} : { hasParent: true })}
-          >
-            Forked only
-          </button>
-        </div>
+        {/* Fork filters — shown only once a fork exists.
+            These are toggles, but they rendered as bare grey mono words with
+            no border and no fill, one of them permanently disabled, under a
+            rule: "Forks of this thread" read as a section heading and "Forked
+            only" as its empty state. On a workspace with 44 threads and ZERO
+            forks they were a control for a thing that did not exist.
+            They are chips now, and they appear when there is something to
+            filter. */}
+        {anyForks && (
+          <div className="mt-2 flex gap-1 border-t border-border px-2 pt-2" aria-label="Fork filters">
+            <button
+              type="button"
+              data-testid="forks-of-thread-filter"
+              aria-pressed={forkFilter.parentThreadId === selectedId}
+              disabled={selectedId === null}
+              className="rounded-full border border-border px-2 py-0.5 text-micro text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 aria-pressed:border-highlight/50 aria-pressed:bg-highlight/10 aria-pressed:font-medium aria-pressed:text-foreground"
+              onClick={() => onForkFilterChange(
+                forkFilter.parentThreadId === selectedId ? {} : { parentThreadId: selectedId ?? undefined },
+              )}
+            >
+              Forks of this
+            </button>
+            <button
+              type="button"
+              data-testid="forked-only-filter"
+              aria-pressed={forkFilter.hasParent === true}
+              className="rounded-full border border-border px-2 py-0.5 text-micro text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground aria-pressed:border-highlight/50 aria-pressed:bg-highlight/10 aria-pressed:font-medium aria-pressed:text-foreground"
+              onClick={() => onForkFilterChange(forkFilter.hasParent ? {} : { hasParent: true })}
+            >
+              Forked only
+            </button>
+          </div>
+        )}
 
       </div>
 

@@ -69,6 +69,63 @@ export const smartTitle = (title: string | null, firstUserMessage?: string | nul
   return title
 }
 
+/**
+ * The NAME a thread goes by in the sidebar list.
+ *
+ * `smartTitle` returns the stored title, which for an alert thread is the
+ * alert's full advisory sentence:
+ *
+ *   "A task got stuck and Mars used up its automatic retry — nothing is fixing
+ *    this now, you need to decide what to do (mars-…"
+ *
+ * That is 944px of text, and the list column gives the title 98px. Measured on
+ * a live session: two threads both rendered as "A task got s…" and were
+ * indistinguishable, with no `title` attribute so hover revealed nothing
+ * either. The sidebar's only job is choosing a thread, and it could not be
+ * done.
+ *
+ * A name is a noun phrase; an advisory is one or more sentences. The same
+ * distinction TriagePage draws for its headline slot. So this keeps the lead
+ * clause — the part that names the subject — and drops the part that gives
+ * advice, which the transcript itself states in full the moment the thread is
+ * opened:
+ *
+ *   "A task got stuck and Mars used up its automatic retry"
+ *   "An update is available for the background engine (5 commits behind)"
+ *   "Mars could not turn this PRD into tasks"
+ *
+ * Nothing is rewritten or summarised — the words are the daemon's own, cut at
+ * a boundary it wrote. A title that was already a name is returned unchanged.
+ */
+export const threadListTitle = (
+  title: string | null,
+  firstUserMessage?: string | null,
+): string => {
+  const full = smartTitle(title, firstUserMessage)
+
+  // A leading markdown heading marker is chrome from a pasted prompt body.
+  let text = full.replace(/^#{1,6}\s+/, '').trim()
+
+  // Cut at the first clause boundary that separates subject from advice. The
+  // em dash is the daemon's own convention for exactly that; a sentence stop
+  // is the general case. Both must be followed by more text, so a trailing
+  // period never counts as a cut.
+  const cut = text.search(/\s+—\s+|[.!?](\s|$)/)
+  if (cut > 0) {
+    const head = text.slice(0, cut).trim()
+    // Only take the head if it is substantial enough to still be a name. A
+    // three-word fragment is worse than the whole sentence.
+    if (head.length >= 16) text = head
+  }
+
+  // The API stores a bounded title, so a long advisory arrives already cut —
+  // sometimes mid-token, leaving "(mars-" hanging. Drop a dangling opener
+  // rather than printing half of one.
+  text = text.replace(/\s*\([^)]*$/, '').trim()
+
+  return text.length > 0 ? text : full
+}
+
 export const PRIORITY_RANK: Record<'high' | 'normal' | 'low', number> = {
   high: 0,
   normal: 1,

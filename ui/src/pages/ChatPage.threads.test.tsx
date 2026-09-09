@@ -850,3 +850,79 @@ describe('ContextRail TASKS panel – live re-derivation', () => {
     expect(qc.getQueryState(['thread-tasks', 'th-1'])?.isInvalidated).toBe(true)
   })
 })
+
+// ---------------------------------------------------------------------------
+// Choosing a thread from the rail
+//
+// The rail's only job is picking a thread. Measured on a live session it could
+// not be done: an alert thread's stored title is the alert's whole advisory
+// sentence, and the title element rendered at 98px for 944px and 1343px of
+// text. Two threads both read "A task got s…", with no `title` attribute so
+// hover revealed nothing either.
+// ---------------------------------------------------------------------------
+
+describe('ThreadSidebar – a thread can be told apart from its neighbour', () => {
+  it('shows the subject of an alert, not its advice', () => {
+    const html = renderSidebar([
+      makeThread({
+        origin: 'alert',
+        title:
+          'A task got stuck and Mars used up its automatic retry — nothing is fixing this now, you need to decide what to do (mars-11b722e8).',
+      }),
+    ])
+    // The VISIBLE text, not the raw HTML: the full sentence is deliberately
+    // still present in the `title` attribute so hovering recovers it.
+    const idx = html.indexOf('data-testid="thread-list-title"')
+    expect(idx).toBeGreaterThan(-1)
+    const visible = html.slice(html.indexOf('>', idx) + 1, html.indexOf('</span>', idx))
+    expect(visible).toContain('A task got stuck and Mars used up its automatic retry')
+    expect(visible).not.toContain('you need to decide what to do')
+  })
+
+  it('carries the full title as a tooltip, so nothing is lost', () => {
+    const full =
+      'A task got stuck and Mars used up its automatic retry — nothing is fixing this now, you need to decide what to do (mars-11b722e8).'
+    const html = renderSidebar([makeThread({ origin: 'alert', title: full })])
+    expect(html).toContain(`title="${full.replace(/&/g, '&amp;')}"`)
+  })
+
+  it('gives the name two lines instead of truncating it to one', () => {
+    const html = renderSidebar([makeThread({ origin: 'alert', title: 'A long alert title here' })])
+    const idx = html.indexOf('data-testid="thread-list-title"')
+    expect(idx).toBeGreaterThan(-1)
+    const tag = html.slice(html.lastIndexOf('<span', idx), idx)
+    expect(tag).toContain('line-clamp-2')
+    expect(tag).not.toContain('truncate')
+  })
+
+  it('does not spend the name’s width on a chip that repeats the icon', () => {
+    // The row's ◉ already carries title="Alert" and aria-label="alert". The
+    // `alert` chip beside it said the same thing in words and took 40 of the
+    // 218px the row had — so it moved to the meta line below, where it costs
+    // the name nothing.
+    const html = renderSidebar([makeThread({ origin: 'alert', title: 'Something failed' })])
+    const titleIdx = html.indexOf('data-testid="thread-list-title"')
+    const chipIdx = html.indexOf('data-testid="thread-kind-chip-alert"')
+    if (chipIdx > -1) expect(chipIdx).toBeGreaterThan(titleIdx)
+  })
+})
+
+describe('ThreadSidebar – fork filters', () => {
+  it('are hidden when nothing has ever been forked', () => {
+    // Measured live: 44 threads, zero with a parent, and the two filters sat
+    // there permanently — one of them disabled — as bare grey words under a
+    // rule, reading as a heading and its empty state rather than as controls.
+    const html = renderSidebar([makeThread(), makeThread({ id: 'th-2' })])
+    expect(html).not.toContain('data-testid="forks-of-thread-filter"')
+    expect(html).not.toContain('data-testid="forked-only-filter"')
+  })
+
+  it('appear once a fork exists', () => {
+    const html = renderSidebar([
+      makeThread(),
+      makeThread({ id: 'th-2', parentThreadId: 'th-1' } as Partial<ChatThread>),
+    ])
+    expect(html).toContain('data-testid="forks-of-thread-filter"')
+    expect(html).toContain('data-testid="forked-only-filter"')
+  })
+})
