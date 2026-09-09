@@ -1,3 +1,4 @@
+import { ArrowDown, ArrowUp } from 'lucide-react'
 import { SkeletonBlock } from '@/components/Skeleton'
 import { useCostPerMergedTask } from '@/entities/kpi/useCostPerMergedTask'
 import { kpiHash } from '@/shared/routing'
@@ -62,15 +63,15 @@ export const CostPerMergedTaskTile = () => {
   const priorValue = priced.length >= 2 ? priced[0].avgCostPerMerge : null
   const delta = priorValue !== null ? currentValue - priorValue : 0
   // The arrow is an IMPROVEMENT arrow (matches kpiDriftDirection /
-  // KpiDetailPage's ↑ Improved / ↓ Regressed convention for lower-is-better
-  // metrics), not a value-direction arrow — lower cost = improved = ↑, even
+  // KpiDetailPage's up=Improved / down=Regressed convention for lower-is-better
+  // metrics), not a value-direction arrow — lower cost = improved = up, even
   // though the sparkline is visibly descending. Spelling out "cheaper" /
   // "dearer" next to it keeps that reading legible instead of relying on the
   // reader to already know the convention (the other four KPI tiles use a
-  // ✓/⚠/× verdict chip, not an arrow, so there's no cross-tile precedent).
+  // Check/TriangleAlert/X verdict chip, not an arrow, so there's no precedent).
   const showArrow = Math.abs(delta) >= 0.001
   const isImproved = delta < 0
-  const deltaArrow = isImproved ? '↑' : '↓'
+  const DeltaArrow = isImproved ? ArrowUp : ArrowDown
   const deltaWord = isImproved ? 'cheaper' : 'dearer'
   const deltaClass = isImproved ? 'text-success' : 'text-error'
 
@@ -92,7 +93,7 @@ export const CostPerMergedTaskTile = () => {
         </span>
         {showArrow && (
           <span className={`flex items-center gap-1 text-micro ${deltaClass}`}>
-            <span aria-hidden="true">{deltaArrow}</span>
+            <DeltaArrow size={11} strokeWidth={2.5} aria-hidden="true" />
             <span>
               {usdFormatter.format(Math.abs(delta))} {deltaWord}
             </span>

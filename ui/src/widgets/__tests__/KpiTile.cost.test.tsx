@@ -99,29 +99,30 @@ describe('CostPerMergedTaskTile — delta arrow', () => {
   // descends. That reading is only legible if the tile also says the word
   // ("cheaper"/"dearer") next to the arrow; a bare glyph reads as the
   // literal-but-wrong "cost went up".
-  it('shows ↑ arrow with "cheaper" when cost improved (decreased)', () => {
-    // cost went from $3.00 to $1.50 → improved → ↑ $1.50 cheaper
+  it('shows an up arrow with "cheaper" when cost improved (decreased)', () => {
+    // cost went from $3.00 to $1.50 → improved → up, $1.50 cheaper.
+    // The arrow is a Lucide icon now, not a "↑" character, so assert the icon.
     mockUseCost.mockReturnValue({
       data: makeTrend(7, 3.0, 1.5),
       isLoading: false,
       error: null,
     })
     const html = renderToStaticMarkup(<CostPerMergedTaskTile />)
-    expect(html).toContain('↑')
-    expect(html).not.toContain('↓')
+    expect(html).toContain('lucide-arrow-up')
+    expect(html).not.toContain('lucide-arrow-down')
     expect(html).toContain('cheaper')
   })
 
-  it('shows ↓ arrow with "dearer" when cost regressed (increased)', () => {
-    // cost went from $1.00 to $2.00 → regressed → ↓ $1.00 dearer
+  it('shows a down arrow with "dearer" when cost regressed (increased)', () => {
+    // cost went from $1.00 to $2.00 → regressed → down, $1.00 dearer.
     mockUseCost.mockReturnValue({
       data: makeTrend(7, 1.0, 2.0),
       isLoading: false,
       error: null,
     })
     const html = renderToStaticMarkup(<CostPerMergedTaskTile />)
-    expect(html).toContain('↓')
-    expect(html).not.toContain('↑')
+    expect(html).toContain('lucide-arrow-down')
+    expect(html).not.toContain('lucide-arrow-up')
     expect(html).toContain('dearer')
   })
 
