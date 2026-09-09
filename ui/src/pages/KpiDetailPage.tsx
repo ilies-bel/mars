@@ -287,7 +287,7 @@ export const KpiDetailPage = ({ kpiKey }: KpiDetailPageProps) => {
                   {formatKpiValue(kpiKey, kpi.currentValue)}
                 </span>
                 <span className={`flex items-center gap-1 text-title ${cue.colorClass}`}>
-                  <span aria-hidden="true">{cue.glyph}</span>
+                  <cue.Icon size={11} strokeWidth={2.5} aria-hidden="true" />
                   <span>{cue.label}</span>
                 </span>
                 {drift && drift !== 'flat' && (

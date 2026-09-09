@@ -301,7 +301,27 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
   const [pending, setPending] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [resolved, setResolved] = useState(false)
-  // Restart is destructive (wipes worktree + branch, discarding commits) — it
+  /**
+ * Does this action destroy work?
+ *
+ * Two reasons the client has to decide this itself rather than trust the row:
+ *
+ *  - `zDecision` is only { label, endpoint, payload } — the daemon sends no
+ *    style hint at all for decisions.
+ *  - For verbs it sends one, and it is wrong where it matters most: the
+ *    `restart` verb arrives as `style: 'primary'`, so "Restart task" rendered
+ *    in the same filled flame chrome as "Copy gate command". In Mars, restart
+ *    is not a benign retry — it wipes the worktree and branch and discards the
+ *    worker's commits. A UI must never dress that as the safe default, so this
+ *    check OVERRIDES the server's style rather than deferring to it.
+ *
+ * The list is short and matches whole words only. A false positive just makes
+ * a safe button quieter; a false negative is the failure that costs work.
+ */
+const isDestructiveAction = (label: string): boolean =>
+  /\b(restart|purge|drop|delete|retire|discard|wipe|remove|abort|reset)\b/i.test(label)
+
+// Restart is destructive (wipes worktree + branch, discarding commits) — it
   // requires an explicit in-app confirm step before dispatching, rather than
   // firing on first click like the reversible Continue verb.
   const [confirmRestart, setConfirmRestart] = useState(false)
@@ -589,18 +609,34 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
                 operator's eye lands on when scanning the actions row.
                 Decision buttons are NEVER hidden behind disclosure — they are the
                 primary CTA for their card type (Enable, Skip, Dismiss, …). */}
-            {item.decisions.slice(0, 3).map((d) => (
-              <ActionButton
-                key={d.label}
-                variant="primary"
-                disabled={pending !== null}
-                pending={pending === d.label}
-                onClick={() => void handleDecision(d)}
-                data-testid={`triage-decision-${d.label}`}
-              >
-                {d.label}
-              </ActionButton>
-            ))}
+            {item.decisions.slice(0, 3).map((d, i) => {
+              // A decision's destructiveness decides its rung. Every decision
+              // used to render `variant="primary"`, so "Copy gate command" and
+              // "Restart task" wore identical filled chrome — and in Mars,
+              // restart WIPES the worktree and branch and discards the worker's
+              // commits. A verb that destroys work must never look like the
+              // safe default.
+              const destructive = isDestructiveAction(d.label)
+              // The ladder allows exactly ONE primary per row (see
+              // ActionButton); `slice(0, 3)` was rendering up to three. The
+              // first non-destructive decision is the CTA, the rest are real
+              // alternatives.
+              const isLeadSafe =
+                !destructive &&
+                item.decisions.findIndex((x) => !isDestructiveAction(x.label)) === i
+              return (
+                <ActionButton
+                  key={d.label}
+                  variant={destructive ? 'danger' : isLeadSafe ? 'primary' : 'secondary'}
+                  disabled={pending !== null}
+                  pending={pending === d.label}
+                  onClick={() => void handleDecision(d)}
+                  data-testid={`triage-decision-${d.label}`}
+                >
+                  {d.label}
+                </ActionButton>
+              )
+            })}
 
             {/* Recipe verb buttons. For task-recovery rows, copy verbs have
                 moved into the "⋯ More" disclosure (mainVerbs excludes them);
@@ -611,7 +647,27 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
                 server emits snooze in both the decisions and verbs arrays). */}
             {mainVerbs
               .filter((v) => !item.decisions.some((d) => d.label === v.label))
-              .map((verb) => (
+              .map((verb, vi, shown) => {
+              const destructive =
+                verb.style === 'destructive' ||
+                isDestructiveAction(verb.op) ||
+                isDestructiveAction(verb.label)
+              // ONE filled primary per card (the ladder's own rule). The
+              // daemon marks several verbs `primary` on the same row — a
+              // gate-broken card arrived with "Copy gate command", "Add
+              // proposed gate" and "No gate needed" all filled, which is three
+              // focal points and therefore none. The first one keeps the fill;
+              // the rest drop to secondary, which is what they are.
+              // A clipboard copy is never the call to action, whatever the
+              // daemon says: "Copy gate command" arrived as `primary` and so
+              // took the filled slot away from "Add proposed gate", which is
+              // the verb that actually changes something.
+              const eligible = (v: typeof verb) =>
+                v.style === 'primary' &&
+                v.op !== 'copy' &&
+                !(isDestructiveAction(v.op) || isDestructiveAction(v.label))
+              const leadPrimary = shown.findIndex(eligible) === vi
+              return (
               <ActionButton
                 key={verb.op === 'copy' ? `copy-${verb.label}` : verb.op}
                 disabled={pending !== null}
@@ -619,9 +675,11 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
                 onClick={() => void handleVerb(verb.op, verb.hint)}
                 size={verb.op === 'copy' ? 'sm' : 'md'}
                 variant={
-                  verb.style === 'destructive'
+                  // The destructive check comes FIRST and outranks the
+                  // server-sent style — see isDestructiveAction.
+                  destructive
                     ? 'danger'
-                    : verb.style === 'primary'
+                    : verb.style === 'primary' && verb.op !== 'copy' && leadPrimary
                       ? 'primary'
                       : verb.style === 'snooze' || verb.op === 'copy'
                         ? 'ghost'
@@ -631,7 +689,8 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
               >
                 {verb.label}
               </ActionButton>
-            ))}
+              )
+            })}
 
             {/* Recovery-exhausted carry-forward panel — only for task-recovery
                 kinds whose single recovery attempt has already been spent. */}

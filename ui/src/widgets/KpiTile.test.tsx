@@ -202,11 +202,11 @@ describe('KpiTile — band indicator', () => {
     expect(html).toContain('Good')
   })
 
-  it('renders the ✓ glyph for a good-band KPI', () => {
+  it('renders the check shape cue for a good-band KPI', () => {
     const html = renderToStaticMarkup(
       <KpiTile kpi={kpi({ key: 'cost_per_arc', currentValue: 2.5 })} />,
     )
-    expect(html).toContain('✓')
+    expect(html).toContain('lucide-check')
   })
 
   it('renders a text label "Warn" for a warn-band KPI (failure_rate at boundary 0.05)', () => {
@@ -217,11 +217,11 @@ describe('KpiTile — band indicator', () => {
     expect(html).toContain('Warn')
   })
 
-  it('renders the ⚠ glyph for a warn-band KPI', () => {
+  it('renders the triangle-alert shape cue for a warn-band KPI', () => {
     const html = renderToStaticMarkup(
       <KpiTile kpi={kpi({ key: 'failure_rate', currentValue: 0.05 })} />,
     )
-    expect(html).toContain('⚠')
+    expect(html).toContain('lucide-triangle-alert')
   })
 
   it('renders a text label "Bad" for a bad-band KPI (failure_rate > 0.05)', () => {
@@ -232,11 +232,11 @@ describe('KpiTile — band indicator', () => {
     expect(html).toContain('Bad')
   })
 
-  it('renders the ✕ glyph for a bad-band KPI', () => {
+  it('renders the x shape cue for a bad-band KPI', () => {
     const html = renderToStaticMarkup(
       <KpiTile kpi={kpi({ key: 'failure_rate', currentValue: 0.10 })} />,
     )
-    expect(html).toContain('✕')
+    expect(html).toContain('lucide-x')
   })
 
   it('does not render a left-border stripe (no border-l-4 class)', () => {

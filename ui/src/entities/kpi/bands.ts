@@ -1,4 +1,6 @@
 import type { KpiKey } from './types'
+import { Check, TriangleAlert, X } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 
 /**
  * Threshold-based band classifier for each KPI.
@@ -35,8 +37,15 @@ import type { KpiKey } from './types'
 export type KpiBand = 'good' | 'warn' | 'bad'
 
 export interface KpiBandCue {
-  /** Shape glyph — communicates band without relying on hue alone. */
-  glyph: string
+  /**
+   * Shape cue — communicates the band without relying on hue alone.
+   *
+   * A Lucide component, not a "✓/⚠/✕" character: those render at whatever
+   * metrics the font gives them (and "⚠" picks up emoji presentation in some
+   * fonts), so they sat at a different optical size and weight from every
+   * other icon in the app.
+   */
+  Icon: LucideIcon
   /** Text label — legible without colour (accessible to red/green-blind users). */
   label: string
   /** Semantic Tailwind token class from --color-* CSS vars; never a raw palette colour. */
@@ -44,16 +53,16 @@ export interface KpiBandCue {
 }
 
 const BAND_CUES: Record<KpiBand, KpiBandCue> = {
-  good: { glyph: '✓', label: 'Good', colorClass: 'text-success' },
-  warn: { glyph: '⚠', label: 'Warn', colorClass: 'text-warn' },
-  bad:  { glyph: '✕', label: 'Bad',  colorClass: 'text-error' },
+  good: { Icon: Check,         label: 'Good', colorClass: 'text-success' },
+  warn: { Icon: TriangleAlert, label: 'Warn', colorClass: 'text-warn' },
+  bad:  { Icon: X,             label: 'Bad',  colorClass: 'text-error' },
 }
 
 /**
- * Returns a display cue for a KPI band: a glyph + text label (non-color cue)
+ * Returns a display cue for a KPI band: an icon + text label (non-color cue)
  * and a semantic color token class (no raw Tailwind palette colors).
  *
- * Both the shape (glyph) and the label are color-independent so the band is
+ * Both the shape (icon) and the label are color-independent so the band is
  * legible without relying on hue (red/green-colorblind accessibility).
  */
 export function kpiBandCue(band: KpiBand): KpiBandCue {

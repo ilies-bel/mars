@@ -968,3 +968,25 @@ html {
 .mars-card:hover:not([class*="hover:bg-"]) {
   background-color: color-mix(in srgb, var(--color-panel) 45%, var(--color-surface));
 }
+
+/* ── Panel title ────────────────────────────────────────────────────────────
+ * A panel's own name, distinct from the labels INSIDE it.
+ *
+ * Collapsing every small-caps label to one `.eyebrow` was right, but it went
+ * one step too far: a panel <h4> ("Promotion ledger") and its table's column
+ * headers ("WORKFLOW", "DECISION") ended up rendering identically, so a
+ * container and its contents' labels were the same typographic rank and the
+ * panels read as a wall.
+ *
+ * This restores the step on three axes at once — size (12 vs 11), case
+ * (sentence vs upper) and colour (foreground vs muted) — so it survives
+ * greyscale and does not depend on colour alone.
+ * ---------------------------------------------------------------------------*/
+.panel-title {
+  font-family: var(--font-sans);
+  font-size: var(--text-label);
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  color: var(--color-fg);
+  text-transform: none;
+}

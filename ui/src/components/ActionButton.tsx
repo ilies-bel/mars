@@ -42,8 +42,15 @@ const VARIANT: Record<ActionVariant, string> = {
   // and start reading as decoration. This one is neutral until pointed at.
   // The border is why it is not "bare text": a destructive action must have a
   // bounding box you can aim at even while it is being visually quiet.
+  // The border is error-tinted AT REST. It was `border-border/70`, which made
+  // this rung differ from `ghost` only by the presence of a hairline — so on
+  // the Gates list "Retire" (permanent) and "Quarantine" (reversible) were
+  // indistinguishable until you pointed at one, and a destructive action you
+  // can only identify by hovering is not identified. The tint is quiet enough
+  // that twelve of them down a column still do not shout, and the label text
+  // carries the meaning independently of colour.
   'danger-ghost':
-    'border border-border/70 text-muted-foreground hover:border-error/60 hover:bg-error/10 hover:text-error active:bg-error/20',
+    'border border-error/30 text-muted-foreground hover:border-error/60 hover:bg-error/10 hover:text-error active:bg-error/20',
 }
 
 const SIZE: Record<ActionSize, string> = {

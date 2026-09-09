@@ -58,7 +58,7 @@ export const StewardLedgerPanel = ({ targetKind, targetId }: StewardLedgerPanelP
       data-target-id={targetId}
       className="border-t border-border px-4 py-3"
     >
-      <h3 className="eyebrow text-muted-foreground">
+      <h3 className="panel-title">
         Steward timeline · {targetLabel}
       </h3>
       {isPending ? (
