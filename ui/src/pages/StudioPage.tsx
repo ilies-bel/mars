@@ -63,7 +63,7 @@ export const StudioPage = ({ taskId, fetchImpl }: StudioPageProps) => {
       <PageHeader
         title={task ? taskTitle(task) : 'Studio'}
         subtitle={taskId}
-        right={
+        actions={
           <a
             href={taskHash(taskId)}
             data-testid="studio-back-to-task"

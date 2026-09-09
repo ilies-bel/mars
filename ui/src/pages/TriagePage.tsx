@@ -1,7 +1,7 @@
 import { Chip, type ChipTone } from '@/components/Chip'
 import { ArrowRight, Search } from 'lucide-react'
 import { ActionButton } from '@/components/ActionButton'
-import { PageHeader } from '@/components/PageHeader'
+import { PageHeader } from '@/widgets/primitives/DensityPrimitives'
 /**
  * TriagePage — "Action Queue" ranked triage view.
  *

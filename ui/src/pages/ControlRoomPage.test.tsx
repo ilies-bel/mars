@@ -403,16 +403,16 @@ describe('ControlRoomPage — Gates section run status', () => {
     expect(html).not.toContain('>passing<')
   })
 
-  it('shows "Last passed:" label text for a currently-passing gate', () => {
+  it('shows a "passed <age>" label for a currently-passing gate', () => {
     const gate = makeGate({ lastFailureAt: 1000, lastPassAt: 2000 })
     const html = renderControlRoom([gate])
-    expect(html).toContain('Last passed:')
+    expect(html).toContain('passed')
   })
 
-  it('shows "Last failure:" label text for a currently-failing gate', () => {
+  it('shows a "failed <age>" label for a currently-failing gate', () => {
     const gate = makeGate({ lastPassAt: null, lastFailureAt: 5000 })
     const html = renderControlRoom([gate])
-    expect(html).toContain('Last failure:')
+    expect(html).toContain('failed')
   })
 
   it('shows no badge and no run-date labels when the gate has never run', () => {
@@ -420,8 +420,8 @@ describe('ControlRoomPage — Gates section run status', () => {
     const html = renderControlRoom([gate])
     expect(html).not.toContain('>passing<')
     expect(html).not.toContain('>failing<')
-    expect(html).not.toContain('Last passed:')
-    expect(html).not.toContain('Last failure:')
+    expect(html).not.toContain('passed')
+    expect(html).not.toContain('failed')
   })
 })
 

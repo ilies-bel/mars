@@ -40,7 +40,7 @@ import { CopyButton } from '@/components/CopyButton'
 import { parseReflectionDetailRoute, reflectionDetailHash, proposalHash } from '@/shared/routing'
 import { useHashRoute } from '@/shared/useHashRoute'
 import { formatAbsoluteDateTime } from '@/shared/time'
-import { PageHeader, SectionLabel } from '@/widgets/primitives/DensityPrimitives'
+import { PageHeader, SectionHeading } from '@/widgets/primitives/DensityPrimitives'
 
 // ---------------------------------------------------------------------------
 // Outcome types (mirrored from the server-side ReflectionSuggestionOutcome)
@@ -715,14 +715,14 @@ export const ReflectionDetailView = ({ detail }: ReflectionDetailViewProps) => {
         <>
           {/* Summary + root cause — the headline, not buried */}
           <section>
-            <div className="mb-2"><SectionLabel>Summary</SectionLabel></div>
+            <SectionHeading>Summary</SectionHeading>
             <p className="font-mono text-body text-foreground leading-relaxed border border-primary/20 bg-card p-3">
               {detail.report.summary}
             </p>
           </section>
 
           <section>
-            <div className="mb-2"><SectionLabel>Root Cause</SectionLabel></div>
+            <SectionHeading>Root Cause</SectionHeading>
             <p className="font-mono text-label text-primary border border-primary/30 bg-primary/5 p-3 leading-relaxed">
               {detail.report.rootCause}
             </p>
@@ -731,7 +731,7 @@ export const ReflectionDetailView = ({ detail }: ReflectionDetailViewProps) => {
           {/* Dissonant calls — ordered by severity, intent vs outcome side-by-side */}
           {sortedCalls.length > 0 && (
             <section>
-              <div className="mb-2"><SectionLabel>Dissonant Calls ({sortedCalls.length})</SectionLabel></div>
+              <SectionHeading>Dissonant Calls ({sortedCalls.length})</SectionHeading>
               <div className="flex flex-col gap-2">
                 {sortedCalls.map((call, i) => (
                   <DissonantCallCard key={i} call={call} index={i} />
@@ -743,7 +743,7 @@ export const ReflectionDetailView = ({ detail }: ReflectionDetailViewProps) => {
           {/* Verify mismatches */}
           {detail.report.verifyMismatches.length > 0 && (
             <section>
-              <div className="mb-2"><SectionLabel>Verify Mismatches ({detail.report.verifyMismatches.length})</SectionLabel></div>
+              <SectionHeading>Verify Mismatches ({detail.report.verifyMismatches.length})</SectionHeading>
               <div className="flex flex-col gap-2">
                 {detail.report.verifyMismatches.map((mm, i) => (
                   <div
@@ -777,7 +777,7 @@ export const ReflectionDetailView = ({ detail }: ReflectionDetailViewProps) => {
           {/* Thrashing patterns */}
           {detail.report.thrashingPatterns.length > 0 && (
             <section>
-              <div className="mb-2"><SectionLabel>Thrashing Patterns ({detail.report.thrashingPatterns.length})</SectionLabel></div>
+              <SectionHeading>Thrashing Patterns ({detail.report.thrashingPatterns.length})</SectionHeading>
               <div className="flex flex-col gap-2">
                 {detail.report.thrashingPatterns.map((p, i) => (
                   <div
@@ -798,7 +798,7 @@ export const ReflectionDetailView = ({ detail }: ReflectionDetailViewProps) => {
 
           {/* Tool call statistics — compact breakdown, not a raw object dump */}
           <section>
-            <div className="mb-2"><SectionLabel>Tool Calls ({detail.report.toolCallStats.total.toLocaleString()} total)</SectionLabel></div>
+            <SectionHeading>Tool Calls ({detail.report.toolCallStats.total.toLocaleString()} total)</SectionHeading>
             <div className="flex flex-wrap gap-2">
               {byNameEntries.map(([tool, count]) => (
                 <div
@@ -815,7 +815,7 @@ export const ReflectionDetailView = ({ detail }: ReflectionDetailViewProps) => {
           {/* Filed proposals — link arc → proposals, with lever binding */}
           {savedSuggestions.length > 0 && (
             <section>
-              <div className="mb-2"><SectionLabel>Proposals Filed ({savedSuggestions.length})</SectionLabel></div>
+              <SectionHeading>Proposals Filed ({savedSuggestions.length})</SectionHeading>
               <div className="flex flex-col gap-2">
                 {savedSuggestions.map((s, i) => (
                   <div
@@ -840,7 +840,7 @@ export const ReflectionDetailView = ({ detail }: ReflectionDetailViewProps) => {
           {/* Lever Changes — knobs you can tune right now */}
           {leverBindings.length > 0 && (
             <section data-testid="lever-changes-section">
-              <div className="mb-2"><SectionLabel>Lever Changes — what you can tune now ({leverBindings.length})</SectionLabel></div>
+              <SectionHeading>Lever Changes — what you can tune now ({leverBindings.length})</SectionHeading>
               <div className="flex flex-col gap-2">
                 {leverBindings.map((s, i) => {
                   const lever = (s.outcome as { type: 'lever'; lever: LeverData }).lever
@@ -866,7 +866,7 @@ export const ReflectionDetailView = ({ detail }: ReflectionDetailViewProps) => {
           {/* Lever Gaps — knobs Mars wishes it had */}
           {leverGaps.length > 0 && (
             <section data-testid="lever-gaps-section">
-              <div className="mb-2"><SectionLabel>Lever Gaps — knobs Mars wishes it had ({leverGaps.length})</SectionLabel></div>
+              <SectionHeading>Lever Gaps — knobs Mars wishes it had ({leverGaps.length})</SectionHeading>
               <div className="flex flex-col gap-2">
                 {leverGaps.map((gap, i) => (
                   <LeverGapCard key={i} gap={gap} index={i} />
@@ -990,7 +990,7 @@ export const ReflectionsPage = () => {
           <div className="flex flex-col gap-3">
             <PageHeader
               title="Reflections"
-              right={
+              actions={
                 listData ? (
                   <span className="font-mono text-micro text-muted-foreground" data-testid="report-count">
                     {listData.totalDiscovered > listData.reports.length

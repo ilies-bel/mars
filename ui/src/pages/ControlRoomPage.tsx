@@ -1,3 +1,6 @@
+import { TriangleAlert } from 'lucide-react'
+import { ActionButton } from '@/components/ActionButton'
+import { Chip } from '@/components/Chip'
 /**
  * ControlRoomPage — operator levers first, reference data below.
  *
@@ -36,7 +39,7 @@ import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
 import { useDispatchState, pauseReasonLabel } from '@/entities/operator/useDispatchState'
 import { useFocusedProject } from '@/shared/useFocusedProject'
 import type { ActionQueueItem } from '@/shared/schemas'
-import { SectionLabel } from '@/widgets/primitives/DensityPrimitives'
+import { PageHeader, SectionHeading, SectionLabel } from '@/widgets/primitives/DensityPrimitives'
 import { relativeTime, formatAbsoluteDateTime } from '@/shared/time'
 import { ErrorState } from '@/components/ErrorState'
 import { SkeletonList } from '@/components/Skeleton'
@@ -137,7 +140,7 @@ const LeversSection = () => {
   if (isLoading) {
     return (
       <section>
-        <div className="mb-3"><SectionLabel>Levers</SectionLabel></div>
+        <SectionHeading>Levers</SectionHeading>
         <SkeletonList rows={2} rowClassName="h-16 w-full mb-3" label="Loading levers" />
       </section>
     )
@@ -146,7 +149,7 @@ const LeversSection = () => {
   if (isError || !state) {
     return (
       <section>
-        <div className="mb-3"><SectionLabel>Levers</SectionLabel></div>
+        <SectionHeading>Levers</SectionHeading>
         <ErrorState
           error={queryError ?? new Error('Operator state unavailable')}
           of="levers"
@@ -162,7 +165,7 @@ const LeversSection = () => {
   return (
     <>
       <section>
-        <div className="mb-4"><SectionLabel>Levers</SectionLabel></div>
+        <SectionHeading>Levers</SectionHeading>
 
         <div className="space-y-3">
           {/* Dispatch lever */}
@@ -176,35 +179,26 @@ const LeversSection = () => {
                   ].join(' ')}
                   aria-hidden="true"
                 />
-                <span className="font-mono text-body font-medium text-foreground">
-                  Dispatch
-                </span>
-                <span
-                  className={[
-                    'rounded-full px-2 py-0.5 font-mono text-micro font-medium uppercase tracking-wide',
-                    isDispatchPaused
-                      ? 'bg-warn/10 text-warn'
-                      : 'bg-success/10 text-success',
-                  ].join(' ')}
-                >
+                <span className="text-title font-semibold text-foreground">Dispatch</span>
+                <Chip tone={isDispatchPaused ? 'warn' : 'success'}>
                   {isDispatchPaused ? 'paused' : 'running'}
-                </span>
+                </Chip>
               </div>
               {isDispatchPaused && dispatch.reason && (
-                <p className="mt-1 font-mono text-micro text-muted-foreground/70">
+                <p className="mt-1 text-label text-muted-foreground">
                   Reason: {pauseReasonLabel(dispatch)}
                   {dispatch.since ? ` · since ${relativeTime(dispatch.since)}` : ''}
                 </p>
               )}
             </div>
-            <button
+            <ActionButton
+              variant="secondary"
               onClick={() =>
                 openConfirm(isDispatchPaused ? { kind: 'dispatch-on' } : { kind: 'dispatch-off' })
               }
-              className="shrink-0 rounded-md border border-border px-3 py-1.5 font-mono text-label text-foreground hover:bg-surface transition-colors"
-            >
-              {isDispatchPaused ? 'Resume' : 'Pause'}
-            </button>
+              >
+                {isDispatchPaused ? 'Resume' : 'Pause'}
+              </ActionButton>
           </div>
 
           {/* Recovery lever */}
@@ -218,27 +212,19 @@ const LeversSection = () => {
                   ].join(' ')}
                   aria-hidden="true"
                 />
-                <span className="font-mono text-body font-medium text-foreground">
-                  Recovery
-                </span>
-                <span
-                  className={[
-                    'rounded-full px-2 py-0.5 font-mono text-micro font-medium uppercase tracking-wide',
-                    controlLevers.recovery === 'off'
-                      ? 'bg-error/10 text-error'
-                      : 'bg-success/10 text-success',
-                  ].join(' ')}
-                >
+                <span className="text-title font-semibold text-foreground">Recovery</span>
+                <Chip tone={controlLevers.recovery === 'off' ? 'error' : 'success'}>
                   {controlLevers.recovery}
-                </span>
+                </Chip>
               </div>
-              <p className="mt-1 font-mono text-micro text-muted-foreground/70">
+              <p className="mt-1 text-label text-muted-foreground">
                 {controlLevers.recovery === 'off'
                   ? 'Fix-task spawning disabled — failures will accumulate.'
                   : 'Fix tasks spawn automatically on worker failure.'}
               </p>
             </div>
-            <button
+            <ActionButton
+              variant="secondary"
               onClick={() =>
                 openConfirm(
                   controlLevers.recovery === 'off'
@@ -246,16 +232,15 @@ const LeversSection = () => {
                     : { kind: 'recovery-off' },
                 )
               }
-              className="shrink-0 rounded-md border border-border px-3 py-1.5 font-mono text-label text-foreground hover:bg-surface transition-colors"
-            >
-              {controlLevers.recovery === 'off' ? 'Enable' : 'Disable'}
-            </button>
+              >
+                {controlLevers.recovery === 'off' ? 'Enable' : 'Disable'}
+              </ActionButton>
           </div>
 
           {/* Caps — read-only */}
           <div className="mars-card rounded bg-surface px-4 py-3">
-            <div className="mb-3">
-              <span className="font-mono text-micro uppercase tracking-widest text-muted-foreground">
+            <div className="mb-4">
+              <span className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">
                 Concurrency caps
               </span>
             </div>
@@ -308,10 +293,10 @@ const LeversSection = () => {
 
 const CapStat = ({ label, value }: { label: string; value: number }) => (
   <div className="flex flex-col items-center gap-1">
-    <span className="font-mono text-title font-semibold leading-none tabular-nums text-foreground">
+    <span className="text-metric font-semibold leading-none tabular-nums text-foreground">
       {value}
     </span>
-    <span className="font-mono text-micro uppercase tracking-widest text-muted-foreground text-center">
+    <span className="text-center text-micro font-medium text-muted-foreground">
       {label}
     </span>
   </div>
@@ -382,7 +367,7 @@ const GatesSection = () => {
   if (isLoading) {
     return (
       <section data-testid="gates-section">
-        <div className="mb-3"><SectionLabel>Gates</SectionLabel></div>
+        <SectionHeading>Gates</SectionHeading>
         <SkeletonList rows={2} rowClassName="h-10 w-full mb-2" label="Loading gates" />
       </section>
     )
@@ -391,7 +376,7 @@ const GatesSection = () => {
   if (isError || !gatesData) {
     return (
       <section data-testid="gates-section">
-        <div className="mb-3"><SectionLabel>Gates</SectionLabel></div>
+        <SectionHeading>Gates</SectionHeading>
         <ErrorState
           error={queryError ?? new Error('Verify gates unavailable')}
           of="gates"
@@ -419,15 +404,16 @@ const GatesSection = () => {
   return (
     <>
       <section data-testid="gates-section">
-        <div className="mb-3"><SectionLabel>Gates</SectionLabel></div>
+        <SectionHeading count={gatesData.length}>Gates</SectionHeading>
 
         {quarantinedRequired.length > 0 && (
           <div
             className="mb-3 rounded border border-error/30 bg-error/5 px-4 py-3"
             data-testid="quarantine-banner"
           >
-            <p className="font-mono text-label font-medium text-error">
-              ⚠ {quarantinedRequired.length} required gate{quarantinedRequired.length !== 1 ? 's are' : ' is'} quarantined — merges are proceeding unchecked
+            <p className="flex items-center gap-1.5 text-label font-semibold text-error">
+              <TriangleAlert size={13} strokeWidth={2} aria-hidden="true" />
+              {quarantinedRequired.length} required gate{quarantinedRequired.length !== 1 ? 's are' : ' is'} quarantined — merges are proceeding unchecked
             </p>
             <ul className="mt-1 space-y-0.5">
               {quarantinedRequired.map((g) => (
@@ -444,100 +430,110 @@ const GatesSection = () => {
             No gates yet — run <code className="font-mono text-micro bg-surface px-1 rounded">mars verify-gate detect</code>
           </p>
         ) : (
-          <ul className="space-y-2">
+          <ul
+            className="divide-y divide-border/70 overflow-hidden rounded-lg border border-border/60 bg-surface shadow-[var(--shadow-e1)]"
+          >
             {gatesData.map((gate) => {
               const failing = isCurrentlyFailing(gate)
               const gateDisplayName = gate.scope !== '.' ? `${gate.scope}: ${gate.name}` : gate.name
               return (
                 <li
                   key={gate.id}
-                  className="mars-card flex items-start justify-between gap-3 rounded bg-surface px-4 py-3"
+                  className="group/gate flex items-center gap-3 px-4 py-2.5 transition-colors duration-[var(--dur-fast)] hover:bg-background/60"
                   data-testid={`gate-row-${gate.id}`}
                 >
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-mono text-body font-medium text-foreground">
+                  {/* Status is a dot, not a word: seven rows each shouting
+                      PASSING/FAILING in a coloured pill made the state harder to
+                      scan, not easier. The dot column aligns so a failing gate
+                      is findable in one vertical sweep. */}
+                  {gate.lastPassAt !== null || gate.lastFailureAt !== null ? (
+                    <span
+                      className={[
+                        'size-1.5 shrink-0 rounded-full',
+                        failing ? 'bg-error' : 'bg-success',
+                      ].join(' ')}
+                      title={failing ? 'failing' : 'passing'}
+                      data-testid={failing ? 'gate-status-failing' : 'gate-status-passing'}
+                    >
+                      <span className="sr-only">{failing ? 'failing' : 'passing'}</span>
+                    </span>
+                  ) : (
+                    <span className="size-1.5 shrink-0 rounded-full bg-border" title="never run" />
+                  )}
+
+                  <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                    <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                      <span className="truncate font-mono text-body font-medium text-foreground">
                         {gateDisplayName}
                       </span>
-                      {/* Current run status badge */}
-                      {gate.lastPassAt !== null || gate.lastFailureAt !== null ? (
-                        <span
-                          className={[
-                            'shrink-0 rounded-full px-2 py-0.5 font-mono text-micro font-medium uppercase tracking-wide',
-                            failing
-                              ? 'bg-error/10 text-error'
-                              : 'bg-success/10 text-success',
-                          ].join(' ')}
-                          data-testid={failing ? 'gate-status-failing' : 'gate-status-passing'}
-                        >
-                          {failing ? 'failing' : 'passing'}
-                        </span>
-                      ) : null}
-                      <span
-                        className={[
-                          'shrink-0 rounded-full px-2 py-0.5 font-mono text-micro font-medium uppercase tracking-wide',
-                          gate.tier === 'integration'
-                            ? 'bg-primary/10 text-primary/70'
-                            : 'bg-surface-elevated text-muted-foreground',
-                        ].join(' ')}
-                      >
-                        {gate.tier}
-                      </span>
-                      {!gate.required && (
-                        <span className="shrink-0 rounded-full px-2 py-0.5 font-mono text-micro font-medium uppercase tracking-wide bg-warn/10 text-warn">
-                          advisory
-                        </span>
-                      )}
-                      {gate.state === 'quarantined' && (
-                        <span className="shrink-0 rounded-full px-2 py-0.5 font-mono text-micro font-medium uppercase tracking-wide bg-error/10 text-error">
-                          quarantined
-                        </span>
-                      )}
+                      {gate.tier === 'integration' && <Chip tone="info">integration</Chip>}
+                      {!gate.required && <Chip tone="warn">advisory</Chip>}
+                      {gate.state === 'quarantined' && <Chip tone="error">quarantined</Chip>}
                     </div>
-                    <p className="mt-1 font-mono text-micro text-muted-foreground/70">
-                      <span className="font-mono">{[gate.cmd, ...gate.args].join(' ')}</span>
+                    <p className="truncate font-mono text-micro text-muted-foreground/70">
+                      {[gate.cmd, ...gate.args].join(' ')}
                       {gate.scope !== '.' && (
-                        <>{' '}<span className="text-muted-foreground/40">in {gate.scope}</span></>
+                        <span className="text-muted-foreground/45"> in {gate.scope}</span>
                       )}
                     </p>
-                    {/* Show last pass when gate is currently passing */}
+                  </div>
+
+                  {/* Timing sits in its own right-aligned column so the eye can
+                      read "when did this last break" down the list. */}
+                  <div className="hidden shrink-0 flex-col items-end gap-0.5 text-micro tabular-nums sm:flex">
                     {!failing && gate.lastPassAt !== null && (
-                      <p className="mt-0.5 font-mono text-micro text-success/60" data-testid="gate-last-pass">
-                        Last passed: <span title={formatAbsoluteDateTime(gate.lastPassAt)}>{relativeTime(gate.lastPassAt)}</span>
-                      </p>
+                      <span className="text-muted-foreground/70" data-testid="gate-last-pass">
+                        passed{' '}
+                        <span title={formatAbsoluteDateTime(gate.lastPassAt)}>
+                          {relativeTime(gate.lastPassAt)}
+                        </span>
+                      </span>
                     )}
-                    {/* Show last failure as secondary detail when passing, or primary when failing */}
                     {gate.lastFailureAt !== null && (
-                      <p className={`mt-0.5 font-mono text-micro ${failing ? 'text-error/60' : 'text-muted-foreground/40'}`} data-testid="gate-last-failure">
-                        Last failure: <span title={formatAbsoluteDateTime(gate.lastFailureAt)}>{relativeTime(gate.lastFailureAt)}</span>
-                      </p>
+                      <span
+                        className={failing ? 'text-error/80' : 'text-muted-foreground/45'}
+                        data-testid="gate-last-failure"
+                      >
+                        failed{' '}
+                        <span title={formatAbsoluteDateTime(gate.lastFailureAt)}>
+                          {relativeTime(gate.lastFailureAt)}
+                        </span>
+                      </span>
                     )}
                   </div>
-                  <div className="flex shrink-0 flex-col gap-1.5">
+
+                  {/* Actions stay mounted (so they are keyboard-reachable and
+                      never reflow the row) but fade up on row hover / focus, so
+                      a list of seven gates is not also a list of fourteen
+                      competing buttons. */}
+                  <div className="flex shrink-0 items-center gap-1">
                     {gate.state === 'quarantined' ? (
-                      <button
+                      <ActionButton
+                        size="sm"
+                        variant="ghost"
                         onClick={() => { openDialog('restore', gate) }}
-                        className="rounded-md border border-border px-3 py-1.5 font-mono text-label text-foreground hover:bg-surface transition-colors"
                         data-testid="gate-restore-btn"
                       >
                         Restore
-                      </button>
+                      </ActionButton>
                     ) : (
-                      <button
+                      <ActionButton
+                        size="sm"
+                        variant="ghost"
                         onClick={() => { openDialog('quarantine', gate) }}
-                        className="rounded-md border border-warn/40 px-3 py-1.5 font-mono text-label text-warn hover:bg-warn/5 transition-colors"
                         data-testid="gate-quarantine-btn"
                       >
                         Quarantine
-                      </button>
+                      </ActionButton>
                     )}
-                    <button
+                    <ActionButton
+                      size="sm"
+                      variant="danger-ghost"
                       onClick={() => { openDialog('retire', gate) }}
-                      className="rounded-md border border-error/30 px-3 py-1.5 font-mono text-label text-error/70 hover:bg-error/5 transition-colors"
                       data-testid="gate-retire-btn"
                     >
                       Retire
-                    </button>
+                    </ActionButton>
                   </div>
                 </li>
               )
@@ -608,7 +604,7 @@ const NowSection = () => {
 
   return (
     <section>
-      <div className="mb-3"><SectionLabel>Now</SectionLabel></div>
+      <SectionHeading>Now</SectionHeading>
 
       <div className="mars-card rounded bg-surface px-4 py-3">
         <div className="mb-4 flex items-center gap-1.5">
@@ -753,7 +749,7 @@ const EngineSection = () => {
   return (
     <>
       <section data-testid="engine-drift-section">
-        <div className="mb-3"><SectionLabel>Engine</SectionLabel></div>
+        <SectionHeading>Engine</SectionHeading>
         <div className="mars-card rounded border border-warn/30 bg-warn/5 px-4 py-3">
           <p className="font-mono text-body font-medium text-warn">
             {driftItem.title ?? 'Engine update available'}
@@ -874,7 +870,7 @@ const AdvisorySection = () => {
 
   return (
     <section>
-      <div className="mb-3"><SectionLabel>Advisory Digest</SectionLabel></div>
+      <SectionHeading>Advisory Digest</SectionHeading>
 
       <div className="mb-4 flex gap-4">
         <a
@@ -975,7 +971,7 @@ const RulesSection = () => {
 
           {filteredTerms.length > 0 && (
             <div>
-              <div className="mb-2"><SectionLabel>Glossary</SectionLabel></div>
+              <SectionHeading>Glossary</SectionHeading>
               <div className="flex flex-wrap gap-1.5">
                 {filteredTerms.map((t) => (
                   <span
@@ -992,7 +988,7 @@ const RulesSection = () => {
 
           {filteredAdrs.length > 0 && (
             <div>
-              <div className="mb-2"><SectionLabel>Decisions (ADRs)</SectionLabel></div>
+              <SectionHeading>Decisions (ADRs)</SectionHeading>
               <ul className="space-y-0.5">
                 {filteredAdrs.map((adr) => (
                   <li key={adr.slug} className="flex items-baseline gap-2">
@@ -1452,8 +1448,13 @@ const HotPathSection = () => {
 // ---------------------------------------------------------------------------
 
 export const ControlRoomPage = () => (
-  <main className="flex h-full min-h-0 flex-1 flex-col gap-8 overflow-y-auto bg-background p-6" data-testid="control-page">
-    <h1 className="font-mono text-title font-semibold text-foreground">Control Room</h1>
+  <main className="flex h-full min-h-0 flex-1 flex-col overflow-y-auto bg-background" data-testid="control-page">
+    <PageHeader
+      title="Control Room"
+      subtitle="Levers, gates and engine health for this repo"
+      className="sticky top-0 z-10"
+    />
+    <div className="flex flex-col gap-8 p-6">
     <LeversSection />
     <GatesSection />
     <NowSection />
@@ -1462,5 +1463,6 @@ export const ControlRoomPage = () => (
     <RulesSection />
     <StewardHistorySection />
     <HotPathSection />
+    </div>
   </main>
 )

@@ -16,7 +16,7 @@ import { FallbackSurface } from '@/components/FallbackSurface'
 import { CollapsibleSection } from '@/components/CollapsibleSection'
 import { useStewardView } from './useStewardView'
 import type { StewardView } from './useStewardView'
-import { PageHeader, SectionLabel } from '@/widgets/primitives/DensityPrimitives'
+import { PageHeader, SectionHeading } from '@/widgets/primitives/DensityPrimitives'
 import { formatAbsoluteDateTime, formatShortDate } from '@/shared/time'
 import { invokeAction } from '@/shared/api'
 
@@ -615,7 +615,7 @@ const GateHealthLane = ({
         <div className="space-y-4">
           {data.scopes.map((scope) => (
             <section key={scope.scope} aria-label={`Verify gates for ${scope.scope}`}>
-              <div className="mb-2"><SectionLabel>Scope: {scope.scope}</SectionLabel></div>
+              <SectionHeading>Scope: {scope.scope}</SectionHeading>
               <ul className="space-y-2">
                 {scope.gates.map((gate) => (
                   <li key={gate.id} className="rounded border border-border/40 bg-muted/10 px-3 py-2">
@@ -731,7 +731,7 @@ export const StewardPage = () => {
       <PageHeader
         title="Steward"
         subtitle="What the Steward is wired to do and what it has actually done."
-        right={
+        actions={
           <div className="flex items-center gap-3 font-mono text-micro text-muted-foreground">
             <span className="flex items-center gap-1">
               <span className="inline-block h-1.5 w-6 rounded bg-success" />

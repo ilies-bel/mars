@@ -18,10 +18,14 @@ describe('PageHeader', () => {
     expect(html).toContain('bg-surface')
   })
 
-  it('renders title in mono font', () => {
+  // The title used to render at text-title (14px) in mono — the same size as
+  // the card titles beneath it, which is why every page read flat. It is now
+  // the top of the type hierarchy, in Inter.
+  it('renders the title at the heading step in Inter', () => {
     const html = renderToStaticMarkup(<PageHeader title="Progress" />)
-    expect(html).toContain('font-mono')
+    expect(html).toContain('text-heading')
     expect(html).toContain('font-semibold')
+    expect(html).not.toContain('font-mono')
   })
 
   it('omits subtitle span when subtitle is not provided', () => {
@@ -45,7 +49,7 @@ describe('PageHeader', () => {
 
   it('renders the right slot when provided', () => {
     const html = renderToStaticMarkup(
-      <PageHeader title="Progress" right={<button>Filter</button>} />,
+      <PageHeader title="Progress" actions={<button>Filter</button>} />,
     )
     expect(html).toContain('ml-auto')
     expect(html).toContain('Filter')
@@ -56,7 +60,7 @@ describe('PageHeader', () => {
       <PageHeader
         title="Progress"
         subtitle="4 active"
-        right={<span>toggle</span>}
+        actions={<span>toggle</span>}
       />,
     )
     expect(html).toContain('Progress')
@@ -81,10 +85,10 @@ describe('SectionLabel', () => {
     expect(html).toMatch(/<span[^>]*>In Progress<\/span>/)
   })
 
-  it('applies uppercase mono styling', () => {
+  it('applies uppercase label styling', () => {
     const html = renderToStaticMarkup(<SectionLabel>Blocked</SectionLabel>)
     expect(html).toContain('uppercase')
-    expect(html).toContain('font-mono')
+    expect(html).toContain('text-micro')
     expect(html).toContain('font-semibold')
   })
 

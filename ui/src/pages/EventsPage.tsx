@@ -1196,7 +1196,7 @@ export const EventsPage = () => {
       {/* Header — fixed above the scrollable list */}
       <PageHeader
         title="Events"
-        right={
+        actions={
           <div className="flex items-center gap-1">
             {/* Event count — subdued pill badge (replaces the old em-dash count in the title) */}
             <span
