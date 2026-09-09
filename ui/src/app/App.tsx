@@ -33,8 +33,7 @@ import {
   resolvePageRoute,
 } from '@/shared/routing'
 import type { RouteName } from '@/shared/routing'
-import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
-import { countNeedsYou } from '@/entities/actionQueue/clusterRows'
+import { useCounts } from '@/entities/counts/useCounts'
 import { useSseConnected } from '@/shared/sseStatus'
 import { useTabTitleBadge } from '@/shared/useTabTitleBadge'
 import { useProposals } from '@/entities/proposals/useProposals'
@@ -185,9 +184,17 @@ const AppInner = () => {
   // Global tab-title badge: prepends `(N)` when there are items needing
   // attention and the SSE stream is connected (connected=false → stale count →
   // drop the prefix to avoid a confident-but-wrong number in the tab bar).
-  const { items: aqItems } = useActionQueue()
+  //
+  // The count comes from useCounts() — the same source the sidebar badge, the
+  // board header, the Control Room Now-strip and the chat greeting read. The
+  // tab used to recompute it locally from `useActionQueue().items`, which
+  // drops every `type: 'group'` row and so showed a smaller number than the
+  // three counts visible on screen (measured live: tab 11, everything else
+  // 38). The tab title is the operator's only signal while the window is
+  // backgrounded, so it is the one surface that must not disagree.
+  const { needsYou, known } = useCounts()
   const sseConnected = useSseConnected()
-  useTabTitleBadge(countNeedsYou(aqItems), sseConnected)
+  useTabTitleBadge(needsYou, sseConnected && known)
 
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-background">

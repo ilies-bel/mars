@@ -237,14 +237,17 @@ const LeversSection = () => {
               </ActionButton>
           </div>
 
-          {/* Caps — read-only */}
-          <div className="mars-card rounded bg-surface px-4 py-3">
-            <div className="mb-4">
-              <span className="eyebrow text-muted-foreground">
-                Concurrency caps
-              </span>
-            </div>
-            <div className="grid grid-cols-5 gap-4">
+          {/* Caps — read-only.
+           *
+           * These were five 32px numerals: the largest type anywhere in the
+           * application, spent on five configuration constants that change
+           * about never, directly above a gate list where seven of twelve were
+           * red at 13px. Size should track how much a number can change and
+           * how much it costs you when it does; by that measure these rank
+           * last on the page. One line now. */}
+          <div className="mars-card flex flex-wrap items-baseline gap-x-4 gap-y-1 rounded bg-surface px-4 py-3">
+            <span className="eyebrow text-muted-foreground">Concurrency caps</span>
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
               <CapStat label="implement" value={caps.implement} />
               <CapStat label="triage" value={caps.triage} />
               <CapStat label="refine" value={caps.refine} />
@@ -292,14 +295,10 @@ const LeversSection = () => {
 }
 
 const CapStat = ({ label, value }: { label: string; value: number }) => (
-  <div className="flex flex-col items-center gap-1">
-    <span className="text-metric font-semibold leading-none tabular-nums text-foreground">
-      {value}
-    </span>
-    <span className="text-center text-micro font-medium text-muted-foreground">
-      {label}
-    </span>
-  </div>
+  <span className="whitespace-nowrap text-label text-muted-foreground">
+    {label}{' '}
+    <span className="font-semibold tabular-nums text-foreground">{value}</span>
+  </span>
 )
 
 // ---------------------------------------------------------------------------
@@ -399,12 +398,47 @@ const GatesSection = () => {
     (g) => g.state === 'quarantined' && g.required,
   )
 
+  const failingGates = gatesData.filter(isCurrentlyFailing)
+  const neverRunGates = gatesData.filter(
+    (g) => g.lastPassAt === null && g.lastFailureAt === null,
+  )
+  // Oldest still-unfixed breakage. A gate red for two weeks is a different
+  // story from one that broke this morning, and the list sorts by neither.
+  const oldestFailureAt = failingGates.reduce<number | null>(
+    (acc, g) =>
+      g.lastFailureAt === null ? acc : acc === null ? g.lastFailureAt : Math.min(acc, g.lastFailureAt),
+    null,
+  )
+
   const copy = pending ? GATE_ACTION_COPY[pending.kind] : null
 
   return (
     <>
       <section data-testid="gates-section">
-        <SectionHeading count={gatesData.length}>Gates</SectionHeading>
+        {/* The heading states the answer, not the noun. "Gates 12" made the
+            reader scan twelve rows to learn that seven were red — a count the
+            page had already computed. The oldest breakage is included because
+            "failing" and "failing since a fortnight ago" are different
+            problems, and only one of them is news. */}
+        <SectionHeading
+          count={gatesData.length}
+          verdict={
+            failingGates.length > 0 ? (
+              <span className="font-medium text-error" data-testid="gates-verdict">
+                {`${failingGates.length} of ${gatesData.length} failing`}
+                {oldestFailureAt !== null && ` · oldest ${relativeTime(oldestFailureAt)}`}
+              </span>
+            ) : (
+              <span className="font-medium text-success" data-testid="gates-verdict">
+                {neverRunGates.length > 0
+                  ? `all ${gatesData.length - neverRunGates.length} run gates passing · ${neverRunGates.length} never run`
+                  : `all ${gatesData.length} passing`}
+              </span>
+            )
+          }
+        >
+          Gates
+        </SectionHeading>
 
         {quarantinedRequired.length > 0 && (
           <div

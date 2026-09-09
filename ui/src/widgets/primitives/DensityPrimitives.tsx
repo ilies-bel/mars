@@ -126,20 +126,32 @@ export function PageShell({
 export function SectionHeading({
   children,
   count,
+  verdict,
   actions,
   className,
 }: {
   children: ReactNode
   count?: number | null
+  /**
+   * The answer the section computes, stated in the heading.
+   *
+   * A heading that names a noun and a total ("Gates 12") makes the reader do
+   * the counting the page has already done — they must scan twelve rows to
+   * learn that seven are red. The verdict slot is where that sentence goes
+   * ("7 of 12 failing · oldest 2w ago"). Tone belongs to the caller, because
+   * only the caller knows whether its answer is good news.
+   */
+  verdict?: ReactNode
   actions?: ReactNode
   className?: string
 }): JSX.Element {
   return (
-    <div className={cn('flex items-center gap-2 pb-2.5', className)}>
+    <div className={cn('flex items-baseline gap-2 pb-2.5', className)}>
       <h2 className="text-section font-semibold tracking-tight text-foreground">{children}</h2>
       {count !== null && count !== undefined && (
         <span className="text-label tabular-nums text-muted-foreground">{count}</span>
       )}
+      {verdict && <span className="text-label">{verdict}</span>}
       {actions && <div className="ml-auto flex items-center gap-1.5">{actions}</div>}
     </div>
   )
