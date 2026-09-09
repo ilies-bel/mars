@@ -261,7 +261,7 @@ const ProposalRow = ({ draft, onDismiss }: ProposalRowProps) => {
           </ActionButton>
         )}
         <ActionButton
-          variant="danger-ghost"
+          variant="secondary"
           onClick={handleDismiss}
           className="ml-auto"
         >

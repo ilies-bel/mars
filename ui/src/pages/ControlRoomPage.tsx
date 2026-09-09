@@ -519,7 +519,7 @@ const GatesSection = () => {
                     ) : (
                       <ActionButton
                         size="sm"
-                        variant="ghost"
+                        variant="secondary"
                         onClick={() => { openDialog('quarantine', gate) }}
                         data-testid="gate-quarantine-btn"
                       >
@@ -528,7 +528,7 @@ const GatesSection = () => {
                     )}
                     <ActionButton
                       size="sm"
-                      variant="danger-ghost"
+                      variant="danger"
                       onClick={() => { openDialog('retire', gate) }}
                       data-testid="gate-retire-btn"
                     >

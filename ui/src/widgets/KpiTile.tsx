@@ -78,10 +78,16 @@ export const KpiTile = ({ kpi }: KpiTileProps) => {
       className="flex w-full min-h-[120px] flex-col items-center justify-between rounded border border-border bg-card px-4 py-2 font-mono no-underline hover:bg-foreground/5"
       aria-label={`View ${label} details — ${cue.label}`}
     >
-      <span className="eyebrow text-muted-foreground">{label}</span>
+      {/* Fixed two-line box (h-6 = 2 x the 11px eyebrow's 12px leading). The row
+          is a grid of tiles laid out with justify-between, so a label that
+          wrapped — "Autonomous completion" did — pushed its own sparkline,
+          value and status row down and broke alignment with the four tiles
+          beside it. Reserving the space makes one-line and two-line labels
+          occupy the same height. */}
+      <span className="eyebrow flex h-6 items-center text-center text-muted-foreground">{label}</span>
       <Sparkline points={seriesPoints} />
       <div className="flex flex-col items-center gap-0.5">
-        <span className="text-lg font-semibold text-foreground">{formatKpiValue(kpi.key, kpi.currentValue)}</span>
+        <span className="text-heading font-semibold text-foreground">{formatKpiValue(kpi.key, kpi.currentValue)}</span>
         <span className={`flex items-center gap-1 text-micro ${cue.colorClass}`}>
           <cue.Icon size={11} strokeWidth={2.5} aria-hidden="true" />
           <span>{cue.label} · last {kpi.windowDays ?? 7}d</span>

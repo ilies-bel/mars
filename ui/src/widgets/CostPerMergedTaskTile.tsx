@@ -83,12 +83,12 @@ export const CostPerMergedTaskTile = () => {
       className="flex w-full min-h-[120px] flex-col items-center justify-between rounded border border-border bg-card px-4 py-2 font-mono no-underline hover:bg-foreground/5"
       aria-label="View Cost / merged task details"
     >
-      <span className="eyebrow text-muted-foreground">
+      <span className="eyebrow flex h-6 items-center text-center text-muted-foreground">
         Cost / merged task
       </span>
       <Sparkline points={sparklinePoints} />
       <div className="flex flex-col items-center gap-0.5">
-        <span className="text-lg font-semibold text-foreground">
+        <span className="text-heading font-semibold text-foreground">
           {usdFormatter.format(currentValue)}
         </span>
         {showArrow && (
