@@ -462,7 +462,7 @@ export const buildAlertSegment = (
             style: alertActionStyle(a.op),
           }))
         : [
-            { op: 'restart', label: 'Restart', style: 'primary' as const },
+            { op: 'restart', label: 'Restart', style: 'destructive' as const },
             { op: 'dismiss', label: 'Dismiss', style: 'default' as const },
           ]
   }

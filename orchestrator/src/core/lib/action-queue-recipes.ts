@@ -250,7 +250,7 @@ const RECIPE_DEFINITIONS = {
           : null,
     }),
     verbs: [
-      { op: 'restart', label: 'Restart', style: 'primary' },
+      { op: 'restart', label: 'Restart', style: 'destructive' },
       { op: 'purge', label: 'Discard task', style: 'destructive' },
     ],
   },

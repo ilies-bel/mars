@@ -225,7 +225,7 @@ describe('TriageRow – the daemon restart verb does not double the Restart cont
     mockItems.mockReturnValue([
       makeItem('failed', {
         verbs: [
-          { op: 'restart', label: 'Restart', style: 'primary' },
+          { op: 'restart', label: 'Restart', style: 'destructive' },
           { op: 'purge', label: 'Discard task', style: 'destructive' },
           { op: 'dismiss', label: 'Dismiss', style: 'default' },
         ],
@@ -254,7 +254,7 @@ describe('TriageRow – the daemon restart verb does not double the Restart cont
     // only restart affordance there and must survive.
     mockItems.mockReturnValue([
       makeItem('daemon-code-drift', {
-        verbs: [{ op: 'restart', label: 'Restart daemon', style: 'primary' }],
+        verbs: [{ op: 'restart', label: 'Restart daemon', style: 'destructive' }],
       }),
     ])
     const { container } = renderPage()
