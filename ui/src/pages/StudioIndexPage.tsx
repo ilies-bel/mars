@@ -224,7 +224,7 @@ export const StudioIndexPage = () => {
                     <td className="py-2 pr-4">
                       <a
                         href={studioHash(entry.runId)}
-                        className="text-foreground hover:text-muted-foreground"
+                        className="text-foreground decoration-muted-foreground decoration-1 underline-offset-2 transition-colors hover:underline"
                       >
                         {title}
                       </a>

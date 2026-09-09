@@ -5,7 +5,9 @@
  * The tile must:
  *   - show the title "Cost / merged task"
  *   - show the current value formatted as USD
- *   - show a 7-day delta arrow (↑ when cost improved, ↓ when it regressed)
+ *   - show a 7-day delta arrow pointing the way the VALUE moved
+ *     (↓ when cost fell, ↑ when it rose), with the verdict carried by the
+ *     adjacent word and colour
  *   - show a low-confidence placeholder when trend data is insufficient
  *
  * Link must point to #/kpi/cost-per-merged-task.
@@ -92,37 +94,46 @@ describe('CostPerMergedTaskTile — USD value formatting', () => {
 describe('CostPerMergedTaskTile — delta arrow', () => {
   beforeEach(() => { vi.resetAllMocks() })
 
-  // The arrow is an IMPROVEMENT arrow (↑ = better, matching kpiDriftDirection
-  // and KpiDetailPage's ↑ Improved / ↓ Regressed convention), not a
-  // value-direction arrow — for a lower-is-better metric like cost, a falling
-  // value is an *improvement* and gets ↑ even while the sparkline visibly
-  // descends. That reading is only legible if the tile also says the word
-  // ("cheaper"/"dearer") next to the arrow; a bare glyph reads as the
-  // literal-but-wrong "cost went up".
-  it('shows an up arrow with "cheaper" when cost improved (decreased)', () => {
-    // cost went from $3.00 to $1.50 → improved → up, $1.50 cheaper.
-    // The arrow is a Lucide icon now, not a "↑" character, so assert the icon.
+  // The arrow is a VALUE-DIRECTION arrow: it points the way the number moved.
+  //
+  // It was an improvement arrow (↑ = better, per kpiDriftDirection and
+  // KpiDetailPage) until the round-7 UX review. That convention made the tile
+  // disagree with itself — a descending sparkline, an ascending arrow and the
+  // word "cheaper", all within ~100px — and the arrow, being the boldest mark,
+  // won the first read. It was also redundant: "improved" is already stated by
+  // the colour and by "cheaper"/"dearer", so an improvement arrow added no
+  // information while adding a way to be wrong.
+  //
+  // Now: cost fell → ArrowDown + "cheaper" + success; cost rose → ArrowUp +
+  // "dearer" + error. Direction from the arrow, magnitude from the figure,
+  // verdict from the word and colour — each said once. KpiDetailPage keeps its
+  // own convention; it has no sparkline beside it to contradict.
+  it('shows a down arrow with "cheaper" when cost improved (decreased)', () => {
+    // cost went from $3.00 to $1.50 → the value FELL, so the arrow points down;
+    // "cheaper" and the success colour carry the verdict.
+    // The arrow is a Lucide icon, not a "↓" character, so assert the icon.
     mockUseCost.mockReturnValue({
       data: makeTrend(7, 3.0, 1.5),
       isLoading: false,
       error: null,
     })
     const html = renderToStaticMarkup(<CostPerMergedTaskTile />)
-    expect(html).toContain('lucide-arrow-up')
-    expect(html).not.toContain('lucide-arrow-down')
+    expect(html).toContain('lucide-arrow-down')
+    expect(html).not.toContain('lucide-arrow-up')
     expect(html).toContain('cheaper')
   })
 
-  it('shows a down arrow with "dearer" when cost regressed (increased)', () => {
-    // cost went from $1.00 to $2.00 → regressed → down, $1.00 dearer.
+  it('shows an up arrow with "dearer" when cost regressed (increased)', () => {
+    // cost went from $1.00 to $2.00 → the value ROSE, so the arrow points up;
+    // "dearer" and the error colour carry the verdict.
     mockUseCost.mockReturnValue({
       data: makeTrend(7, 1.0, 2.0),
       isLoading: false,
       error: null,
     })
     const html = renderToStaticMarkup(<CostPerMergedTaskTile />)
-    expect(html).toContain('lucide-arrow-down')
-    expect(html).not.toContain('lucide-arrow-up')
+    expect(html).toContain('lucide-arrow-up')
+    expect(html).not.toContain('lucide-arrow-down')
     expect(html).toContain('dearer')
   })
 

@@ -133,9 +133,28 @@ export const WatchtowerTrendChart = ({
     }
   }
 
+  const latest = scores.length > 0 ? scores[scores.length - 1] : null
+
   return (
     <div className="flex flex-col gap-1 min-h-[104px]">
-      <span className="font-mono text-label text-muted-foreground">{workflow}</span>
+      {/* A line on an unlabelled box is decoration: it shows movement but not
+       * magnitude, and a reader cannot tell 0.82 from 0.28. The header carries
+       * the reading the chart cannot — the current score, stated as a fraction
+       * so the 0..1 scale is legible without axis ticks, plus the sample count
+       * so a two-point "trend" is not mistaken for a trend. */}
+      <div className="flex items-baseline gap-2">
+        <span className="font-mono text-label text-muted-foreground">{workflow}</span>
+        {latest !== null && (
+          <span className="flex items-baseline gap-1">
+            <span className="tabular-nums text-title font-semibold text-foreground">
+              {latest.toFixed(2)}
+            </span>
+            <span className="text-micro tabular-nums text-muted-foreground">
+              {`/ 1.00 · ${scores.length} run${scores.length === 1 ? '' : 's'}`}
+            </span>
+          </span>
+        )}
+      </div>
 
       {/* Version chips — one per version visible in the window */}
       {chips.length > 0 && (
@@ -160,7 +179,8 @@ export const WatchtowerTrendChart = ({
       {scores.length === 0 ? (
         <p className="text-body text-muted-foreground">No scores yet</p>
       ) : (
-        <div className="relative w-full">
+        <div className="flex items-stretch gap-1.5">
+        <div className="relative min-w-0 flex-1">
         <svg
           width="100%"
           height={CHART_H}
@@ -171,7 +191,7 @@ export const WatchtowerTrendChart = ({
            * of a stroke under that stretch; vector-effect pins stroke width to
            * device pixels, so the line stays 1.5px in every direction. */
           preserveAspectRatio="none"
-          aria-label={`Score trend for ${workflow}`}
+          aria-label={`Score trend for ${workflow}: latest ${latest?.toFixed(2) ?? "none"} of 1.00 over ${scores.length} runs${p90 !== null ? `, p90 ${p90.toFixed(2)}` : ""}`}
         >
           <defs>
             <linearGradient id={`trendfill-${workflow}`} x1="0" y1="0" x2="0" y2="1">
@@ -238,6 +258,21 @@ export const WatchtowerTrendChart = ({
           className="pointer-events-none absolute right-0 h-1.5 w-1.5 -translate-x-1/2 translate-y-1/2 rounded-full bg-current"
           style={{ bottom: `${(scores[scores.length - 1] ?? 0) * 100}%` }}
         />
+        </div>
+        {/* The dashed p90 rule was the one mark on the chart whose meaning was
+         * unrecoverable from the picture. Labelling it in a right gutter (HTML,
+         * not SVG — the chart is stretched non-uniformly, so SVG text would
+         * shear) turns it from a stray line into a reference the eye can use. */}
+        <div className="relative w-16 shrink-0" aria-hidden="true">
+          {p90 !== null && (
+            <span
+              className="absolute right-0 translate-y-1/2 whitespace-nowrap text-micro tabular-nums text-muted-foreground"
+              style={{ bottom: `${p90 * 100}%` }}
+            >
+              {`p90 ${p90.toFixed(2)}`}
+            </span>
+          )}
+        </div>
         </div>
       )}
     </div>

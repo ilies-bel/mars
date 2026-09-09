@@ -990,3 +990,43 @@ html {
   color: var(--color-fg);
   text-transform: none;
 }
+
+/* ---------------------------------------------------------------------------
+ * Row actions — reveal on hover / focus
+ *
+ * A list of twelve gate rows was also a list of twenty-four buttons at full
+ * strength, half of them a destructive `Retire` in the stop colour. The row's
+ * job is to report health; the actions are what you reach for once you have
+ * found the row that needs one. So they recede until the row is engaged.
+ *
+ * Three things this deliberately does NOT do:
+ *
+ *   - It does not unmount them. `display:none` would drop them out of the tab
+ *     order and reflow the row on hover; opacity keeps geometry and focus
+ *     order stable.
+ *   - It does not strand a keyboard user in front of an invisible button.
+ *     `:focus-within` on the host fires the moment focus lands on any action,
+ *     so tabbing into the row reveals it — the same gesture that reveals it
+ *     for a mouse.
+ *   - It does not become a desktop-only affordance. Where hover does not
+ *     exist the actions are simply always visible; the rule is unlayered, so
+ *     it outranks the utility that would otherwise hide them (in Tailwind v4
+ *     layer order beats specificity, and unlayered beats every layer).
+ * ---------------------------------------------------------------------------*/
+.row-actions {
+  opacity: 0;
+  transition: opacity var(--dur-fast) ease;
+}
+
+.row-actions-host:hover .row-actions,
+.row-actions-host:focus-within .row-actions {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .row-actions { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .row-actions { transition: none; }
+}

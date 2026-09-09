@@ -1,4 +1,4 @@
-import { ArrowRight, ChevronDown, TriangleAlert } from 'lucide-react'
+import { ArrowRight, Check, ChevronDown, Circle, TriangleAlert, X } from 'lucide-react'
 import { ActionButton, ActionLink } from '@/components/ActionButton'
 import { Chip } from '@/components/Chip'
 /**
@@ -439,26 +439,51 @@ const GatesSection = () => {
               return (
                 <li
                   key={gate.id}
-                  className="group/gate flex items-center gap-3 px-4 py-2.5 transition-colors duration-[var(--dur-fast)] hover:bg-background/60"
+                  className="row-actions-host group/gate flex items-center gap-3 px-4 py-2.5 transition-colors duration-[var(--dur-fast)] hover:bg-background/60"
                   data-testid={`gate-row-${gate.id}`}
                 >
-                  {/* Status is a dot, not a word: seven rows each shouting
+                  {/* Status is a glyph, not a word: twelve rows each shouting
                       PASSING/FAILING in a coloured pill made the state harder to
-                      scan, not easier. The dot column aligns so a failing gate
-                      is findable in one vertical sweep. */}
+                      scan, not easier. The column aligns so a failing gate is
+                      findable in one vertical sweep.
+
+                      It was a dot until the round-7 review: two 6px circles
+                      identical in size and shape, separated only by red vs
+                      green. That is WCAG 1.4.1 — the sr-only label served a
+                      screen-reader user (1.1.1) but gave a sighted reader with
+                      a colour deficiency nothing, and the title tooltip is not
+                      an answer when the question is "which of these twelve
+                      broke". Check / X / hollow-ring differ in shape first and
+                      colour second, so the sweep survives greyscale. Same
+                      vocabulary as the KPI bands (entities/kpi/bands.ts). */}
                   {gate.lastPassAt !== null || gate.lastFailureAt !== null ? (
                     <span
                       className={[
-                        'size-1.5 shrink-0 rounded-full',
-                        failing ? 'bg-error' : 'bg-success',
+                        'flex size-3.5 shrink-0 items-center justify-center',
+                        failing ? 'text-error' : 'text-success',
                       ].join(' ')}
                       title={failing ? 'failing' : 'passing'}
                       data-testid={failing ? 'gate-status-failing' : 'gate-status-passing'}
                     >
+                      {failing ? (
+                        <X size={12} strokeWidth={3} aria-hidden="true" />
+                      ) : (
+                        <Check size={12} strokeWidth={3} aria-hidden="true" />
+                      )}
                       <span className="sr-only">{failing ? 'failing' : 'passing'}</span>
                     </span>
                   ) : (
-                    <span className="size-1.5 shrink-0 rounded-full bg-border" title="never run" />
+                    /* Never run. This branch previously rendered a bare grey dot
+                       with a title and no sr-only text, so three gates on this
+                       page announced nothing whatsoever. */
+                    <span
+                      className="flex size-3.5 shrink-0 items-center justify-center text-muted-foreground"
+                      title="never run"
+                      data-testid="gate-status-never-run"
+                    >
+                      <Circle size={10} strokeWidth={2} aria-hidden="true" />
+                      <span className="sr-only">never run</span>
+                    </span>
                   )}
 
                   <div className="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -504,9 +529,14 @@ const GatesSection = () => {
 
                   {/* Actions stay mounted (so they are keyboard-reachable and
                       never reflow the row) but fade up on row hover / focus, so
-                      a list of seven gates is not also a list of fourteen
-                      competing buttons. */}
-                  <div className="flex shrink-0 items-center gap-1">
+                      a list of twelve gates is not also a list of twenty-four
+                      competing buttons — twelve of them a destructive `Retire`
+                      in the stop colour, on a page whose job is to report gate
+                      health. The comment above said this before the round-7
+                      review; only the comment did. `.row-actions` (index.css)
+                      carries the opacity, and pins it to 1 where hover does not
+                      exist so this is not a desktop-only affordance. */}
+                  <div className="row-actions flex shrink-0 items-center gap-1">
                     {gate.state === 'quarantined' ? (
                       <ActionButton
                         size="sm"

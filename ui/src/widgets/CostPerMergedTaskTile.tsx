@@ -62,16 +62,31 @@ export const CostPerMergedTaskTile = () => {
   // change rather than the boundary between "no pricing" and "pricing".
   const priorValue = priced.length >= 2 ? priced[0].avgCostPerMerge : null
   const delta = priorValue !== null ? currentValue - priorValue : 0
-  // The arrow is an IMPROVEMENT arrow (matches kpiDriftDirection /
-  // KpiDetailPage's up=Improved / down=Regressed convention for lower-is-better
-  // metrics), not a value-direction arrow — lower cost = improved = up, even
-  // though the sparkline is visibly descending. Spelling out "cheaper" /
-  // "dearer" next to it keeps that reading legible instead of relying on the
-  // reader to already know the convention (the other four KPI tiles use a
-  // Check/TriangleAlert/X verdict chip, not an arrow, so there's no precedent).
+  // The arrow points the way the VALUE moved, not the way the verdict moved.
+  //
+  // It used to be an improvement arrow, borrowed from kpiDriftDirection /
+  // KpiDetailPage (up = Improved for a lower-is-better metric). That put three
+  // signals in one tile pointing two ways: a sparkline visibly descending, an
+  // up arrow, and the word "cheaper" — and the arrow was the loudest of the
+  // three. The old comment here conceded the clash and hoped the adjacent word
+  // would resolve it; on screen it does not, because the arrow is rendered
+  // inside the same span as a dollar amount, and "↑ $1.41" reads as "up $1.41"
+  // before any word arrives to undo it.
+  //
+  // Note also what the improvement reading cost: it made the arrow redundant.
+  // Improvement is already carried twice, by the colour and by
+  // "cheaper"/"dearer". Only a value-direction arrow contributes something the
+  // tile does not otherwise state, and it agrees with the sparkline 8px above.
+  // So: improved (cost fell) = ArrowDown + "cheaper" + success; regressed =
+  // ArrowUp + "dearer" + error. Direction, magnitude and verdict, each said
+  // once, none contradicting another.
+  //
+  // This deliberately diverges from KpiDetailPage's arrow convention. That
+  // convention is fine where it lives — there is no sparkline beside it to
+  // argue with.
   const showArrow = Math.abs(delta) >= 0.001
   const isImproved = delta < 0
-  const DeltaArrow = isImproved ? ArrowUp : ArrowDown
+  const DeltaArrow = isImproved ? ArrowDown : ArrowUp
   const deltaWord = isImproved ? 'cheaper' : 'dearer'
   const deltaClass = isImproved ? 'text-success' : 'text-error'
 
