@@ -261,8 +261,8 @@ const LeversSection = () => {
           {copy && (
             <>
               <DialogHeader>
-                <DialogTitle className="font-mono text-title">{copy.title}</DialogTitle>
-                <DialogDescription className="font-mono text-body text-foreground/70">
+                <DialogTitle className="text-title">{copy.title}</DialogTitle>
+                <DialogDescription className="text-body text-foreground/70">
                   {copy.body}
                 </DialogDescription>
               </DialogHeader>
@@ -463,7 +463,7 @@ const GatesSection = () => {
 
                   <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                     <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-                      <span className="truncate font-mono text-body font-medium text-foreground">
+                      <span className="truncate text-body font-medium text-foreground">
                         {gateDisplayName}
                       </span>
                       {gate.tier === 'integration' && <Chip tone="info">integration</Chip>}
@@ -546,8 +546,8 @@ const GatesSection = () => {
       <Dialog open={pending !== null} onOpenChange={(open) => { if (!open) setPending(null) }}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle className="font-mono">{copy?.title}</DialogTitle>
-            <DialogDescription className="font-mono text-label">
+            <DialogTitle className="">{copy?.title}</DialogTitle>
+            <DialogDescription className="text-label">
               {pending && (
                 <span className="font-medium text-foreground">
                   {pending.gate.scope !== '.' ? `${pending.gate.scope}: ` : ''}{pending.gate.name}
@@ -572,7 +572,7 @@ const GatesSection = () => {
               onClick={() => { void handleConfirm() }}
               disabled={acting}
               className={[
-                'rounded-md px-4 py-2 font-mono text-label font-medium text-white transition-colors disabled:opacity-50',
+                'rounded-md px-4 py-2 text-label font-medium text-white transition-colors disabled:opacity-50',
                 pending?.kind === 'retire'
                   ? 'bg-error hover:bg-error/90'
                   : pending?.kind === 'quarantine'
@@ -615,7 +615,7 @@ const NowSection = () => {
             ].join(' ')}
             aria-hidden="true"
           />
-          <span className="font-mono text-micro text-muted-foreground">
+          <span className="text-micro text-muted-foreground">
             {dispatch.paused
               ? `⏸ Paused · ${pauseReasonLabel(dispatch)}`
               : connected
@@ -666,7 +666,7 @@ const Stat = ({ label, value, colorClass }: StatProps) => (
   <div className="flex flex-col">
     <span
       className={[
-        'font-mono text-title font-semibold leading-none tabular-nums',
+        'text-title font-semibold leading-none tabular-nums',
         colorClass ?? 'text-muted-foreground/50',
       ].join(' ')}
     >
@@ -807,9 +807,9 @@ const EngineSection = () => {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle className="font-mono text-title">Restart engine?</DialogTitle>
+            <DialogTitle className="text-title">Restart engine?</DialogTitle>
             <DialogDescription
-              className="font-mono text-body text-foreground/70"
+              className="text-body text-foreground/70"
               data-testid="engine-restart-confirm-body"
             >
               {runningCount} task{runningCount !== 1 ? 's are' : ' is'} currently running and will
@@ -823,7 +823,7 @@ const EngineSection = () => {
               </li>
             ))}
             {runningTasks.length > 5 && (
-              <li className="font-mono text-micro text-muted-foreground/60">
+              <li className="text-micro text-muted-foreground/60">
                 … and {runningTasks.length - 5} more
               </li>
             )}
@@ -842,7 +842,7 @@ const EngineSection = () => {
                 void doRestart()
               }}
               disabled={restarting}
-              className="rounded border border-warn/50 bg-warn/10 px-3 py-1.5 font-mono text-label text-warn hover:bg-warn/20 disabled:opacity-50"
+              className="rounded border border-warn/50 bg-warn/10 px-3 py-1.5 text-label text-warn hover:bg-warn/20 disabled:opacity-50"
               data-testid="engine-restart-confirm-btn"
             >
               {restarting ? 'Restarting…' : 'Restart anyway'}
@@ -875,13 +875,13 @@ const AdvisorySection = () => {
       <div className="mb-4 flex gap-4">
         <a
           href="#/steward"
-          className="font-mono text-label text-muted-foreground hover:text-foreground transition-colors"
+          className="text-label text-muted-foreground hover:text-foreground transition-colors"
         >
           → Steward ledgers
         </a>
         <a
           href="#/reflections"
-          className="font-mono text-label text-muted-foreground hover:text-foreground transition-colors"
+          className="text-label text-muted-foreground hover:text-foreground transition-colors"
         >
           → Deep reflections
         </a>
@@ -950,7 +950,7 @@ const RulesSection = () => {
         <SectionLabel>Rules &amp; Language</SectionLabel>
         <span
           className={[
-            'font-mono text-micro text-muted-foreground transition-transform duration-200',
+            'text-micro text-muted-foreground transition-transform duration-200',
             expanded ? 'rotate-180' : '',
           ].join(' ')}
           aria-hidden="true"
@@ -966,7 +966,7 @@ const RulesSection = () => {
             placeholder="Filter glossary + ADRs…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full rounded border border-border bg-transparent px-3 py-1.5 font-mono text-label text-foreground placeholder:text-muted-foreground/40 focus:border-border focus:outline-none"
+            className="w-full rounded border border-border bg-transparent px-3 py-1.5 text-label text-foreground placeholder:text-muted-foreground/40 focus:border-border focus:outline-none"
           />
 
           {filteredTerms.length > 0 && (
@@ -977,7 +977,7 @@ const RulesSection = () => {
                   <span
                     key={t.term}
                     title={t.definition}
-                    className="rounded border border-border px-2 py-0.5 font-mono text-label text-foreground/80 hover:border-border hover:text-foreground"
+                    className="rounded border border-border px-2 py-0.5 text-label text-foreground/80 hover:border-border hover:text-foreground"
                   >
                     {t.term}
                   </span>
@@ -995,7 +995,7 @@ const RulesSection = () => {
                     <span className="w-10 shrink-0 font-mono text-micro text-muted-foreground/50">
                       {String(adr.number).padStart(4, '0')}
                     </span>
-                    <span className="font-mono text-label text-foreground/70">{adr.title}</span>
+                    <span className="text-label text-foreground/70">{adr.title}</span>
                   </li>
                 ))}
               </ul>
@@ -1046,7 +1046,7 @@ const StewardHistorySection = () => {
           <SectionLabel>Steward history</SectionLabel>
           <a
             href="#/steward"
-            className="font-mono text-label text-muted-foreground hover:text-foreground transition-colors"
+            className="text-label text-muted-foreground hover:text-foreground transition-colors"
           >
             → Full view
           </a>
@@ -1235,7 +1235,7 @@ const HotPathSection = () => {
 
   const toggleBtn = (active: boolean): string =>
     [
-      'px-2 py-0.5 font-mono text-label rounded border transition-colors',
+      'px-2 py-0.5 text-label rounded border transition-colors',
       active
         ? 'border-highlight bg-highlight/10 text-foreground'
         : 'border-border text-muted-foreground hover:text-foreground hover:border-highlight/40',
@@ -1271,11 +1271,11 @@ const HotPathSection = () => {
 
       {/* Body */}
       {error ? (
-        <div className="font-mono text-label text-destructive">
+        <div className="text-label text-destructive">
           Failed to load hot paths.
         </div>
       ) : isLoading || !data ? (
-        <div className="font-mono text-label text-muted-foreground">Loading…</div>
+        <div className="text-label text-muted-foreground">Loading…</div>
       ) : data.paths.length === 0 ? (
         <div
           data-testid="hot-path-empty"
@@ -1356,7 +1356,7 @@ const HotPathSection = () => {
                       fontSize={9}
                       fill="currentColor"
                       fillOpacity={0.7}
-                      style={{ pointerEvents: 'none', fontFamily: 'var(--font-mono)' }}
+                      style={{ pointerEvents: 'none', fontFamily: 'var(--)' }}
                     >
                       copied
                     </text>
@@ -1390,7 +1390,7 @@ const HotPathSection = () => {
                       y={ty + 16}
                       fontSize={10}
                       fill="currentColor"
-                      style={{ fontFamily: 'var(--font-mono)' }}
+                      style={{ fontFamily: 'var(--)' }}
                     >
                       {shortTooltipPath}
                     </text>
@@ -1400,7 +1400,7 @@ const HotPathSection = () => {
                       fontSize={10}
                       fill="currentColor"
                       fillOpacity={0.55}
-                      style={{ fontFamily: 'var(--font-mono)' }}
+                      style={{ fontFamily: 'var(--)' }}
                     >
                       {tooltip.changes} commits
                     </text>
@@ -1419,7 +1419,7 @@ const HotPathSection = () => {
               {top10.map((entry, i) => (
                 <li
                   key={entry.path}
-                  className="flex items-center gap-2 font-mono text-label"
+                  className="flex items-center gap-2 text-label"
                 >
                   <span className="w-5 shrink-0 text-right text-muted-foreground tabular-nums">
                     {i + 1}.

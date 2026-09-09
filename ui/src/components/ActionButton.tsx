@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, ReactNode } from 'react'
+import type { AnchorHTMLAttributes, ButtonHTMLAttributes, ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 
 /**
@@ -49,6 +49,19 @@ const SIZE: Record<ActionSize, string> = {
   md: 'h-7 gap-1.5 rounded-md px-2.5 text-label',
 }
 
+const base = (variant: ActionVariant, size: ActionSize, className?: string) =>
+  cn(
+    'inline-flex shrink-0 select-none items-center justify-center whitespace-nowrap font-medium',
+    'transition-[background-color,border-color,color,box-shadow] duration-[var(--dur-fast)] ease-[var(--ease-out)]',
+    'disabled:pointer-events-none disabled:opacity-45',
+    SIZE[size],
+    VARIANT[variant],
+    className,
+  )
+
+const Label = ({ pending, children }: { pending: boolean; children?: ReactNode }) =>
+  pending ? <span className="animate-mars-pulse">···</span> : <>{children}</>
+
 export interface ActionButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: ActionVariant
   size?: ActionSize
@@ -70,16 +83,34 @@ export const ActionButton = ({
     type="button"
     disabled={disabled === true || pending}
     aria-busy={pending || undefined}
-    className={cn(
-      'inline-flex shrink-0 select-none items-center justify-center whitespace-nowrap font-medium',
-      'transition-[background-color,border-color,color,box-shadow] duration-[var(--dur-fast)] ease-[var(--ease-out)]',
-      'disabled:pointer-events-none disabled:opacity-45',
-      SIZE[size],
-      VARIANT[variant],
-      className,
-    )}
+    className={base(variant, size, className)}
     {...rest}
   >
-    {pending ? <span className="animate-mars-pulse">···</span> : children}
+    <Label pending={pending}>{children}</Label>
   </button>
+)
+
+export interface ActionLinkProps extends AnchorHTMLAttributes<HTMLAnchorElement> {
+  variant?: ActionVariant
+  size?: ActionSize
+  children?: ReactNode
+}
+
+/**
+ * The same rung of the ladder, rendered as an anchor.
+ *
+ * An action that is genuinely a navigation must be a real <a>: a <button>
+ * that sets location breaks middle-click, "copy link", and the browser's own
+ * history, and it lies to assistive tech about what will happen.
+ */
+export const ActionLink = ({
+  variant = 'secondary',
+  size = 'md',
+  className,
+  children,
+  ...rest
+}: ActionLinkProps) => (
+  <a className={base(variant, size, className)} {...rest}>
+    {children}
+  </a>
 )

@@ -1,8 +1,9 @@
+import { useCounts } from '@/entities/counts/useCounts'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { BellIcon } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
-import { countNeedsYou, sortItems } from '@/entities/actionQueue/clusterRows'
+import { sortItems } from '@/entities/actionQueue/clusterRows'
 import { dismissActionQueueItem } from '@/shared/api'
 import { startThreadFromAlert } from '@/entities/alerts/api'
 import { hasResolvableTask } from '@/shared/schemas'
@@ -44,7 +45,8 @@ const NOTICE_KINDS = new Set([
  *   Have an Acknowledge button that calls dismissActionQueueItem and
  *   invalidates the 'action-queue' query key.
  *
- * Badge: countNeedsYou(items), hidden when 0, capped at '99+'.
+ * Badge: useCounts().needsYou — the same number the sidebar and the Needs You
+ * page header show. Hidden when 0, capped at '99+'.
  */
 export const BellMenu = () => {
   const { items } = useActionQueue()
@@ -54,7 +56,10 @@ export const BellMenu = () => {
 
   const filtered = items.filter((item) => item.kind !== 'draft-proposal')
   const sorted = sortItems(filtered)
-  const count = countNeedsYou(filtered)
+  // Server-side count, not a recount of the fetched page: the list below is
+  // whatever the feed returned, but the badge is a population figure and has
+  // to agree with the sidebar and the Needs You header.
+  const { needsYou: count } = useCounts()
   const badgeLabel = count > 99 ? '99+' : String(count)
 
   const handleAck = useCallback(

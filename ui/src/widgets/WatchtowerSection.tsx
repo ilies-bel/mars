@@ -26,7 +26,7 @@ const ConfidenceBadge = ({ value }: { value: number }) => {
         ? 'text-warn'
         : 'text-muted-foreground'
   return (
-    <span className={`font-mono text-micro tabular-nums ${colour}`}>
+    <span className={`text-micro tabular-nums ${colour}`}>
       {pct}%
     </span>
   )
@@ -53,7 +53,7 @@ const AcceptButton = ({ scorer, accept, isPending }: AcceptButtonProps) => {
             setConfirming(false)
           }}
           disabled={isPending}
-          className="rounded border border-primary px-1.5 py-0.5 font-mono text-micro text-primary hover:bg-foreground/5 disabled:opacity-50"
+          className="rounded border border-primary px-1.5 py-0.5 text-micro text-primary hover:bg-foreground/5 disabled:opacity-50"
           aria-label={`Confirm accepting scorer: ${scorer.title}`}
         >
           {isPending ? 'Accepting…' : 'Confirm'}
@@ -122,10 +122,10 @@ const SuggestedScorersPanel = ({ scorers }: SuggestedScorersPanelProps) => {
           >
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2 min-w-0">
-                <span className="font-mono text-label font-medium text-primary truncate">
+                <span className="text-label font-medium text-primary truncate">
                   {scorer.title}
                 </span>
-                <span className="shrink-0 rounded bg-muted px-1 py-0.5 font-mono text-micro text-muted-foreground">
+                <span className="shrink-0 rounded bg-muted px-1 py-0.5 text-micro text-muted-foreground">
                   {scorer.workflow}
                 </span>
                 <ConfidenceBadge value={scorer.confidence} />

@@ -1,3 +1,4 @@
+import { PauseCircle } from 'lucide-react'
 /**
  * LiveParkedChip — counter chip for the Shell top bar.
  *
@@ -30,9 +31,10 @@ export const LiveParkedChip = () => {
       href={AWAITING_HUMAN_HREF}
       data-testid="live-parked-chip"
       aria-label={`${count} live task${count === 1 ? '' : 's'} parked awaiting your input`}
-      className="shrink-0 rounded-full bg-warn/15 px-2 py-0.5 font-mono text-micro leading-none text-warn transition-colors hover:opacity-80"
+      className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-full bg-warn/15 px-2.5 text-micro font-medium text-warn transition-colors duration-[var(--dur-fast)] hover:bg-warn/25"
     >
-      ◎&nbsp;{count} parked
+      <PauseCircle size={12} strokeWidth={2} aria-hidden="true" />
+      {count} parked
     </a>
   )
 }

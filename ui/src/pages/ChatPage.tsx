@@ -73,7 +73,7 @@ import {
   PromptInputButton,
   PromptInputSubmit,
 } from '@/components/chat-primitives/prompt-input'
-import { PaperclipIcon, MicIcon, SquareIcon, XIcon, PauseIcon } from 'lucide-react'
+import { ChevronDown, ChevronRight, MicIcon, PaperclipIcon, PauseIcon, SquareIcon, XIcon } from 'lucide-react'
 import { AgentConfigPanel } from '@/widgets/chat/AgentConfigPanel'
 import { ContextRail } from '@/widgets/chat/ContextRail'
 import { buildRankedOpenWork, type OpenWorkItem } from '@/widgets/chat/openWork'
@@ -2507,7 +2507,7 @@ export const ThreadSidebar = ({
               onClick={() => setStaleUntitledOpen((v) => !v)}
               aria-expanded={staleUntitledOpen}
             >
-              {staleUntitledOpen ? '▼' : '▸'} {staleUntitledThreads.length} older untitled {staleUntitledThreads.length === 1 ? 'thread' : 'threads'}
+              {staleUntitledOpen ? <ChevronDown size={12} strokeWidth={2} aria-hidden="true" /> : <ChevronRight size={12} strokeWidth={2} aria-hidden="true" />}{' '}{staleUntitledThreads.length} older untitled {staleUntitledThreads.length === 1 ? 'thread' : 'threads'}
             </button>
             {staleUntitledOpen && staleUntitledThreads.map((t) => (
               <ThreadItem
@@ -2532,7 +2532,7 @@ export const ThreadSidebar = ({
               onClick={() => setArchivedOpen((v) => !v)}
               aria-expanded={archivedOpen}
             >
-              {archivedOpen ? '▼' : '▸'} archived ({archivedThreads.length})
+              {archivedOpen ? <ChevronDown size={12} strokeWidth={2} aria-hidden="true" /> : <ChevronRight size={12} strokeWidth={2} aria-hidden="true" />}{' '}archived ({archivedThreads.length})
             </button>
             {archivedOpen && archivedThreads.map((t) => (
               <ThreadItem

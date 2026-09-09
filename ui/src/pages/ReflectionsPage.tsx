@@ -130,7 +130,7 @@ const OutcomeTag = ({ outcome }: OutcomeTagProps) => {
     return (
       <div
         data-testid="outcome-unbound"
-        className="mt-2 border border-border bg-card px-2 py-1 font-mono text-micro text-muted-foreground inline-flex items-center gap-1"
+        className="mt-2 border border-border bg-card px-2 py-1 text-micro text-muted-foreground inline-flex items-center gap-1"
       >
         <span className="uppercase tracking-wide">No lever binding</span>
         <span className="text-micro">(predates binding feature)</span>
@@ -142,7 +142,7 @@ const OutcomeTag = ({ outcome }: OutcomeTagProps) => {
     return (
       <div
         data-testid="outcome-lever"
-        className="mt-2 border border-border bg-primary/5 px-2 py-1 font-mono text-micro"
+        className="mt-2 border border-border bg-primary/5 px-2 py-1 text-micro"
       >
         <div className="flex items-center gap-2 flex-wrap">
           <span className="uppercase tracking-wide text-muted-foreground">Lever</span>
@@ -170,7 +170,7 @@ const OutcomeTag = ({ outcome }: OutcomeTagProps) => {
   return (
     <div
       data-testid="outcome-lever-gap"
-      className="mt-2 border border-warn/30 bg-warn/5 px-2 py-1 font-mono text-micro"
+      className="mt-2 border border-warn/30 bg-warn/5 px-2 py-1 text-micro"
     >
       <div className="flex items-center gap-2 flex-wrap">
         <span className="uppercase tracking-wide text-warn">Lever Gap</span>
@@ -223,11 +223,16 @@ export const LeverChangeCard = ({
   return (
     <div
       data-testid={`lever-change-${index}`}
-      className="border border-border bg-primary/5 p-2 font-mono text-label"
+      className="rounded-md border border-border bg-background p-2.5 text-label"
     >
       {/* Header: id + family + optional proposal link */}
-      <div className="flex items-center gap-2 mb-1">
-        <span data-testid={`lever-change-id-${index}`} className="text-primary font-semibold">{lever.id}</span>
+      <div className="mb-1 flex items-center gap-2">
+        <span
+          data-testid={`lever-change-id-${index}`}
+          className="font-mono font-semibold text-foreground"
+        >
+          {lever.id}
+        </span>
         <span className="text-muted-foreground text-micro uppercase">{lever.family}</span>
         <span className="text-muted-foreground text-micro">{lever.scope}</span>
         {proposalTargetId && (
@@ -416,7 +421,7 @@ export interface LeverGapCardProps {
 export const LeverGapCard = ({ gap, index }: LeverGapCardProps) => (
   <div
     data-testid={`lever-gap-${index}`}
-    className="border border-warn/30 bg-warn/5 p-2 font-mono text-label"
+    className="border border-warn/30 bg-warn/5 p-2 text-label"
     aria-label={`Lever gap: no parameter controls ${gap.proposedLeverId}`}
   >
     <div className="flex items-center gap-2">
@@ -475,7 +480,7 @@ const RunStateBanner = ({ autoRunReflect, autoEnqueue, lastReflectedAt, originId
   return (
     <div
       data-testid="run-state-banner"
-      className="border border-border bg-card p-3 font-mono text-label"
+      className="border border-border bg-card p-3 text-label"
     >
       <span className="text-muted-foreground">{lastRan}</span>
       {' · '}
@@ -492,7 +497,7 @@ const RunStateBanner = ({ autoRunReflect, autoEnqueue, lastReflectedAt, originId
                 text={reflectCmd}
                 label={reflectCmd}
                 aria-label={`Copy ${reflectCmd}`}
-                className="rounded border border-border px-1.5 py-0.5 font-mono text-micro text-primary/70 hover:bg-foreground/5 hover:text-primary"
+                className="rounded border border-border px-1.5 py-0.5 text-micro text-primary/70 hover:bg-foreground/5 hover:text-primary"
               />
             </span>
           ) : onToggleAutoReflect ? (
@@ -543,15 +548,15 @@ const ReflectionRow = ({ report }: ReflectionRowProps) => (
     className="flex flex-col gap-1 border border-border bg-card p-3 hover:border-border hover:bg-card/80 transition-colors"
   >
     <div className="flex items-center gap-2">
-      <span className="font-mono text-label text-foreground truncate flex-1">
+      <span className="text-label text-foreground truncate flex-1">
         {formatAbsoluteDateTime(report.recordedAt)}
       </span>
-      <span className={`font-mono text-micro ${statusClass(report.status)}`}>
+      <span className={`text-micro ${statusClass(report.status)}`}>
         {statusLabel(report.status)}
       </span>
     </div>
-    <div className="flex items-center gap-4 font-mono text-micro text-muted-foreground">
-      <span>{report.originId}</span>
+    <div className="flex items-center gap-4 text-micro text-muted-foreground">
+      <span className="font-mono">{report.originId}</span>
       {report.dissonantCallCount > 0 && (
         <span className="text-error">{report.dissonantCallCount} dissonant</span>
       )}
@@ -581,7 +586,7 @@ interface DissonantCallCardProps {
 const DissonantCallCard = ({ call, index }: DissonantCallCardProps) => (
   <div
     data-testid={`dissonant-call-${index}`}
-    className="border border-border bg-card p-3 font-mono text-label"
+    className="border border-border bg-card p-3 text-label"
   >
     <div className="flex items-center gap-2 mb-1">
       <span className={`uppercase font-semibold ${severityClass(call.severity)}`}>
@@ -691,20 +696,20 @@ export const ReflectionDetailView = ({ detail }: ReflectionDetailViewProps) => {
       <div className="border border-border bg-card p-4">
         <div className="flex items-start justify-between gap-4">
           <div className="flex-1 min-w-0">
-            <div className="font-mono text-micro uppercase tracking-wide text-muted-foreground mb-1">Arc</div>
+            <div className="mb-1 text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">Arc</div>
             <div className="font-mono text-body text-foreground break-all">{detail.originId}</div>
           </div>
           <div className="text-right shrink-0">
-            <div className={`font-mono text-label font-semibold ${statusClass(detail.status)}`}>
+            <div className={`text-label font-semibold ${statusClass(detail.status)}`}>
               {statusLabel(detail.status)}
             </div>
-            <div className="font-mono text-micro text-muted-foreground">{formatAbsoluteDateTime(detail.recordedAt)}</div>
+            <div className="text-micro text-muted-foreground">{formatAbsoluteDateTime(detail.recordedAt)}</div>
           </div>
         </div>
         {detail.status !== 'complete' && (
           <div
             data-testid="non-complete-notice"
-            className="mt-3 border border-warn/30 bg-warn/5 p-2 font-mono text-label text-warn"
+            className="mt-3 border border-warn/30 bg-warn/5 p-2 text-label text-warn"
           >
             This report has status <strong>{statusLabel(detail.status)}</strong> — the full report body is not yet available.
           </div>
@@ -749,7 +754,7 @@ export const ReflectionDetailView = ({ detail }: ReflectionDetailViewProps) => {
                   <div
                     key={i}
                     data-testid={`verify-mismatch-${i}`}
-                    className="border border-warn/30 bg-warn/5 p-3 font-mono text-label"
+                    className="border border-warn/30 bg-warn/5 p-3 text-label"
                   >
                     <div className="flex items-center gap-2 mb-1">
                       <span className={`uppercase font-semibold ${severityClass(mm.severity)}`}>
@@ -783,7 +788,7 @@ export const ReflectionDetailView = ({ detail }: ReflectionDetailViewProps) => {
                   <div
                     key={i}
                     data-testid={`thrashing-pattern-${i}`}
-                    className="border border-border bg-card p-3 font-mono text-label"
+                    className="border border-border bg-card p-3 text-label"
                   >
                     <div className="flex items-center gap-2 mb-1">
                       <span className="text-foreground">{p.pattern}</span>
@@ -803,7 +808,7 @@ export const ReflectionDetailView = ({ detail }: ReflectionDetailViewProps) => {
               {byNameEntries.map(([tool, count]) => (
                 <div
                   key={tool}
-                  className="border border-border bg-card px-2 py-1 font-mono text-label"
+                  className="border border-border bg-card px-2 py-1 text-label"
                 >
                   <span className="text-primary">{tool}</span>
                   <span className="text-muted-foreground"> {count}</span>
@@ -821,7 +826,7 @@ export const ReflectionDetailView = ({ detail }: ReflectionDetailViewProps) => {
                   <div
                     key={i}
                     data-testid={`filed-proposal-${i}`}
-                    className="border border-border bg-card p-2 font-mono text-label"
+                    className="border border-border bg-card p-2 text-label"
                   >
                     <a
                       href={proposalHash(s.targetId!, 'reflections')}
@@ -969,7 +974,7 @@ export const ReflectionsPage = () => {
             <div className="flex items-center gap-2">
               <a
                 href="#/reflections"
-                className="font-mono text-label text-primary hover:text-foreground"
+                className="text-label text-primary hover:text-foreground"
               >
                 ← Reflections
               </a>
@@ -992,7 +997,7 @@ export const ReflectionsPage = () => {
               title="Reflections"
               actions={
                 listData ? (
-                  <span className="font-mono text-micro text-muted-foreground" data-testid="report-count">
+                  <span className="text-micro text-muted-foreground" data-testid="report-count">
                     {listData.totalDiscovered > listData.reports.length
                       ? `${listData.reports.length} of ${listData.totalDiscovered} reports`
                       : `${listData.reports.length} report${listData.reports.length !== 1 ? 's' : ''}`}
@@ -1022,7 +1027,7 @@ export const ReflectionsPage = () => {
             ) : listData?.reports.length === 0 ? (
               <div
                 data-testid="empty-state"
-                className="font-mono text-label text-muted-foreground border border-border bg-card p-4 text-center"
+                className="text-label text-muted-foreground border border-border bg-card p-4 text-center"
               >
                 No reports
               </div>

@@ -130,16 +130,20 @@ describe('ProposalsPage — row action buttons', () => {
     expect(html).toContain('Promote')
   })
 
-  it('renders footer actions in order: Dismiss, Review, Grill, Promote', () => {
+  // Dismiss led the row, which put the one irreversible verb first and gave
+  // the affirmative path (Review -> Grill -> Promote) no leading position.
+  // The three constructive actions now read left to right in the order an
+  // operator would take them, and Dismiss is pushed to the right edge.
+  it('renders footer actions in order: Review, Grill, Promote, then Dismiss last', () => {
     const html = render([draft()])
-    const dismissAt = html.indexOf('Dismiss')
     const reviewAt = html.indexOf('Review')
     const grillAt = html.indexOf('>Grill<')
     const promoteAt = html.indexOf('>Promote<')
-    expect(dismissAt).toBeGreaterThan(-1)
-    expect(reviewAt).toBeGreaterThan(dismissAt)
+    const dismissAt = html.indexOf('>Dismiss<')
+    expect(reviewAt).toBeGreaterThan(-1)
     expect(grillAt).toBeGreaterThan(reviewAt)
     expect(promoteAt).toBeGreaterThan(grillAt)
+    expect(dismissAt).toBeGreaterThan(promoteAt)
   })
 
   it('Grill button carries an aria-label identifying the proposal', () => {

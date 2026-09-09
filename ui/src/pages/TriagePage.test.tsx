@@ -98,6 +98,20 @@ vi.mock('@/hooks/useProgress', () => ({
 }))
 
 const mockInvalidateQueries = vi.fn().mockResolvedValue(undefined)
+// useCounts is the single source of truth for the "needs you" number (see the
+// Numbers section of ui/README.md). Mocked here so the header badge does not
+// depend on a live query.
+let mockNeedsYou = 1
+vi.mock('@/entities/counts/useCounts', () => ({
+  useCounts: () => ({
+    needsYou: mockNeedsYou,
+    running: 0, verifying: 0, merging: 0,
+    queued: 0, blocked: 0, failed: 0, doneToday: 0,
+    proposals: { draft: 0, total: 0 },
+    known: true,
+  }),
+}))
+
 vi.mock('@tanstack/react-query', () => ({
   useQueryClient: () => ({ invalidateQueries: mockInvalidateQueries }),
 }))

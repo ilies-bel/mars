@@ -90,7 +90,7 @@ export const liveElapsedLabel = (startedAt: string, nowMs: number): string => {
 // ── Panels ────────────────────────────────────────────────────────────────────
 
 const PANEL_SUMMARY_CLASS =
-  'cursor-pointer list-none rounded border border-border px-2 py-0.5 font-mono text-micro text-primary hover:bg-foreground/5 [&::-webkit-details-marker]:hidden'
+  'cursor-pointer list-none rounded border border-border px-2 py-0.5 text-micro text-primary hover:bg-foreground/5 [&::-webkit-details-marker]:hidden'
 
 /** Space-key toggle for <details>, mirroring the drawer's step cards. */
 const toggleOnSpace = (e: React.KeyboardEvent): void => {
@@ -139,20 +139,20 @@ const PromptBody = ({
         {prompt.source === 'recovered' ? (
           <span
             data-testid="studio-prompt-source"
-            className="rounded border border-warn/40 bg-warn/5 px-1 py-0.5 font-mono text-micro text-warn"
+            className="rounded border border-warn/40 bg-warn/5 px-1 py-0.5 text-micro text-warn"
           >
             recovered from transcript
           </span>
         ) : (
           <span
             data-testid="studio-prompt-source"
-            className="rounded border border-border px-1 py-0.5 font-mono text-micro text-muted-foreground"
+            className="rounded border border-border px-1 py-0.5 text-micro text-muted-foreground"
           >
             persisted
           </span>
         )}
         {claudeSessionId != null ? (
-          <span className="font-mono text-micro text-muted-foreground" title={claudeSessionId}>
+          <span className="text-micro text-muted-foreground" title={claudeSessionId}>
             session:{claudeSessionId.slice(0, 8)}
           </span>
         ) : null}
@@ -161,7 +161,7 @@ const PromptBody = ({
             text={prompt.prompt}
             data-testid="studio-prompt-copy"
             aria-label="Copy the composed prompt"
-            className="ml-auto shrink-0 rounded border border-border px-2 py-0.5 font-mono text-micro text-primary hover:bg-foreground/5"
+            className="ml-auto shrink-0 rounded border border-border px-2 py-0.5 text-micro text-primary hover:bg-foreground/5"
           />
         ) : null}
       </div>
@@ -188,7 +188,7 @@ const PhaseChip = ({ phase, stepName }: { phase: string; stepName: string }) => 
   const primitive = primitiveForStep(phase, stepName)
   if (primitive === null) {
     return (
-      <span className="rounded border border-border px-1 font-mono text-micro text-muted-foreground">
+      <span className="rounded border border-border px-1 text-micro text-muted-foreground">
         {phase}
       </span>
     )
@@ -198,7 +198,7 @@ const PhaseChip = ({ phase, stepName }: { phase: string; stepName: string }) => 
       href={primitiveHash(primitive)}
       data-testid="studio-node-primitive-link"
       title={`Open the ${primitive} primitive — tool surface and run history`}
-      className="rounded border border-border px-1 font-mono text-micro text-muted-foreground hover:bg-foreground/5 hover:text-foreground"
+      className="rounded border border-border px-1 text-micro text-muted-foreground hover:bg-foreground/5 hover:text-foreground"
     >
       {phase}
     </a>
@@ -282,7 +282,7 @@ const StudioNode = ({
           <div className="flex flex-wrap items-baseline gap-2">
             <span className="text-title font-semibold text-foreground">{entry.stepName}</span>
             {entry.workerName != null ? (
-              <span className="font-mono text-micro text-muted-foreground">{entry.workerName}</span>
+              <span className="text-micro text-muted-foreground">{entry.workerName}</span>
             ) : null}
             {entry.phase != null ? (
               <PhaseChip phase={entry.phase} stepName={entry.stepName} />
@@ -308,7 +308,7 @@ const StudioNode = ({
         {durationLabel !== null ? (
           <span
             data-testid="studio-node-duration"
-            className="shrink-0 font-mono text-body text-muted-foreground"
+            className="shrink-0 text-body text-muted-foreground"
           >
             {durationLabel}
           </span>
@@ -460,7 +460,7 @@ export const StudioView = ({ taskId, timeline, stepPrompts, nowMs, fetchImpl }: 
                 accessible on hover for support/debugging but off the face. */}
             <span className="sr-only" title={run.runId}>{run.runId}</span>
             {run.endedAt === null ? (
-              <span className="rounded border border-warn/40 bg-warn/5 px-1 font-mono text-micro text-warn">
+              <span className="rounded border border-warn/40 bg-warn/5 px-1 text-micro text-warn">
                 in flight
               </span>
             ) : null}

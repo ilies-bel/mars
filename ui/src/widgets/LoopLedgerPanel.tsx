@@ -84,7 +84,7 @@ export const LoopLedgerPanel = () => {
                       <span className="text-foreground">{title}</span>
                       {title !== entry.runId && (
                         <span
-                          className="font-mono text-micro text-muted-foreground/60"
+                          className="text-micro text-muted-foreground/60"
                           title={entry.runId}
                         >
                           {entry.runId}

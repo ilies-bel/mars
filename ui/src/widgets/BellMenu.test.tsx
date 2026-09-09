@@ -77,6 +77,18 @@ mock.module('@/entities/actionQueue/useActionQueue', () => ({
   }),
 }))
 
+// useCounts is the single source of truth for the badge number.
+let mockNeedsYou = 1
+mock.module('@/entities/counts/useCounts', () => ({
+  useCounts: () => ({
+    needsYou: mockNeedsYou,
+    running: 0, verifying: 0, merging: 0,
+    queued: 0, blocked: 0, failed: 0, doneToday: 0,
+    proposals: { draft: 0, total: 0 },
+    known: true,
+  }),
+}))
+
 mock.module('@tanstack/react-query', () => ({
   useQueryClient: () => ({ invalidateQueries: vi.fn() }),
 }))
@@ -135,30 +147,30 @@ const teardown = async (root: ReturnType<typeof createRoot>, container: HTMLElem
 // Tests: badge (initial closed state, readable from renderToStaticMarkup)
 // ---------------------------------------------------------------------------
 
+// The badge reads useCounts().needsYou — the server-side population figure —
+// rather than recounting the fetched page, so that the bell, the sidebar and
+// the Needs You header can never disagree. These tests drive that source.
 describe('BellMenu – badge', () => {
-  it('renders a numeric badge showing countNeedsYou on the bell button', () => {
-    // countNeedsYou([NOTICE, ALERT]) = 2 (different entityIds, neither draft-proposal)
+  it('renders the needsYou count on the bell button', () => {
+    mockNeedsYou = 2
     const html = renderToStaticMarkup(<BellMenu />)
     expect(html).toContain('>2<')
     expect(html).toContain('2 items need attention')
   })
 
-  it('hides the badge when there are no items', () => {
-    mockItems = []
+  it('hides the badge when the count is zero', () => {
+    mockNeedsYou = 0
     const html = renderToStaticMarkup(<BellMenu />)
     expect(html).not.toContain('items need attention')
+    mockNeedsYou = 1
   })
 
   it('caps badge at 99+ when count exceeds 99', () => {
-    // 100 distinct-entityId items, none draft-proposal
-    mockItems = Array.from({ length: 100 }, (_, i) => ({
-      ...ALERT_FIXTURE,
-      id: `alert-${i}`,
-      entityId: `task-${i}`,
-    }))
+    mockNeedsYou = 100
     const html = renderToStaticMarkup(<BellMenu />)
     expect(html).toContain('99+')
     expect(html).toContain('99+ items need attention')
+    mockNeedsYou = 1
   })
 })
 

@@ -1,4 +1,5 @@
-import { Search } from 'lucide-react'
+import { ArrowRight, Check, ChevronDown, ChevronUp, Search } from 'lucide-react'
+import { ActionButton, ActionLink } from '@/components/ActionButton'
 import { PageHeader } from '@/widgets/primitives/DensityPrimitives'
 /**
  * ProposalsPage — operator-facing draft proposal triage surface.
@@ -195,7 +196,7 @@ const ProposalRow = ({ draft, onDismiss }: ProposalRowProps) => {
           independent of whether the backfill has run. */}
       <a
         href={proposalHash(draft.id, 'proposals')}
-        className="mb-1 block line-clamp-2 font-mono text-title font-semibold leading-snug text-foreground hover:underline"
+        className="mb-1 block line-clamp-2 text-title font-semibold leading-snug text-foreground hover:underline"
       >
         {cleanTitle}
       </a>
@@ -215,57 +216,57 @@ const ProposalRow = ({ draft, onDismiss }: ProposalRowProps) => {
             <button
               type="button"
               onClick={handleToggleExpand}
-              className="mt-0.5 text-label text-highlight hover:text-foreground focus:outline-none"
+              className="mt-1 inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-label font-medium text-highlight transition-colors duration-[var(--dur-fast)] hover:bg-highlight/10 focus:outline-none"
               aria-expanded={expanded}
             >
-              {expanded ? 'less ↑' : 'more ↓'}
+              {expanded ? 'Show less' : 'Show more'}
+              {expanded ? (
+                <ChevronUp size={12} strokeWidth={2} aria-hidden="true" />
+              ) : (
+                <ChevronDown size={12} strokeWidth={2} aria-hidden="true" />
+              )}
             </button>
           )}
         </div>
       )}
 
-      {/* Footer: Dismiss · Review → · Grill · Promote */}
-      <div className="flex flex-wrap items-center gap-3">
-        <button
-          type="button"
-          onClick={handleDismiss}
-          className="text-label text-muted-foreground hover:text-foreground focus:outline-none"
-        >
-          Dismiss
-        </button>
-        <a
-          href={proposalHash(draft.id, 'proposals')}
-          className="rounded-md border border-highlight/20 bg-highlight/10 px-3 py-1 text-label font-medium text-highlight transition-colors hover:bg-highlight/20"
-        >
-          Review →
-        </a>
-        <button
-          type="button"
+      {/* Footer: Review · Grill · Promote — Dismiss sits apart on the right */}
+      <div className="flex flex-wrap items-center gap-1.5">
+        <ActionLink href={proposalHash(draft.id, 'proposals')} variant="primary">
+          Review
+          <ArrowRight size={13} strokeWidth={1.75} aria-hidden="true" />
+        </ActionLink>
+        <ActionButton
           onClick={() => { void handleGrill() }}
-          disabled={grillState.kind === 'pending'}
+          pending={grillState.kind === 'pending'}
           aria-label={`Grill proposal ${draft.id}`}
-          className="text-label text-muted-foreground hover:text-foreground focus:outline-none disabled:opacity-50"
         >
-          {grillState.kind === 'pending' ? 'Opening…' : 'Grill'}
-        </button>
+          Grill
+        </ActionButton>
         {promoteState.kind === 'done' && promoteState.taskId ? (
           <a
             href={taskHash(promoteState.taskId)}
-            className="text-label text-success hover:underline"
+            className="inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-label font-medium text-success hover:underline"
           >
-            ✓ Task {promoteState.taskId}
+            <Check size={13} strokeWidth={2} aria-hidden="true" />
+            Task {promoteState.taskId}
           </a>
         ) : (
-          <button
-            type="button"
+          <ActionButton
             onClick={() => { void handlePromote() }}
-            disabled={promoteState.kind === 'pending'}
+            pending={promoteState.kind === 'pending'}
             aria-label={`Promote proposal ${draft.id}`}
-            className="text-label text-muted-foreground hover:text-foreground focus:outline-none disabled:opacity-50"
           >
-            {promoteState.kind === 'pending' ? 'Promoting…' : 'Promote'}
-          </button>
+            Promote
+          </ActionButton>
         )}
+        <ActionButton
+          variant="danger-ghost"
+          onClick={handleDismiss}
+          className="ml-auto"
+        >
+          Dismiss
+        </ActionButton>
         {grillState.kind === 'error' && (
           <span className="text-label text-error">{grillState.message}</span>
         )}
@@ -400,7 +401,7 @@ export const ProposalsPage = () => {
               placeholder="Search proposals..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full rounded-md border border-border bg-card py-0.5 pl-6 pr-2 font-mono text-label text-foreground placeholder:text-muted-foreground/60 focus:border-highlight/40 focus:outline-none"
+              className="h-7 w-full rounded-md border border-border bg-background pl-7.5 pr-2.5 text-label text-foreground shadow-[var(--shadow-e1)] transition-[border-color,box-shadow] duration-[var(--dur-fast)] placeholder:text-muted-foreground/70 focus:border-highlight/50 focus:outline-none focus:ring-2 focus:ring-highlight/15"
             />
           </div>
           {/* Source filter chips */}
@@ -418,9 +419,10 @@ export const ProposalsPage = () => {
                     onClick={() => toggleSource(source)}
                     aria-pressed={isActive}
                     className={[
-                      'rounded-full border px-2.5 py-0.5 text-micro font-medium leading-none transition-opacity focus:outline-none',
-                      colorClass,
-                      isActive ? 'opacity-100' : 'opacity-40 hover:opacity-70',
+                      'inline-flex h-6 items-center rounded-md border px-2 text-micro font-medium transition-[background-color,border-color,color] duration-[var(--dur-fast)] focus:outline-none',
+                      isActive
+                        ? colorClass
+                        : 'border-transparent bg-foreground/[0.04] text-muted-foreground hover:bg-foreground/8 hover:text-foreground',
                     ].join(' ')}
                   >
                     {label}
@@ -434,6 +436,8 @@ export const ProposalsPage = () => {
 
       {/* List */}
       <div className="flex-1 overflow-y-auto">
+        {/* A reading column, not the full viewport: these cards are prose, and
+            prose that runs to 1680px is unreadable no matter how it is set. */}
         {isPending ? (
           <ProposalsSkeleton />
         ) : sorted.length === 0 ? (
@@ -446,7 +450,7 @@ export const ProposalsPage = () => {
             </p>
           </div>
         ) : (
-          <div className="flex flex-col gap-4 p-4">
+          <div className="mx-auto flex w-full max-w-[1080px] flex-col gap-3 p-4">
             {filtered.map((draft) => (
               <ProposalRow key={draft.id} draft={draft} onDismiss={() => { void refetch() }} />
             ))}

@@ -131,7 +131,7 @@ export const StudioIndexPage = () => {
                       </a>
                       {title !== entry.runId && (
                         <span
-                          className="block font-mono text-micro text-muted-foreground/60"
+                          className="block text-micro text-muted-foreground/60"
                           title={entry.runId}
                         >
                           {entry.runId}
@@ -139,12 +139,12 @@ export const StudioIndexPage = () => {
                       )}
                     </td>
                     <td
-                      className="py-2 pr-4 font-mono text-muted-foreground"
+                      className="py-2 pr-4 text-muted-foreground"
                       title={entry.scoredAt !== null ? formatAbsoluteDateTime(entry.scoredAt) : undefined}
                     >
                       {entry.scoredAt !== null ? relativeTime(entry.scoredAt) : '—'}
                     </td>
-                    <td className="py-2 font-mono tabular-nums">
+                    <td className="py-2 tabular-nums">
                       {entry.score !== null ? entry.score.toFixed(2) : '—'}
                     </td>
                   </tr>

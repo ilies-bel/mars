@@ -132,30 +132,40 @@
   --color-trace-mars: #1D4ED8;  /* blue-700 — 6.2:1 on bg, reads blue on dark too */
 
   /* DAG cluster chip colours — consumed via CSS var() in the React Flow DOM
-     nodes and resolved at runtime by buildClusterStyleFromVars
-     (topologyFlowModel.ts) for the SVG MiniMap. CSS is the single source of
-     truth; no manual sync with TypeScript is required. */
-  --color-dag-proposal-fill:       #2e1065;
-  --color-dag-proposal-stroke:     #7c3aed;
-  --color-dag-proposal-text:       #c4b5fd;
-  --color-dag-in-progress-fill:    #431407;
-  --color-dag-in-progress-stroke:  #ea580c;
-  --color-dag-in-progress-text:    #fdba74;
-  /* Blocked: warm amber/ochre — separated from Queued's cool grey so the two
-     statuses are clearly distinct on the dark canvas (was #18181b vs Queued's
-     #1c1917, near-identical). */
-  --color-dag-blocked-fill:        #3f2a14;
-  --color-dag-blocked-stroke:      #d9a441;
-  --color-dag-blocked-text:        #fde9c8;
-  --color-dag-failed-fill:         #450a0a;
-  --color-dag-failed-stroke:       #dc2626;
-  --color-dag-failed-text:         #fca5a5;
+   * nodes and resolved at runtime by buildClusterStyleFromVars
+   * (topologyFlowModel.ts) for the SVG MiniMap. CSS is the single source of
+   * truth; no manual sync with TypeScript is required.
+   *
+   * These were dark-canvas values, which made Progress the only route in the
+   * app with a near-black ground — sandwiched between its own light header and
+   * its own light footer, with two hard seams. They are light-ground values
+   * now, so the route matches every other one.
+   *
+   * The proposal cluster was violet (#7c3aed), a hue that appeared nowhere
+   * else in the product. It uses the sanctioned cool exception instead
+   * (--color-trace-mars), which is already the one non-warm hue in the
+   * palette and reads as clearly "not a task status".
+   * ---------------------------------------------------------------------- */
+  --color-dag-proposal-fill:       #EEF2FF;
+  --color-dag-proposal-stroke:     #1D4ED8;
+  --color-dag-proposal-text:       #1E3A8A;
+  --color-dag-in-progress-fill:    #FDF0E3;
+  --color-dag-in-progress-stroke:  #C2650A;
+  --color-dag-in-progress-text:    #7C3F00;
+  /* Blocked: warm ochre — separated from Queued's cool grey so the two
+   * statuses stay clearly distinct on the light canvas. */
+  --color-dag-blocked-fill:        #FBF1DC;
+  --color-dag-blocked-stroke:      #B5852A;
+  --color-dag-blocked-text:        #6B4E12;
+  --color-dag-failed-fill:         #FDECEC;
+  --color-dag-failed-stroke:       #DC2626;
+  --color-dag-failed-text:         #8F1616;
   /* Queued: cool grey — clearly cooler than Blocked's warm ochre. */
-  --color-dag-queued-fill:         #2a2a30;
-  --color-dag-queued-stroke:       #9ca3af;
-  --color-dag-queued-text:         #e5e7eb;
-  --color-dag-edge-provenance:     #7c3aed;
-  --color-dag-edge-blocker:        #52525b;
+  --color-dag-queued-fill:         #F1F0EE;
+  --color-dag-queued-stroke:       #9A968F;
+  --color-dag-queued-text:         #4A4640;
+  --color-dag-edge-provenance:     #1D4ED8;
+  --color-dag-edge-blocker:        #B8B2A8;
 
   /* ── Task-status semantic tokens ──
    * One token per task status, valued from the Mars palette above. Component
@@ -379,19 +389,6 @@ textarea:focus-visible,
   border-radius: 3px;
 }
 
-/* Dark-surface override — the G6 DAG canvas (.dag-canvas) has a near-black
- * background (#251812); --color-flame would give only ~2.9:1 there, below the
- * 3:1 target. --color-amber gives 8.3:1 on that dark surface instead. */
-.dag-canvas a:focus-visible,
-.dag-canvas button:focus-visible,
-.dag-canvas input:focus-visible,
-.dag-canvas select:focus-visible,
-.dag-canvas textarea:focus-visible,
-.dag-canvas [tabindex]:focus-visible {
-  outline-color: var(--color-amber);
-  box-shadow: 0 0 0 1px rgba(26, 15, 10, 0.7);
-}
-
 /* Root font-size is the browser default (16px) so that every rem-based token
  * renders at its documented value. This used to be pinned to 14px, which
  * silently rescaled the ENTIRE design system to 87.5%: --text-body, commented
@@ -402,6 +399,50 @@ textarea:focus-visible,
  * body inherits --text-body explicitly; before, unstyled text picked up the
  * bare 14px root, which is why prose and chrome disagreed by a pixel in places
  * no component was choosing a size. */
+/* ── Interactive base ────────────────────────────────────────────────────────
+ * An audit across ten routes found 28 distinct button treatments — radii of
+ * 0, 4, 6, 8 and pill, heights from 11px to 36px, in two font families. The
+ * 0px group is the tell: they are bare <button> elements that never received
+ * a class at all. Two base rules fix more of that than any number of
+ * per-call-site edits could.
+ *
+ * 1. A default radius, so an unstyled button still belongs to the family.
+ *    Scoped off anything that names its own radius so real overrides win.
+ * ---------------------------------------------------------------------------*/
+@layer base {
+  button:not([class*="rounded"]):not([class*="size-"]) {
+    border-radius: var(--radius-md);
+  }
+
+  /* 2. A 24x24 minimum POINTER target on every button, without touching
+   *    layout. The same audit found 191 interactive elements below the WCAG
+   *    2.5.8 floor — disclosure carets at 12x7, overflow menus at 19x17.
+   *    Growing them visually would wreck the density this app depends on, so
+   *    the hit area is expanded with a centred pseudo-element instead: the
+   *    glyph stays 12px, the thing you can hit is 24px. */
+  button::after,
+  [role="button"]::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 100%;
+    height: 100%;
+    min-width: 24px;
+    min-height: 24px;
+    transform: translate(-50%, -50%);
+    pointer-events: auto;
+  }
+  button,
+  [role="button"] {
+    position: relative;
+  }
+  /* Opt-out for the handful of controls that own their ::after. */
+  .no-hit-pad::after {
+    content: none;
+  }
+}
+
 /* Press feedback. Nothing in the app reacted to a pointer-down, so every
  * control — including one that deletes a task branch — felt inert. A 1.5%
  * scale-down for 90ms is the smallest gesture that still registers. */
@@ -571,9 +612,9 @@ html {
 .topo-node {
   transition: opacity 160ms ease-out, box-shadow 160ms ease-out;
 }
-.topo-node.topo-dim { opacity: 0.14; }
+.topo-node.topo-dim { opacity: 0.22; }
 .topo-node.topo-lit {
-  box-shadow: 0 0 0 1.5px var(--color-dag-proposal-text), 0 0 12px rgba(167, 139, 250, 0.5);
+  box-shadow: 0 0 0 1.5px var(--color-dag-proposal-stroke), var(--shadow-e3);
 }
 /* 'In progress' border pulse — echoes the board view's animate-mars-pulse. */
 @keyframes topo-border-pulse {
@@ -588,27 +629,27 @@ html {
 
 /* Dark theming for React Flow chrome on the topology canvas. */
 .dag-canvas .react-flow__controls.topo-controls button {
-  background: #1a0f0a;
-  border-bottom: 1px solid var(--color-border-dark);
-  color: var(--color-muted-dark);
-  fill: var(--color-muted-dark);
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-muted);
+  fill: var(--color-muted);
 }
 .dag-canvas .react-flow__controls.topo-controls button:hover {
-  background: #2a1a12;
+  background: var(--color-bg);
 }
 .dag-canvas .react-flow__minimap.topo-minimap {
-  background: #1a0f0a;
-  border: 1px solid var(--color-border-dark);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
   border-radius: 6px;
   overflow: hidden;
   /* Float above the graph content so it doesn't visually merge with cards */
-  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 4px 6px -4px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow-e3);
   /* Clear the bottom legend bar (~36px) and any footer chrome; right breathing room */
   bottom: 60px !important;
   right: 16px !important;
 }
 .dag-canvas .react-flow__minimap.topo-minimap .react-flow__minimap-mask {
-  fill: rgba(37, 24, 18, 0.75);
+  fill: rgba(26, 15, 10, 0.12);
 }
 /* Narrower viewports: shrink the minimap so it takes less canvas space */
 @media (max-width: 1279px) {

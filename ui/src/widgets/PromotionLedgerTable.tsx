@@ -70,7 +70,7 @@ export const PromotionLedgerTable = ({ workflow }: Props) => {
                 <td className="py-0.5 pr-2 font-mono">{formatTs(entry.createdAt)}</td>
                 <td className="py-0.5 pr-2">{entry.workflow}</td>
                 <td className="py-0.5 pr-2">{entry.decision}</td>
-                <td className="py-0.5 pr-2 font-mono text-micro">
+                <td className="py-0.5 pr-2 text-micro">
                   {entry.candidateVersionId} → {entry.incumbentVersionId}
                 </td>
                 <td className="py-0.5">

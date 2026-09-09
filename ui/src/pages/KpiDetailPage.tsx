@@ -195,7 +195,7 @@ const CostPerMergedTaskDetailSection = () => {
         {trend.map((row) => (
           <div
             key={row.day}
-            className="flex items-center border-b border-border py-1 font-mono text-title hover:bg-foreground/5"
+            className="flex items-center border-b border-border py-1 text-title hover:bg-foreground/5"
           >
             <span className="w-32 shrink-0 text-muted-foreground">{row.day}</span>
             <span className="w-24 shrink-0 text-right text-foreground">{row.mergedCount}</span>
@@ -282,7 +282,7 @@ export const KpiDetailPage = ({ kpiKey }: KpiDetailPageProps) => {
           {kpi && !kpi.lowConfidence && cue ? (
             <div className="flex flex-col gap-2 rounded border border-border bg-card p-4">
               <div className="flex flex-wrap items-baseline gap-4">
-                <span className="font-mono text-3xl font-bold text-foreground">
+                <span className="text-3xl font-bold text-foreground">
                   {formatKpiValue(kpiKey, kpi.currentValue)}
                 </span>
                 <span className={`flex items-center gap-1 text-title ${cue.colorClass}`}>
@@ -440,7 +440,7 @@ export const KpiDetailPage = ({ kpiKey }: KpiDetailPageProps) => {
                   role="listitem"
                   title={arc.arcId}
                   data-testid={`arc-row-${arc.arcId}`}
-                  className={`flex items-center rounded px-1 py-1.5 font-mono text-title no-underline transition-colors cursor-pointer ${arcRowClass(arc.passed)}`}
+                  className={`flex items-center rounded px-1 py-1.5 text-title no-underline transition-colors cursor-pointer ${arcRowClass(arc.passed)}`}
                 >
                   <span className="w-16 shrink-0 text-muted-foreground">{arc.status}</span>
                   {kpiKey === 'cost_per_arc' ? (

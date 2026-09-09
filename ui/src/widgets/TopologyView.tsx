@@ -216,7 +216,7 @@ const FanoutBundleNode = memo(({ data }: NodeProps<Node<FanoutBundleNodeData>>) 
     style={{
       width: BUNDLE_W,
       height: BUNDLE_H,
-      background: 'var(--color-surface-dark)',
+      background: 'var(--color-bg)',
       borderColor: 'var(--color-dag-queued-stroke)',
     }}
     aria-label={`${data.count} linked tasks · click to expand`}
@@ -576,7 +576,7 @@ const TopologyViewInner = ({
       <div
         role="img"
         className="dag-canvas absolute inset-0 h-full w-full"
-        style={{ background: 'var(--color-surface-dark)' }}
+        style={{ background: 'var(--color-bg)' }}
         aria-label={`Task topology graph, ${visibleTasks.length} task${visibleTasks.length === 1 ? '' : 's'}. Use the Board tab for a screen-reader and keyboard accessible view.`}
       >
         <ReactFlow

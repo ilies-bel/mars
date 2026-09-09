@@ -1,3 +1,4 @@
+import { ChevronDown, ChevronUp, Circle, CircleDot } from 'lucide-react'
 /**
  * ProjectSelector — a single-trigger dropdown that shows the currently focused
  * project and lets the user switch between all registered projects.
@@ -35,11 +36,13 @@ const healthColorClass = (health: DaemonHealth): string => {
 }
 
 // Distinct shape per health state — non-colour cue so health is not hue-only
-// for sighted users (WCAG 1.4.1: Use of Colour).
-const HEALTH_GLYPH: Record<DaemonHealth, string> = {
-  live: '●',
-  degraded: '◑',
-  down: '○',
+// for sighted users (WCAG 1.4.1: Use of Colour). Lucide rather than Unicode
+// dingbats: ●◑○ share no stroke weight and render differently per platform.
+const HealthDot = ({ health }: { health: DaemonHealth }) => {
+  const props = { size: 11, strokeWidth: 2, 'aria-hidden': true } as const
+  if (health === 'live') return <Circle {...props} fill="currentColor" />
+  if (health === 'degraded') return <CircleDot {...props} />
+  return <Circle {...props} />
 }
 
 interface ProjectSelectorInnerProps {
@@ -90,7 +93,7 @@ export const ProjectSelectorInner = ({
 }: ProjectSelectorInnerProps) => {
   const focusedProject =
     projects.find((p) => p.projectId === focusedProjectId) ?? projects[0]
-  const { name: focusedName, icon: focusedIcon } = projectIdentity(focusedProject)
+  const { name: focusedName } = projectIdentity(focusedProject)
 
   const activatedId =
     activeIndex != null && projects[activeIndex] != null
@@ -106,21 +109,22 @@ export const ProjectSelectorInner = ({
         aria-expanded={open}
         onClick={onToggle}
         data-testid="project-selector-trigger"
-        className="flex items-center gap-1.5 rounded px-2 py-0.5 font-mono text-label text-fg-dark transition-colors hover:bg-primary/20"
+        className="flex h-7 items-center gap-1.5 rounded-md px-2 text-label font-medium text-fg-dark transition-colors duration-[var(--dur-fast)] hover:bg-fg-dark/10"
       >
         <span
           role="img"
           aria-label={`${focusedName} — ${focusedProject.health}`}
           title={`${focusedName} — ${focusedProject.health}`}
-          className={healthColorClass(focusedProject.health)}
+          className={`flex items-center ${healthColorClass(focusedProject.health)}`}
         >
-          {HEALTH_GLYPH[focusedProject.health]}
+          <HealthDot health={focusedProject.health} />
         </span>
-        <span aria-hidden="true">{focusedIcon}</span>
-        {focusedName}
-        <span aria-hidden="true" className="ml-1 text-muted-dark">
-          {open ? '▲' : '▼'}
-        </span>
+        <span className="font-mono">{focusedName}</span>
+        {open ? (
+          <ChevronUp size={12} strokeWidth={2} aria-hidden="true" className="ml-0.5 text-muted-dark" />
+        ) : (
+          <ChevronDown size={12} strokeWidth={2} aria-hidden="true" className="ml-0.5 text-muted-dark" />
+        )}
       </button>
       {open && (
         <ul
@@ -140,7 +144,7 @@ export const ProjectSelectorInner = ({
           className="absolute left-0 top-full z-50 mt-1 min-w-[14rem] max-h-[60vh] overflow-y-auto overflow-hidden rounded border border-border bg-background shadow-lg outline-none"
         >
           {projects.map((p, idx) => {
-            const { name, icon } = projectIdentity(p)
+            const { name } = projectIdentity(p)
             const isFocused = p.projectId === focusedProjectId
             const isActive = activeIndex === idx
             const isStarting = starting === p.projectId
@@ -168,12 +172,11 @@ export const ProjectSelectorInner = ({
                     role="img"
                     aria-label={`${name} — ${p.health}`}
                     title={`${name} — ${p.health}`}
-                    className={healthColorClass(p.health)}
+                    className={`flex items-center ${healthColorClass(p.health)}`}
                   >
-                    {HEALTH_GLYPH[p.health]}
+                    <HealthDot health={p.health} />
                   </span>
-                  <span aria-hidden="true">{icon}</span>
-                  {name}
+                  <span className="truncate font-mono">{name}</span>
                   {(p.health === 'down' || isFocused) ? (
                     <span className="ml-auto flex items-center gap-1">
                       {p.health === 'down' ? (

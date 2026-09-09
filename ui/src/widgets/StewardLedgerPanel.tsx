@@ -58,7 +58,7 @@ export const StewardLedgerPanel = ({ targetKind, targetId }: StewardLedgerPanelP
       data-target-id={targetId}
       className="border-t border-border px-4 py-3"
     >
-      <h3 className="font-mono text-label uppercase tracking-[0.1em] text-muted-foreground">
+      <h3 className="text-label uppercase tracking-[0.1em] text-muted-foreground">
         Steward timeline · {targetLabel}
       </h3>
       {isPending ? (
@@ -80,7 +80,7 @@ export const StewardLedgerPanel = ({ targetKind, targetId }: StewardLedgerPanelP
                   data-testid="steward-ledger-row"
                   className="rounded border border-border bg-card px-3 py-2"
                 >
-                  <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 font-mono text-label">
+                  <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 text-label">
                     <span className="font-semibold text-foreground" title={entry.targetId}>
                       {entry.targetKind.charAt(0).toUpperCase() + entry.targetKind.slice(1)}{' '}
                       <span className="">{entry.targetId}</span>

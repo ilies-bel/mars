@@ -1,6 +1,7 @@
+import { useCounts } from '@/entities/counts/useCounts'
 import { SelectField } from '@/components/SelectField'
 import { Chip, type ChipTone } from '@/components/Chip'
-import { ArrowRight, Search } from 'lucide-react'
+import { ArrowRight, ChevronDown, ChevronRight, Search } from 'lucide-react'
 import { ActionButton } from '@/components/ActionButton'
 import { PageHeader } from '@/widgets/primitives/DensityPrimitives'
 /**
@@ -34,7 +35,7 @@ import { PageHeader } from '@/widgets/primitives/DensityPrimitives'
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
-import { sortItems, buildRenderedRows, countNeedsYou, type RenderedRow } from '@/entities/actionQueue/clusterRows'
+import { sortItems, buildRenderedRows, type RenderedRow } from '@/entities/actionQueue/clusterRows'
 import { useProgress } from '@/hooks/useProgress'
 import { useProposals } from '@/entities/proposals/useProposals'
 import { useDaemonHealth } from '@/entities/daemon/useDaemonHealth'
@@ -553,7 +554,7 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
       {hasResolvableTask(item) && (
         <a
           href={taskHash(item.entityId, 'triage')}
-          className="mb-2 inline-flex w-fit items-center gap-1 rounded text-label font-medium text-highlight transition-colors duration-[var(--dur-fast)] hover:text-foreground hover:underline"
+          className="mb-2 -ml-1.5 inline-flex h-6 w-fit items-center gap-1 rounded-md px-1.5 text-label font-medium text-highlight transition-colors duration-[var(--dur-fast)] hover:bg-highlight/10 hover:text-foreground"
           data-testid="triage-entity-link"
           title={item.entityId}
         >
@@ -960,7 +961,11 @@ export const TriageCauseGroupRow = ({
           className="shrink-0 font-mono text-micro text-muted-foreground transition-colors hover:text-foreground"
           data-testid="cause-group-toggle"
         >
-          {expanded ? '▾' : '▸'}
+          {expanded ? (
+            <ChevronDown size={12} strokeWidth={2} aria-hidden="true" />
+          ) : (
+            <ChevronRight size={12} strokeWidth={2} aria-hidden="true" />
+          )}
         </button>
         <Chip tone={kindTone} icon={kindIcon}>
           {kindLabel}
@@ -1182,7 +1187,12 @@ export const TriagePage = () => {
   }, [sorted, kindFilter, searchQuery])
 
   const renderedRows = buildRenderedRows(filteredSorted, serverGroups)
-  const needsYouCount = countNeedsYou(items, serverGroups)
+  // The single source of truth for this number — the same value the sidebar
+  // badge and the bell render. It used to be recomputed here from the fetched
+  // page of action-queue items, which is why one screen could show 29 in the
+  // nav, 12 on the bell and 13 in this header at the same moment. See the
+  // "Numbers" section of ui/README.md: never add a per-widget count.
+  const { needsYou: needsYouCount } = useCounts()
 
   // Only show the empty state when every feed succeeded AND there is genuinely
   // nothing to act on. A feed error is itself something to surface, so the
@@ -1266,7 +1276,12 @@ export const TriagePage = () => {
         ) : !hasContent ? (
           <EmptyState running={running} doneToday={doneToday} />
         ) : (
-          <div className="flex flex-col gap-4 p-4">
+          <div
+            /* A reading column. At 1680px a queue card put its headline on the
+               left, its timestamp 1500px away on the right, and nothing in
+               between — the eye had to traverse dead space to pair them. */
+            className="mx-auto flex w-full max-w-[1080px] flex-col gap-3 p-4"
+          >
             {/* Inline error cards — one per failing feed, never blanking the page */}
             {queueError && <FeedErrorCard label="action queue" error={queueError} />}
             {proposalsError && <FeedErrorCard label="proposals" error={proposalsError} />}

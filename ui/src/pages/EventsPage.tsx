@@ -1,5 +1,5 @@
 import { SelectField } from '@/components/SelectField'
-import { RefreshCw, Search, SlidersHorizontal } from 'lucide-react'
+import { ChevronDown, ChevronRight, RefreshCw, Search, SlidersHorizontal } from 'lucide-react'
 import { ActionButton } from '@/components/ActionButton'
 import { Segmented } from '@/components/Segmented'
 import { memo, useEffect, useMemo, useRef, useState, useCallback } from 'react'
@@ -518,7 +518,7 @@ const GroupedRow = memo(({
         <button
           type="button"
           onClick={handleToggle}
-          className="mb-1 flex w-full items-center gap-2 rounded border border-border bg-primary/10 px-3 py-1 font-mono text-micro text-primary hover:text-foreground"
+          className="mb-1 flex w-full items-center gap-2 rounded-md border border-border bg-foreground/[0.04] px-3 py-1 font-mono text-micro text-muted-foreground transition-colors duration-[var(--dur-fast)] hover:bg-foreground/8 hover:text-foreground"
           data-testid={`group-row-${first.id}`}
         >
           <span>▾</span>
@@ -545,7 +545,7 @@ const GroupedRow = memo(({
     <button
       type="button"
       onClick={handleToggle}
-      className="flex w-full items-center gap-2 rounded border border-border bg-primary/5 px-3 py-1.5 font-mono text-body text-foreground hover:bg-primary/15"
+      className="flex w-full items-center gap-2 rounded-md border border-border bg-foreground/[0.03] px-3 py-1.5 font-mono text-body text-foreground transition-colors duration-[var(--dur-fast)] hover:bg-foreground/8"
       data-testid={`group-row-${first.id}`}
     >
       <span className="shrink-0 text-micro text-muted-foreground">{relativeTime(first.timestamp, now)}</span>
@@ -720,7 +720,7 @@ const ToolCallGroup = memo(({
         <button
           type="button"
           onClick={handleToggle}
-          className="mb-1 flex w-full items-center gap-2 rounded border border-border bg-primary/10 px-3 py-1 font-mono text-micro text-primary hover:text-foreground"
+          className="mb-1 flex w-full items-center gap-2 rounded-md border border-border bg-foreground/[0.04] px-3 py-1 font-mono text-micro text-muted-foreground transition-colors duration-[var(--dur-fast)] hover:bg-foreground/8 hover:text-foreground"
           data-testid={`tool-group-row-${first.id}`}
         >
           <span>▾</span>
@@ -746,7 +746,7 @@ const ToolCallGroup = memo(({
     <button
       type="button"
       onClick={handleToggle}
-      className="flex w-full items-center gap-2 rounded border border-border bg-primary/5 px-3 py-1.5 font-mono text-body text-muted-foreground hover:bg-primary/15"
+      className="flex w-full items-center gap-2 rounded-md border border-border bg-foreground/[0.03] px-3 py-1.5 font-mono text-body text-muted-foreground transition-colors duration-[var(--dur-fast)] hover:bg-foreground/8"
       data-testid={`tool-group-row-${first.id}`}
     >
       <span className="shrink-0 text-micro">{relativeTime(first.timestamp, now)}</span>
@@ -800,7 +800,11 @@ const TimelineStep = ({ group, now }: TimelineStepProps) => {
         className="flex w-full items-center gap-2 py-0.5 text-left text-label"
       >
         <span className="shrink-0 text-micro text-muted-foreground">
-          {expanded ? '▾' : '▸'}
+          {expanded ? (
+            <ChevronDown size={12} strokeWidth={2} aria-hidden="true" />
+          ) : (
+            <ChevronRight size={12} strokeWidth={2} aria-hidden="true" />
+          )}
         </span>
         <span className="font-semibold text-foreground">{stepName}</span>
         <span className={`text-micro ${outcomeClass}`}>{outcome}</span>
@@ -858,7 +862,11 @@ const TimelineTaskGroup = ({ group, now }: TimelineTaskGroupProps) => {
         className="flex w-full items-center gap-2 py-1 text-left"
       >
         <span className="font-mono text-micro text-muted-foreground">
-          {expanded ? '▾' : '▸'}
+          {expanded ? (
+            <ChevronDown size={12} strokeWidth={2} aria-hidden="true" />
+          ) : (
+            <ChevronRight size={12} strokeWidth={2} aria-hidden="true" />
+          )}
         </span>
         <a
           href={taskHash(group.taskId, 'events')}
@@ -933,7 +941,11 @@ const TimelineArcGroup = ({ group, now }: TimelineArcGroupProps) => {
         className="flex w-full items-center gap-2 text-left"
       >
         <span className="font-mono text-micro text-muted-foreground">
-          {expanded ? '▾' : '▸'}
+          {expanded ? (
+            <ChevronDown size={12} strokeWidth={2} aria-hidden="true" />
+          ) : (
+            <ChevronRight size={12} strokeWidth={2} aria-hidden="true" />
+          )}
         </span>
         <span className="font-mono text-label font-semibold text-foreground">
           Arc{' '}
