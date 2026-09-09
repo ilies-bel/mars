@@ -631,24 +631,40 @@ const TopologyViewInner = ({
           <span className="shrink-0 opacity-50">· Esc to collapse</span>
         </div>
       )}
-      {/* Navigation hint — quiet, top-left under the breadcrumb spot when free. */}
-      <div className="pointer-events-none absolute bottom-10 right-3 z-10 text-right text-label leading-relaxed text-muted-foreground">
-        scroll = zoom · drag = pan
-        <br />
-        {hintText ? (
-          <span className="font-semibold">{hintText}</span>
-        ) : (
-          'click card = open · click task = details · esc = collapse'
+      {/* One backed panel, bottom-left.
+       *
+       * The legend, the navigation hint and the minimap were three unbacked
+       * overlays stacked into the same bottom-right corner, painted straight
+       * onto the dot grid at ~2.4:1 with the hint partly under the minimap.
+       * The minimap keeps that corner; the two text overlays merge into a
+       * single readable card on the opposite side, clear of the zoom controls. */}
+      <div className="pointer-events-none absolute bottom-3 left-12 z-10 flex flex-col gap-1.5 rounded-md border border-border bg-surface/95 px-2.5 py-2 shadow-[var(--shadow-e2)]">
+        <div className="flex items-center gap-2.5 text-micro text-muted-foreground">
+          {LEGEND_ITEMS.map((item) => (
+            <span key={item.label} className="inline-flex items-center gap-1.5">
+              <i className="inline-block h-[9px] w-[9px] rounded-[2px]" style={{ background: item.color }} />
+              {item.label}
+            </span>
+          ))}
+        </div>
+        {emphasized.edges.length === 0 && (
+          /* A dot grid of disconnected cards reads as "the graph failed to
+           * draw". It has not: a recovery edge is internal to its arc's card,
+           * so a snapshot where nothing blocks anything ACROSS arcs genuinely
+           * has no line to draw. Say so rather than leaving it ambiguous. */
+          <p className="text-micro text-muted-foreground" data-testid="topo-no-edges">
+            No dependencies between active arcs.
+          </p>
         )}
-      </div>
-      {/* Status legend — bottom, over the canvas */}
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex items-center justify-end gap-3 px-4 py-2 font-mono text-label text-muted-dark">
-        {LEGEND_ITEMS.map((item) => (
-          <span key={item.label} className="inline-flex items-center gap-1.5">
-            <i className="inline-block h-[9px] w-[9px] rounded-[2px]" style={{ background: item.color }} />
-            {item.label}
-          </span>
-        ))}
+        <p className="text-micro leading-relaxed text-muted-foreground">
+          scroll = zoom · drag = pan
+          <br />
+          {hintText ? (
+            <span className="font-medium text-foreground">{hintText}</span>
+          ) : (
+            'click card = open · click task = details · esc = collapse'
+          )}
+        </p>
       </div>
     </main>
   )
