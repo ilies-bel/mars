@@ -287,6 +287,12 @@ export const zDecision = z.object({
   label: z.string(),
   endpoint: z.string(),
   payload: z.record(z.string(), z.unknown()).default({}),
+  /**
+   * Visual style hint for the button, mirroring alertVerbSchema.style.
+   * Optional for compatibility with daemon versions that predate this field;
+   * the client defaults to 'default' when absent.
+   */
+  style: z.enum(['primary', 'destructive', 'default', 'snooze']).optional(),
   secondary: z
     .object({
       kind: z.enum(['teach-recipe', 'scope-choice']),

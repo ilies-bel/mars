@@ -591,7 +591,13 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
                 key={d.label}
                 disabled={pending !== null}
                 onClick={() => void handleDecision(d)}
-                className="rounded border border-primary/30 bg-primary/10 px-2 py-1 font-mono text-micro font-medium text-primary transition-colors hover:bg-primary/20 disabled:opacity-50"
+                className={
+                  d.style === 'destructive'
+                    ? 'rounded border border-error/40 bg-error/5 px-2 py-1 font-mono text-micro text-error transition-colors hover:bg-error/10 disabled:opacity-50'
+                    : d.style === 'primary'
+                    ? 'rounded border border-highlight/60 bg-highlight/10 px-2 py-1 font-mono text-micro font-medium text-highlight transition-colors hover:bg-highlight/20 disabled:opacity-50'
+                    : 'rounded border border-primary/30 bg-primary/10 px-2 py-1 font-mono text-micro font-medium text-primary transition-colors hover:bg-primary/20 disabled:opacity-50'
+                }
                 data-testid={`triage-decision-${d.label}`}
               >
                 {pending === d.label ? '…' : d.label}

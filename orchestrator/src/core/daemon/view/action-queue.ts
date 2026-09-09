@@ -25,6 +25,7 @@ import {
   getRecipeVerbs,
   type RecipeHumanDetail,
   type RecipeVerb,
+  type RecipeDecision,
 } from '../../lib/action-queue-recipes'
 import { isActionQueueKind, classifyKind, KIND_CLASS, DERIVED_KINDS, type ActionQueueKind, type ActionQueueClass } from '../../lib/action-queue-kinds'
 import type { DispatchPauseState } from '../pause-state'
@@ -179,6 +180,27 @@ export interface ActionQueueRow {
    * field — the UI task will perform the hard cut.
    */
   verbs: RecipeVerb[]
+  /**
+   * Server-defined decision buttons. Each entry maps to exactly one button on
+   * the client (no client-side switch on failure kind required). Populated by
+   * per-kind recipes; absent or empty for rows that carry only verb buttons.
+   * The client falls back to `[]` when this field is absent (see
+   * `zDecision.default([])` in `ui/src/shared/schemas.ts`).
+   *
+   * Every `style` value here MUST be accepted by the client's `zDecision.style`
+   * enum (`ui/src/shared/schemas.ts`), because an unknown style fails validation
+   * for the entire row, not just the button.
+   */
+  decisions?: {
+    label: string
+    endpoint: string
+    payload: Record<string, unknown>
+    style?: 'primary' | 'destructive' | 'default' | 'snooze'
+    secondary?: {
+      kind: 'teach-recipe' | 'scope-choice'
+      prompt: string
+    }
+  }[]
   /**
    * Operator-facing goal sentence for this action-queue card — the primary
    * headline in the inverted card hierarchy (§7). For origin failed-task rows,
@@ -931,7 +953,7 @@ const buildRecipeFields = (
   entityId: string,
   title: string,
   body: string,
-): { humanSummary: string; humanDetail: RecipeHumanDetail; verbs: RecipeVerb[] } => {
+): { humanSummary: string; humanDetail: RecipeHumanDetail; verbs: RecipeVerb[]; decisions: RecipeDecision[] } => {
   const kind = row.kind
   if (!isActionQueueKind(kind)) {
     return {
@@ -941,6 +963,7 @@ const buildRecipeFields = (
         { op: 'dismiss', label: 'Dismiss', style: 'default' },
         { op: 'snooze', label: 'Snooze', style: 'default' },
       ],
+      decisions: [],
     }
   }
   const recipe = lookupRecipe(kind)
@@ -953,10 +976,18 @@ const buildRecipeFields = (
     body,
     raisedAt: new Date(row.raisedAt).toISOString(),
   }
+  const rawDecisions = recipe.decisions
+  const decisions: RecipeDecision[] =
+    rawDecisions == null
+      ? []
+      : typeof rawDecisions === 'function'
+      ? rawDecisions(ctx)
+      : rawDecisions
   return {
     humanSummary: recipe.humanSummary(ctx),
     humanDetail: recipe.humanDetail(ctx),
     verbs: getRecipeVerbs(recipe, ctx),
+    decisions,
   }
 }
 
@@ -1721,6 +1752,7 @@ export const buildActionQueueView = async ({
       // dismiss/grill verbs would 500. Suppress all recipe verbs so the row
       // is visible but unactionable until a reconciliation pass closes it.
       verbs: isMiskindedDraftProposal ? [] : recipeFields.verbs,
+      decisions: recipeFields.decisions ?? [],
     })
   }
 
@@ -1801,6 +1833,7 @@ export const buildActionQueueView = async ({
       humanSummary: daemonKilledRecipe.humanSummary(batchRecipeCtx),
       humanDetail: daemonKilledRecipe.humanDetail(batchRecipeCtx),
       verbs: getRecipeVerbs(daemonKilledRecipe, batchRecipeCtx),
+      decisions: [],
     })
   }
 
@@ -2140,6 +2173,7 @@ export const buildActionQueueHistoryView = async ({
       humanSummary: historyHumanSummary,
       humanDetail: historyRecipeFields.humanDetail,
       verbs: [], // Resolved rows are read-only; no action verbs.
+      decisions: [], // Resolved rows are read-only; no decision buttons.
     })
   }
 

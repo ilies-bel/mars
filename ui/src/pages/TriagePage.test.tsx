@@ -351,6 +351,68 @@ describe('TriageRow – gate-enrichment shows decisions, no Continue/Restart', (
 })
 
 // ---------------------------------------------------------------------------
+// TriageRow — decision button style field
+// ---------------------------------------------------------------------------
+
+describe('TriageRow – decision button style field', () => {
+  it('applies destructive styling when style is "destructive"', () => {
+    mockItems.mockReturnValue([
+      makeItem('gate-enrichment', {
+        decisions: [
+          {
+            label: 'Retire',
+            endpoint: '/api/gate/retire',
+            payload: {},
+            style: 'destructive',
+          },
+        ],
+      }),
+    ])
+    const { container } = renderPage()
+    const btn = container.querySelector('[data-testid="triage-decision-Retire"]') as HTMLButtonElement
+    expect(btn).not.toBeNull()
+    expect(btn.className).toContain('text-error')
+  })
+
+  it('applies primary styling when style is "primary"', () => {
+    mockItems.mockReturnValue([
+      makeItem('gate-enrichment', {
+        decisions: [
+          {
+            label: 'Approve',
+            endpoint: '/api/gate/approve',
+            payload: {},
+            style: 'primary',
+          },
+        ],
+      }),
+    ])
+    const { container } = renderPage()
+    const btn = container.querySelector('[data-testid="triage-decision-Approve"]') as HTMLButtonElement
+    expect(btn).not.toBeNull()
+    expect(btn.className).toContain('text-highlight')
+  })
+
+  it('applies default (primary/10) styling when style is absent', () => {
+    mockItems.mockReturnValue([
+      makeItem('gate-enrichment', {
+        decisions: [
+          {
+            label: 'Approve',
+            endpoint: '/api/gate/approve',
+            payload: {},
+          },
+        ],
+      }),
+    ])
+    const { container } = renderPage()
+    const btn = container.querySelector('[data-testid="triage-decision-Approve"]') as HTMLButtonElement
+    expect(btn).not.toBeNull()
+    expect(btn.className).toContain('text-primary')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // TriageRow — mutations fired on click
 // ---------------------------------------------------------------------------
 

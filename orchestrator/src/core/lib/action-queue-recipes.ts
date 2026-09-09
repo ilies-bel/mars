@@ -78,6 +78,21 @@ export type RecipeVerb = {
   hint?: string
 }
 
+/**
+ * A server-defined decision button emitted on `ActionQueueRow.decisions`.
+ * Shape mirrors `zDecision` (`ui/src/shared/schemas.ts`) — every field here
+ * MUST be accepted by that Zod schema, because an unknown field fails
+ * validation for the entire row.
+ */
+export type RecipeDecision = {
+  label: string
+  endpoint: string
+  payload: Record<string, unknown>
+  /** Visual style hint — same vocabulary as `RecipeVerb.style`. */
+  style?: 'primary' | 'destructive' | 'default' | 'snooze'
+  secondary?: { kind: 'teach-recipe' | 'scope-choice'; prompt: string }
+}
+
 /** A labelled daemon operation that Mars can preload as a Notice response chip. */
 export type PreloadedResponse = {
   id: string
@@ -134,6 +149,15 @@ export type Recipe<K extends ActionQueueKind = ActionQueueKind> = {
    * Notice responses deliberately omit AlertCard-only presentation styling.
    */
   preloadedResponses: PreloadedResponse[] | ((ctx: RecipeContext<K>) => PreloadedResponse[])
+  /**
+   * Server-defined decision buttons for this kind. Each entry maps to exactly
+   * one button on the client (no client-side switch on failure kind required).
+   * When present, these are emitted verbatim on the `ActionQueueRow.decisions`
+   * field; absent means `decisions: []`. The `style` field mirrors
+   * `RecipeVerb.style` and MUST use the same vocabulary so the client's
+   * `zDecision.style` enum accepts it without translation.
+   */
+  decisions?: RecipeDecision[] | ((ctx: RecipeContext<K>) => RecipeDecision[])
   /**
    * Optional bulk-resolve verb for a cause-group card whose members all share
    * this kind. When present, the group card shows this as its primary action

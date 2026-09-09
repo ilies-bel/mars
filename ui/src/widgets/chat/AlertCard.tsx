@@ -730,7 +730,7 @@ export const AlertCard = ({
             <button
               key={d.label}
               type="button"
-              className={verbButtonClass('default')}
+              className={verbButtonClass(d.style ?? 'default')}
               disabled={pendingOp !== null}
               onClick={() => {
                 setPendingOp(d.label)
