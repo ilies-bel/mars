@@ -37,6 +37,7 @@ import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
 import { sortItems, buildRenderedRows, type RenderedRow } from '@/entities/actionQueue/clusterRows'
+import { filterQueue } from '@/entities/actionQueue/filterQueue'
 import { useProgress } from '@/hooks/useProgress'
 import { useProposals } from '@/entities/proposals/useProposals'
 import { useDaemonHealth } from '@/entities/daemon/useDaemonHealth'
@@ -306,9 +307,40 @@ interface TriageRowProps {
    * Continue/Restart affordance that could contradict the first.
    */
   extraBadges?: string[]
+  /**
+   * Set when this row is a member of an expanded cause group: the sentence the
+   * group header already stated once, on the reader's behalf.
+   *
+   * Expanding the "17 tasks · slice failed" cluster used to reveal seventeen
+   * byte-identical cards — same chip, same `high`, same `1d ago`, same
+   * sentence — four screens of them. The only reason to open a cluster is to
+   * find out WHICH members are in it and whether they are really the same
+   * thing, and the expansion answered neither. (Verified: 17 members, one
+   * distinct rendering.)
+   *
+   * With this set the row drops what the group already said and leads with
+   * what distinguishes it instead.
+   *
+   * It is an object rather than a bare string precisely so that "this row is
+   * inside a group" and "the group has a shared sentence" stay separate
+   * questions. Conflating them meant the 7-member `failed` group — whose
+   * members carry different titles but the same kind and the same priority —
+   * kept rendering seven `failed` chips and seven `high` chips.
+   */
+  groupContext?: {
+    /**
+     * What sets THIS member apart from its siblings, chosen by the group.
+     *
+     * The group decides, because only the group can see whether a field
+     * actually varies. A row asked to pick for itself reached for its title,
+     * which on the seventeen slice-failed members is the same sentence on all
+     * of them — a distinguisher that distinguished nothing.
+     */
+    memberName: string | null
+  }
 }
 
-const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
+const TriageRow = ({ item, extraBadges, groupContext }: TriageRowProps) => {
   const qc = useQueryClient()
   const projectId = useFocusedProjectId() ?? undefined
   const [pending, setPending] = useState<string | null>(null)
@@ -419,6 +451,22 @@ const isDestructiveAction = (label: string): boolean => {
   // humanSummary || title falls back to the sole headline.
   const goal = item.operatorGoal ?? null
   const headline = !goal ? (item.humanSummary || item.title) : null
+
+  // ── Inside an expanded cause group ────────────────────────────────────────
+  //
+  // Members share `(kind, failureReasonCode)` BY CONSTRUCTION — that is what
+  // put them in the group — so the kind chip, the priority chip, the cause
+  // phrase and the recipe's advice for that cause are identical on every one
+  // of them. The group header states each once, above. A member repeats none
+  // of them, and leads instead with the name the group picked for it.
+  //
+  // This is a structural rule, not a string comparison. Comparing strings was
+  // the first attempt and it failed on exactly the case it existed for: the
+  // group header reads "Coding step failed — cause not identified" while each
+  // member's subhead reads "Coding step failed", so seven members went on
+  // restating the cause under a header that had just given it.
+  const inGroup = groupContext !== undefined
+  const memberName = groupContext?.memberName ?? null
   // An advisory is not a name, and the title slot is for names.
   //
   // Several kinds put a full recommendation in humanSummary — "N tasks all
@@ -531,13 +579,30 @@ const isDestructiveAction = (label: string): boolean => {
     <div
       className="mars-card group/row relative rounded-lg bg-card px-4 py-3"
     >
-      {/* Top row: kind chip + priority badge + age */}
+      {/* Top row: kind chip + priority badge + age.
+          Inside a group the kind and the priority are properties of the GROUP,
+          identical on every member — seventeen `slice failed` chips and
+          seventeen `high` chips said nothing seventeen times. The group header
+          states both, once. */}
       <div className="mb-1.5 flex items-center gap-2">
-        <Chip tone={kindTone} icon={kindIcon}>
-          {kindLabel}
-        </Chip>
-        {item.priority === 'high' && <Chip tone="error">high</Chip>}
-        {item.priority === 'normal' && <Chip tone="neutral">normal</Chip>}
+        {!inGroup && (
+          <>
+            <Chip tone={kindTone} icon={kindIcon}>
+              {kindLabel}
+            </Chip>
+            {item.priority === 'high' && <Chip tone="error">high</Chip>}
+            {item.priority === 'normal' && <Chip tone="neutral">normal</Chip>}
+          </>
+        )}
+        {inGroup && !goal && memberName !== null && (
+          <span
+            className="min-w-0 flex-1 truncate text-label font-medium text-foreground"
+            data-testid="cause-group-member-name"
+            title={memberName}
+          >
+            {memberName}
+          </span>
+        )}
         <span className="ml-auto text-micro tabular-nums text-muted-foreground">
           {age}
         </span>
@@ -569,19 +634,27 @@ const isDestructiveAction = (label: string): boolean => {
            - Otherwise: humanSummary || title is the sole headline. */}
       {goal ? (
         <>
+          {/* A member sits one level below its group, so it is set one step
+              down the scale (15px vs 17px). At 17px the members were louder
+              than the group header that contains them, which inverts the
+              nesting the expansion exists to express. */}
           <p
-            className="mb-1 text-section font-semibold leading-snug text-foreground line-clamp-2"
+            className={`mb-1 font-semibold leading-snug text-foreground line-clamp-2 ${
+              inGroup ? 'text-title' : 'text-section'
+            }`}
             data-testid="triage-goal"
           >
             {goal.split('\n')[0]?.trim()}
           </p>
-          <p
-            className="text-label text-muted-foreground"
-            data-testid="triage-title-subhead"
-          >
-            {signatureFamilyPhrase(item.humanDetail?.failureSignature) ?? item.title}
-          </p>
-          {item.humanSummary && (
+          {!inGroup && (
+            <p
+              className="text-label text-muted-foreground"
+              data-testid="triage-title-subhead"
+            >
+              {signatureFamilyPhrase(item.humanDetail?.failureSignature) ?? item.title}
+            </p>
+          )}
+          {item.humanSummary && !inGroup && (
             <p className="mt-1 text-label leading-relaxed text-muted-foreground line-clamp-2">
               {item.humanSummary}
             </p>
@@ -606,7 +679,10 @@ const isDestructiveAction = (label: string): boolean => {
           )}
         </>
       ) : (
-        headline && (
+        // Inside a group, a headline the group header already stated is not
+        // repeated — that repetition IS the wallpaper.
+        headline &&
+        !inGroup && (
           <p
             className={
               headlineIsAdvisory
@@ -1020,6 +1096,41 @@ export const TriageCauseGroupRow = ({
   // `done-with-unverifiable-merge` in front of an operator.
   const label = causeGroupPhrase(group.signature, group.causeLabel)
 
+  /**
+   * Which field to name each member by — decided here, where every member is
+   * in view, because only from here is it knowable whether a field varies.
+   *
+   * Tried in descending order of how much it tells a reader; the first one
+   * that is genuinely distinct across the whole group wins.
+   *
+   * `entityId` is the last resort and it is a slug, which this UI otherwise
+   * keeps off the face of a card. It earns the exception in the one case where
+   * it is not decoration: when every other field is identical, the id is the
+   * ONLY fact separating one row from the next, and it is what the operator
+   * pastes into a command to act on it. Seventeen identical sentences would be
+   * strictly less honest.
+   *
+   * (The better fix is upstream — slice-failed rows arrive with operatorGoal
+   * null while the PRD's real title sits inside the body prose. Filed
+   * separately; regexing prose for a name is how these start lying.)
+   */
+  const nameOf = ((): ((m: (typeof group.members)[number]) => string | null) => {
+    const candidates: Array<(m: (typeof group.members)[number]) => string | null> = [
+      (m) => m.operatorGoal ?? null,
+      (m) => m.arcGoal ?? null,
+      (m) => m.title ?? null,
+    ]
+    for (const get of candidates) {
+      const values = group.members
+        .map(get)
+        .filter((v): v is string => v != null && v !== '')
+      if (values.length === group.members.length && new Set(values).size === values.length) {
+        return get
+      }
+    }
+    return (m) => m.entityId ?? null
+  })()
+
   // Primary bulk verb: use the kind's recipe-declared bulkResolveVerb (HR-3).
   // A kind that declares none shows only Snooze — no invented action.
   const bulkVerb = group.bulkResolveVerb ?? null
@@ -1147,7 +1258,11 @@ export const TriageCauseGroupRow = ({
           data-testid="cause-group-members"
         >
           {group.members.map((member) => (
-            <TriageRow key={member.id} item={member} />
+            <TriageRow
+              key={member.id}
+              item={member}
+              groupContext={{ memberName: nameOf(member) }}
+            />
           ))}
         </div>
       )}
@@ -1269,6 +1384,73 @@ const EmptyState = ({ running, doneToday }: EmptyStateProps) => (
   </div>
 )
 
+/**
+ * The page's one column.
+ *
+ * Applied to the header toolbar and to the list, so the search field and the
+ * cards end at the same x. The page gutter is NOT part of this: PageHeader
+ * applies its own `px-6`, and the list's scroll container applies the same,
+ * so both start at the same x without this constant having to know about it.
+ */
+const MEASURE = 'max-w-[1080px]'
+
+/**
+ * Shown when the filters matched nothing — which is a different fact from an
+ * empty queue and has to read as one.
+ *
+ * It names what was searched (the reader may have typed into a field that had
+ * scrolled out of view, or left a kind filter set from an earlier visit), says
+ * how much is still behind the filter, and offers the one move that fixes it.
+ * An empty page with no explanation makes the reader doubt the queue rather
+ * than the query.
+ */
+const NoMatchesState = ({
+  query,
+  kind,
+  total,
+  onClear,
+}: {
+  query: string
+  kind: string
+  total: number
+  onClear: () => void
+}) => {
+  const kindLabel = kind
+    ? ((KIND_LABEL as Record<string, string | undefined>)[kind] ?? kind.replace(/-/g, ' '))
+    : null
+  return (
+    <div
+      className="flex flex-col items-center justify-center py-24 text-center"
+      data-testid="triage-no-matches"
+    >
+      <p className="mb-1 text-title font-medium text-foreground">No matches</p>
+      <p className="max-w-[420px] text-label text-muted-foreground">
+        {query.trim() !== '' && (
+          <>
+            Nothing in the queue mentions <span className="text-foreground">{query.trim()}</span>
+            {kindLabel ? ' ' : '. '}
+          </>
+        )}
+        {kindLabel && (
+          <>
+            {query.trim() !== '' ? 'among ' : 'No '}
+            <span className="text-foreground">{kindLabel}</span> rows.{' '}
+          </>
+        )}
+        {total > 0 && `All ${total} items are still there.`}
+      </p>
+      <button
+        type="button"
+        onClick={onClear}
+        className="mt-3 rounded-md border border-border px-2.5 py-1 text-label text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground"
+        data-testid="triage-clear-filters"
+      >
+        Clear filters
+      </button>
+    </div>
+  )
+}
+
 // ── TriagePage ────────────────────────────────────────────────────────────────
 
 export const TriagePage = () => {
@@ -1299,27 +1481,20 @@ export const TriagePage = () => {
 
   const sorted = sortItems(items)
 
-  /** Items after applying the search + kind filter, in priority-recency order. */
-  const filteredSorted = useMemo(() => {
-    let result = sorted
-    if (kindFilter) result = result.filter((i) => i.kind === kindFilter)
-    if (searchQuery) {
-      const q = searchQuery.toLowerCase()
-      result = result.filter(
-        (i) =>
-          (i.title && i.title.toLowerCase().includes(q)) ||
-          (i.humanSummary && i.humanSummary.toLowerCase().includes(q)) ||
-          (i.operatorGoal && i.operatorGoal.toLowerCase().includes(q)) ||
-          // entityTitle is the entity's real human name (e.g. the PRD title on
-          // slice-failed rows) — preferred over the truncated entityId slug.
-          (i.entityTitle && i.entityTitle.toLowerCase().includes(q)) ||
-          (i.entityId && i.entityId.toLowerCase().includes(q)),
-      )
-    }
-    return result
-  }, [sorted, kindFilter, searchQuery])
+  /**
+   * The queue after both controls, in priority-recency order.
+   *
+   * Both shapes are filtered — loose items AND the daemon's pre-grouped cause
+   * rows. Passing `serverGroups` through unfiltered is what made the search
+   * box return three confident-looking rows for a gibberish query; see
+   * filterQueue.ts.
+   */
+  const filtered = useMemo(
+    () => filterQueue(sorted, serverGroups, { kind: kindFilter, query: searchQuery }),
+    [sorted, serverGroups, kindFilter, searchQuery],
+  )
 
-  const renderedRows = buildRenderedRows(filteredSorted, serverGroups)
+  const renderedRows = buildRenderedRows(filtered.items, filtered.groups)
   // The single source of truth for this number — the same value the sidebar
   // badge and the bell render. It used to be recomputed here from the fetched
   // page of action-queue items, which is why one screen could show 29 in the
@@ -1337,7 +1512,12 @@ export const TriagePage = () => {
   // the queries had not yet settled into an error state and the page cheerfully
   // announced "All quiet".
   const hasAnyError = queueError !== null || proposalsError !== null
-  const hasContent = renderedRows.length > 0 || hasAnyError
+  // A filter that matched nothing is not an empty queue. Without this the page
+  // answered a gibberish search with "All quiet." while 38 items sat behind
+  // the filter — the exact false-empty this page exists to avoid, reached by
+  // a different door.
+  const filteredToNothing = filtered.active && renderedRows.length === 0 && !hasAnyError
+  const hasContent = renderedRows.length > 0 || hasAnyError || filteredToNothing
   // The action-queue query's first fetch hasn't settled yet (no cached data,
   // no error). Without this check the page fell through to EmptyState during
   // that window and showed "All quiet" — indistinguishable from a genuinely
@@ -1354,6 +1534,16 @@ export const TriagePage = () => {
             ? '1 item needs attention'
             : `${needsYouCount} items need attention`
         }
+        /* The chip keeps reporting the queue; the subtitle reports the view.
+           Both are true and they answer different questions — "how much is
+           wrong" and "how much of it am I looking at". With a filter running
+           and only the chip on screen, the header claimed 38 while three rows
+           were visible. */
+        subtitle={
+          filtered.active
+            ? `showing ${renderedRows.length} of ${needsYouCount}`
+            : undefined
+        }
         actions={
           <a
             href="#/chat"
@@ -1366,7 +1556,7 @@ export const TriagePage = () => {
         /* Search + kind filter — always visible so the operator can narrow a
            35-row wall without scrolling first. */
         toolbar={
-          <>
+          <div className={`flex w-full items-center gap-2 ${MEASURE}`}>
             <div className="relative flex-1">
               <Search
                 size={13}
@@ -1407,24 +1597,49 @@ export const TriagePage = () => {
                 </option>
               ))}
             </SelectField>
-          </>
+          </div>
         }
       />
 
-      {/* Ranked list */}
-      <div className="flex-1 overflow-y-auto">
+      {/* Ranked list. `px-6` is the page gutter — the same one PageHeader
+          applies — so it is owned once here and inherited by every state
+          below rather than re-declared per branch. */}
+      <div className="flex-1 overflow-y-auto px-6">
         {isDown && renderedRows.length === 0 ? (
           <UnreachableState />
         ) : isLoading ? (
           <LoadingState />
+        ) : filteredToNothing ? (
+          <NoMatchesState
+            query={searchQuery}
+            kind={kindFilter}
+            total={needsYouCount}
+            onClear={() => {
+              setSearchQuery('')
+              setKindFilter('')
+            }}
+          />
         ) : !hasContent ? (
           <EmptyState running={running} doneToday={doneToday} />
         ) : (
           <div
-            /* A reading column. At 1680px a queue card put its headline on the
+            /* A reading column, sharing its left edge with the header above.
+               It used to centre itself inside the pane while the header sat at
+               the page gutter: measured at 1512px, the h1 and the search field
+               started at x=248 and every card started at x=344 and ran to
+               1392, so the list was inset 96px from its own header on the left
+               and overhung it 53px on the right — aligned to nothing. At
+               1024px the inset inverted (card 240 vs h1 248), which is why it
+               only showed up once the window was wide, which is where this
+               page is looked at.
+
+               MEASURE is the page's one column, applied here and to the
+               toolbar, so the two cannot drift apart again. The cap itself
+               earns its keep: at 1680px a queue card put its headline on the
                left, its timestamp 1500px away on the right, and nothing in
-               between — the eye had to traverse dead space to pair them. */
-            className="mx-auto flex w-full max-w-[1080px] flex-col gap-3 p-4"
+               between. The gutter belongs to the scroll container above, the
+               same way PageHeader owns its own. */
+            className={`flex w-full flex-col gap-3 py-4 ${MEASURE}`}
           >
             {/* Inline error cards — one per failing feed, never blanking the page */}
             {queueError && <FeedErrorCard label="action queue" error={queueError} />}

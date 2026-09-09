@@ -344,6 +344,66 @@ describe('TriageCauseGroupRow', () => {
     ).toBe('1task')
   })
 
+  it('gives each expanded member a line the others do not have', () => {
+    // Expanding "17 tasks · slice failed" used to reveal seventeen
+    // byte-identical cards — same chip, same priority, same age, same sentence
+    // — four screens of them. The only reason to open a cluster is to find out
+    // WHICH members are in it; the expansion answered nothing.
+    const members = [
+      makeItem('slice-failed', {
+        id: 'a',
+        entityId: '04b4e4e0-queue-position-ordering',
+        title: 'Mars could not turn this PRD into tasks.',
+        failureReasonCode: 'slice-failed/slicer-timeout',
+        verbs: [],
+      }),
+      makeItem('slice-failed', {
+        id: 'b',
+        entityId: '7f8d248a-merge-trains',
+        title: 'Mars could not turn this PRD into tasks.',
+        failureReasonCode: 'slice-failed/slicer-timeout',
+        verbs: [],
+      }),
+    ]
+    const group = { ...makeGroup(2), members, count: 2 }
+    act(() => {
+      root.render(<TriageCauseGroupRow group={group} />)
+    })
+    act(() => {
+      container
+        .querySelector<HTMLButtonElement>('[data-testid="cause-group-toggle"]')!
+        .click()
+    })
+
+    const names = [
+      ...container.querySelectorAll('[data-testid="cause-group-member-name"]'),
+    ].map((n) => n.textContent)
+    expect(names).toEqual(['04b4e4e0-queue-position-ordering', '7f8d248a-merge-trains'])
+    expect(new Set(names).size).toBe(names.length)
+  })
+
+  it('does not make a member repeat what the group header just said', () => {
+    const shared = 'Mars could not turn this PRD into tasks.'
+    const members = [
+      makeItem('slice-failed', { id: 'a', entityId: 'p1', title: shared, verbs: [] }),
+      makeItem('slice-failed', { id: 'b', entityId: 'p2', title: shared, verbs: [] }),
+    ]
+    const group = { ...makeGroup(2), members, count: 2 }
+    act(() => {
+      root.render(<TriageCauseGroupRow group={group} />)
+    })
+    act(() => {
+      container
+        .querySelector<HTMLButtonElement>('[data-testid="cause-group-toggle"]')!
+        .click()
+    })
+    const memberText = container.querySelector('[data-testid="cause-group-members"]')!.textContent ?? ''
+    expect(memberText).not.toContain(shared)
+    // The kind and the priority are properties of the GROUP — identical on
+    // every member by construction — so they are stated once, above.
+    expect(memberText).not.toContain('slice failed')
+  })
+
   it('never prints a raw slug on the face of the row', () => {
     // The daemon's `causeLabel` is frequently the failure slug itself. This row
     // preferred it over the mapped phrase, so a live queue showed
