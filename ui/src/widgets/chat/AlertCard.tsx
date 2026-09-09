@@ -285,25 +285,25 @@ const DetailExpander = ({ detail }: { detail: AlertHumanDetail }) => {
         >
           {detail.failureSignature && (
             <div>
-              <dt className="text-micro uppercase text-muted-foreground">Failure</dt>
+              <dt className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">Failure</dt>
               <dd className="font-mono text-micro text-muted-foreground">{detail.failureSignature}</dd>
             </div>
           )}
           {detail.branch && (
             <div>
-              <dt className="font-mono text-micro uppercase text-muted-foreground">Branch</dt>
+              <dt className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">Branch</dt>
               <dd className="font-mono text-micro text-muted-foreground">{detail.branch}</dd>
             </div>
           )}
           {detail.worktree && (
             <div>
-              <dt className="font-mono text-micro uppercase text-muted-foreground">Worktree</dt>
+              <dt className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">Worktree</dt>
               <dd className="font-mono text-micro text-muted-foreground break-all">{detail.worktree}</dd>
             </div>
           )}
           {detail.rawError && (
             <div>
-              <dt className="font-mono text-micro uppercase text-muted-foreground">Error</dt>
+              <dt className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">Error</dt>
               <dd>
                 <pre
                   className="max-w-[68ch] mt-0.5 max-h-32 overflow-y-auto rounded bg-primary/10 p-1.5 text-micro text-muted-foreground whitespace-pre-wrap leading-relaxed break-all"
@@ -316,7 +316,7 @@ const DetailExpander = ({ detail }: { detail: AlertHumanDetail }) => {
           )}
           {detail.changelog && (
             <div>
-              <dt className="text-micro uppercase text-muted-foreground">Changelog</dt>
+              <dt className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">Changelog</dt>
               <dd className="mt-0.5 chat-markdown prose prose-sm prose-invert max-w-none text-label">
                 <Response>{detail.changelog}</Response>
               </dd>

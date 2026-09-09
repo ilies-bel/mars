@@ -181,7 +181,7 @@ export const ToolInput = ({ className, input, ...props }: ToolInputProps) => {
   if (command !== undefined) {
     return (
       <div className={cn("space-y-2 overflow-hidden p-4", className)} {...props}>
-        <h4 className="font-medium text-muted-foreground text-label uppercase tracking-wide">
+        <h4 className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">
           Command
         </h4>
         <pre className="overflow-x-auto rounded-md bg-accent/50 p-3 text-label">
@@ -200,7 +200,7 @@ export const ToolInput = ({ className, input, ...props }: ToolInputProps) => {
           className={cn("space-y-2 overflow-hidden p-4", className)}
           {...props}
         >
-          <h4 className="font-medium text-muted-foreground text-label uppercase tracking-wide">
+          <h4 className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">
             Parameters
           </h4>
           <dl className="space-y-1 text-label">
@@ -223,7 +223,7 @@ export const ToolInput = ({ className, input, ...props }: ToolInputProps) => {
   // Fallback: pretty-printed JSON for genuinely unknown shapes.
   return (
     <div className={cn("space-y-2 overflow-hidden p-4", className)} {...props}>
-      <h4 className="font-medium text-muted-foreground text-label uppercase tracking-wide">
+      <h4 className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">
         Parameters
       </h4>
       <pre className="overflow-x-auto rounded-md bg-accent/50 p-3 text-label">
@@ -254,7 +254,7 @@ export const ToolOutput = ({
 
   return (
     <div className={cn("space-y-2 p-4", className)} {...props}>
-      <h4 className="font-medium text-muted-foreground text-label uppercase tracking-wide">
+      <h4 className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">
         {errorText ? "Error" : "Result"}
       </h4>
       <div

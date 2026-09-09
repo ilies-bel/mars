@@ -505,7 +505,7 @@ const StringList = ({ items }: { items: string[] }) =>
 /** One labelled cell in the compact meta grid. */
 const MetaCell = ({ label, value }: { label: string; value: ReactNode }) => (
   <div className="flex flex-col gap-0.5">
-    <span className="font-mono text-micro uppercase tracking-[0.08em] text-muted-foreground">
+    <span className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">
       {label}
     </span>
     <span className="break-all font-mono text-label text-foreground">{value}</span>
@@ -1051,7 +1051,7 @@ const ChangesSection = ({ taskId, taskStatus, changesData: injected, projectId, 
                     aria-expanded={hasHunks ? isExpanded : undefined}
                   >
                     <span
-                      className={`rounded border px-1 text-micro uppercase ${statusPillClass[f.status] ?? ''}`}
+                      className={`text-micro font-semibold uppercase tracking-[0.07em] rounded border px-1 ${statusPillClass[f.status] ?? ''} text-muted-foreground`}
                     >
                       {f.status}
                     </span>
@@ -1196,7 +1196,7 @@ export const TaskDetailBody = ({
           data-testid="task-detail-error"
           className="rounded border border-error/50 bg-error/5 px-3 py-2"
         >
-          <p className="text-label uppercase tracking-[0.1em] text-error">
+          <p className="text-micro font-semibold uppercase tracking-[0.07em] text-error">
             {task.status === 'failed' ? 'Failure' : isBlocked ? 'Blocked' : 'Error'}
           </p>
           {isBlocked ? (
@@ -1252,7 +1252,7 @@ export const TaskDetailBody = ({
                 </pre>
               ) : null}
               {task.failureSignature != null ? (
-                <p className="mt-1 text-micro uppercase tracking-[0.08em] text-error/50">
+                <p className="text-micro font-semibold uppercase tracking-[0.07em] mt-1 text-error/50">
                   {task.failureSignature}
                 </p>
               ) : null}
@@ -1278,7 +1278,7 @@ export const TaskDetailBody = ({
         promptIsLong ? (
           <div>
             <details>
-              <summary className="cursor-pointer select-none font-mono text-micro uppercase tracking-[0.08em] text-muted-foreground">
+              <summary className="text-micro font-semibold uppercase tracking-[0.07em] cursor-pointer select-none text-muted-foreground">
                 Prompt · {promptLineCount} lines
               </summary>
               <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-label text-foreground">
@@ -1334,7 +1334,7 @@ export const TaskDetailBody = ({
         <summary className={`cursor-pointer ${SECTION_LABEL}`}>Diagnostics</summary>
         <dl className="mt-2 flex flex-col gap-1.5">
           <div>
-            <dt className="font-mono text-micro uppercase tracking-[0.08em] text-muted-foreground">
+            <dt className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">
               Worktree
             </dt>
             <dd className="break-all font-mono text-label text-muted-foreground">
@@ -1343,7 +1343,7 @@ export const TaskDetailBody = ({
           </div>
           {task.blockerTaskId != null ? (
             <div>
-              <dt className="font-mono text-micro uppercase tracking-[0.08em] text-muted-foreground">
+              <dt className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">
                 Blocker task id
               </dt>
               <dd className="break-all font-mono text-label text-muted-foreground">
@@ -1353,7 +1353,7 @@ export const TaskDetailBody = ({
           ) : null}
           {task.blockedBy.length > 0 ? (
             <div>
-              <dt className="text-micro uppercase tracking-[0.08em] text-muted-foreground">
+              <dt className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">
                 Blocked by
               </dt>
               <dd>
@@ -1874,7 +1874,7 @@ const StepCardList = ({
     className="border-b border-border px-4 py-3"
   >
     <div className="mb-3 flex items-baseline justify-between">
-      <h3 className="text-label uppercase tracking-[0.1em] text-muted-foreground">
+      <h3 className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">
         Steps
       </h3>
       {studioHref !== undefined ? (
@@ -2024,7 +2024,7 @@ const ProposalStepTimeline = ({
     <div className="border-b border-border">
       {/* ── Proposal steps group ─────────────────────────────────────────── */}
       <section data-testid="step-group-proposal" className="px-4 py-3">
-        <h3 className="mb-2 text-label uppercase tracking-[0.1em] text-muted-foreground">
+        <h3 className="text-micro font-semibold uppercase tracking-[0.07em] mb-2 text-muted-foreground">
           Proposal steps
         </h3>
         {otherProposalSpans.length > 0 ? (
@@ -2054,7 +2054,7 @@ const ProposalStepTimeline = ({
           data-testid={`step-group-${taskId}`}
           className="border-t border-border px-4 py-3"
         >
-          <h3 className="mb-2 font-mono text-label uppercase tracking-[0.1em] text-muted-foreground">
+          <h3 className="text-micro font-semibold uppercase tracking-[0.07em] mb-2 text-muted-foreground">
             {taskId} &middot; {taskSpans.length} steps
           </h3>
           <ol className="flex flex-col">
@@ -2480,7 +2480,7 @@ export const TaskDetailDrawer = ({
           data-testid="task-detail-subgraph"
           className="border-b border-border px-4 py-3"
         >
-          <h3 className="mb-2 text-label uppercase tracking-[0.1em] text-muted-foreground">
+          <h3 className="text-micro font-semibold uppercase tracking-[0.07em] mb-2 text-muted-foreground">
             Context
           </h3>
           {/* Flex-wrap chip layout — each node is an HTML anchor chip so labels

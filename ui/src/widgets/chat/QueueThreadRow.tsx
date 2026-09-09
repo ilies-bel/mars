@@ -116,7 +116,7 @@ export const QueueThreadRow = memo(({
           <span aria-hidden="true" className="shrink-0 text-label text-muted-foreground">{KIND_ICON[item.kind]}</span>
           <span className="shrink-0 font-mono text-micro text-foreground">Mars</span>
           <span aria-hidden="true" className="text-muted-foreground">·</span>
-          <span className="shrink-0 text-micro uppercase text-muted-foreground">{kindBadgeLabel(item.kind)}</span>
+          <span className="text-micro font-semibold uppercase tracking-[0.07em] shrink-0 text-muted-foreground">{kindBadgeLabel(item.kind)}</span>
           {kindChip === 'alert' && (
             <span
               className="shrink-0 rounded bg-error/15 px-1.5 py-0.5 text-micro font-medium text-error"
@@ -144,7 +144,7 @@ export const QueueThreadRow = memo(({
             </span>
           )}
           <span
-            className={`ml-auto shrink-0 text-micro uppercase ${priorityBadgeClass(item.priority)}`}
+            className={`text-micro font-semibold uppercase tracking-[0.07em] ml-auto shrink-0 ${priorityBadgeClass(item.priority)} text-muted-foreground`}
           >
             {item.priority}
           </span>
@@ -218,7 +218,7 @@ export const QueueThreadRow = memo(({
                 e.stopPropagation()
                 onRestart(item.entityId)
               }}
-              className="shrink-0 border border-foreground/60 px-2 py-0.5 font-mono text-micro uppercase text-foreground transition hover:bg-primary/20 active:scale-[0.97] disabled:opacity-50"
+              className="text-micro font-semibold uppercase tracking-[0.07em] shrink-0 border border-foreground/60 px-2 py-0.5 text-foreground transition hover:bg-primary/20 active:scale-[0.97] disabled:opacity-50"
             >
               {restartPending ? 'Restarting…' : 'Restart'}
             </button>
@@ -237,7 +237,7 @@ export const QueueThreadRow = memo(({
             {nonRestartActions.slice(0, 3).map((a) => (
               <span
                 key={a.id}
-                className="border border-border px-1 font-mono text-micro uppercase text-muted-foreground"
+                className="text-micro font-semibold uppercase tracking-[0.07em] border border-border px-1 text-muted-foreground"
               >
                 {a.label}
               </span>

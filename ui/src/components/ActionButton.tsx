@@ -34,14 +34,16 @@ const VARIANT: Record<ActionVariant, string> = {
   secondary:
     'border border-border bg-surface text-foreground shadow-[var(--shadow-e1)] hover:border-border hover:bg-background active:bg-border/40',
   ghost:
-    'text-muted-foreground hover:bg-foreground/5 hover:text-foreground active:bg-foreground/10',
+    'border border-transparent text-muted-foreground hover:border-border hover:bg-foreground/5 hover:text-foreground active:bg-foreground/10',
   danger:
     'border border-error/25 bg-transparent text-error hover:border-error/60 hover:bg-error/10 active:bg-error/20',
   // For a destructive verb repeated down a list. `danger` puts error-red text
   // on every row, and twelve red words in a column stop reading as a warning
   // and start reading as decoration. This one is neutral until pointed at.
+  // The border is why it is not "bare text": a destructive action must have a
+  // bounding box you can aim at even while it is being visually quiet.
   'danger-ghost':
-    'text-muted-foreground hover:bg-error/10 hover:text-error active:bg-error/20',
+    'border border-border/70 text-muted-foreground hover:border-error/60 hover:bg-error/10 hover:text-error active:bg-error/20',
 }
 
 const SIZE: Record<ActionSize, string> = {

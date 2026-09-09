@@ -35,7 +35,7 @@ export const CollapsibleSection = ({
     data-testid={testId}
     className={`group ${className}`}
   >
-    <summary className="flex cursor-pointer list-none items-center gap-1.5 py-0.5 text-micro uppercase tracking-[0.08em] text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
+    <summary className="text-micro font-semibold uppercase tracking-[0.07em] flex cursor-pointer list-none items-center gap-1.5 py-0.5 text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
       {/* Rotate chevron 90° when the <details> is open via the group-open variant */}
       <span
         className="inline-block text-micro transition-transform group-open:rotate-90"

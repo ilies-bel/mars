@@ -185,7 +185,7 @@ export const ProjectSelectorInner = ({
                           disabled={isStarting}
                           onClick={(e) => onStart(p.projectId, e)}
                           data-testid={`start-btn-${p.projectId}`}
-                          className="rounded border border-border px-1.5 py-0.5 text-micro uppercase text-foreground hover:bg-primary/20 disabled:opacity-50"
+                          className="text-micro font-semibold uppercase tracking-[0.07em] rounded border border-border px-1.5 py-0.5 text-foreground hover:bg-primary/20 disabled:opacity-50"
                         >
                           {isStarting ? '…' : 'Start'}
                         </button>
@@ -196,7 +196,7 @@ export const ProjectSelectorInner = ({
                           disabled={isRestarting}
                           onClick={(e) => onRestart(p.projectId, e)}
                           data-testid={`restart-btn-${p.projectId}`}
-                          className="rounded border border-border px-1.5 py-0.5 text-micro uppercase text-foreground hover:bg-primary/20 disabled:opacity-50"
+                          className="text-micro font-semibold uppercase tracking-[0.07em] rounded border border-border px-1.5 py-0.5 text-foreground hover:bg-primary/20 disabled:opacity-50"
                         >
                           {isRestarting ? '…' : 'Restart'}
                         </button>

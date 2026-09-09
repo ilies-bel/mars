@@ -80,7 +80,7 @@ const EntryDetail = ({ entry }: EntryDetailProps) => {
           <p className={SECTION_LABEL}>Spec</p>
           {spec.files.length > 0 ? (
             <div>
-              <p className="text-micro uppercase tracking-[0.08em] text-muted-foreground">
+              <p className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">
                 Files
               </p>
               <StringList items={spec.files} />
@@ -88,7 +88,7 @@ const EntryDetail = ({ entry }: EntryDetailProps) => {
           ) : null}
           {spec.verifyCmd !== null ? (
             <div>
-              <p className="font-mono text-micro uppercase tracking-[0.08em] text-muted-foreground">
+              <p className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">
                 Verify
               </p>
               <p className="mt-0.5 break-all font-mono text-label text-foreground">
@@ -98,7 +98,7 @@ const EntryDetail = ({ entry }: EntryDetailProps) => {
           ) : null}
           {spec.doneCriteria.length > 0 ? (
             <div>
-              <p className="text-micro uppercase tracking-[0.08em] text-muted-foreground">
+              <p className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">
                 Done
               </p>
               <StringList items={spec.doneCriteria} />
@@ -319,7 +319,7 @@ export const ReleaseNotesModal = ({ onClose }: ReleaseNotesModalProps) => {
                           className="flex items-center gap-2 px-4 py-1.5"
                         >
                           <span className="h-px flex-1 bg-highlight/40" aria-hidden="true" />
-                          <span className="text-micro uppercase tracking-[0.1em] text-highlight">
+                          <span className="text-micro font-semibold uppercase tracking-[0.07em] text-highlight">
                             new since you were away
                           </span>
                           <span className="h-px flex-1 bg-highlight/40" aria-hidden="true" />

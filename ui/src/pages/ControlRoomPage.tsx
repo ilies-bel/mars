@@ -1,4 +1,4 @@
-import { ArrowRight, TriangleAlert } from 'lucide-react'
+import { ArrowRight, ChevronDown, TriangleAlert } from 'lucide-react'
 import { ActionButton, ActionLink } from '@/components/ActionButton'
 import { Chip } from '@/components/Chip'
 /**
@@ -672,7 +672,7 @@ const Stat = ({ label, value, colorClass }: StatProps) => (
     >
       {value}
     </span>
-    <span className="mt-0.5 text-micro uppercase tracking-widest text-muted-foreground">
+    <span className="text-micro font-semibold uppercase tracking-[0.07em] mt-0.5 text-muted-foreground">
       {label}
     </span>
   </div>
@@ -893,7 +893,7 @@ const AdvisorySection = () => {
               className="mars-card rounded bg-surface px-3 py-2"
             >
               <div className="flex items-start gap-2">
-                <span className="mt-0.5 shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-micro uppercase tracking-wide text-muted-foreground">
+                <span className="text-micro font-semibold uppercase tracking-[0.07em] mt-0.5 shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-muted-foreground">
                   {ADVISORY_LABELS[item.kind] ?? item.kind.replace(/-/g, ' ')}
                 </span>
                 <span className="text-body text-foreground">{item.title}</span>
@@ -940,7 +940,7 @@ const RulesSection = () => {
     <section>
       <button
         onClick={() => setExpanded((v) => !v)}
-        className="mb-3 flex w-full items-center justify-between"
+        className="mb-3 -mx-2 flex w-full items-center justify-between rounded-md px-2 py-1.5 transition-colors hover:bg-foreground/5"
         aria-expanded={expanded}
       >
         <SectionLabel>Rules &amp; Language</SectionLabel>
@@ -951,7 +951,7 @@ const RulesSection = () => {
           ].join(' ')}
           aria-hidden="true"
         >
-          ▾
+          <ChevronDown size={12} strokeWidth={2} aria-hidden="true" />
         </span>
       </button>
 
@@ -1049,7 +1049,7 @@ const StewardHistorySection = () => {
 
       {data && (
         <div className="mars-card mb-4 rounded bg-surface px-4 py-3">
-          <div className="mb-1 text-micro uppercase tracking-widest text-muted-foreground">
+          <div className="text-micro font-semibold uppercase tracking-[0.07em] mb-1 text-muted-foreground">
             Concurrency cap ratchet
           </div>
           <CapRatchet
@@ -1406,7 +1406,7 @@ const HotPathSection = () => {
 
           {/* ── Top-10 text list ─────────────────────────────────────────── */}
           <div data-testid="hot-path-top10">
-            <div className="mb-1 font-mono text-micro uppercase tracking-widest text-muted-foreground">
+            <div className="text-micro font-semibold uppercase tracking-[0.07em] mb-1 text-muted-foreground">
               Top files by commit count
             </div>
             <ol className="flex flex-col gap-0.5">

@@ -46,7 +46,7 @@ function TaskTracePanel({ taskId }: { taskId: string }) {
       {data.events.map((e) => (
         <li key={e.id} className={`font-mono text-micro ${traceEventRowClass(e.severity)}`}>
           <span className="text-muted-foreground">{relativeTime(e.timestamp)}</span>{' '}
-          <span className={`uppercase ${severityColor(e.severity)}`}>
+          <span className={`text-micro font-semibold uppercase tracking-[0.07em] ${severityColor(e.severity)} text-muted-foreground`}>
             [{e.severity}]
           </span>{' '}
           <span className="text-muted-foreground">{e.kind}</span>{' '}
@@ -104,7 +104,7 @@ export default function ArcChainRail({
                 selectedId === node.id ? 'bg-primary/15 font-bold text-foreground' : 'text-foreground',
               ].join(' ')}
             >
-              <span className="shrink-0 text-micro uppercase text-muted-foreground">
+              <span className="text-micro font-semibold uppercase tracking-[0.07em] shrink-0 text-muted-foreground">
                 {node.kind === 'proposal'
                   ? 'Proposal'
                   : node.attemptIndex !== undefined
@@ -113,7 +113,7 @@ export default function ArcChainRail({
               </span>
               <span className="break-words">{node.label}</span>
               {node.status ? (
-                <span className="ml-auto shrink-0 text-micro uppercase text-muted-foreground">
+                <span className="text-micro font-semibold uppercase tracking-[0.07em] ml-auto shrink-0 text-muted-foreground">
                   {node.status}
                 </span>
               ) : null}
@@ -129,13 +129,13 @@ export default function ArcChainRail({
           data-node-id={selectedNode.id}
         >
           <div>
-            <p className="mb-1 text-micro uppercase tracking-wider text-muted-foreground">Prompt</p>
+            <p className="text-micro font-semibold uppercase tracking-[0.07em] mb-1 text-muted-foreground">Prompt</p>
             <p className="whitespace-pre-wrap font-mono text-body text-foreground">
               {selectedNode.label}
             </p>
           </div>
           <div>
-            <p className="mb-1 text-micro uppercase tracking-wider text-muted-foreground">Traces</p>
+            <p className="text-micro font-semibold uppercase tracking-[0.07em] mb-1 text-muted-foreground">Traces</p>
             <TaskTracePanel taskId={selectedNode.id} />
           </div>
         </aside>

@@ -17,7 +17,7 @@ export const CostPerMergedTaskTile = () => {
 
   if (isLoading) {
     return (
-      <SkeletonBlock className="w-[180px] min-h-[120px] rounded border border-border" />
+      <SkeletonBlock className="w-full min-h-[120px] rounded border border-border" />
     )
   }
 
@@ -29,7 +29,7 @@ export const CostPerMergedTaskTile = () => {
       <a
         href={kpiHash('cost-per-merged-task')}
         data-testid="cost-per-merged-task-error"
-        className="flex w-[180px] min-h-[120px] flex-col items-center justify-center rounded border border-error/40 bg-card px-4 py-2 text-center font-mono text-body text-error no-underline hover:bg-error/5"
+        className="flex w-full min-h-[120px] flex-col items-center justify-center rounded border border-error/40 bg-card px-4 py-2 text-center font-mono text-body text-error no-underline hover:bg-error/5"
         aria-label="Cost / merged task failed to load"
       >
         Cost / merged task: failed to load
@@ -49,7 +49,7 @@ export const CostPerMergedTaskTile = () => {
     return (
       <a
         href={kpiHash('cost-per-merged-task')}
-        className="kpi-tile--low-confidence flex w-[180px] min-h-[120px] flex-col items-center justify-center rounded border border-border bg-card px-4 py-2 font-mono text-muted-foreground text-body no-underline hover:bg-foreground/5"
+        className="kpi-tile--low-confidence flex w-full min-h-[120px] flex-col items-center justify-center rounded border border-border bg-card px-4 py-2 font-mono text-muted-foreground text-body no-underline hover:bg-foreground/5"
         aria-label="View Cost / merged task details"
       >
         Cost / merged task: insufficient data
@@ -79,10 +79,10 @@ export const CostPerMergedTaskTile = () => {
   return (
     <a
       href={kpiHash('cost-per-merged-task')}
-      className="flex w-[180px] min-h-[120px] flex-col items-center justify-between rounded border border-border bg-card px-4 py-2 font-mono no-underline hover:bg-foreground/5"
+      className="flex w-full min-h-[120px] flex-col items-center justify-between rounded border border-border bg-card px-4 py-2 font-mono no-underline hover:bg-foreground/5"
       aria-label="View Cost / merged task details"
     >
-      <span className="text-micro uppercase tracking-wide text-muted-foreground">
+      <span className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">
         Cost / merged task
       </span>
       <Sparkline points={sparklinePoints} />

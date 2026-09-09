@@ -219,33 +219,20 @@ export const CapRatchet = ({
           strokeLinecap="square"
           className="text-success"
         />
-        {/* Time axis: label the first and last transition timestamps */}
-        {firstEntry !== undefined && (
-          <text
-            x={xLeft}
-            y={SVG_H - 2}
-            fontSize={7}
-            fill="currentColor"
-            fillOpacity={0.5}
-            className="text-muted-foreground"
-          >
-            {formatShortDate(firstEntry.timestamp)}
-          </text>
-        )}
-        {lastEntry !== undefined && lastEntry !== firstEntry && (
-          <text
-            x={xRight}
-            y={SVG_H - 2}
-            fontSize={7}
-            fill="currentColor"
-            fillOpacity={0.5}
-            textAnchor="end"
-            className="text-muted-foreground"
-          >
-            {formatShortDate(lastEntry.timestamp)}
-          </text>
-        )}
       </svg>
+      {/* Axis labels as HTML: the chart is width=100% over a fixed 400x56
+          viewBox with preserveAspectRatio=none, so it stretches ~4.5x and
+          fontSize=7 text inside it RENDERED at ~32px, smeared and unhinted. */}
+      {(firstEntry !== undefined || lastEntry !== undefined) && (
+        <div className="mt-0.5 flex items-baseline justify-between text-micro text-muted-foreground">
+          <span>{firstEntry !== undefined ? formatShortDate(firstEntry.timestamp) : ''}</span>
+          <span>
+            {lastEntry !== undefined && lastEntry !== firstEntry
+              ? formatShortDate(lastEntry.timestamp)
+              : ''}
+          </span>
+        </div>
+      )}
 
       {/* Raw transitions — collapsed by default, available for exact sequence inspection */}
       {entries.length > 0 && (
@@ -316,7 +303,7 @@ const RuntimeTuningLane = ({ data }: { data: StewardView['runtimeTuning'] }) => 
 
       {/* Acks — Steward's own first-person voice, newest first */}
       <div className="space-y-2">
-        <div className="text-micro uppercase tracking-wide text-muted-foreground">
+        <div className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">
           Steward acknowledgments ({acks.length})
         </div>
         {acks.length === 0 ? (
@@ -402,7 +389,7 @@ const SignatureStormLane = ({ data }: { data: StewardView['signatureStorm'] }) =
 
       <div className="grid grid-cols-2 gap-3">
         <div className="rounded border border-border/50 bg-muted/20 p-3">
-          <div className="text-micro uppercase tracking-wide text-muted-foreground">
+          <div className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">
             Breaker (Postgres)
           </div>
           <div
@@ -418,7 +405,7 @@ const SignatureStormLane = ({ data }: { data: StewardView['signatureStorm'] }) =
           )}
         </div>
         <div className="rounded border border-border/50 bg-muted/20 p-3">
-          <div className="text-micro uppercase tracking-wide text-muted-foreground">
+          <div className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">
             Dispatch (in-memory)
           </div>
           <div
@@ -433,7 +420,7 @@ const SignatureStormLane = ({ data }: { data: StewardView['signatureStorm'] }) =
 
       <div className="mt-3 space-y-1">
         <div className="flex items-baseline gap-2">
-          <span className="text-micro text-muted-foreground uppercase tracking-wide w-28">
+          <span className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground w-28">
             Streak count
           </span>
           <span className="font-mono text-body font-semibold text-foreground" data-testid="storm-streak">
@@ -443,7 +430,7 @@ const SignatureStormLane = ({ data }: { data: StewardView['signatureStorm'] }) =
         </div>
         {current_signature !== null && (
           <div className="flex items-baseline gap-2">
-            <span className="font-mono text-micro text-muted-foreground uppercase tracking-wide w-28">
+            <span className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground w-28">
               Signature
             </span>
             <code
@@ -456,7 +443,7 @@ const SignatureStormLane = ({ data }: { data: StewardView['signatureStorm'] }) =
         )}
         {last_task_id !== null && (
           <div className="flex items-baseline gap-2">
-            <span className="font-mono text-micro text-muted-foreground uppercase tracking-wide w-28">
+            <span className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground w-28">
               Last task
             </span>
             <code className="font-mono text-micro text-muted-foreground">{last_task_id}</code>
@@ -464,7 +451,7 @@ const SignatureStormLane = ({ data }: { data: StewardView['signatureStorm'] }) =
         )}
         {signatureStormAqCount > 0 && (
           <div className="flex items-baseline gap-2">
-            <span className="text-micro text-muted-foreground uppercase tracking-wide w-28">
+            <span className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground w-28">
               AQ items
             </span>
             <span className="font-mono text-label text-error" data-testid="storm-aq-count">
@@ -773,7 +760,7 @@ export const StewardPage = () => {
 
       {/* Agent spec footer */}
       <footer className="mt-2 rounded border border-border/30 bg-muted/10 px-4 py-3">
-        <div className="mb-1 text-micro uppercase tracking-wide text-muted-foreground">
+        <div className="text-micro font-semibold uppercase tracking-[0.07em] mb-1 text-muted-foreground">
           Agent spec — {data.agentSpec.name} ({data.agentSpec.dispatchSites} dispatch site{data.agentSpec.dispatchSites !== 1 ? 's' : ''})
         </div>
         <div className="flex flex-wrap gap-x-4 gap-y-1 font-mono text-micro text-muted-foreground">

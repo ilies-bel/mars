@@ -24,6 +24,14 @@ const toPolylinePoints = (scores: number[]): string => {
     .join(' ')
 }
 
+/**
+ * The same points closed down to the baseline, so the line can carry a wash.
+ * A bare 1px polyline on an empty box reads as a debug artefact; the fill is
+ * what makes it read as a chart.
+ */
+const toAreaPoints = (scores: number[]): string =>
+  `0,${CHART_H} ${toPolylinePoints(scores)} ${CHART_W},${CHART_H}`
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
@@ -152,12 +160,32 @@ export const WatchtowerTrendChart = ({
       {scores.length === 0 ? (
         <p className="text-body text-muted-foreground">No scores yet</p>
       ) : (
+        <div className="relative w-full">
         <svg
-          width={CHART_W}
+          width="100%"
           height={CHART_H}
           viewBox={`0 0 ${CHART_W} ${CHART_H}`}
+          /* The card is ~1000px and the chart was a fixed 240px sitting in it,
+           * so the panel read as ~90% empty. It stretches to the card now.
+           * preserveAspectRatio="none" would normally thin the vertical parts
+           * of a stroke under that stretch; vector-effect pins stroke width to
+           * device pixels, so the line stays 1.5px in every direction. */
+          preserveAspectRatio="none"
           aria-label={`Score trend for ${workflow}`}
         >
+          <defs>
+            <linearGradient id={`trendfill-${workflow}`} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="currentColor" stopOpacity={0.18} />
+              <stop offset="100%" stopColor="currentColor" stopOpacity={0} />
+            </linearGradient>
+          </defs>
+          {/* Baseline — the chart had no floor, so a low score and an empty
+              chart looked the same. */}
+          <line
+            x1={0} y1={CHART_H} x2={CHART_W} y2={CHART_H}
+            stroke="currentColor" strokeWidth={1} strokeOpacity={0.2}
+            vectorEffect="non-scaling-stroke"
+          />
           {/* Version-boundary vertical dashed rules */}
           {boundaryXs.map(({ version, x }) => (
             <line
@@ -170,6 +198,7 @@ export const WatchtowerTrendChart = ({
               strokeWidth={1}
               strokeOpacity={0.35}
               strokeDasharray="2 2"
+              vectorEffect="non-scaling-stroke"
             />
           ))}
 
@@ -184,9 +213,11 @@ export const WatchtowerTrendChart = ({
               strokeWidth={1}
               strokeOpacity={0.25}
               strokeDasharray="3 3"
+              vectorEffect="non-scaling-stroke"
             />
           )}
 
+          <polygon points={toAreaPoints(scores)} fill={`url(#trendfill-${workflow})`} stroke="none" />
           {/* main score trend — solid */}
           <polyline
             points={toPolylinePoints(scores)}
@@ -195,8 +226,19 @@ export const WatchtowerTrendChart = ({
             strokeWidth={1.5}
             strokeLinejoin="round"
             strokeLinecap="round"
+            vectorEffect="non-scaling-stroke"
           />
         </svg>
+        {/* Last value marker, drawn in HTML rather than SVG: the chart is
+            stretched non-uniformly, so an SVG <circle> would render as an
+            ellipse. The final sample is always at the right edge. */}
+        <span
+          aria-hidden="true"
+          data-testid="trend-last-marker"
+          className="pointer-events-none absolute right-0 h-1.5 w-1.5 -translate-x-1/2 translate-y-1/2 rounded-full bg-current"
+          style={{ bottom: `${(scores[scores.length - 1] ?? 0) * 100}%` }}
+        />
+        </div>
       )}
     </div>
   )

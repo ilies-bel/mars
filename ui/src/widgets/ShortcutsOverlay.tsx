@@ -110,7 +110,7 @@ export const ShortcutsOverlay = ({ onClose }: ShortcutsOverlayProps) => {
           className="modal-panel flex w-full max-w-sm flex-col rounded-lg border border-border bg-background shadow-2xl outline-none"
         >
           <header className="flex items-center justify-between border-b border-border px-4 py-3">
-            <h2 className="text-title uppercase tracking-wide text-muted-foreground">
+            <h2 className="text-section font-semibold text-foreground">
               Keyboard Shortcuts
             </h2>
             <button

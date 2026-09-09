@@ -148,7 +148,7 @@ const ProposalCard = ({ proposal }: { proposal: ProgressProposalNode }) => {
     >
       {/* Row 1: source badge + id (id is an anchor for right-click and testability) */}
       <div className="flex items-center justify-between gap-1 min-w-0">
-        <span className="font-mono text-micro font-semibold uppercase tracking-wide text-muted-foreground">
+        <span className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">
           {proposal.source}
         </span>
         <a

@@ -453,7 +453,7 @@ export const StudioView = ({ taskId, timeline, stepPrompts, nowMs, fetchImpl }: 
       {runs.map((run, runIdx) => (
         <section key={run.runId} data-testid="studio-run" data-run-id={run.runId}>
           <header className="mb-2 flex flex-wrap items-baseline gap-2">
-            <h3 className="font-mono text-label uppercase tracking-[0.1em] text-muted-foreground">
+            <h3 className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">
               Run {runIdx + 1} of {runs.length}
             </h3>
             {/* runId is a long internal string (e.g. scorer-bc1661fb-…); keep it

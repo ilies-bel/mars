@@ -101,7 +101,7 @@ export const executorLabel = (executor: PrimitiveDetail['primitive']['executor']
 // ── Section chrome ────────────────────────────────────────────────────────────
 
 const SectionLabel = ({ children }: { children: ReactNode }) => (
-  <p className="mb-2 text-micro uppercase tracking-wide text-muted-foreground">
+  <p className="text-micro font-semibold uppercase tracking-[0.07em] mb-2 text-muted-foreground">
     {children}
   </p>
 )
@@ -116,7 +116,7 @@ const WorkerProfileCard = ({ profile }: { profile: PrimitiveWorkerProfile }) => 
     <div className="flex flex-wrap items-baseline gap-2">
       <span className="font-mono text-body font-semibold text-foreground">{profile.workerName}</span>
       {profile.source === 'registry' ? (
-        <span className="rounded border border-warn/40 bg-warn/5 px-1 text-micro uppercase tracking-wide text-warn">
+        <span className="text-micro font-semibold uppercase tracking-[0.07em] rounded border border-warn/40 bg-warn/5 px-1 text-warn">
           registry
         </span>
       ) : null}
@@ -127,7 +127,7 @@ const WorkerProfileCard = ({ profile }: { profile: PrimitiveWorkerProfile }) => 
     </p>
     {profile.forfeitedTools.length > 0 ? (
       <div className="mt-1 flex flex-col gap-0.5">
-        <span className="text-micro uppercase tracking-wide text-muted-foreground">
+        <span className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">
           Forfeited tools
         </span>
         <ul className="flex flex-wrap gap-1">
@@ -325,7 +325,7 @@ export const PrimitiveDetailDrawer = ({
               <div className="flex flex-wrap items-center gap-2">
                 <span
                   data-testid="primitive-detail-executor"
-                  className="inline-flex items-center rounded bg-primary/10 px-1.5 py-0.5 text-micro font-semibold uppercase tracking-wide text-muted-foreground"
+                  className="text-micro font-semibold uppercase tracking-[0.07em] inline-flex items-center rounded bg-primary/10 px-1.5 py-0.5 text-muted-foreground"
                 >
                   {executorLabel(detail.primitive.executor)}
                 </span>

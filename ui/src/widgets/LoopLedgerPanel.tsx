@@ -66,7 +66,7 @@ export const LoopLedgerPanel = () => {
       ) : (
         <table className="w-full text-body">
           <thead>
-            <tr className="text-left text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">
+            <tr className="text-micro font-semibold uppercase tracking-[0.07em] text-left text-muted-foreground">
               <th className="pb-1 pr-2 font-normal">Run</th>
               <th className="pb-1 pr-2 font-normal">Scored at</th>
               <th className="pb-1 pr-2 font-normal">Score</th>

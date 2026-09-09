@@ -97,7 +97,7 @@ export const ErrorState = ({
       className="flex h-full flex-col items-center justify-center px-6 text-center"
     >
       <div className="max-w-lg border border-border bg-primary/10 p-6 text-left">
-        <p className="text-body uppercase tracking-wide text-foreground">
+        <p className="text-section font-semibold text-foreground">
           <AlertTriangle size={12} strokeWidth={2} aria-hidden="true" className="mr-1 inline-block align-[-2px]" />
           {fb.headline}
         </p>

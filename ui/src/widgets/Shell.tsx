@@ -296,7 +296,7 @@ export const ShellSidebar = ({
       <div className="flex-1">
         {scrolling.map((group) => (
           <div key={group.label} className="mb-4 last:mb-0">
-            <p className="px-4 pb-1.5 text-micro font-semibold uppercase tracking-[0.09em] text-muted-dark">
+            <p className="text-micro font-semibold uppercase tracking-[0.07em] px-4 pb-1.5 text-muted-dark">
               {group.label}
             </p>
             <div className="flex flex-col gap-px">

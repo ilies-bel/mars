@@ -656,7 +656,7 @@ const TopologyViewInner = ({
             No dependencies between active arcs.
           </p>
         )}
-        <p className="text-micro leading-relaxed text-muted-foreground">
+        <p className="text-label leading-relaxed text-muted-foreground">
           scroll = zoom · drag = pan
           <br />
           {hintText ? (

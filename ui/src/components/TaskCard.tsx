@@ -106,7 +106,7 @@ export const TaskCard = memo(({ task, index }: Props) => {
         </a>
         <div className="flex shrink-0 items-center gap-1.5">
           {isLive ? (
-            <span className="inline-flex items-center gap-1 text-micro font-semibold uppercase tracking-wide text-status-running">
+            <span className="text-micro font-semibold uppercase tracking-[0.07em] inline-flex items-center gap-1 text-status-running">
               <span
                 aria-hidden="true"
                 className="inline-block h-1.5 w-1.5 rounded-full bg-status-running motion-safe:animate-mars-pulse"

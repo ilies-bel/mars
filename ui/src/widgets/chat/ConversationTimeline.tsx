@@ -1,4 +1,5 @@
 import { Fragment, useRef, useState } from 'react'
+import { ChevronUp } from 'lucide-react'
 import type { ChatConversationEntry, PreloadedResponse, SubjectBoundary } from '@/shared/schemas'
 import { MemoryBoundaryLine } from './MemoryBoundaryLine'
 import { PreloadedResponses } from './PreloadedResponses'
@@ -175,8 +176,12 @@ export const ConversationTimeline = ({
           type="button"
           onClick={() => setVisibleSubjectCount((c) => c + INITIAL_SUBJECTS)}
           data-testid="show-earlier-button"
-          className="inline-flex min-h-[24px] items-center px-2 py-1 text-micro uppercase text-foreground underline"
+          /* Was an all-caps underlined anchor with no chrome — the only
+             control in the transcript that looked like raw HTML. It is a
+             button, so it looks like one. */
+          className="mx-auto inline-flex h-7 items-center gap-1.5 rounded-md border border-border bg-surface px-2.5 text-label font-medium text-muted-foreground shadow-[var(--shadow-e1)] transition-colors hover:bg-background hover:text-foreground"
         >
+          <ChevronUp size={12} strokeWidth={2} aria-hidden="true" />
           Show {hiddenSubjectCount} earlier
         </button>
       )}

@@ -150,7 +150,9 @@ describe('WatchtowerTrendChart', () => {
     const html = renderToStaticMarkup(
       <WatchtowerTrendChart workflow="implement" />,
     )
-    expect(html).not.toContain('<line')
+    // The chart always draws a baseline now, so "no <line> at all" no longer
+    // isolates the p90 rule. The p90 rule is the one with a 3-3 dash.
+    expect(html).not.toContain('stroke-dasharray="3 3"')
   })
 
   it('renders a version chip with delta when two config versions span the visible window', async () => {

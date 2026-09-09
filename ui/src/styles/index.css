@@ -478,6 +478,23 @@
 .chat-prose td { border: 1px solid var(--color-border); padding: 0.3rem 0.5rem; text-align: left; }
 .chat-prose th { font-weight: 600; background: var(--color-panel); }
 
+/* One corner on every control.
+ *
+ * A census of the rendered app found 193 controls at 6px and 32 at 4px — two
+ * radii two pixels apart, which reads as sloppiness rather than as a
+ * distinction. `rounded` (Tailwind's 4px) on an interactive element is
+ * normalised to the same 6px as `rounded-md`. `[class~=]` matches the token
+ * exactly, so `rounded-full` pills and `rounded-lg` cards are untouched.
+ *
+ * This has to be unlayered: Tailwind puts `.rounded` in @layer utilities,
+ * which beats @layer base whatever the specificity, and unlayered rules beat
+ * every layer. */
+button[class~="rounded"],
+[role="button"][class~="rounded"],
+a[href][class~="rounded"] {
+  border-radius: var(--radius-md);
+}
+
 /* Mouse/touch presses must not paint the ring. */
 *:focus:not(:focus-visible) {
   outline: none;
@@ -677,12 +694,20 @@ html {
       background-color 160ms ease-out,
       transform 160ms ease-out;
   }
+  /* A row under the pointer answers with a warm tint and a firmer edge. That
+   * is a scanning aid and it costs nothing if the row is inert. No transform,
+   * so a list never jitters as the cursor crosses it. */
   .mars-card:hover {
     border-color: color-mix(in srgb, var(--color-border) 90%, transparent);
-    /* A queue row is the unit of interaction; it has to answer the pointer.
-     * One elevation step plus a warm tint — no transform, so a list of rows
-     * never jitters as the cursor crosses it. */
     background-color: color-mix(in srgb, var(--color-panel) 60%, var(--color-surface));
+  }
+  /* The ELEVATION step is reserved for a card you can actually pick up. A
+   * queue row whose buttons are the only interactive parts was lifting on
+   * hover while reporting `cursor: default` — it looked clickable and wasn't. */
+  a.mars-card:hover,
+  button.mars-card:hover,
+  .mars-card[role="button"]:hover,
+  .mars-card[class*="cursor-pointer"]:hover {
     box-shadow: var(--shadow-e3);
   }
 }
