@@ -1,3 +1,4 @@
+import { ChevronRight } from 'lucide-react'
 /**
  * Topology view — React Flow (@xyflow/react) + deterministic dagre layout.
  *
@@ -225,7 +226,7 @@ const FanoutBundleNode = memo(({ data }: NodeProps<Node<FanoutBundleNodeData>>) 
     <span className="font-mono text-label text-muted-dark">
       {data.count} linked tasks
     </span>
-    <span className="text-micro text-muted-dark opacity-60">▸</span>
+    <ChevronRight size={11} strokeWidth={2} aria-hidden="true" className="text-muted-dark" />
   </div>
 ))
 FanoutBundleNode.displayName = 'FanoutBundleNode'
@@ -541,7 +542,7 @@ const TopologyViewInner = ({
         {selectedProposalId != null ? (
           <div className="flex flex-col items-center gap-3 text-center">
             <span
-              className="select-none font-mono text-5xl leading-none text-muted-foreground/20"
+              className="select-none font-mono text-5xl leading-none text-muted-foreground"
               aria-hidden="true"
             >
               ◈
@@ -559,7 +560,7 @@ const TopologyViewInner = ({
         ) : (
           <div className="flex flex-col items-center gap-3 text-center">
             <span
-              className="select-none font-mono text-5xl leading-none text-muted-foreground/20"
+              className="select-none font-mono text-5xl leading-none text-muted-foreground"
               aria-hidden="true"
             >
               ◈

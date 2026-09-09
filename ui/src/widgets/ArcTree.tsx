@@ -197,7 +197,7 @@ export const ArcTree = ({ dag, entityId, entityStatus, onOpenTask }: ArcTreeProp
                 style={{ backgroundColor: statusColor }}
               />
               {/* Kind label */}
-              <span className="font-mono text-micro uppercase text-primary">
+              <span className="font-mono text-micro uppercase text-muted-foreground">
                 {row.kind}
               </span>
               {/* Task ID — selectable, copyable, break-all per OriginTree */}
@@ -218,7 +218,7 @@ export const ArcTree = ({ dag, entityId, entityStatus, onOpenTask }: ArcTreeProp
             {row.isCenter && (
               <a
                 href={arcQaHash(row.id)}
-                className="shrink-0 font-mono text-micro text-primary underline decoration-primary/40 hover:decoration-primary"
+                className="shrink-0 font-mono text-micro text-highlight underline decoration-primary/40 hover:decoration-primary"
                 title="View QA walk"
               >
                 QA

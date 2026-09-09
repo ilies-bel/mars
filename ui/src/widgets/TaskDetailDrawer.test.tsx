@@ -998,7 +998,7 @@ describe('TaskDetailDrawer – drill-in breadcrumb', () => {
     expect(html).toContain('data-crumb-id="c"')
   })
 
-  it('separates crumbs with the ▸ glyph', () => {
+  it('separates crumbs with a chevron icon', () => {
     const html = renderDrawer(
       <TaskDetailDrawer
         taskId="c"
@@ -1007,7 +1007,7 @@ describe('TaskDetailDrawer – drill-in breadcrumb', () => {
       />,
     )
     // Two separators for a three-crumb trail.
-    expect((html.match(/▸/g) ?? []).length).toBe(2)
+    expect((html.match(/lucide-chevron-right/g) ?? []).length).toBe(2)
   })
 
   it('renders earlier crumbs as buttons and the current crumb as non-button', () => {

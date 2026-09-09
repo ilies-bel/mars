@@ -1,3 +1,4 @@
+import { ChevronRight } from 'lucide-react'
 /**
  * StewardPage — what the Steward is wired to do and what it has actually done.
  *
@@ -16,7 +17,7 @@ import { FallbackSurface } from '@/components/FallbackSurface'
 import { CollapsibleSection } from '@/components/CollapsibleSection'
 import { useStewardView } from './useStewardView'
 import type { StewardView } from './useStewardView'
-import { PageHeader, SectionHeading } from '@/widgets/primitives/DensityPrimitives'
+import { PageBody, PageHeader, PageShell, SectionHeading } from '@/widgets/primitives/DensityPrimitives'
 import { formatAbsoluteDateTime, formatShortDate } from '@/shared/time'
 import { invokeAction } from '@/shared/api'
 
@@ -154,7 +155,7 @@ export const CapRatchet = ({
           title={`ceiling: ${ceiling}`}
         />
         <div
-          className="absolute top-0 h-full w-px bg-primary/40"
+          className="absolute top-0 h-full w-px bg-foreground/35"
           style={{ left: toPercent(baseline) }}
           title={`baseline: ${baseline}`}
         />
@@ -206,7 +207,7 @@ export const CapRatchet = ({
           strokeWidth={1}
           strokeOpacity={0.3}
           strokeDasharray="3 2"
-          className="text-primary"
+          className="text-muted-foreground"
         />
         {/* Step polyline — the cap level over time */}
         <polyline
@@ -249,14 +250,14 @@ export const CapRatchet = ({
       {/* Raw transitions — collapsed by default, available for exact sequence inspection */}
       {entries.length > 0 && (
         <details className="mt-1">
-          <summary className="cursor-pointer text-micro text-muted-foreground/40 hover:text-muted-foreground/70 select-none">
-            ▸ raw transitions
+          <summary className="cursor-pointer text-micro text-muted-foreground hover:text-muted-foreground select-none">
+            <ChevronRight size={11} strokeWidth={2} aria-hidden="true" /> raw transitions
           </summary>
-          <div className="mt-1 flex flex-wrap items-center gap-1 text-micro text-muted-foreground">
-            <span className="text-primary">{baseline}</span>
+          <div className="mt-1 flex flex-wrap items-center gap-1 text-label text-muted-foreground">
+            <span className="text-muted-foreground">{baseline}</span>
             {entries.map((e) => (
               <span key={e.timestamp} className="flex items-center gap-1">
-                <span className="text-muted-foreground/50">→</span>
+                <span className="text-muted-foreground">→</span>
                 <span className="text-success">{e.to}</span>
               </span>
             ))}
@@ -315,7 +316,7 @@ const RuntimeTuningLane = ({ data }: { data: StewardView['runtimeTuning'] }) => 
 
       {/* Acks — Steward's own first-person voice, newest first */}
       <div className="space-y-2">
-        <div className="text-micro uppercase tracking-wide text-muted-foreground/70">
+        <div className="text-micro uppercase tracking-wide text-muted-foreground">
           Steward acknowledgments ({acks.length})
         </div>
         {acks.length === 0 ? (
@@ -401,7 +402,7 @@ const SignatureStormLane = ({ data }: { data: StewardView['signatureStorm'] }) =
 
       <div className="grid grid-cols-2 gap-3">
         <div className="rounded border border-border/50 bg-muted/20 p-3">
-          <div className="text-micro uppercase tracking-wide text-muted-foreground/70">
+          <div className="text-micro uppercase tracking-wide text-muted-foreground">
             Breaker (Postgres)
           </div>
           <div
@@ -417,7 +418,7 @@ const SignatureStormLane = ({ data }: { data: StewardView['signatureStorm'] }) =
           )}
         </div>
         <div className="rounded border border-border/50 bg-muted/20 p-3">
-          <div className="text-micro uppercase tracking-wide text-muted-foreground/70">
+          <div className="text-micro uppercase tracking-wide text-muted-foreground">
             Dispatch (in-memory)
           </div>
           <div
@@ -432,7 +433,7 @@ const SignatureStormLane = ({ data }: { data: StewardView['signatureStorm'] }) =
 
       <div className="mt-3 space-y-1">
         <div className="flex items-baseline gap-2">
-          <span className="text-micro text-muted-foreground/70 uppercase tracking-wide w-28">
+          <span className="text-micro text-muted-foreground uppercase tracking-wide w-28">
             Streak count
           </span>
           <span className="font-mono text-body font-semibold text-foreground" data-testid="storm-streak">
@@ -442,7 +443,7 @@ const SignatureStormLane = ({ data }: { data: StewardView['signatureStorm'] }) =
         </div>
         {current_signature !== null && (
           <div className="flex items-baseline gap-2">
-            <span className="font-mono text-micro text-muted-foreground/70 uppercase tracking-wide w-28">
+            <span className="font-mono text-micro text-muted-foreground uppercase tracking-wide w-28">
               Signature
             </span>
             <code
@@ -455,7 +456,7 @@ const SignatureStormLane = ({ data }: { data: StewardView['signatureStorm'] }) =
         )}
         {last_task_id !== null && (
           <div className="flex items-baseline gap-2">
-            <span className="font-mono text-micro text-muted-foreground/70 uppercase tracking-wide w-28">
+            <span className="font-mono text-micro text-muted-foreground uppercase tracking-wide w-28">
               Last task
             </span>
             <code className="font-mono text-micro text-muted-foreground">{last_task_id}</code>
@@ -463,7 +464,7 @@ const SignatureStormLane = ({ data }: { data: StewardView['signatureStorm'] }) =
         )}
         {signatureStormAqCount > 0 && (
           <div className="flex items-baseline gap-2">
-            <span className="text-micro text-muted-foreground/70 uppercase tracking-wide w-28">
+            <span className="text-micro text-muted-foreground uppercase tracking-wide w-28">
               AQ items
             </span>
             <span className="font-mono text-label text-error" data-testid="storm-aq-count">
@@ -668,7 +669,7 @@ const GateHealthLane = ({
                       </div>
                     )}
                     {(gate.lastFailureSignature !== null || gate.lastFailureOriginId !== null || gate.lastFailureAt !== null) && (
-                      <div className="mt-2 border-t border-border/30 pt-2 text-micro text-muted-foreground">
+                      <div className="mt-2 border-t border-border/30 pt-2 text-label text-muted-foreground">
                         <p>
                           Last failed
                           {gate.lastFailureAt !== null ? ` on ${formatAbsoluteDateTime(gate.lastFailureAt)}` : ''}.
@@ -695,8 +696,9 @@ const GateHealthLane = ({
 // ---------------------------------------------------------------------------
 
 const StewardSkeleton = () => (
-  <main className="flex h-full min-h-0 flex-1 flex-col gap-6 overflow-y-auto bg-background p-6" data-testid="steward-page">
+  <PageShell testId="steward-page">
     <PageHeader title="Steward" />
+    <PageBody className="gap-6">
     <GateHealthLane data={undefined} isLoading />
     {[0, 1, 2].map((i) => (
       <div
@@ -705,7 +707,8 @@ const StewardSkeleton = () => (
         aria-hidden="true"
       />
     ))}
-  </main>
+    </PageBody>
+  </PageShell>
 )
 
 export const StewardPage = () => {
@@ -715,19 +718,16 @@ export const StewardPage = () => {
 
   if (error !== null && data === undefined) {
     return (
-      <main className="flex min-h-0 flex-1 overflow-hidden bg-background p-6" data-testid="steward-page">
+      <div className="flex min-h-0 flex-1 overflow-hidden bg-background px-6 py-4" data-testid="steward-page">
         <GateHealthLane data={undefined} error={error} />
-      </main>
+      </div>
     )
   }
 
   if (data === undefined) return <StewardSkeleton />
 
   return (
-    <main
-      className="flex h-full min-h-0 flex-1 flex-col gap-6 overflow-y-auto bg-background p-6"
-      data-testid="steward-page"
-    >
+    <PageShell testId="steward-page">
       <PageHeader
         title="Steward"
         subtitle="What the Steward is wired to do and what it has actually done."
@@ -749,6 +749,7 @@ export const StewardPage = () => {
           </div>
         }
       />
+      <PageBody className="gap-6">
 
       <div className="flex flex-col gap-4">
         {/* Lane 1: Runtime tuning — the only lane that actually executes */}
@@ -772,7 +773,7 @@ export const StewardPage = () => {
 
       {/* Agent spec footer */}
       <footer className="mt-2 rounded border border-border/30 bg-muted/10 px-4 py-3">
-        <div className="mb-1 text-micro uppercase tracking-wide text-muted-foreground/70">
+        <div className="mb-1 text-micro uppercase tracking-wide text-muted-foreground">
           Agent spec — {data.agentSpec.name} ({data.agentSpec.dispatchSites} dispatch site{data.agentSpec.dispatchSites !== 1 ? 's' : ''})
         </div>
         <div className="flex flex-wrap gap-x-4 gap-y-1 font-mono text-micro text-muted-foreground">
@@ -781,6 +782,7 @@ export const StewardPage = () => {
           <span>events: <span className="text-foreground">{data.agentSpec.eventVariants.join(', ')}</span></span>
         </div>
       </footer>
-    </main>
+      </PageBody>
+    </PageShell>
   )
 }

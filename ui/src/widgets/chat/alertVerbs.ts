@@ -22,8 +22,8 @@ export const verbButtonClass = (style: AlertVerb['style']): string => {
   if (style === 'destructive')
     return `${base} border-error/40 bg-error/10 text-error hover:bg-error/20`
   if (style === 'snooze')
-    return `${base} border-primary/30 text-primary/70 hover:bg-primary/20`
-  return `${base} border-primary/30 text-primary hover:bg-primary/20`
+    return `${base} border-primary/30 text-muted-foreground hover:bg-primary/20`
+  return `${base} border-primary/30 text-muted-foreground hover:bg-primary/20`
 }
 
 // ---------------------------------------------------------------------------

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { Search } from 'lucide-react'
 import { FallbackSurface } from '@/components/FallbackSurface'
 import { useProgress } from '@/hooks/useProgress'
 import { useHotPaths } from '@/hooks/useHotPaths'
@@ -292,21 +293,21 @@ export const ProgressPage = () => {
           </div>
         )}
         {/* Text search — always visible */}
-        <div className="flex items-center border-b border-border bg-background px-4 py-1.5">
+        <div className="flex items-center border-b border-border bg-background px-6 py-2">
           <div className="relative min-w-0 flex-1">
-            <span
-              className="pointer-events-none absolute inset-y-0 left-2 flex select-none items-center text-muted-foreground/60"
+            <Search
+              size={13}
+              strokeWidth={2}
               aria-hidden="true"
-            >
-              ⌕
-            </span>
+              className="pointer-events-none absolute inset-y-0 left-2 my-auto text-muted-foreground"
+            />
             <input
               type="text"
               data-testid="search-tasks"
               placeholder="Search id, prompt, branch…"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full rounded-md border border-border bg-card py-0.5 pl-6 pr-2 font-mono text-label text-foreground placeholder:text-muted-foreground/60 focus:border-highlight/40 focus:outline-none"
+              className="h-7 w-full rounded-md border border-border bg-card pl-7 pr-2 text-label text-foreground placeholder:text-muted-foreground focus:border-highlight/40"
             />
           </div>
         </div>

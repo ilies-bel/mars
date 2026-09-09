@@ -4,7 +4,7 @@ const COLOR: Record<Role, string> = {
   planner: 'text-warn',
   builder: 'text-highlight',
   reviewer: 'text-muted-foreground',
-  orchestrator: 'text-primary',
+  orchestrator: 'text-muted-foreground',
 }
 
 export const RoleTag = ({ role }: { role: Role }) => (

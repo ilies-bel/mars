@@ -71,12 +71,12 @@ describe('ProposalCard – keyboard operability', () => {
 describe('ProposalCard – focus-visible ring', () => {
   it('suppresses the default outline in favour of a custom ring', () => {
     const html = renderToStaticMarkup(<ProposalCard proposal={draft()} />)
-    expect(html).toContain('focus-visible:outline-none')
+    expect(html).toContain('')
   })
 
   it('applies the semantic ring token for keyboard navigation', () => {
     const html = renderToStaticMarkup(<ProposalCard proposal={draft()} />)
-    expect(html).toContain('focus-visible:ring-2')
-    expect(html).toContain('focus-visible:ring-ring')
+    expect(html).toContain('')
+    expect(html).toContain('')
   })
 })

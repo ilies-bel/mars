@@ -70,7 +70,7 @@ export const FallbackSurface = ({ error, of, variant = 'pane', repoRoot }: Fallb
           <p className="mt-4 text-label text-muted-foreground">{fb.remedy}</p>
         )}
         {fb.detail !== null && (
-          <p className="mt-3 whitespace-pre-wrap break-all text-label text-primary">
+          <p className="mt-3 whitespace-pre-wrap break-all text-label text-muted-foreground">
             {fb.detail}
           </p>
         )}

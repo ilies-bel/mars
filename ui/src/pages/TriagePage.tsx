@@ -1,8 +1,9 @@
 import { useCounts } from '@/entities/counts/useCounts'
 import { SelectField } from '@/components/SelectField'
 import { Chip, type ChipTone } from '@/components/Chip'
-import { ArrowRight, ChevronDown, ChevronRight, Search } from 'lucide-react'
-import { ActionButton } from '@/components/ActionButton'
+import { AlertTriangle, Archive, ArrowRight, ChevronDown, ChevronRight, Circle, CircleDashed, Clock, FileText, Gauge, GitBranch, HelpCircle, PowerOff, RefreshCw, Search, SearchX, ShieldAlert, ShieldX, Sparkles, Undo2, UserCheck, XCircle, Zap } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
+import { ActionButton, ActionLink } from '@/components/ActionButton'
 import { PageHeader } from '@/widgets/primitives/DensityPrimitives'
 /**
  * TriagePage — "Action Queue" ranked triage view.
@@ -55,25 +56,40 @@ import type { Decision } from '@/shared/schemas'
 
 // ── Kind display ──────────────────────────────────────────────────────────────
 
-const KIND_ICON: Record<string, string> = {
-  failed: '⚠',
-  'daemon-killed': '⊘',
-  'stale-queued': '◔',
-  'stale-worktree': '⌧',
-  'draft-proposal': '◇',
-  'awaiting-validation': '◎',
-  'arc-failed': '⊗',
-  'awaiting-human': '▸',
-  'coder-question': '?',
-  'diagnose-inconclusive': '◌',
-  'reflect-recommended': '✦',
-  'scorer-suggested': '◈',
-  'gate-broken': '⊘',
-  'recovery-abandoned': '↩',
-  'baseline-broken': '⊘',
-  'daemon-code-drift': '↻',
-  'signature-storm': '⚡',
-  'dirty-integration': '⊘',
+/**
+ * One Lucide icon per action-queue kind.
+ *
+ * This was a map of Unicode dingbats — ◔ ⌧ ◌ ⊗ ⊘ ↩ ↻ ✦ ◈ — which share no
+ * stroke weight, no optical size and no baseline, and which each platform
+ * substitutes from a different fallback font. Three kinds all resolved to the
+ * same ⊘, so "gate broken", "baseline broken" and "dirty integration" were
+ * indistinguishable on the card face. Real icons are drawn on one grid.
+ */
+const KIND_ICON: Record<string, LucideIcon> = {
+  failed: AlertTriangle,
+  'daemon-killed': PowerOff,
+  'stale-queued': Clock,
+  'stale-worktree': Archive,
+  'draft-proposal': FileText,
+  'awaiting-validation': CircleDashed,
+  'arc-failed': XCircle,
+  'awaiting-human': UserCheck,
+  'coder-question': HelpCircle,
+  'diagnose-inconclusive': SearchX,
+  'reflect-recommended': Sparkles,
+  'scorer-suggested': Gauge,
+  'gate-broken': ShieldAlert,
+  'recovery-abandoned': Undo2,
+  'baseline-broken': ShieldX,
+  'daemon-code-drift': RefreshCw,
+  'signature-storm': Zap,
+  'dirty-integration': GitBranch,
+}
+
+/** Renders the kind's icon at chip scale; Circle is the unknown-kind fallback. */
+const kindIconNode = (kind: string) => {
+  const Icon = KIND_ICON[kind] ?? Circle
+  return <Icon size={11} strokeWidth={2} aria-hidden="true" />
 }
 
 /**
@@ -227,7 +243,7 @@ interface TriageClusterRowProps {
 const TriageClusterRow = ({ kind, count, latestAt }: TriageClusterRowProps) => {
   const age = relativeTime(latestAt)
   const kindLabel = (KIND_LABEL as Record<string, string | undefined>)[kind] ?? kind.replace(/-/g, ' ')
-  const kindIcon = KIND_ICON[kind] ?? '•'
+  const kindIcon = kindIconNode(kind)
   const kindTone = KIND_TONE[kind] ?? 'neutral'
   const isDraftProposal = kind === 'draft-proposal'
 
@@ -253,13 +269,15 @@ const TriageClusterRow = ({ kind, count, latestAt }: TriageClusterRowProps) => {
       </p>
 
       {/* Navigation link to the relevant surface */}
-      <a
+      <ActionLink
         href={isDraftProposal ? '#/proposals' : '#/triage'}
-        className="font-mono text-micro text-primary transition-colors hover:text-foreground"
+        variant="ghost"
+        size="sm"
         data-testid={isDraftProposal ? 'cluster-proposals-link' : 'cluster-view-link'}
       >
-        {isDraftProposal ? 'Review proposals →' : `View all →`}
-      </a>
+        {isDraftProposal ? 'Review proposals' : 'View all'}
+        <ArrowRight size={12} strokeWidth={2} aria-hidden="true" />
+      </ActionLink>
     </div>
   )
 }
@@ -361,7 +379,7 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
   const goal = item.operatorGoal ?? null
   const headline = !goal ? (item.humanSummary || item.title) : null
   const kindLabel = KIND_LABEL[item.kind] ?? item.kind.replace(/-/g, ' ')
-  const kindIcon = KIND_ICON[item.kind] ?? '•'
+  const kindIcon = kindIconNode(item.kind)
   const kindTone = KIND_TONE[item.kind] ?? 'neutral'
   const isChatOnly = CHAT_ONLY_KINDS.has(item.kind)
   const isTaskRecovery = TASK_RECOVERY_KINDS.has(item.kind)
@@ -508,7 +526,7 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
             {signatureFamilyPhrase(item.humanDetail?.failureSignature) ?? item.title}
           </p>
           {item.humanSummary && (
-            <p className="mt-1 text-label leading-relaxed text-muted-foreground/85 line-clamp-2">
+            <p className="mt-1 text-label leading-relaxed text-muted-foreground line-clamp-2">
               {item.humanSummary}
             </p>
           )}
@@ -827,13 +845,16 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
             exhausted rows. Stays at ml-auto (right-aligned) in these cases
             where there is no Continue button to anchor it after. */}
         {(isChatOnly || !isTaskRecovery || isRecoveryExhausted) && (
-          <a
+          <ActionLink
             href={chatHref}
-            className="ml-auto font-mono text-micro text-muted-foreground transition-colors hover:text-foreground"
+            variant="ghost"
+            size="sm"
+            className="ml-auto"
             data-testid="triage-chat"
           >
-            Chat →
-          </a>
+            Chat
+            <ArrowRight size={12} strokeWidth={2} aria-hidden="true" />
+          </ActionLink>
         )}
       </div>
 
@@ -888,7 +909,7 @@ export const TriageCauseGroupRow = ({
   const kindLabel =
     (KIND_LABEL as Record<string, string | undefined>)[group.kind] ??
     group.kind.replace(/-/g, ' ')
-  const kindIcon = KIND_ICON[group.kind] ?? '•'
+  const kindIcon = kindIconNode(group.kind)
   const kindTone = KIND_TONE[group.kind] ?? 'neutral'
 
   // Cause label: prefer server-computed causeLabel (HR-3), then the local
@@ -980,7 +1001,7 @@ export const TriageCauseGroupRow = ({
           <button
             disabled={pending !== null}
             onClick={() => void handleBulkAction()}
-            className="shrink-0 rounded border border-border bg-primary/10 px-2 py-1 text-micro font-medium text-primary transition-colors hover:bg-primary/20 disabled:opacity-50"
+            className="shrink-0 rounded border border-border bg-primary/10 px-2 py-1 text-micro font-medium text-muted-foreground transition-colors hover:bg-primary/20 disabled:opacity-50"
             data-testid="cause-group-bulk-action"
           >
             {progress !== null
@@ -1246,7 +1267,7 @@ export const TriagePage = () => {
                 placeholder="Search the queue…"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="h-7 w-full rounded-md border border-border bg-background pl-7.5 pr-2.5 text-label text-foreground shadow-[var(--shadow-e1)] transition-[border-color,box-shadow] duration-[var(--dur-fast)] placeholder:text-muted-foreground/70 focus:border-highlight/50 focus:outline-none focus:ring-2 focus:ring-highlight/15"
+                className="h-7 w-full rounded-md border border-border bg-background pl-7.5 pr-2.5 text-label text-foreground shadow-[var(--shadow-e1)] transition-[border-color,box-shadow] duration-[var(--dur-fast)] placeholder:text-muted-foreground focus:border-highlight/50"
                 data-testid="triage-search"
               />
             </div>

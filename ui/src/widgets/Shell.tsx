@@ -155,7 +155,7 @@ const ShellTopbar = ({ hash }: ShellTopbarProps) => {
             {crumbs.map((crumb, i) => (
               <span key={i} className="flex shrink-0 items-center gap-1.5">
                 {i > 0 && (
-                  <span className="text-label text-muted-dark/40" aria-hidden="true">
+                  <span className="text-label text-muted-dark" aria-hidden="true">
                     /
                   </span>
                 )}
@@ -296,7 +296,7 @@ export const ShellSidebar = ({
       <div className="flex-1">
         {scrolling.map((group) => (
           <div key={group.label} className="mb-4 last:mb-0">
-            <p className="px-4 pb-1.5 text-micro font-semibold uppercase tracking-[0.09em] text-muted-dark/60">
+            <p className="px-4 pb-1.5 text-micro font-semibold uppercase tracking-[0.09em] text-muted-dark">
               {group.label}
             </p>
             <div className="flex flex-col gap-px">

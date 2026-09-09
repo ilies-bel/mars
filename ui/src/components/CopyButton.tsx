@@ -25,7 +25,7 @@ interface CopyButtonProps {
 export function CopyButton({
   text,
   label = 'Copy',
-  className = 'shrink-0 rounded border border-border px-2 py-0.5 font-mono text-body text-primary hover:bg-foreground/5',
+  className = 'shrink-0 rounded border border-border px-2 py-0.5 font-mono text-body text-muted-foreground hover:bg-foreground/5',
   'data-testid': testId,
   'aria-label': ariaLabel,
 }: CopyButtonProps) {

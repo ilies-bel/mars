@@ -1,3 +1,4 @@
+import { ChevronRight } from 'lucide-react'
 /**
  * Task detail drawer — right-side panel opened from any task node on the
  * Progress tab (DAG or column view).
@@ -494,7 +495,7 @@ const StringList = ({ items }: { items: string[] }) =>
   items.length > 0 ? (
     <ul className="flex flex-col gap-0.5">
       {items.map((s) => (
-        <li key={s} className="break-all font-mono text-label text-primary">
+        <li key={s} className="break-all font-mono text-label text-muted-foreground">
           {s}
         </li>
       ))}
@@ -599,7 +600,7 @@ export const RecoveryCommands = ({
             <button
               data-testid="restart-confirm-cancel"
               onClick={() => setConfirming(null)}
-              className="rounded border border-border px-3 py-1 text-label text-primary hover:bg-foreground/5"
+              className="rounded border border-border px-3 py-1 text-label text-muted-foreground hover:bg-foreground/5"
             >
               Cancel
             </button>
@@ -630,7 +631,7 @@ export const RecoveryCommands = ({
             <button
               data-testid="drop-confirm-cancel"
               onClick={() => setConfirming(null)}
-              className="rounded border border-border px-3 py-1 text-label text-primary hover:bg-foreground/5"
+              className="rounded border border-border px-3 py-1 text-label text-muted-foreground hover:bg-foreground/5"
             >
               Cancel
             </button>
@@ -665,7 +666,7 @@ export const RecoveryCommands = ({
               data-testid="supersede-btn"
               onClick={() => void invoke('supersede')}
               disabled={loading !== null || confirming !== null}
-              className="rounded border border-border bg-primary/5 px-3 py-1 font-mono text-label text-primary hover:bg-foreground/5 disabled:cursor-not-allowed disabled:opacity-40"
+              className="rounded border border-border bg-primary/5 px-3 py-1 font-mono text-label text-muted-foreground hover:bg-foreground/5 disabled:cursor-not-allowed disabled:opacity-40"
             >
               {loading === 'supersede' ? 'Superseding…' : 'Supersede'}
             </button>
@@ -785,14 +786,14 @@ const BlockersSection = ({ taskId, blockedBy }: { taskId: string; blockedBy: str
         <ul className="flex flex-col gap-0.5">
           {blockedBy.map((bid) => (
             <li key={bid} className="flex items-center gap-2">
-              <code className="flex-1 break-all font-mono text-label text-primary">
+              <code className="flex-1 break-all font-mono text-label text-muted-foreground">
                 {bid}
               </code>
               <button
                 data-testid={`unblock-${bid}`}
                 onClick={() => handleUnblock(bid)}
                 disabled={loading !== null}
-                className="shrink-0 rounded border border-border px-2 py-0.5 font-mono text-micro text-primary hover:bg-foreground/5 disabled:cursor-not-allowed disabled:opacity-40"
+                className="shrink-0 rounded border border-border px-2 py-0.5 font-mono text-micro text-muted-foreground hover:bg-foreground/5 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {loading === `remove:${bid}` ? '…' : 'Unblock'}
               </button>
@@ -810,13 +811,13 @@ const BlockersSection = ({ taskId, blockedBy }: { taskId: string; blockedBy: str
           onChange={(e) => setAddInput(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') handleAdd() }}
           placeholder="Task id to add as blocker…"
-          className="flex-1 rounded border border-border bg-transparent px-2 py-0.5 font-mono text-label text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-border"
+          className="flex-1 rounded border border-border bg-transparent px-2 py-0.5 font-mono text-label text-foreground placeholder:text-muted-foreground focus:border-border"
         />
         <button
           data-testid="add-blocker-btn"
           onClick={handleAdd}
           disabled={loading !== null || addInput.trim() === ''}
-          className="shrink-0 rounded border border-border px-2 py-0.5 font-mono text-micro text-primary hover:bg-foreground/5 disabled:cursor-not-allowed disabled:opacity-40"
+          className="shrink-0 rounded border border-border px-2 py-0.5 font-mono text-micro text-muted-foreground hover:bg-foreground/5 disabled:cursor-not-allowed disabled:opacity-40"
         >
           Add
         </button>
@@ -829,10 +830,10 @@ const BlockersSection = ({ taskId, blockedBy }: { taskId: string; blockedBy: str
 
 const statusPillClass: Record<string, string> = {
   A: 'bg-success/10 text-success border-success/30',
-  M: 'bg-primary/10 text-primary border-border',
+  M: 'bg-primary/10 text-muted-foreground border-border',
   D: 'bg-error/10 text-error border-error/30',
   R: 'bg-warn/10 text-warn border-warn/30',
-  C: 'bg-primary/10 text-primary border-border',
+  C: 'bg-primary/10 text-muted-foreground border-border',
 }
 
 interface ChangesSectionProps {
@@ -928,7 +929,7 @@ const ChangesSection = ({ taskId, taskStatus, changesData: injected, projectId, 
           data-testid="changes-restart-btn"
           onClick={handleRestart}
           disabled={restartLoading}
-          className="mt-2 rounded border border-border px-3 py-1 font-mono text-label text-primary hover:bg-foreground/5 disabled:cursor-not-allowed disabled:opacity-40"
+          className="mt-2 rounded border border-border px-3 py-1 font-mono text-label text-muted-foreground hover:bg-foreground/5 disabled:cursor-not-allowed disabled:opacity-40"
         >
           {restartLoading ? 'Restarting…' : 'Restart'}
         </button>
@@ -987,7 +988,7 @@ const ChangesSection = ({ taskId, taskStatus, changesData: injected, projectId, 
           {landedSha != null ? (
             <p className="font-mono text-micro text-muted-foreground" data-testid="changes-branch-gone-sha">
               {taskStatus === 'dropped' || taskStatus === 'failed' ? 'Commit: ' : 'Merge commit: '}
-              <span className="text-primary">{landedSha.slice(0, 7)}</span>
+              <span className="text-muted-foreground">{landedSha.slice(0, 7)}</span>
             </p>
           ) : null}
         </div>
@@ -998,7 +999,7 @@ const ChangesSection = ({ taskId, taskStatus, changesData: injected, projectId, 
           {/* Summary line */}
           <p className="text-label text-muted-foreground" data-testid="changes-summary">
             {landedSha != null ? (
-              <>Landed on main as <span className="text-primary">{landedSha.slice(0, 7)}</span> · </>
+              <>Landed on main as <span className="text-muted-foreground">{landedSha.slice(0, 7)}</span> · </>
             ) : null}
             <span className="text-foreground">{files.length} file{files.length !== 1 ? 's' : ''}</span>
             {' · '}
@@ -1166,7 +1167,7 @@ export const TaskDetailBody = ({
         <div className="mt-1 flex items-baseline gap-2">
           <span
             data-testid="task-detail-status"
-            className="text-body uppercase tracking-wide text-primary"
+            className="text-body uppercase tracking-wide text-muted-foreground"
           >
             {task.status}
           </span>
@@ -1199,7 +1200,7 @@ export const TaskDetailBody = ({
             {task.status === 'failed' ? 'Failure' : isBlocked ? 'Blocked' : 'Error'}
           </p>
           {isBlocked ? (
-            <p className="mt-1 text-label text-primary">
+            <p className="mt-1 text-label text-muted-foreground">
               Waiting on {task.blockedBy.length} blocker
               {task.blockedBy.length === 1 ? '' : 's'}.
             </p>
@@ -1320,7 +1321,7 @@ export const TaskDetailBody = ({
           <MetaCell label="Created" value={relativeTime(task.createdAt) || task.createdAt} />
           <MetaCell label="Updated" value={relativeTime(task.updatedAt) || task.updatedAt} />
         </div>
-        <p className="font-mono text-micro text-primary">recovery: {task.recoverySpawnedCount}</p>
+        <p className="font-mono text-micro text-muted-foreground">recovery: {task.recoverySpawnedCount}</p>
       </div>
 
       {/* h. Changes — per-file diff summary. Fetches live unless changesData was injected. */}
@@ -1336,7 +1337,7 @@ export const TaskDetailBody = ({
             <dt className="font-mono text-micro uppercase tracking-[0.08em] text-muted-foreground">
               Worktree
             </dt>
-            <dd className="break-all font-mono text-label text-primary">
+            <dd className="break-all font-mono text-label text-muted-foreground">
               {task.worktreePath ?? '—'}
             </dd>
           </div>
@@ -1345,7 +1346,7 @@ export const TaskDetailBody = ({
               <dt className="font-mono text-micro uppercase tracking-[0.08em] text-muted-foreground">
                 Blocker task id
               </dt>
-              <dd className="break-all font-mono text-label text-primary">
+              <dd className="break-all font-mono text-label text-muted-foreground">
                 {task.blockerTaskId}
               </dd>
             </div>
@@ -1587,14 +1588,14 @@ const ToolInvocationRow = ({
             </summary>
             <div className="mt-1 space-y-1">
               {stdout ? (
-                <pre className="max-h-32 overflow-y-auto whitespace-pre-wrap break-all rounded bg-secondary/60 p-1.5 font-mono text-micro text-primary">
+                <pre className="max-h-32 overflow-y-auto whitespace-pre-wrap break-all rounded bg-secondary/60 p-1.5 font-mono text-micro text-muted-foreground">
                   {stdout}
                 </pre>
               ) : null}
               {stderr ? (
                 <pre
                   className={`max-h-32 overflow-y-auto whitespace-pre-wrap break-all rounded p-1.5 font-mono text-micro ${
-                    isActualFail ? 'bg-error/5 text-error/80' : 'bg-secondary/60 text-primary'
+                    isActualFail ? 'bg-error/5 text-error/80' : 'bg-secondary/60 text-muted-foreground'
                   }`}
                 >
                   {stderr}
@@ -1760,7 +1761,7 @@ const StepCard = ({
             ))}
           </div>
         ) : toolEvents.length === 0 && entry.claudeSessionId == null ? (
-          <p className="pt-2 text-label text-muted-foreground/60">
+          <p className="pt-2 text-label text-muted-foreground">
             No tool invocations recorded
           </p>
         ) : null}
@@ -1783,7 +1784,7 @@ const StepCard = ({
             </summary>
             <pre
               data-testid="step-result-input"
-              className="mt-1 max-h-48 overflow-y-auto whitespace-pre-wrap break-all rounded bg-secondary/60 p-1.5 font-mono text-micro text-primary"
+              className="mt-1 max-h-48 overflow-y-auto whitespace-pre-wrap break-all rounded bg-secondary/60 p-1.5 font-mono text-micro text-muted-foreground"
             >
               {(() => {
                 try {
@@ -1814,7 +1815,7 @@ const StepCard = ({
             </summary>
             <pre
               data-testid="step-result-output"
-              className="mt-1 max-h-48 overflow-y-auto whitespace-pre-wrap break-all rounded bg-secondary/60 p-1.5 font-mono text-micro text-primary"
+              className="mt-1 max-h-48 overflow-y-auto whitespace-pre-wrap break-all rounded bg-secondary/60 p-1.5 font-mono text-micro text-muted-foreground"
             >
               {(() => {
                 try {
@@ -1880,14 +1881,14 @@ const StepCardList = ({
         <a
           href={studioHref}
           data-testid="open-in-studio"
-          className="font-mono text-label text-primary hover:text-foreground hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+          className="font-mono text-label text-muted-foreground hover:text-foreground hover:underline"
         >
           Open in Studio →
         </a>
       ) : null}
     </div>
     {cards.length === 0 ? (
-      <p className="text-body text-primary">No steps recorded yet</p>
+      <p className="text-body text-muted-foreground">No steps recorded yet</p>
     ) : (
       <div className="flex flex-col">
         {cards.map((card, i) => {
@@ -2042,7 +2043,7 @@ const ProposalStepTimeline = ({
           </details>
         ) : null}
         {proposalSpans.length === 0 ? (
-          <p className="text-body text-primary">No proposal-level steps recorded</p>
+          <p className="text-body text-muted-foreground">No proposal-level steps recorded</p>
         ) : null}
       </section>
 
@@ -2428,7 +2429,7 @@ export const TaskDetailDrawer = ({
         className="drawer-panel fixed inset-0 z-50 flex w-full flex-col border-border bg-background outline-none xl:inset-y-0 xl:left-auto xl:right-0 xl:w-[min(560px,100vw)] xl:border-l xl:shadow-2xl"
       >
       <header className="flex items-center justify-between border-b border-border px-4 py-3">
-        <h2 className="min-w-0 flex-1 truncate text-title text-primary">
+        <h2 className="min-w-0 flex-1 truncate text-title text-muted-foreground">
           {readyTask ? taskTitle(readyTask) : 'Task'}
         </h2>
         <button
@@ -2436,7 +2437,7 @@ export const TaskDetailDrawer = ({
           onClick={handleClose}
           aria-label="Close task detail"
           data-testid="task-detail-close"
-          className="rounded border border-border px-2 py-0.5 font-mono text-body text-primary hover:bg-foreground/5"
+          className="rounded border border-border px-2 py-0.5 font-mono text-body text-muted-foreground hover:bg-foreground/5"
         >
           Close
         </button>
@@ -2453,7 +2454,7 @@ export const TaskDetailDrawer = ({
             const isCurrent = i === trail.length - 1
             return (
               <span key={id} className="flex items-center gap-1">
-                {i > 0 ? <span className="text-muted-foreground">▸</span> : null}
+                {i > 0 ? <ChevronRight size={11} strokeWidth={2} aria-hidden="true" className="text-muted-foreground" /> : null}
                 {isCurrent ? (
                   <span data-crumb-id={id} className="font-medium text-foreground">
                     {crumbLabel(id)}
@@ -2463,7 +2464,7 @@ export const TaskDetailDrawer = ({
                     type="button"
                     data-crumb-id={id}
                     onClick={() => navigate(id)}
-                    className="text-primary hover:underline"
+                    className="text-muted-foreground hover:underline"
                   >
                     {crumbLabel(id)}
                   </button>
@@ -2591,7 +2592,7 @@ export const TaskDetailDrawer = ({
           data-testid="task-detail-not-found"
           className="flex flex-1 items-center justify-center p-6"
         >
-          <p className="max-w-[40ch] text-center text-title text-primary">
+          <p className="max-w-[40ch] text-center text-title text-muted-foreground">
             Task not found. It may have been purged.
           </p>
         </div>

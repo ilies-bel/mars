@@ -38,7 +38,7 @@ export const SelectField = ({
         'w-full min-w-0 cursor-pointer appearance-none truncate rounded-md border border-border bg-surface',
         'font-medium text-foreground shadow-[var(--shadow-e1)]',
         'transition-[border-color,box-shadow,background-color] duration-[var(--dur-fast)] ease-[var(--ease-out)]',
-        'hover:bg-background focus:border-highlight/50 focus:outline-none focus:ring-2 focus:ring-highlight/15',
+        'hover:bg-background focus:border-highlight/50',
         'disabled:pointer-events-none disabled:opacity-45',
         scale === 'sm' ? 'h-6 pl-2 pr-7 text-micro' : 'h-7 pl-2.5 pr-8 text-label',
         className,

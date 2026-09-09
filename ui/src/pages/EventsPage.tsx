@@ -183,7 +183,7 @@ const chipClass = (active: boolean): string =>
     'rounded border px-2 py-0.5 text-micro uppercase tracking-wide transition-colors',
     active
       ? 'border-primary bg-primary/15 font-semibold text-foreground'
-      : 'border-dashed border-border/50 bg-transparent text-muted-foreground/60 hover:border-border hover:text-muted-foreground',
+      : 'border-dashed border-border/50 bg-transparent text-muted-foreground hover:border-border hover:text-muted-foreground',
   ].join(' ')
 
 interface MultiSelectProps<T extends string> {
@@ -204,7 +204,7 @@ const MultiSelect = <T extends string>({
   displayLabel,
 }: MultiSelectProps<T>) => (
   <div className="flex flex-wrap items-center gap-1" data-testid={testId}>
-    <span className="self-center text-micro uppercase tracking-wide text-muted-foreground/60">
+    <span className="self-center text-micro uppercase tracking-wide text-muted-foreground">
       {label}:
     </span>
     {options.map((opt) => {
@@ -294,7 +294,14 @@ const EventRow = memo(({ event, now, fieldsExpanded, onToggleFields }: EventRowP
     <>
       <div
         className="grid items-baseline gap-x-2.5"
-        style={{ gridTemplateColumns: '3.5rem 2.75rem 3.75rem 5.5rem minmax(0, 1fr)' }}
+        /* Six real columns, not five plus a flex bag. The task id and the
+         * source chip used to live INSIDE the message cell, so the message
+         * itself began at x≈470 on an error row, x≈680 on a warn row carrying
+         * a phase, and somewhere else again on a log row with a source chip.
+         * Three layouts in one list: nothing lined up and the column could not
+         * be scanned. The id now has its own column, so prose always starts at
+         * the same x whatever the row is carrying. */
+        style={{ gridTemplateColumns: '3.5rem 2.75rem 3.75rem 5.5rem 7rem minmax(0, 1fr)' }}
       >
         <span className="truncate text-muted-foreground">{relativeTime(event.timestamp, now)}</span>
         <span
@@ -309,16 +316,19 @@ const EventRow = memo(({ event, now, fieldsExpanded, onToggleFields }: EventRowP
           {callerSource ?? ''}
           {event.phase ? ` · ${humanizePhase(event.phase)}` : ''}
         </span>
+        {/* Task id — its own column, so the message never shifts. */}
+        {effectiveTaskId ? (
+          <a
+            href={taskHash(effectiveTaskId, 'events')}
+            onClick={(e) => e.stopPropagation()}
+            className="truncate font-mono text-micro text-muted-foreground hover:text-foreground hover:underline"
+          >
+            {fullId(effectiveTaskId)}
+          </a>
+        ) : (
+          <span aria-hidden="true" />
+        )}
         <div className="flex min-w-0 items-baseline gap-x-1">
-          {effectiveTaskId ? (
-            <a
-              href={taskHash(effectiveTaskId, 'events')}
-              onClick={(e) => e.stopPropagation()}
-              className="shrink-0 font-mono text-micro text-muted-foreground hover:text-foreground hover:underline"
-            >
-              {fullId(effectiveTaskId)}
-            </a>
-          ) : null}
           {logLineSource && logLineSource !== callerSource ? (
             <span
               className="shrink-0 rounded bg-foreground/8 px-1 font-mono text-micro text-muted-foreground"
@@ -377,7 +387,7 @@ const EventRow = memo(({ event, now, fieldsExpanded, onToggleFields }: EventRowP
         e.preventDefault()
         window.location.hash = href
       }}
-      className={`block cursor-pointer border-b border-l-2 border-b-border/45 ${severityRowClass(event.severity)}${ageOpacity ? ` ${ageOpacity}` : ''} px-3 py-1.5 font-mono text-body text-foreground transition-colors duration-[var(--dur-fast)] hover:bg-foreground/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-highlight/40`}
+      className={`block cursor-pointer border-b border-l-2 border-b-border/45 ${severityRowClass(event.severity)}${ageOpacity ? ` ${ageOpacity}` : ''} px-3 py-1.5 font-mono text-body text-foreground transition-colors duration-[var(--dur-fast)] hover:bg-foreground/5`}
       data-testid={`event-row-${event.id}`}
     >
       {body}
@@ -551,7 +561,7 @@ const GroupedRow = memo(({
       <span className="shrink-0 text-micro text-muted-foreground">{relativeTime(first.timestamp, now)}</span>
       <span className="shrink-0 text-micro text-muted-foreground">–</span>
       <span className="shrink-0 text-micro text-muted-foreground">{relativeTime(last.timestamp, now)}</span>
-      <span className="shrink-0 rounded bg-primary/20 px-1.5 font-mono text-micro font-semibold text-primary">×{events.length}</span>
+      <span className="shrink-0 rounded bg-primary/20 px-1.5 font-mono text-micro font-semibold text-muted-foreground">×{events.length}</span>
       <span className="min-w-0 truncate text-label text-muted-foreground">{summarizeTraceEvent(first)}</span>
     </button>
   )
@@ -663,7 +673,7 @@ const IncidentGroup = memo(({
     >
       <span className="shrink-0 text-micro text-muted-foreground">{relativeTime(first.timestamp, now)}</span>
       <span className={`shrink-0 text-micro font-semibold uppercase ${severityColor(worst)}`}>{worst}</span>
-      <span className="shrink-0 rounded bg-primary/20 px-1.5 font-mono text-micro font-semibold text-primary">×{events.length}</span>
+      <span className="shrink-0 rounded bg-primary/20 px-1.5 font-mono text-micro font-semibold text-muted-foreground">×{events.length}</span>
       {taskId ? (
         <span className="shrink-0 font-mono text-micro text-muted-foreground">{fullId(taskId)}</span>
       ) : null}
@@ -1001,7 +1011,7 @@ const TimelineView = ({ events, now }: TimelineViewProps) => {
 
   if (arcGroups.length === 0) {
     return (
-      <div data-testid="events-empty" className="font-mono text-label text-primary">
+      <div data-testid="events-empty" className="font-mono text-label text-muted-foreground">
         No events match these filters.
       </div>
     )
@@ -1213,7 +1223,7 @@ export const EventsPage = () => {
   }
 
   return (
-    <main className="flex h-full min-h-0 flex-1 flex-col gap-3 overflow-hidden bg-background p-4" data-testid="events-page">
+    <main className="flex h-full min-h-0 flex-1 flex-col gap-3 overflow-hidden bg-background pb-4" data-testid="events-page">
       {/* Header — fixed above the scrollable list */}
       <PageHeader
         title="Events"
@@ -1277,7 +1287,7 @@ export const EventsPage = () => {
           Secondary panel (kind/phase/time/id) lives below, revealed on demand.
           All filter controls remain in the DOM even when the panel is hidden so
           tests and keyboard access work regardless of panel state. */}
-      <div className="flex flex-col gap-1.5">
+      <div className="flex flex-col gap-1.5 px-6">
         {/* Primary row */}
         <div className="flex flex-wrap items-center gap-2">
           <Segmented
@@ -1310,7 +1320,7 @@ export const EventsPage = () => {
               onChange={(e) =>
                 setState((prev) => ({ ...prev, q: e.target.value }))
               }
-              className="h-7 w-full rounded-md border border-border bg-background pl-7.5 pr-2.5 text-label text-foreground shadow-[var(--shadow-e1)] transition-[border-color,box-shadow] duration-[var(--dur-fast)] placeholder:text-muted-foreground/70 focus:border-highlight/50 focus:outline-none focus:ring-2 focus:ring-highlight/15"
+              className="h-7 w-full rounded-md border border-border bg-background pl-7.5 pr-2.5 text-label text-foreground shadow-[var(--shadow-e1)] transition-[border-color,box-shadow] duration-[var(--dur-fast)] placeholder:text-muted-foreground focus:border-highlight/50"
             />
           </div>
 
@@ -1331,7 +1341,7 @@ export const EventsPage = () => {
           <div className="flex flex-wrap items-center gap-3">
             {/* Time range */}
             <div className="flex items-center gap-1">
-              <span className="text-micro uppercase tracking-wide text-muted-foreground/60">
+              <span className="text-micro uppercase tracking-wide text-muted-foreground">
                 Time:
               </span>
               <SelectField
@@ -1344,7 +1354,7 @@ export const EventsPage = () => {
                     range: e.target.value as TimeRange,
                   }))
                 }
-                className="rounded border border-border bg-primary/5 px-2 py-0.5 font-mono text-label text-foreground focus:border-border focus:outline-none"
+                className="rounded border border-border bg-primary/5 px-2 py-0.5 font-mono text-label text-foreground focus:border-border"
               >
                 {TIME_RANGE_OPTIONS.map((o) => (
                   <option key={o.value} value={o.value}>
@@ -1381,7 +1391,7 @@ export const EventsPage = () => {
 
             {/* Task ID exact match */}
             <div className="flex items-center gap-1">
-              <span className="font-mono text-micro uppercase tracking-wide text-muted-foreground/60">
+              <span className="font-mono text-micro uppercase tracking-wide text-muted-foreground">
                 Task&nbsp;ID:
               </span>
               <input
@@ -1393,13 +1403,13 @@ export const EventsPage = () => {
                 onChange={(e) =>
                   setState((prev) => ({ ...prev, taskId: e.target.value }))
                 }
-                className="rounded border border-border bg-primary/5 px-2 py-0.5 font-mono text-label text-foreground placeholder-muted-foreground/40 focus:border-border focus:outline-none"
+                className="rounded border border-border bg-primary/5 px-2 py-0.5 font-mono text-label text-foreground placeholder-muted-foreground/40 focus:border-border"
               />
             </div>
 
             {/* Origin ID exact match */}
             <div className="flex items-center gap-1">
-              <span className="font-mono text-micro uppercase tracking-wide text-muted-foreground/60">
+              <span className="font-mono text-micro uppercase tracking-wide text-muted-foreground">
                 Origin&nbsp;ID:
               </span>
               <input
@@ -1411,7 +1421,7 @@ export const EventsPage = () => {
                 onChange={(e) =>
                   setState((prev) => ({ ...prev, originId: e.target.value }))
                 }
-                className="rounded border border-border bg-primary/5 px-2 py-0.5 font-mono text-label text-foreground placeholder-muted-foreground/40 focus:border-border focus:outline-none"
+                className="rounded border border-border bg-primary/5 px-2 py-0.5 font-mono text-label text-foreground placeholder-muted-foreground/40 focus:border-border"
               />
             </div>
           </div>
@@ -1421,7 +1431,7 @@ export const EventsPage = () => {
       {/* Events display — flat virtualized list or grouped timeline */}
       <div
         ref={scrollRef}
-        className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden"
+        className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-6"
         data-testid="events-list"
       >
         {initial.isPending ? (
@@ -1431,7 +1441,7 @@ export const EventsPage = () => {
         ) : events.length === 0 ? (
           <div
             data-testid="events-empty"
-            className="font-mono text-label text-primary"
+            className="font-mono text-label text-muted-foreground"
           >
             No events match these filters.
           </div>

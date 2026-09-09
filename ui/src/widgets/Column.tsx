@@ -199,7 +199,7 @@ export const DenseColumn = ({ label, qualifier, count, children, tooltip }: Dens
     </header>
     <div className="flex flex-col gap-2 overflow-y-auto">
       {count === 0 ? (
-        <div className="px-1 py-2 font-mono text-label text-muted-foreground/70">empty</div>
+        <div className="px-1 py-2 font-mono text-label text-muted-foreground">empty</div>
       ) : (
         children
       )}
@@ -237,13 +237,13 @@ export const ArcColumn = ({ label, arcs, accent = 'muted', expandAll = false, pu
         {collapsedQueuedCount ? (
           <div
             data-testid="queued-count-header"
-            className="px-1 py-1 font-mono text-label text-muted-foreground/60"
+            className="px-1 py-1 font-mono text-label text-muted-foreground"
           >
             {collapsedQueuedCount} queued
           </div>
         ) : null}
         {arcs.length === 0 && !collapsedQueuedCount ? (
-          <div className="px-1 py-2 font-mono text-label text-muted-foreground/70">
+          <div className="px-1 py-2 font-mono text-label text-muted-foreground">
             empty
           </div>
         ) : arcs.length === 0 ? null : (
@@ -308,7 +308,7 @@ export const ArcColumn = ({ label, arcs, accent = 'muted', expandAll = false, pu
                   <span className="min-w-0 flex-1">
                     {/* Title: muted for orphaned arcs (origin force-purged, recovery live).
                         No line-through — the recovery is active, not abandoned. */}
-                    <span className={`block line-clamp-2 text-title font-medium leading-snug ${isOrphaned ? 'text-muted-foreground/70' : 'text-foreground'}`}>
+                    <span className={`block line-clamp-2 text-title font-medium leading-snug ${isOrphaned ? 'text-muted-foreground' : 'text-foreground'}`}>
                       {arc.title}
                     </span>
                     <span className="mt-1 block font-mono text-label text-muted-foreground">
@@ -325,7 +325,7 @@ export const ArcColumn = ({ label, arcs, accent = 'muted', expandAll = false, pu
                       </span>
                     ) : null}
                     {isOrphaned ? (
-                      <span className="mt-1 block font-mono text-micro text-muted-foreground/70" data-arc-state="orphaned-origin">
+                      <span className="mt-1 block font-mono text-micro text-muted-foreground" data-arc-state="orphaned-origin">
                         ↱ recovery in progress · origin force-purged
                       </span>
                     ) : null}

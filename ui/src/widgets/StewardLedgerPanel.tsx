@@ -89,7 +89,7 @@ export const StewardLedgerPanel = ({ targetKind, targetId }: StewardLedgerPanelP
                       {smartTimestamp(entry.ts)}
                     </time>
                   </div>
-                  <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-2 gap-y-1 font-mono text-micro leading-relaxed">
+                  <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-2 gap-y-1 font-mono text-label leading-relaxed">
                     <dt className="text-muted-foreground">Recipe</dt>
                     <dd className="break-all text-foreground" title={entry.recipeId}>
                       {/[:/]/.test(entry.recipeId)
@@ -121,7 +121,7 @@ export const StewardLedgerPanel = ({ targetKind, targetId }: StewardLedgerPanelP
                           </summary>
                           <pre
                             data-testid="steward-outcome-detail"
-                            className="mt-1 overflow-x-auto whitespace-pre-wrap break-all font-mono text-micro text-muted-foreground/70"
+                            className="mt-1 overflow-x-auto whitespace-pre-wrap break-all font-mono text-micro text-muted-foreground"
                           >
                             {outcomeDetail}
                           </pre>
@@ -134,7 +134,7 @@ export const StewardLedgerPanel = ({ targetKind, targetId }: StewardLedgerPanelP
                         <dd>
                           <a
                             href={`https://github.com/search?q=${encodeURIComponent(entry.commitSha)}&type=commits`}
-                            className="text-primary underline underline-offset-2 hover:text-foreground"
+                            className="text-muted-foreground underline underline-offset-2 hover:text-foreground"
                           >
                             {entry.commitSha}
                           </a>

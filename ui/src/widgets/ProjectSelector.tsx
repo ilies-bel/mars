@@ -164,7 +164,7 @@ export const ProjectSelectorInner = ({
                     ? 'bg-primary/30 text-foreground'
                     : isActive
                       ? 'bg-primary/10 text-foreground'
-                      : 'text-primary hover:bg-foreground/5 hover:text-foreground',
+                      : 'text-muted-foreground hover:bg-foreground/5 hover:text-foreground',
                 ].join(' ')}
               >
                 <div className="flex items-center gap-1.5">

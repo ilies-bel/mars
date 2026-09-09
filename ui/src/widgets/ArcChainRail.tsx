@@ -49,7 +49,7 @@ function TaskTracePanel({ taskId }: { taskId: string }) {
           <span className={`uppercase ${severityColor(e.severity)}`}>
             [{e.severity}]
           </span>{' '}
-          <span className="text-primary">{e.kind}</span>{' '}
+          <span className="text-muted-foreground">{e.kind}</span>{' '}
           <span className={marsToolTextClass(e)}>{summarizeTraceEvent(e)}</span>
         </li>
       ))}
@@ -101,10 +101,10 @@ export default function ArcChainRail({
               className={[
                 'flex w-full items-baseline gap-1.5 rounded px-2 py-1 text-left font-mono text-label',
                 'transition-colors hover:bg-foreground/5',
-                selectedId === node.id ? 'bg-primary/15 font-bold text-foreground' : 'text-foreground/80',
+                selectedId === node.id ? 'bg-primary/15 font-bold text-foreground' : 'text-foreground',
               ].join(' ')}
             >
-              <span className="shrink-0 text-micro uppercase text-primary">
+              <span className="shrink-0 text-micro uppercase text-muted-foreground">
                 {node.kind === 'proposal'
                   ? 'Proposal'
                   : node.attemptIndex !== undefined
@@ -129,13 +129,13 @@ export default function ArcChainRail({
           data-node-id={selectedNode.id}
         >
           <div>
-            <p className="mb-1 text-micro uppercase tracking-wider text-primary">Prompt</p>
+            <p className="mb-1 text-micro uppercase tracking-wider text-muted-foreground">Prompt</p>
             <p className="whitespace-pre-wrap font-mono text-body text-foreground">
               {selectedNode.label}
             </p>
           </div>
           <div>
-            <p className="mb-1 text-micro uppercase tracking-wider text-primary">Traces</p>
+            <p className="mb-1 text-micro uppercase tracking-wider text-muted-foreground">Traces</p>
             <TaskTracePanel taskId={selectedNode.id} />
           </div>
         </aside>

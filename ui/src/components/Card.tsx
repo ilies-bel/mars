@@ -46,7 +46,7 @@ export function Card({ card, onSilenced }: Props) {
     >
       <div className="flex items-start justify-between gap-2">
         <span className="font-mono text-label text-muted-foreground">{card.producer_key}</span>
-        <span className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 font-mono text-micro font-semibold text-primary">
+        <span className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 font-mono text-micro font-semibold text-muted-foreground">
           {card.autonomy_level}
         </span>
       </div>

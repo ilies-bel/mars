@@ -18,7 +18,7 @@ import { fetchChatConfig } from '@/shared/api'
 import type { ChatConfig, ChatConfigTool } from '@/shared/schemas'
 
 const SectionHeading = ({ children }: { children: string }) => (
-  <h3 className="mt-4 text-micro uppercase tracking-wider text-primary/60">{children}</h3>
+  <h3 className="mt-4 text-micro uppercase tracking-wider text-muted-foreground">{children}</h3>
 )
 
 const ToolList = ({ tools, testId }: { tools: ChatConfigTool[]; testId: string }) => (
@@ -26,7 +26,7 @@ const ToolList = ({ tools, testId }: { tools: ChatConfigTool[]; testId: string }
     {tools.map((t) => (
       <li key={t.name} className="text-label">
         <span className="text-foreground">{t.name}</span>
-        {t.description && <p className="mt-0.5 text-micro leading-snug text-primary/70">{t.description}</p>}
+        {t.description && <p className="mt-0.5 text-micro leading-snug text-muted-foreground">{t.description}</p>}
       </li>
     ))}
   </ul>
@@ -39,25 +39,25 @@ export const AgentConfigContent = ({ config }: { config: ChatConfig }) => (
 
     <SectionHeading>Conversation memory</SectionHeading>
     <dl data-testid="agent-config-memory" className="mt-1 grid grid-cols-2 gap-x-2 gap-y-1 text-micro">
-      <dt className="text-primary/60">Cache retention</dt>
+      <dt className="text-muted-foreground">Cache retention</dt>
       <dd>{Math.round(config.retentionMs / 60_000)} min</dd>
-      <dt className="text-primary/60">Reusable prefix</dt>
+      <dt className="text-muted-foreground">Reusable prefix</dt>
       <dd>{config.minimumReusablePrefixTokens.toLocaleString()} tokens</dd>
-      <dt className="text-primary/60">Context window</dt>
+      <dt className="text-muted-foreground">Context window</dt>
       <dd>{config.contextWindowTokens.toLocaleString()} tokens</dd>
     </dl>
 
     <SectionHeading>System prompt</SectionHeading>
     <details className="mt-1">
-      <summary className="cursor-pointer text-label text-foreground hover:text-primary">
+      <summary className="cursor-pointer text-label text-foreground hover:text-muted-foreground">
         {config.systemPromptSource === 'override'
           ? 'Override — .mars/chat-system-prompt.md'
           : 'Built-in'}
-        <span className="ml-2 text-micro text-primary/50">({config.systemPrompt.length} chars)</span>
+        <span className="ml-2 text-micro text-muted-foreground">({config.systemPrompt.length} chars)</span>
       </summary>
       <pre
         data-testid="agent-config-system-prompt"
-        className="mt-2 max-h-64 overflow-y-auto whitespace-pre-wrap border border-border bg-primary/5 p-2 font-mono text-micro leading-relaxed text-primary"
+        className="mt-2 max-h-64 overflow-y-auto whitespace-pre-wrap border border-border bg-primary/5 p-2 font-mono text-micro leading-relaxed text-muted-foreground"
       >
         {config.systemPrompt}
       </pre>
@@ -68,7 +68,7 @@ export const AgentConfigContent = ({ config }: { config: ChatConfig }) => (
 
     <SectionHeading>MCP servers</SectionHeading>
     {config.mcpServers.length === 0 && (
-      <p className="mt-1 text-micro text-primary/50">None configured (.mcp.json)</p>
+      <p className="mt-1 text-micro text-muted-foreground">None configured (.mcp.json)</p>
     )}
     {config.mcpServers.map((server) => (
       <div key={server.name} data-testid={`agent-config-mcp-${server.name}`} className="mt-1.5">
@@ -80,7 +80,7 @@ export const AgentConfigContent = ({ config }: { config: ChatConfig }) => (
             }`}
           />
           {server.name}
-          <span className="ml-2 text-micro text-primary/50">{server.command}</span>
+          <span className="ml-2 text-micro text-muted-foreground">{server.command}</span>
         </p>
         {server.status === 'failed' ? (
           <p className="mt-0.5 font-mono text-micro text-error">not connected</p>
@@ -94,7 +94,7 @@ export const AgentConfigContent = ({ config }: { config: ChatConfig }) => (
 
     <SectionHeading>Skills</SectionHeading>
     <details className="mt-1">
-      <summary className="cursor-pointer text-label text-foreground hover:text-primary">
+      <summary className="cursor-pointer text-label text-foreground hover:text-muted-foreground">
         {config.skills.length} skill{config.skills.length === 1 ? '' : 's'} (.claude/skills)
       </summary>
       <div className="border-l border-border pl-2">
@@ -118,7 +118,7 @@ export const AgentConfigPanel = ({ projectId }: { projectId?: string }) => {
         type="button"
         data-testid="agent-config-trigger"
         onClick={() => setOpen(true)}
-        className="flex w-full items-center gap-1.5 rounded border border-border px-2 py-1 font-mono text-label text-primary hover:bg-primary/20 hover:text-foreground"
+        className="flex w-full items-center gap-1.5 rounded border border-border px-2 py-1 font-mono text-label text-muted-foreground hover:bg-primary/20 hover:text-foreground"
       >
         <Settings2Icon className="h-3 w-3" />
         Agent config
@@ -132,18 +132,18 @@ export const AgentConfigPanel = ({ projectId }: { projectId?: string }) => {
           className="fixed inset-y-0 right-0 z-50 flex w-[380px] max-w-full flex-col border-l border-border bg-background shadow-2xl"
         >
           <div className="flex items-center justify-between border-b border-border px-3 py-2">
-            <h2 className="text-label uppercase tracking-wider text-primary">Agent configuration</h2>
+            <h2 className="text-label uppercase tracking-wider text-muted-foreground">Agent configuration</h2>
             <button
               type="button"
               aria-label="Close"
               onClick={() => setOpen(false)}
-              className="text-primary hover:text-foreground"
+              className="text-muted-foreground hover:text-foreground"
             >
               <XIcon className="h-3.5 w-3.5" />
             </button>
           </div>
           <div className="flex-1 overflow-y-auto">
-            {isLoading && <p className="px-3 py-4 text-label text-primary/60">Loading…</p>}
+            {isLoading && <p className="px-3 py-4 text-label text-muted-foreground">Loading…</p>}
             {isError && (
               <p className="px-3 py-4 text-label text-error">
                 Could not load the agent configuration — is the daemon running?

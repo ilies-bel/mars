@@ -35,7 +35,7 @@ describe('TopStripe – stat labels match their values', () => {
     )
     const section = between(html, 'stat-in-progress', 'stat-done')
     expect(section).toContain('>3<')
-    expect(section).toContain('IN PROGRESS')
+    expect(section).toContain('In Progress')
   })
 
   it('shows the DONE TODAY count in its own section', () => {
@@ -44,7 +44,7 @@ describe('TopStripe – stat labels match their values', () => {
     )
     const section = between(html, 'stat-done', 'stat-failed')
     expect(section).toContain('>5<')
-    expect(section).toContain('DONE TODAY')
+    expect(section).toContain('Done Today')
   })
 
   it('shows the FAILED count in its own section', () => {
@@ -53,7 +53,7 @@ describe('TopStripe – stat labels match their values', () => {
     )
     const section = from(html, 'stat-failed')
     expect(section).toContain('>2<')
-    expect(section).toContain('FAILED')
+    expect(section).toContain('Failed')
   })
 
   it('does not show an ACTION QUEUE label (replaced by FAILED)', () => {

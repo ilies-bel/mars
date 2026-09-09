@@ -1,3 +1,4 @@
+import { ChevronDown } from 'lucide-react'
 import { memo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import type { UITask } from '@/shared/types'
@@ -134,7 +135,7 @@ export const TaskCard = memo(({ task, index }: Props) => {
         type="button"
         aria-label={task.title}
         onClick={openDrawer}
-        className={`w-full text-left line-clamp-3 text-title font-medium leading-snug text-foreground focus-visible:outline-none before:absolute before:inset-0 before:content-['']${task.status === 'dropped' ? ' line-through' : ''}`}
+        className={`w-full text-left line-clamp-3 text-title font-medium leading-snug text-foreground before:absolute before:inset-0 before:content-['']${task.status === 'dropped' ? ' line-through' : ''}`}
       >
         {task.title}
       </button>
@@ -175,14 +176,14 @@ export const TaskCard = memo(({ task, index }: Props) => {
         <details
           className="relative z-10 border-t border-border/50 pt-2"
         >
-          <summary className="flex cursor-pointer list-none select-none items-center gap-1.5 py-0.5 text-micro font-semibold text-muted-foreground/80 hover:text-foreground">
-            <span className="text-foreground/60">spec</span>
-            <span className="opacity-40 text-micro">▾</span>
+          <summary className="flex cursor-pointer list-none select-none items-center gap-1.5 py-0.5 text-micro font-semibold text-muted-foreground hover:text-foreground">
+            <span className="text-foreground">spec</span>
+            <ChevronDown size={11} strokeWidth={2} aria-hidden="true" className="text-muted-foreground" />
           </summary>
           <div className="flex flex-col gap-1 pt-1 font-mono text-micro text-muted-foreground">
             {spec.files.length > 0 ? (
               <div>
-                <span className="font-semibold text-foreground/60">files</span>
+                <span className="font-semibold text-foreground">files</span>
                 <ul className="mt-0.5 space-y-0.5">
                   {spec.files.map((f) => (
                     <li key={f} className="truncate pl-2">
@@ -194,7 +195,7 @@ export const TaskCard = memo(({ task, index }: Props) => {
             ) : null}
             {(spec.readFirst ?? []).length > 0 ? (
               <div>
-                <span className="font-semibold text-foreground/60">read first</span>
+                <span className="font-semibold text-foreground">read first</span>
                 <ol className="mt-0.5 list-decimal space-y-0.5 pl-4">
                   {(spec.readFirst ?? []).map((f) => (
                     <li key={f} className="truncate">
@@ -206,7 +207,7 @@ export const TaskCard = memo(({ task, index }: Props) => {
             ) : null}
             {spec.prescriptiveAction ? (
               <div>
-                <span className="font-semibold text-foreground/60">action</span>
+                <span className="font-semibold text-foreground">action</span>
                 <p className="mt-0.5 line-clamp-3 whitespace-pre-wrap pl-2">
                   {spec.prescriptiveAction}
                 </p>
@@ -214,7 +215,7 @@ export const TaskCard = memo(({ task, index }: Props) => {
             ) : null}
             {spec.verifyCmd ? (
               <div>
-                <span className="font-semibold text-foreground/60">verify</span>
+                <span className="font-semibold text-foreground">verify</span>
                 <code className="mt-0.5 block truncate pl-2">{spec.verifyCmd}</code>
               </div>
             ) : null}

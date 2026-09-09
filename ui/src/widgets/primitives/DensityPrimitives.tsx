@@ -71,6 +71,55 @@ export function PageHeader({
 }
 
 /**
+ * The scrolling body beneath a PageHeader — and the single owner of the page
+ * gutter.
+ *
+ * PageHeader is a full-bleed band: it carries its own `px-6`, a bottom rule and
+ * a surface, so it is meant to span the content column edge to edge. Pages that
+ * *also* wrapped it in a padded `<main>` got both paddings, and the content
+ * gutter measured 248px on triage, 264px on events and 272px on kpi/steward —
+ * the shell visibly jumped sideways on every navigation.
+ *
+ * The rule this encodes: the page container adds no horizontal padding, the
+ * header owns its own, and PageBody owns the body's. One gutter, one number.
+ * It also makes the header stay put while the body scrolls, which is what a
+ * header band is for.
+ */
+export function PageBody({
+  children,
+  className,
+}: {
+  children: ReactNode
+  className?: string
+}): JSX.Element {
+  return (
+    <div className={cn('flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-6 py-4', className)}>
+      {children}
+    </div>
+  )
+}
+
+/** The outer frame every page shares: full height, no gutter of its own. */
+export function PageShell({
+  children,
+  className,
+  testId,
+}: {
+  children: ReactNode
+  className?: string
+  testId?: string
+}): JSX.Element {
+  return (
+    <div
+      data-testid={testId}
+      className={cn('flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-background', className)}
+    >
+      {children}
+    </div>
+  )
+}
+
+/**
  * A heading for a section inside a page body — the rung between PageHeader and
  * a card title that the app previously had no token for.
  */

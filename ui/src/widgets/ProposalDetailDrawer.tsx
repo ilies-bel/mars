@@ -1,3 +1,4 @@
+import { ChevronDown } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState, useMemo } from 'react'
 import type { ReactNode } from 'react'
 import type { ProposalDetail, ProgressTask } from '@/shared/schemas'
@@ -60,14 +61,14 @@ interface ProposalDetailDrawerProps {
  * iron treatment rather than rendering nothing.
  */
 const STATUS_BADGE: Record<string, string> = {
-  draft: 'bg-primary/10 text-primary',
+  draft: 'bg-primary/10 text-muted-foreground',
   'prd-ready': 'bg-warn/15 text-warn',
   sliced: 'bg-warn/15 text-warn',
-  dismissed: 'bg-primary/10 text-primary line-through',
+  dismissed: 'bg-primary/10 text-muted-foreground line-through',
 }
 
 const badgeClass = (status: string): string =>
-  STATUS_BADGE[status] ?? 'bg-primary/10 text-primary'
+  STATUS_BADGE[status] ?? 'bg-primary/10 text-muted-foreground'
 
 /**
  * Copy-pasteable CLI commands shown in the drawer for each proposal status.
@@ -189,14 +190,14 @@ export const BodySection = ({
               disabled={editState === 'saving'}
               autoFocus
               aria-label={`Edit ${label}`}
-              className="min-h-[80px] w-full resize-y rounded border border-border bg-background px-2 py-1 text-body text-foreground focus:outline-none focus:ring-1 focus:ring-primary/60 disabled:opacity-50"
+              className="min-h-[80px] w-full resize-y rounded border border-border bg-background px-2 py-1 text-body text-foreground disabled:opacity-50"
             />
             <div className="flex items-center gap-2">
               <button
                 type="button"
                 onClick={() => { void handleSave() }}
                 disabled={editState === 'saving'}
-                className="rounded border border-border px-2 py-0.5 font-mono text-body text-primary hover:bg-foreground/5 disabled:opacity-50"
+                className="rounded border border-border px-2 py-0.5 font-mono text-body text-muted-foreground hover:bg-foreground/5 disabled:opacity-50"
               >
                 {editState === 'saving' ? 'Saving…' : 'Save'}
               </button>
@@ -220,7 +221,7 @@ export const BodySection = ({
                 type="button"
                 onClick={handleEdit}
                 aria-label={`Edit ${label}`}
-                className="absolute right-0 top-0 rounded px-1 py-0.5 font-mono text-body text-primary opacity-0 transition-opacity hover:bg-foreground/5 group-hover:opacity-100"
+                className="absolute right-0 top-0 rounded px-1 py-0.5 font-mono text-body text-muted-foreground opacity-0 transition-opacity hover:bg-foreground/5 group-hover:opacity-100"
               >
                 ✎
               </button>
@@ -244,7 +245,7 @@ export const BodySection = ({
               <button
                 type="button"
                 onClick={() => setExpanded((v) => !v)}
-                className="mt-1.5 text-micro text-primary underline hover:text-foreground"
+                className="mt-1.5 text-micro text-muted-foreground underline hover:text-foreground"
               >
                 {expanded ? 'Show less' : 'Read more'}
               </button>
@@ -483,7 +484,7 @@ export const ProposalDetailDrawer = ({
               target="_blank"
               rel="noopener noreferrer"
               data-testid="link-view-mockup"
-              className="inline-flex w-fit items-center gap-1 rounded border border-border px-2 py-0.5 font-mono text-body text-primary hover:bg-foreground/5"
+              className="inline-flex w-fit items-center gap-1 rounded border border-border px-2 py-0.5 font-mono text-body text-muted-foreground hover:bg-foreground/5"
             >
               View mockup ↗
             </a>
@@ -494,7 +495,7 @@ export const ProposalDetailDrawer = ({
           onClick={handleClose}
           aria-label="Close proposal detail"
           data-testid="proposal-detail-close"
-          className="shrink-0 rounded border border-border px-2 py-0.5 font-mono text-body text-primary hover:bg-foreground/5"
+          className="shrink-0 rounded border border-border px-2 py-0.5 font-mono text-body text-muted-foreground hover:bg-foreground/5"
         >
           Close
         </button>
@@ -581,7 +582,7 @@ export const ProposalDetailDrawer = ({
                     <button
                       type="button"
                       data-testid="btn-add-story"
-                      className="text-body text-primary underline hover:text-foreground"
+                      className="text-body text-highlight underline hover:text-foreground"
                       onClick={() => setAddingStory(true)}
                     >
                       Add story
@@ -599,7 +600,7 @@ export const ProposalDetailDrawer = ({
                         <button
                           type="button"
                           disabled={storyOpState === 'pending' || !newStoryText.trim()}
-                          className="text-body text-primary underline hover:text-foreground disabled:opacity-50"
+                          className="text-body text-highlight underline hover:text-foreground disabled:opacity-50"
                           onClick={async () => {
                             const trimmed = newStoryText.trim()
                             if (!trimmed) return
@@ -621,7 +622,7 @@ export const ProposalDetailDrawer = ({
                         </button>
                         <button
                           type="button"
-                          className="text-body text-muted-foreground underline hover:text-foreground"
+                          className="text-body text-highlight underline hover:text-foreground"
                           onClick={() => {
                             setAddingStory(false)
                             setNewStoryText('')
@@ -677,7 +678,7 @@ export const ProposalDetailDrawer = ({
                     href={taskHash(task.id)}
                     className="flex items-center gap-2 rounded border border-border px-2 py-1.5 font-mono text-body transition-colors hover:bg-foreground/5"
                   >
-                    <span className="shrink-0 text-primary">{task.id}</span>
+                    <span className="shrink-0 text-muted-foreground">{task.id}</span>
                     <span
                       className={`inline-flex shrink-0 items-center rounded px-1 py-0.5 text-micro font-semibold uppercase tracking-wide ${badgeClass(task.status)}`}
                     >
@@ -698,8 +699,8 @@ export const ProposalDetailDrawer = ({
           Collapsed behind a <details> so the drawer footer stays compact. */}
       <section className="border-t border-border px-4 py-3">
         <details>
-          <summary className="cursor-pointer select-none font-mono text-body text-primary hover:text-foreground">
-            Copy command ▾
+          <summary className="cursor-pointer select-none font-mono text-body text-muted-foreground hover:text-foreground">
+            Copy command <ChevronDown size={11} strokeWidth={2} aria-hidden="true" />
           </summary>
           <div className="mt-2 flex flex-col gap-1.5">
             {(STATUS_CLI_VERBS[proposal.status] ?? ['show']).map((verb) => {

@@ -16,6 +16,8 @@ import { SelectField } from '@/components/SelectField'
  */
 
 import { useState, useMemo } from 'react'
+import { ArrowDown, ArrowUp, ChevronsUpDown } from 'lucide-react'
+import { cn } from '@/lib/utils'
 import { useScorerWorkflows } from '@/entities/watchtower/useScorerWorkflows'
 import { useLoopLedger } from '@/entities/watchtower/useLoopLedger'
 import { useTasks } from '@/hooks/useTasks'
@@ -23,6 +25,72 @@ import { SkeletonList } from '@/components/Skeleton'
 import { PageHeader } from '@/widgets/primitives/DensityPrimitives'
 import { studioHash } from '@/shared/routing'
 import { relativeTime, formatAbsoluteDateTime } from '@/shared/time'
+
+type SortKey = 'task' | 'scored' | 'score'
+
+/**
+ * A column header that is actually a control. The previous <th> were inert
+ * text with `cursor: auto` and no aria-sort, so the table announced itself as
+ * static to assistive tech and offered no affordance to sighted users either.
+ */
+const SortHeader = ({
+  label,
+  col,
+  sort,
+  onSort,
+  className,
+}: {
+  label: string
+  col: SortKey
+  sort: { key: SortKey; dir: 'asc' | 'desc' }
+  onSort: (k: SortKey) => void
+  className?: string
+}) => {
+  const active = sort.key === col
+  return (
+    <th
+      scope="col"
+      aria-sort={active ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}
+      className={cn('pb-2 font-normal', className)}
+    >
+      <button
+        type="button"
+        onClick={() => onSort(col)}
+        className={cn(
+          'inline-flex items-center gap-1 text-micro font-semibold uppercase tracking-[0.07em] transition-colors',
+          active ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
+        )}
+      >
+        {label}
+        {active
+          ? (sort.dir === 'asc'
+              ? <ArrowUp size={10} strokeWidth={2.5} aria-hidden="true" />
+              : <ArrowDown size={10} strokeWidth={2.5} aria-hidden="true" />)
+          : <ChevronsUpDown size={10} strokeWidth={2} aria-hidden="true" className="opacity-0 transition-opacity group-hover:opacity-100" />}
+      </button>
+    </th>
+  )
+}
+
+/**
+ * A score rendered as a value, not just a number. 0.35 and 0.85 used to be the
+ * same 13px black text, so the table encoded its most important column in
+ * digits alone — you had to read every row to find the bad ones.
+ */
+const ScoreCell = ({ score }: { score: number | null }) => {
+  if (score === null) return <span className="text-muted-foreground">—</span>
+  const pct = Math.max(0, Math.min(1, score)) * 100
+  const tone =
+    score >= 0.8 ? 'bg-success' : score >= 0.5 ? 'bg-warn' : 'bg-error'
+  return (
+    <span className="flex items-center gap-2">
+      <span className="h-1.5 w-24 shrink-0 overflow-hidden rounded-full bg-foreground/8">
+        <span className={cn('block h-full rounded-full', tone)} style={{ width: `${pct}%` }} />
+      </span>
+      <span className="tabular-nums text-label text-foreground">{score.toFixed(2)}</span>
+    </span>
+  )
+}
 
 export const StudioIndexPage = () => {
   const { data: workflows } = useScorerWorkflows()
@@ -35,8 +103,15 @@ export const StudioIndexPage = () => {
   const { entries, isLoading, error } = useLoopLedger(workflow)
 
   // Only show runs that have actually been scored.
-  const scoredEntries = useMemo(() => entries.filter((e) => e.score !== null), [entries])
+  const filtered = useMemo(() => entries.filter((e) => e.score !== null), [entries])
 
+  // A scored-runs table you cannot sort by score is a list of numbers, not a
+  // ranking — the one question this page exists to answer ("which runs scored
+  // badly?") required reading every row. Sorting defaults to worst-first.
+  const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' }>({
+    key: 'score',
+    dir: 'asc',
+  })
   // Build an id→title map from the Progress snapshot. Almost always already
   // cached from the Progress tab, so this adds zero extra network requests.
   const { snapshot } = useTasks()
@@ -50,6 +125,27 @@ export const StudioIndexPage = () => {
     }
     return map
   }, [snapshot])
+
+  const scoredEntries = useMemo(() => {
+    const rows = [...filtered]
+    rows.sort((a, b) => {
+      const mul = sort.dir === 'asc' ? 1 : -1
+      if (sort.key === 'score') return ((a.score ?? 0) - (b.score ?? 0)) * mul
+      if (sort.key === 'scored') return ((a.scoredAt ?? 0) - (b.scoredAt ?? 0)) * mul
+      const at = taskTitleMap.get(a.runId) ?? a.runId
+      const bt = taskTitleMap.get(b.runId) ?? b.runId
+      return at.localeCompare(bt) * mul
+    })
+    return rows
+  }, [filtered, sort, taskTitleMap])
+
+  const toggleSort = (key: SortKey) =>
+    setSort((cur) =>
+      cur.key === key
+        ? { key, dir: cur.dir === 'asc' ? 'desc' : 'asc' }
+        : { key, dir: key === 'task' ? 'asc' : 'desc' },
+    )
+
 
   return (
     <div data-testid="studio-index-page" className="flex h-full flex-col overflow-hidden bg-background">
@@ -100,7 +196,7 @@ export const StudioIndexPage = () => {
               Accept a scorer on the{' '}
               <a
                 href="#/kpi"
-                className="text-primary underline-offset-2 hover:underline focus:outline-none focus:ring-2 focus:ring-primary/40"
+                className="text-highlight underline-offset-2 hover:underline"
               >
                 KPI page
               </a>{' '}
@@ -111,27 +207,30 @@ export const StudioIndexPage = () => {
         ) : (
           <table className="w-full text-body">
             <thead>
-              <tr className="text-left text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">
-                <th className="pb-2 pr-4 font-normal">Task</th>
-                <th className="pb-2 pr-4 font-normal">Scored</th>
-                <th className="pb-2 font-normal">Score</th>
+              <tr className="text-left">
+                <SortHeader label="Task" col="task" sort={sort} onSort={toggleSort} className="pr-4" />
+                <SortHeader label="Scored" col="scored" sort={sort} onSort={toggleSort} className="pr-4" />
+                <SortHeader label="Score" col="score" sort={sort} onSort={toggleSort} className="w-40" />
               </tr>
             </thead>
             <tbody>
               {scoredEntries.map((entry) => {
                 const title = taskTitleMap.get(entry.runId) ?? entry.runId
                 return (
-                  <tr key={entry.runId} className="border-t border-border/40">
+                  <tr
+                    key={entry.runId}
+                    className="border-t border-border/40 transition-colors hover:bg-foreground/[0.035]"
+                  >
                     <td className="py-2 pr-4">
                       <a
                         href={studioHash(entry.runId)}
-                        className="text-foreground hover:text-primary focus:outline-none focus:ring-2 focus:ring-primary/40"
+                        className="text-foreground hover:text-muted-foreground"
                       >
                         {title}
                       </a>
                       {title !== entry.runId && (
                         <span
-                          className="block text-micro text-muted-foreground/60"
+                          className="block text-label text-muted-foreground"
                           title={entry.runId}
                         >
                           {entry.runId}
@@ -144,8 +243,8 @@ export const StudioIndexPage = () => {
                     >
                       {entry.scoredAt !== null ? relativeTime(entry.scoredAt) : '—'}
                     </td>
-                    <td className="py-2 tabular-nums">
-                      {entry.score !== null ? entry.score.toFixed(2) : '—'}
+                    <td className="py-2">
+                      <ScoreCell score={entry.score} />
                     </td>
                   </tr>
                 )

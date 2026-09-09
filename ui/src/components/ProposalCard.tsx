@@ -26,7 +26,7 @@ export const ProposalCard = memo(({ proposal }: Props) => {
     <article
       tabIndex={0}
       role="button"
-      className="flex flex-col gap-2 rounded-md border border-border bg-card p-3 cursor-pointer transition-[transform,background-color] duration-150 ease-out hover:bg-secondary active:scale-[0.99] motion-reduce:transform-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className="flex flex-col gap-2 rounded-md border border-border bg-card p-3 cursor-pointer transition-[transform,background-color] duration-150 ease-out hover:bg-secondary active:scale-[0.99] motion-reduce:transform-none"
       onClick={(e) => {
         // Let inner anchors (e.g. the id link) handle their own navigation
         if ((e.target as HTMLElement).closest('a') !== null) return
@@ -46,7 +46,7 @@ export const ProposalCard = memo(({ proposal }: Props) => {
         >
           {proposal.id}
         </a>
-        <span className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 font-mono text-micro font-semibold text-primary">
+        <span className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 font-mono text-micro font-semibold text-muted-foreground">
           {proposal.status}
         </span>
       </div>
@@ -66,7 +66,7 @@ export const ProposalCard = memo(({ proposal }: Props) => {
             rel="noopener noreferrer"
             data-testid="proposal-card-mockup-chip"
             onClick={(e) => e.stopPropagation()}
-            className="rounded border border-border px-1.5 py-0.5 font-mono text-micro text-primary hover:bg-foreground/5"
+            className="rounded border border-border px-1.5 py-0.5 font-mono text-micro text-muted-foreground hover:bg-foreground/5"
           >
             mockup ready ↗
           </a>

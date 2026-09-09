@@ -1,5 +1,5 @@
-import { TriangleAlert } from 'lucide-react'
-import { ActionButton } from '@/components/ActionButton'
+import { ArrowRight, TriangleAlert } from 'lucide-react'
+import { ActionButton, ActionLink } from '@/components/ActionButton'
 import { Chip } from '@/components/Chip'
 /**
  * ControlRoomPage — operator levers first, reference data below.
@@ -262,7 +262,7 @@ const LeversSection = () => {
             <>
               <DialogHeader>
                 <DialogTitle className="text-title">{copy.title}</DialogTitle>
-                <DialogDescription className="text-body text-foreground/70">
+                <DialogDescription className="text-body text-foreground">
                   {copy.body}
                 </DialogDescription>
               </DialogHeader>
@@ -271,7 +271,7 @@ const LeversSection = () => {
               )}
               <DialogFooter>
                 <DialogClose asChild>
-                  <button className="rounded border border-border px-3 py-1.5 text-label text-foreground/70 hover:border-border/80">
+                  <button className="rounded border border-border px-3 py-1.5 text-label text-foreground hover:border-border/80">
                     Cancel
                   </button>
                 </DialogClose>
@@ -426,7 +426,7 @@ const GatesSection = () => {
         )}
 
         {gatesData.length === 0 ? (
-          <p className="font-mono text-label text-muted-foreground/50">
+          <p className="font-mono text-label text-muted-foreground">
             No gates yet — run <code className="font-mono text-micro bg-surface px-1 rounded">mars verify-gate detect</code>
           </p>
         ) : (
@@ -470,10 +470,10 @@ const GatesSection = () => {
                       {!gate.required && <Chip tone="warn">advisory</Chip>}
                       {gate.state === 'quarantined' && <Chip tone="error">quarantined</Chip>}
                     </div>
-                    <p className="truncate font-mono text-micro text-muted-foreground/70">
+                    <p className="truncate font-mono text-micro text-muted-foreground">
                       {[gate.cmd, ...gate.args].join(' ')}
                       {gate.scope !== '.' && (
-                        <span className="text-muted-foreground/45"> in {gate.scope}</span>
+                        <span className="text-muted-foreground"> in {gate.scope}</span>
                       )}
                     </p>
                   </div>
@@ -482,7 +482,7 @@ const GatesSection = () => {
                       read "when did this last break" down the list. */}
                   <div className="hidden shrink-0 flex-col items-end gap-0.5 text-micro tabular-nums sm:flex">
                     {!failing && gate.lastPassAt !== null && (
-                      <span className="text-muted-foreground/70" data-testid="gate-last-pass">
+                      <span className="text-muted-foreground" data-testid="gate-last-pass">
                         passed{' '}
                         <span title={formatAbsoluteDateTime(gate.lastPassAt)}>
                           {relativeTime(gate.lastPassAt)}
@@ -491,7 +491,7 @@ const GatesSection = () => {
                     )}
                     {gate.lastFailureAt !== null && (
                       <span
-                        className={failing ? 'text-error/80' : 'text-muted-foreground/45'}
+                        className={failing ? 'text-error/80' : 'text-muted-foreground'}
                         data-testid="gate-last-failure"
                       >
                         failed{' '}
@@ -611,7 +611,7 @@ const NowSection = () => {
           <span
             className={[
               'h-1.5 w-1.5 rounded-full',
-              dispatch.paused ? 'bg-warn' : connected ? 'bg-success' : 'bg-primary/30',
+              dispatch.paused ? 'bg-warn' : connected ? 'bg-success' : 'bg-muted-foreground/45',
             ].join(' ')}
             aria-hidden="true"
           />
@@ -667,7 +667,7 @@ const Stat = ({ label, value, colorClass }: StatProps) => (
     <span
       className={[
         'text-title font-semibold leading-none tabular-nums',
-        colorClass ?? 'text-muted-foreground/50',
+        colorClass ?? 'text-muted-foreground',
       ].join(' ')}
     >
       {value}
@@ -761,7 +761,7 @@ const EngineSection = () => {
           )}
           {runningCount > 0 && (
             <p
-              className="mt-2 text-micro text-muted-foreground/70"
+              className="mt-2 text-micro text-muted-foreground"
               data-testid="engine-running-count"
             >
               {runningCount} task{runningCount !== 1 ? 's are' : ' is'} currently running — will be
@@ -809,7 +809,7 @@ const EngineSection = () => {
           <DialogHeader>
             <DialogTitle className="text-title">Restart engine?</DialogTitle>
             <DialogDescription
-              className="text-body text-foreground/70"
+              className="text-body text-foreground"
               data-testid="engine-restart-confirm-body"
             >
               {runningCount} task{runningCount !== 1 ? 's are' : ' is'} currently running and will
@@ -823,7 +823,7 @@ const EngineSection = () => {
               </li>
             ))}
             {runningTasks.length > 5 && (
-              <li className="text-micro text-muted-foreground/60">
+              <li className="text-micro text-muted-foreground">
                 … and {runningTasks.length - 5} more
               </li>
             )}
@@ -833,7 +833,7 @@ const EngineSection = () => {
           )}
           <DialogFooter>
             <DialogClose asChild>
-              <button className="rounded border border-border px-3 py-1.5 text-label text-foreground/70 hover:border-border/80">
+              <button className="rounded border border-border px-3 py-1.5 text-label text-foreground hover:border-border/80">
                 Cancel
               </button>
             </DialogClose>
@@ -873,22 +873,18 @@ const AdvisorySection = () => {
       <SectionHeading>Advisory Digest</SectionHeading>
 
       <div className="mb-4 flex gap-4">
-        <a
-          href="#/steward"
-          className="text-label text-muted-foreground hover:text-foreground transition-colors"
-        >
-          → Steward ledgers
-        </a>
-        <a
-          href="#/reflections"
-          className="text-label text-muted-foreground hover:text-foreground transition-colors"
-        >
-          → Deep reflections
-        </a>
+        <ActionLink href="#/steward" variant="ghost" size="sm">
+            <ArrowRight size={12} strokeWidth={2} aria-hidden="true" />
+            Steward ledgers
+          </ActionLink>
+        <ActionLink href="#/reflections" variant="ghost" size="sm">
+            <ArrowRight size={12} strokeWidth={2} aria-hidden="true" />
+            Deep reflections
+          </ActionLink>
       </div>
 
       {advisories.length === 0 ? (
-        <p className="text-label text-muted-foreground/50">No pending advisories.</p>
+        <p className="text-label text-muted-foreground">No pending advisories.</p>
       ) : (
         <ul className="space-y-2">
           {advisories.map((item) => (
@@ -897,10 +893,10 @@ const AdvisorySection = () => {
               className="mars-card rounded bg-surface px-3 py-2"
             >
               <div className="flex items-start gap-2">
-                <span className="mt-0.5 shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-micro uppercase tracking-wide text-primary/60">
+                <span className="mt-0.5 shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-micro uppercase tracking-wide text-muted-foreground">
                   {ADVISORY_LABELS[item.kind] ?? item.kind.replace(/-/g, ' ')}
                 </span>
-                <span className="text-body text-foreground/80">{item.title}</span>
+                <span className="text-body text-foreground">{item.title}</span>
               </div>
               {item.body && (
                 <p className="mt-1 text-label text-muted-foreground leading-snug">
@@ -966,7 +962,7 @@ const RulesSection = () => {
             placeholder="Filter glossary + ADRs…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full rounded border border-border bg-transparent px-3 py-1.5 text-label text-foreground placeholder:text-muted-foreground/40 focus:border-border focus:outline-none"
+            className="w-full rounded border border-border bg-transparent px-3 py-1.5 text-label text-foreground placeholder:text-muted-foreground focus:border-border"
           />
 
           {filteredTerms.length > 0 && (
@@ -977,7 +973,7 @@ const RulesSection = () => {
                   <span
                     key={t.term}
                     title={t.definition}
-                    className="rounded border border-border px-2 py-0.5 text-label text-foreground/80 hover:border-border hover:text-foreground"
+                    className="rounded border border-border px-2 py-0.5 text-label text-foreground hover:border-border hover:text-foreground"
                   >
                     {t.term}
                   </span>
@@ -992,10 +988,10 @@ const RulesSection = () => {
               <ul className="space-y-0.5">
                 {filteredAdrs.map((adr) => (
                   <li key={adr.slug} className="flex items-baseline gap-2">
-                    <span className="w-10 shrink-0 font-mono text-micro text-muted-foreground/50">
+                    <span className="w-10 shrink-0 font-mono text-micro text-muted-foreground">
                       {String(adr.number).padStart(4, '0')}
                     </span>
-                    <span className="text-label text-foreground/70">{adr.title}</span>
+                    <span className="text-label text-foreground">{adr.title}</span>
                   </li>
                 ))}
               </ul>
@@ -1003,7 +999,7 @@ const RulesSection = () => {
           )}
 
           {filteredTerms.length === 0 && filteredAdrs.length === 0 && (
-            <p className="text-label text-muted-foreground/50">
+            <p className="text-label text-muted-foreground">
               {q ? 'No matches.' : 'No glossary terms or ADRs found.'}
             </p>
           )}
@@ -1044,12 +1040,10 @@ const StewardHistorySection = () => {
       <div className="mb-3">
         <div className="flex items-center justify-between">
           <SectionLabel>Steward history</SectionLabel>
-          <a
-            href="#/steward"
-            className="text-label text-muted-foreground hover:text-foreground transition-colors"
-          >
-            → Full view
-          </a>
+          <ActionLink href="#/steward" variant="ghost" size="sm">
+            <ArrowRight size={12} strokeWidth={2} aria-hidden="true" />
+            Full view
+          </ActionLink>
         </div>
       </div>
 

@@ -127,7 +127,7 @@ export const WatchtowerTrendChart = ({
 
   return (
     <div className="flex flex-col gap-1 min-h-[104px]">
-      <span className="font-mono text-label text-primary">{workflow}</span>
+      <span className="font-mono text-label text-muted-foreground">{workflow}</span>
 
       {/* Version chips — one per version visible in the window */}
       {chips.length > 0 && (

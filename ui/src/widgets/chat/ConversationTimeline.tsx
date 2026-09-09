@@ -233,14 +233,14 @@ export const ConversationTimeline = ({
                       className={
                         isNotice
                           ? 'shrink-0 rounded bg-muted-foreground/[0.08] px-1.5 py-0.5'
-                          : 'shrink-0 font-medium text-foreground/70'
+                          : 'shrink-0 font-medium text-foreground'
                       }
                     >
                       {entry.role} · {friendlyKind(entry.kind)}
                     </span>
                     {entry.backingEntityId && (
                       <details className="inline">
-                        <summary className="cursor-pointer font-mono text-micro text-muted-foreground/60 underline decoration-dotted">
+                        <summary className="cursor-pointer font-mono text-micro text-muted-foreground underline decoration-dotted">
                           details
                         </summary>
                         <span className="ml-1 select-all">{entry.backingEntityId}</span>
@@ -308,6 +308,7 @@ export const ConversationTimeline = ({
           // the operator's own turns and ordinary replies stay plain, so the
           // difference between "I said this" and "Mars said this" is visible.
           const isNotice = entry.kind === 'notice'
+          const isOperator = entry.role === 'user'
 
           return (
             <Fragment key={entry.id}>
@@ -315,20 +316,34 @@ export const ConversationTimeline = ({
               <article
                 data-thread-id={entry.threadId}
                 data-message-kind={entry.kind}
+                data-message-role={entry.role}
                 data-testid={isNotice ? `notice-card-${entry.id}` : undefined}
-                className={isNotice ? 'mars-card rounded-md bg-card p-3' : undefined}
+                /* The operator's turn and Mars's turn used to be typeset
+                   identically — same left edge, same ground, same size — so a
+                   thread read as one undifferentiated column and the only cue
+                   for who was speaking was an 11px meta line. Mars speaks on a
+                   surface; the operator's turn is marked by an accent rail. */
+                className={
+                  isNotice
+                    ? 'mars-card rounded-md bg-card p-3'
+                    : isOperator
+                      ? 'border-l-2 border-highlight/45 pl-3'
+                      : 'rounded-md border border-border bg-card px-3 py-2.5'
+                }
               >
-                <header className="mb-1.5 flex items-center gap-2 text-micro text-muted-foreground">
-                  {isNotice ? (
-                    <span className="text-foreground">Mars</span>
-                  ) : (
-                    <span>{entry.subjectTitle || 'Untitled subject'}</span>
-                  )}
-                  {!isNotice && <span>{entry.subjectClosed ? 'closed' : 'open'}</span>}
-                  <span className={isNotice ? 'rounded bg-muted-foreground/[0.08] px-1.5 py-0.5' : undefined}>{entry.role} · {friendlyKind(entry.kind)}</span>
+                {/* The thread subject is NOT repeated here. Entries are already
+                    grouped by subject and the group carries a SubjectBoundaryLine,
+                    so printing the title on every turn restated the same string
+                    three times in a row — and, unbounded in a flex row, pushed
+                    the rest of the meta out to x≈1845 at 1440px wide. */}
+                <header className="mb-1.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-micro text-muted-foreground">
+                  <span className="shrink-0 font-medium text-foreground">
+                    {isNotice ? 'Mars' : isOperator ? 'You' : 'Mars'}
+                  </span>
+                  <span className={isNotice ? 'shrink-0 rounded bg-muted-foreground/[0.08] px-1.5 py-0.5' : 'shrink-0'}>{friendlyKind(entry.kind)}</span>
                   {entry.backingEntityId && (
                     <details className="inline">
-                      <summary className="cursor-pointer font-mono text-micro text-muted-foreground/60 underline decoration-dotted">
+                      <summary className="cursor-pointer font-mono text-micro text-muted-foreground underline decoration-dotted">
                         details
                       </summary>
                       <span className="ml-1 select-all">{entry.backingEntityId}</span>

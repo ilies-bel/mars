@@ -1,3 +1,4 @@
+import { ArrowLeft } from 'lucide-react'
 /**
  * ArcQaPage — per-arc QA walk viewer.
  *
@@ -87,9 +88,9 @@ export const ArcQaPage = ({ originId }: ArcQaPageProps) => {
         <p className="text-label text-muted-foreground">No QA report exists for this arc.</p>
         <a
           href="#/progress"
-          className="mt-4 self-start rounded border border-border px-2 py-1 text-body text-primary hover:bg-foreground/5"
+          className="mt-4 self-start rounded border border-border px-2 py-1 text-body text-muted-foreground hover:bg-foreground/5"
         >
-          ← Back to Progress
+          <ArrowLeft size={12} strokeWidth={2} aria-hidden="true" /> Back to Progress
         </a>
       </main>
     )

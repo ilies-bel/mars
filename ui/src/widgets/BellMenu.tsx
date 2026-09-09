@@ -104,7 +104,7 @@ export const BellMenu = () => {
         onClick={() => setOpen((v) => !v)}
         aria-label="Bell"
         aria-expanded={open}
-        className="relative rounded px-2 py-1 text-primary transition-transform duration-150 ease-out hover:scale-105 hover:text-foreground"
+        className="relative rounded px-2 py-1 text-muted-foreground transition-transform duration-150 ease-out hover:scale-105 hover:text-foreground"
       >
         <BellIcon size={14} aria-hidden="true" />
         {count > 0 && (
@@ -120,11 +120,11 @@ export const BellMenu = () => {
       {open && (
         <div className="mars-card absolute right-0 top-full z-50 mt-1 w-72 rounded bg-background p-2 text-label">
           <section>
-            <h2 className="px-1 pb-1 text-micro uppercase tracking-wide text-primary">
+            <h2 className="px-1 pb-1 text-micro uppercase tracking-wide text-muted-foreground">
               Needs You
             </h2>
             {sorted.length === 0 ? (
-              <p className="px-1 py-1 text-primary">Nothing needs you</p>
+              <p className="px-1 py-1 text-muted-foreground">Nothing needs you</p>
             ) : (
               <ul>
                 {sorted.map((item) => {
@@ -150,7 +150,7 @@ export const BellMenu = () => {
                           <button
                             type="button"
                             onClick={() => handleAck(item.id)}
-                            className="text-micro text-primary underline hover:text-foreground"
+                            className="text-micro text-muted-foreground underline hover:text-foreground"
                           >
                             Acknowledge
                           </button>
@@ -159,7 +159,7 @@ export const BellMenu = () => {
                             <button
                               type="button"
                               onClick={() => discussItem(item.entityId)}
-                              className="text-micro text-primary underline hover:text-foreground"
+                              className="text-micro text-muted-foreground underline hover:text-foreground"
                             >
                               Discuss
                             </button>

@@ -113,7 +113,7 @@ export const QueueThreadRow = memo(({
       <div className="min-w-0 flex-1 px-3 py-2">
         {/* Sender band: all queue rows read like the first message from Mars. */}
         <div className="flex items-baseline gap-2">
-          <span aria-hidden="true" className="shrink-0 text-label text-primary">{KIND_ICON[item.kind]}</span>
+          <span aria-hidden="true" className="shrink-0 text-label text-muted-foreground">{KIND_ICON[item.kind]}</span>
           <span className="shrink-0 font-mono text-micro text-foreground">Mars</span>
           <span aria-hidden="true" className="text-muted-foreground">·</span>
           <span className="shrink-0 text-micro uppercase text-muted-foreground">{kindBadgeLabel(item.kind)}</span>
@@ -151,7 +151,7 @@ export const QueueThreadRow = memo(({
         </div>
 
         {/* Entity ID — monospace, ≥11px for legibility */}
-        <span className="break-all font-mono text-label text-primary">
+        <span className="break-all font-mono text-label text-muted-foreground">
           {item.entityId}
         </span>
 

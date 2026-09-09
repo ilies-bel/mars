@@ -283,7 +283,7 @@ const AppInner = () => {
                   navigateReplace(origin ? ROUTE_BASE[origin] : '#/progress')
                 }}
                 aria-label="Close"
-                className="shrink-0 rounded border border-border px-2 py-0.5 font-mono text-body text-primary hover:bg-foreground/5"
+                className="shrink-0 rounded border border-border px-2 py-0.5 font-mono text-body text-muted-foreground hover:bg-foreground/5"
               >
                 Close
               </button>
@@ -337,7 +337,7 @@ const AppInner = () => {
                   navigateReplace(origin ? ROUTE_BASE[origin] : '#/progress')
                 }}
                 aria-label="Close"
-                className="shrink-0 rounded border border-border px-2 py-0.5 font-mono text-body text-primary hover:bg-foreground/5"
+                className="shrink-0 rounded border border-border px-2 py-0.5 font-mono text-body text-muted-foreground hover:bg-foreground/5"
               >
                 Close
               </button>
@@ -383,7 +383,7 @@ const AppInner = () => {
                 type="button"
                 onClick={() => navigateReplace('#/progress')}
                 aria-label="Close"
-                className="shrink-0 rounded border border-border px-2 py-0.5 font-mono text-body text-primary hover:bg-foreground/5"
+                className="shrink-0 rounded border border-border px-2 py-0.5 font-mono text-body text-muted-foreground hover:bg-foreground/5"
               >
                 Close
               </button>

@@ -1,3 +1,4 @@
+import { ArrowLeft } from 'lucide-react'
 /**
  * ChatHero — inline delta of everything since the last visit.
  *
@@ -77,8 +78,8 @@ export interface ChatHeroProps {
 
 const SECTION_HEADER = 'text-label uppercase tracking-[0.1em] text-muted-foreground mb-2'
 const SECTION_WRAPPER = 'flex flex-col gap-0.5'
-const ITEM_ROW = 'font-mono text-body text-foreground/80'
-const TASK_ID = 'text-primary font-semibold mr-1'
+const ITEM_ROW = 'font-mono text-body text-foreground'
+const TASK_ID = 'text-muted-foreground font-semibold mr-1'
 
 // ── ChatHero ─────────────────────────────────────────────────────────────────
 
@@ -105,9 +106,9 @@ export const ChatHero = ({ delta, onBack }: ChatHeroProps) => {
           type="button"
           data-testid="chat-hero-back"
           onClick={onBack}
-          className="font-mono text-label text-primary transition-colors hover:text-foreground"
+          className="font-mono text-label text-muted-foreground transition-colors hover:text-foreground"
         >
-          ← Back to chat
+          <ArrowLeft size={12} strokeWidth={2} aria-hidden="true" /> Back to chat
         </button>
       </div>
 

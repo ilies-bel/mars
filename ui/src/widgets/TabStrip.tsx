@@ -7,9 +7,11 @@ interface TabStripProps {
 
 const tabClass = (active: boolean): string =>
   [
-    '-mb-px px-3 pb-2 pt-1.5 text-label uppercase tracking-wide transition-colors border-b-2',
+    // font-medium unconditionally. Selection used to add it, so the label
+    // grew a few px and every sibling tab shifted sideways on click.
+    '-mb-px border-b-2 px-2.5 pb-2 pt-1.5 text-label font-medium transition-colors',
     active
-      ? 'border-highlight text-foreground font-medium'
+      ? 'border-highlight text-foreground'
       : 'border-transparent text-muted-foreground hover:text-foreground',
   ].join(' ')
 
@@ -23,7 +25,7 @@ export const TabStrip = ({ active, onSelect }: TabStripProps) => (
   <div
     role="tablist"
     aria-label="Progress views"
-    className="flex items-end border-b border-border bg-background px-4"
+    className="flex items-end gap-1 border-b border-border bg-surface px-6"
   >
     {TABS.map((tab) => {
       const isActive = tab === active

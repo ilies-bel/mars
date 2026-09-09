@@ -110,7 +110,7 @@ export const ShortcutsOverlay = ({ onClose }: ShortcutsOverlayProps) => {
           className="modal-panel flex w-full max-w-sm flex-col rounded-lg border border-border bg-background shadow-2xl outline-none"
         >
           <header className="flex items-center justify-between border-b border-border px-4 py-3">
-            <h2 className="text-title uppercase tracking-wide text-primary">
+            <h2 className="text-title uppercase tracking-wide text-muted-foreground">
               Keyboard Shortcuts
             </h2>
             <button
@@ -118,7 +118,7 @@ export const ShortcutsOverlay = ({ onClose }: ShortcutsOverlayProps) => {
               onClick={handleClose}
               aria-label="Close shortcuts"
               data-testid="shortcuts-close"
-              className="rounded border border-border px-2 py-0.5 font-mono text-body text-primary hover:bg-foreground/5"
+              className="rounded border border-border px-2 py-0.5 font-mono text-body text-muted-foreground hover:bg-foreground/5"
             >
               Close
             </button>

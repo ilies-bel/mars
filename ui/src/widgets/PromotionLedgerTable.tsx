@@ -58,7 +58,7 @@ export const PromotionLedgerTable = ({ workflow }: Props) => {
           </tr>
         ) : entries.length === 0 ? (
           <tr>
-            <td colSpan={5} className="py-1 text-primary">No promotions yet</td>
+            <td colSpan={5} className="py-1 text-muted-foreground">No promotions yet</td>
           </tr>
         ) : (
           entries.map((entry) => (

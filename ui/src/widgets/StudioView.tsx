@@ -90,7 +90,7 @@ export const liveElapsedLabel = (startedAt: string, nowMs: number): string => {
 // ── Panels ────────────────────────────────────────────────────────────────────
 
 const PANEL_SUMMARY_CLASS =
-  'cursor-pointer list-none rounded border border-border px-2 py-0.5 text-micro text-primary hover:bg-foreground/5 [&::-webkit-details-marker]:hidden'
+  'cursor-pointer list-none rounded border border-border px-2 py-0.5 text-micro text-muted-foreground hover:bg-foreground/5 [&::-webkit-details-marker]:hidden'
 
 /** Space-key toggle for <details>, mirroring the drawer's step cards. */
 const toggleOnSpace = (e: React.KeyboardEvent): void => {
@@ -161,13 +161,13 @@ const PromptBody = ({
             text={prompt.prompt}
             data-testid="studio-prompt-copy"
             aria-label="Copy the composed prompt"
-            className="ml-auto shrink-0 rounded border border-border px-2 py-0.5 text-micro text-primary hover:bg-foreground/5"
+            className="ml-auto shrink-0 rounded border border-border px-2 py-0.5 text-micro text-muted-foreground hover:bg-foreground/5"
           />
         ) : null}
       </div>
       <pre
         data-testid="studio-prompt-text"
-        className="max-h-72 overflow-y-auto whitespace-pre-wrap break-words rounded bg-secondary/60 p-2 font-mono text-micro leading-relaxed text-primary"
+        className="max-h-72 overflow-y-auto whitespace-pre-wrap break-words rounded bg-secondary/60 p-2 font-mono text-micro leading-relaxed text-muted-foreground"
       >
         {prompt.prompt}
       </pre>
@@ -350,7 +350,7 @@ const StudioNode = ({
             {entry.resultJson != null ? (
               <pre
                 data-testid="studio-output-json"
-                className="max-h-48 overflow-y-auto whitespace-pre-wrap break-all rounded bg-secondary/60 p-1.5 font-mono text-micro text-primary"
+                className="max-h-48 overflow-y-auto whitespace-pre-wrap break-all rounded bg-secondary/60 p-1.5 font-mono text-micro text-muted-foreground"
               >
                 {(() => {
                   try {
@@ -441,7 +441,7 @@ export const StudioView = ({ taskId, timeline, stepPrompts, nowMs, fetchImpl }: 
         data-testid="studio-empty"
         className="flex flex-1 items-center justify-center p-6"
       >
-        <p className="max-w-[52ch] text-center font-mono text-title text-primary">
+        <p className="max-w-[52ch] text-center font-mono text-title text-muted-foreground">
           No step spans for {taskId}
         </p>
       </div>

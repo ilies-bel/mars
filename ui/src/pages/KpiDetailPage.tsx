@@ -1,3 +1,4 @@
+import { ArrowDown, ArrowUp, Check, X } from 'lucide-react'
 import { useState, useCallback } from 'react'
 import type { KpiKey, KpiArc } from '@/shared/schemas'
 import { FallbackSurface } from '@/components/FallbackSurface'
@@ -295,7 +296,7 @@ export const KpiDetailPage = ({ kpiKey }: KpiDetailPageProps) => {
                       drift === 'improved' ? 'text-success' : 'text-error'
                     }`}
                   >
-                    <span aria-hidden="true">{drift === 'improved' ? '↑' : '↓'}</span>
+                    {drift === 'improved' ? <ArrowUp size={11} strokeWidth={2.5} aria-hidden="true" /> : <ArrowDown size={11} strokeWidth={2.5} aria-hidden="true" />}
                     <span>{drift === 'improved' ? 'Improved' : 'Regressed'}</span>
                     <span className="text-muted-foreground">
                       ({kpi.delta >= 0 ? '+' : ''}
@@ -452,7 +453,7 @@ export const KpiDetailPage = ({ kpiKey }: KpiDetailPageProps) => {
                   ) : (
                     <span className="w-24 shrink-0">
                       <span className={arc.passed ? 'text-success' : 'text-error'}>
-                        {arc.passed ? '✓ PASS' : '✗ FAIL'}
+                        {arc.passed ? <><Check size={11} strokeWidth={2.5} aria-hidden="true" /> PASS</> : <><X size={11} strokeWidth={2.5} aria-hidden="true" /> FAIL</>}
                       </span>
                     </span>
                   )}

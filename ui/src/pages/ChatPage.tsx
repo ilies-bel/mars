@@ -73,7 +73,7 @@ import {
   PromptInputButton,
   PromptInputSubmit,
 } from '@/components/chat-primitives/prompt-input'
-import { ChevronDown, ChevronRight, MicIcon, PaperclipIcon, PauseIcon, SquareIcon, XIcon } from 'lucide-react'
+import { ArrowDown, ArrowLeft, ChevronDown, ChevronLeft, ChevronRight, MicIcon, PaperclipIcon, PauseIcon, SquareIcon, XIcon } from 'lucide-react'
 import { AgentConfigPanel } from '@/widgets/chat/AgentConfigPanel'
 import { ContextRail } from '@/widgets/chat/ContextRail'
 import { buildRankedOpenWork, type OpenWorkItem } from '@/widgets/chat/openWork'
@@ -180,7 +180,7 @@ export const HeroSuggestions = ({ alerts, onAlertClick, onChipClick, onWhatHappe
             <span className={`ml-auto uppercase ${priorityBadgeClass(topAlert.priority)}`}>{topAlert.priority}</span>
           </div>
           <h2 className="mt-2 font-mono text-title font-semibold text-foreground">{topAlert.title}</h2>
-          <p className="mt-1 line-clamp-2 font-mono text-body leading-relaxed text-primary">{topAlert.body}</p>
+          <p className="mt-1 line-clamp-2 font-mono text-body leading-relaxed text-muted-foreground">{topAlert.body}</p>
           <div className="mt-3 flex items-center justify-between gap-3">
             <span className="truncate font-mono text-micro text-muted-foreground">{topAlert.entityId}</span>
             <button
@@ -208,7 +208,7 @@ export const HeroSuggestions = ({ alerts, onAlertClick, onChipClick, onWhatHappe
                 type="button"
                 data-testid="hero-alert-option"
                 title={alert.title}
-                className="flex min-w-0 max-w-full items-center gap-1.5 rounded-full border border-border px-3 py-1.5 font-mono text-label text-primary transition-colors hover:bg-foreground/5 hover:text-foreground active:scale-[0.98]"
+                className="flex min-w-0 max-w-full items-center gap-1.5 rounded-full border border-border px-3 py-1.5 font-mono text-label text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground active:scale-[0.98]"
                 onClick={() => onAlertClick(alert)}
               >
                 <span aria-hidden="true">{KIND_ICON[alert.kind] ?? '•'}</span>
@@ -224,7 +224,7 @@ export const HeroSuggestions = ({ alerts, onAlertClick, onChipClick, onWhatHappe
           <button
             key={chip.label}
             type="button"
-            className="rounded-full border border-border px-3.5 py-1.5 text-label text-primary transition-colors hover:border-border hover:bg-foreground/5 hover:text-foreground active:scale-[0.98]"
+            className="rounded-full border border-border px-3.5 py-1.5 text-label text-muted-foreground transition-colors hover:border-border hover:bg-foreground/5 hover:text-foreground active:scale-[0.98]"
             onClick={() =>
               'action' in chip && chip.action === 'what-happened'
                 ? onWhatHappened()
@@ -412,7 +412,7 @@ export const FeedbackControls = ({ messageId, feedback, onFeedbackChange }: Feed
             'rounded p-0.5 transition-colors',
             localRating === 'up'
               ? 'text-accent'
-              : 'text-primary/40 hover:text-primary',
+              : 'text-muted-foreground hover:text-muted-foreground',
           ].join(' ')}
           onClick={() => void handleUp()}
         >
@@ -426,7 +426,7 @@ export const FeedbackControls = ({ messageId, feedback, onFeedbackChange }: Feed
             'rounded p-0.5 transition-colors',
             localRating === 'down'
               ? 'text-error'
-              : 'text-primary/40 hover:text-primary',
+              : 'text-muted-foreground hover:text-muted-foreground',
           ].join(' ')}
           onClick={() => void handleDown()}
         >
@@ -434,7 +434,7 @@ export const FeedbackControls = ({ messageId, feedback, onFeedbackChange }: Feed
         </button>
         {localNote && localRating === 'down' && (
           <span
-            className="max-w-[200px] truncate font-mono text-micro text-primary/50"
+            className="max-w-[200px] truncate font-mono text-micro text-muted-foreground"
             title={localNote}
           >
             {localNote}
@@ -447,7 +447,7 @@ export const FeedbackControls = ({ messageId, feedback, onFeedbackChange }: Feed
           type="text"
           aria-label="What went wrong? (optional)"
           placeholder="What went wrong? (optional)"
-          className="w-full max-w-xs rounded border border-border bg-card px-2 py-1 font-mono text-label text-foreground placeholder:text-primary/40 focus:border-border focus:outline-none"
+          className="w-full max-w-xs rounded border border-border bg-card px-2 py-1 font-mono text-label text-foreground placeholder:text-muted-foreground focus:border-border"
           value={noteInput}
           onChange={(e) => setNoteInput(e.target.value)}
           onKeyDown={(e) => {
@@ -497,7 +497,7 @@ export const AttachmentDisplay = ({ attachment }: { attachment: ChatSegmentAttac
       <div className="my-1" data-testid="attachment-audio">
         {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
         <audio controls src={src} className="w-full max-w-sm" />
-        <p className="mt-0.5 text-micro text-primary/60 truncate">{attachment.name}</p>
+        <p className="mt-0.5 text-micro text-muted-foreground truncate">{attachment.name}</p>
       </div>
     )
   }
@@ -506,7 +506,7 @@ export const AttachmentDisplay = ({ attachment }: { attachment: ChatSegmentAttac
       <div className="my-1" data-testid="attachment-video">
         {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
         <video controls src={src} className="max-h-64 w-full rounded border border-border object-contain" />
-        <p className="mt-0.5 text-micro text-primary/60 truncate">{attachment.name}</p>
+        <p className="mt-0.5 text-micro text-muted-foreground truncate">{attachment.name}</p>
       </div>
     )
   }
@@ -891,7 +891,7 @@ const ThreadItem = ({ thread, isSelected, onSelect, onRename, indented = false, 
         // Unselected: subtle indent rule for subthread hierarchy.
         isSelected
           ? `border-l-2 border-l-highlight bg-card text-foreground ${indented ? 'ml-3 pl-2 pr-2' : 'px-2'}`
-          : `border-b border-border ${indented ? 'ml-3 border-l border-border pl-2 pr-2' : 'px-2'} text-primary hover:bg-accent hover:text-foreground`,
+          : `border-b border-border ${indented ? 'ml-3 border-l border-border pl-2 pr-2' : 'px-2'} text-muted-foreground hover:bg-accent hover:text-foreground`,
       ].join(' ')}
       role="button"
       tabIndex={0}
@@ -1031,7 +1031,7 @@ export const ThinkingIndicator = () => (
       <span className="h-1.5 w-1.5 flex-none animate-thinking-dot rounded-full bg-primary/50 [animation-delay:150ms]" />
       <span className="h-1.5 w-1.5 flex-none animate-thinking-dot rounded-full bg-primary/50 [animation-delay:300ms]" />
     </span>
-    <span className="font-mono text-label text-primary/50">Thinking…</span>
+    <span className="font-mono text-label text-muted-foreground">Thinking…</span>
   </div>
 )
 
@@ -1467,7 +1467,7 @@ const SlashPalette = ({ matches, activeIndex, onSelect, onActivate }: SlashPalet
           className={`flex w-full items-center gap-2 px-3 py-2 text-left font-mono text-label ${
             index === activeIndex
               ? 'bg-primary/20 text-foreground'
-              : 'text-primary hover:bg-primary/20 hover:text-foreground'
+              : 'text-muted-foreground hover:bg-primary/20 hover:text-foreground'
           }`}
           onMouseDown={(e) => {
             // Prevent textarea blur before click fires.
@@ -1477,7 +1477,7 @@ const SlashPalette = ({ matches, activeIndex, onSelect, onActivate }: SlashPalet
           onMouseEnter={() => onActivate(index)}
         >
           <span className="text-foreground">{cmd}</span>
-          <span className="truncate text-primary/50">{prompt}</span>
+          <span className="truncate text-muted-foreground">{prompt}</span>
         </button>
       ))}
     </div>
@@ -2480,7 +2480,7 @@ export const ThreadSidebar = ({
           />
         ) : allThreads.length === 0 ? (
           <p
-            className="px-2 py-3 text-micro text-primary/40"
+            className="px-2 py-3 text-micro text-muted-foreground"
             data-testid="empty-rail"
           >
             {filters.query.trim() ? 'No matches' : 'No items'}
@@ -3014,6 +3014,11 @@ export const ChatPage = () => {
 
   return (
     <div className="flex h-full flex-col overflow-hidden" data-testid="chat-page">
+      {/* Chat is the one route with no title band: a conversation needs the
+          vertical space, and the rail already names the open Subject. The
+          heading still has to exist — every other route has an h1, and without
+          one this page has no accessible name and no top of the outline. */}
+      <h1 className="sr-only">Chat</h1>
       {/* Global Codex auth banner — one banner for all throttled threads */}
       {codexAuthState?.needsAuth && (
         <div
@@ -3084,7 +3089,7 @@ export const ChatPage = () => {
               type="button"
               aria-label="Open sidebar"
               onClick={() => setSidebarOpen(true)}
-              className="mr-3 font-mono text-base text-primary hover:text-foreground"
+              className="mr-3 font-mono text-base text-muted-foreground hover:text-foreground"
             >
               ☰
             </button>
@@ -3097,7 +3102,7 @@ export const ChatPage = () => {
             className="ml-auto font-mono text-micro text-muted-foreground transition-colors hover:text-foreground"
             onClick={() => setContextPanelOpen((v) => !v)}
           >
-            context {contextPanelOpen ? '◂' : '▸'}
+            context {contextPanelOpen ? <ChevronLeft size={11} strokeWidth={2} aria-hidden="true" /> : <ChevronRight size={11} strokeWidth={2} aria-hidden="true" />}
           </button>
         </div>
         {queueSelectionResolved ? (
@@ -3106,13 +3111,13 @@ export const ChatPage = () => {
             className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center"
           >
             <p className="text-body text-foreground">This item has been resolved.</p>
-            <p className="text-label text-primary">
+            <p className="text-label text-muted-foreground">
               It was removed from the action queue.
             </p>
             <div className="flex gap-3">
               <button
                 type="button"
-                className="border border-border px-3 py-1 font-mono text-label text-primary hover:bg-foreground/5"
+                className="border border-border px-3 py-1 font-mono text-label text-muted-foreground hover:bg-foreground/5"
                 onClick={() => {
                   const id = selectedQueueItemId!
                   window.location.hash = taskHash(
@@ -3125,10 +3130,10 @@ export const ChatPage = () => {
               </button>
               <button
                 type="button"
-                className="border border-border px-3 py-1 text-label text-primary hover:bg-foreground/5"
+                className="border border-border px-3 py-1 text-label text-muted-foreground hover:bg-foreground/5"
                 onClick={() => setSelectedQueueItemId(null)}
               >
-                ← Back to chat
+                <ArrowLeft size={12} strokeWidth={2} aria-hidden="true" /> Back to chat
               </button>
             </div>
           </div>
@@ -3261,12 +3266,12 @@ export const ChatPage = () => {
               aria-hidden={!isScrolledUp}
               tabIndex={isScrolledUp ? 0 : -1}
               className={[
-                'mx-auto mb-1 flex items-center gap-1 rounded-full border border-border px-3 py-1 font-mono text-micro text-primary transition-opacity',
+                'mx-auto mb-1 flex items-center gap-1 rounded-full border border-border px-3 py-1 font-mono text-micro text-muted-foreground transition-opacity',
                 isScrolledUp ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none',
               ].join(' ')}
               onClick={scrollToBottom}
             >
-              ↓ Latest message
+              <ArrowDown size={11} strokeWidth={2} aria-hidden="true" /> Latest message
             </button>
             {/* Composer area — docked OUTSIDE the scroll container so it stays
                 visible regardless of how far the user has scrolled up.

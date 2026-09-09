@@ -1,3 +1,4 @@
+import { ArrowLeft } from 'lucide-react'
 /**
  * StudioPage — the full-page Studio surface at `#/studio/<taskId>`.
  *
@@ -67,10 +68,10 @@ export const StudioPage = ({ taskId, fetchImpl }: StudioPageProps) => {
           <a
             href={taskHash(taskId)}
             data-testid="studio-back-to-task"
-            className="text-title text-muted-foreground hover:text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+            className="text-title text-muted-foreground hover:text-foreground"
             aria-label={`Back to task ${taskId}`}
           >
-            ← Task
+            <ArrowLeft size={12} strokeWidth={2} aria-hidden="true" /> Task
           </a>
         }
       />

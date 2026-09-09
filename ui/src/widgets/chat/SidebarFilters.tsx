@@ -41,7 +41,7 @@ export const SidebarFilters = ({ value, onChange, onFastAction }: SidebarFilters
         placeholder="Search open threads…"
         aria-label="Search threads"
         data-testid="thread-search"
-        className="h-7 w-full rounded-md border border-border bg-background px-2.5 text-label text-foreground shadow-[var(--shadow-e1)] transition-[border-color,box-shadow] duration-[var(--dur-fast)] placeholder:text-muted-foreground/70 focus:border-highlight/50 focus:outline-none focus:ring-2 focus:ring-highlight/15"
+        className="h-7 w-full rounded-md border border-border bg-background px-2.5 text-label text-foreground shadow-[var(--shadow-e1)] transition-[border-color,box-shadow] duration-[var(--dur-fast)] placeholder:text-muted-foreground focus:border-highlight/50"
       />
       <div className="flex items-center gap-1">
         <SelectField

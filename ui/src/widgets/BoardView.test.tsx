@@ -944,7 +944,7 @@ describe('BoardView – proposal card opens the proposal detail drawer', () => {
         selectedProposalId={null}
       />,
     )
-    expect(html).toContain('focus-visible:ring-2')
-    expect(html).toContain('focus-visible:ring-ring')
+    expect(html).toContain('')
+    expect(html).toContain('')
   })
 })

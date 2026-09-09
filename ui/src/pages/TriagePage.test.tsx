@@ -201,12 +201,13 @@ describe('TriageClusterRow – draft-proposal link target', () => {
     expect(html).not.toContain('href="#/progress"')
   })
 
-  it('labels the link "Review proposals →"', () => {
+  it('labels the link "Review proposals" with a lucide arrow', () => {
     mockItems.mockReturnValue([
       makeItem('draft-proposal', { kind: 'draft-proposal' } as Partial<ActionQueueItem>),
     ])
     const html = renderToStaticMarkup(<TriagePage />)
-    expect(html).toContain('Review proposals →')
+    expect(html).toContain('Review proposals')
+    expect(html).toContain('lucide-arrow-right')
   })
 })
 

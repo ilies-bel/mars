@@ -36,7 +36,10 @@ export const Response = memo(
   ({ className, components, ...props }: ResponseProps) => (
     <Streamdown
       className={cn(
-        "size-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
+        // chat-prose is the single message-body rhythm (13px/1.6). Without it
+        // Streamdown applies its own markdown scale and a message containing a
+        // "#" heading renders at a different leading than its plain siblings.
+        "chat-prose size-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
         className
       )}
       components={{ ...taskLinkComponents, ...components }}

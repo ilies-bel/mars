@@ -53,7 +53,7 @@ const AcceptButton = ({ scorer, accept, isPending }: AcceptButtonProps) => {
             setConfirming(false)
           }}
           disabled={isPending}
-          className="rounded border border-primary px-1.5 py-0.5 text-micro text-primary hover:bg-foreground/5 disabled:opacity-50"
+          className="rounded border border-highlight/40 bg-highlight/10 px-1.5 py-0.5 text-micro font-medium text-foreground hover:bg-highlight/20 disabled:opacity-50"
           aria-label={`Confirm accepting scorer: ${scorer.title}`}
         >
           {isPending ? 'Accepting…' : 'Confirm'}
@@ -73,7 +73,7 @@ const AcceptButton = ({ scorer, accept, isPending }: AcceptButtonProps) => {
     <button
       onClick={() => setConfirming(true)}
       disabled={isPending}
-      className="rounded border border-border px-1.5 py-0.5 text-micro text-muted-foreground hover:border-primary hover:text-primary disabled:opacity-50"
+      className="rounded border border-border px-1.5 py-0.5 text-micro text-muted-foreground hover:border-highlight/50 hover:text-foreground disabled:opacity-50"
       aria-label={`Accept scorer: ${scorer.title}`}
     >
       Accept
@@ -105,7 +105,7 @@ const SuggestedScorersPanel = ({ scorers }: SuggestedScorersPanelProps) => {
         aria-label="No accepted scorers — scoring is inactive"
       >
         <p>
-          <strong className="text-primary">0 accepted scorers — nothing is graded.</strong>{' '}
+          <strong className="text-muted-foreground">0 accepted scorers — nothing is graded.</strong>{' '}
           Accepting a scorer grades every subsequent merged task of that workflow
           against its rubric, record-only. The low-trend auto-reflect trigger
           cannot fire until at least one scorer is accepted.
@@ -122,7 +122,7 @@ const SuggestedScorersPanel = ({ scorers }: SuggestedScorersPanelProps) => {
           >
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2 min-w-0">
-                <span className="text-label font-medium text-primary truncate">
+                <span className="text-label font-medium text-muted-foreground truncate">
                   {scorer.title}
                 </span>
                 <span className="shrink-0 rounded bg-muted px-1 py-0.5 text-micro text-muted-foreground">
@@ -181,19 +181,19 @@ const ScoreTrends = () => {
 
 export const WatchtowerSection = () => (
   <div className="flex flex-col gap-3">
-    <h3 className="text-label uppercase tracking-wide text-primary">Watchtower</h3>
+    <h3 className="text-label uppercase tracking-wide text-muted-foreground">Watchtower</h3>
     <div className="flex flex-col gap-3">
       {/* Score trends — live data via useScorerWorkflows + WatchtowerTrendChart */}
       <div className="flex flex-col gap-2 rounded border border-border p-4">
-        <h4 className="text-label uppercase tracking-wide text-primary">Score trends</h4>
+        <h4 className="text-label uppercase tracking-wide text-muted-foreground">Score trends</h4>
         <ScoreTrends />
       </div>
       <div className="flex flex-col gap-2 rounded border border-border p-4">
-        <h4 className="text-label uppercase tracking-wide text-primary">Promotion ledger</h4>
+        <h4 className="text-label uppercase tracking-wide text-muted-foreground">Promotion ledger</h4>
         <PromotionLedgerTable />
       </div>
       <div className="flex flex-col gap-2 rounded border border-border p-4">
-        <h4 className="text-label uppercase tracking-wide text-primary">Loop ledger</h4>
+        <h4 className="text-label uppercase tracking-wide text-muted-foreground">Loop ledger</h4>
         <LoopLedgerPanel />
       </div>
     </div>

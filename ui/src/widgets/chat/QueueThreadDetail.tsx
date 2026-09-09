@@ -46,7 +46,7 @@ interface ResolutionBlockProps {
 
 const ResolutionBlock = ({ resolution }: ResolutionBlockProps) => (
   <div data-testid="resolution-block">
-    <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-primary">
+    <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-muted-foreground">
       Resolution
     </dt>
     <dd className="flex flex-col gap-1">
@@ -58,7 +58,7 @@ const ResolutionBlock = ({ resolution }: ResolutionBlockProps) => (
         {resolution.resolvedBy ? ` · ${resolution.resolvedBy}` : null}
       </span>
       {resolution.resolutionNote ? (
-        <p className="max-w-[68ch] whitespace-pre-wrap leading-relaxed text-label text-primary">
+        <p className="max-w-[68ch] whitespace-pre-wrap leading-relaxed text-label text-muted-foreground">
           {resolution.resolutionNote}
         </p>
       ) : null}
@@ -67,7 +67,7 @@ const ResolutionBlock = ({ resolution }: ResolutionBlockProps) => (
           <span className="text-micro uppercase tracking-wider text-muted-foreground">
             Root cause:{' '}
           </span>
-          <span className="font-mono text-label text-primary">
+          <span className="font-mono text-label text-muted-foreground">
             {resolution.rootCause}
           </span>
         </div>
@@ -264,7 +264,7 @@ export const ActionBar = ({ item }: ActionBarProps) => {
         }
       }}
     >
-      <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-primary">
+      <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-muted-foreground">
         Move forward
       </dt>
       <dd className="flex flex-wrap gap-2">
@@ -274,7 +274,7 @@ export const ActionBar = ({ item }: ActionBarProps) => {
               key={action.id}
               text={action.hint ?? action.label}
               label={action.label}
-              className="rounded-md border border-border px-3 py-1.5 font-mono text-label text-primary transition hover:bg-foreground/5 active:scale-[0.97]"
+              className="rounded-md border border-border px-3 py-1.5 font-mono text-label text-muted-foreground transition hover:bg-foreground/5 active:scale-[0.97]"
             />
           ) : (
             <button
@@ -376,7 +376,7 @@ const LearnedRecipeSection = ({ failureSignature }: { failureSignature: string }
 
   return (
     <div data-testid="learned-recipe-section">
-      <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-primary">
+      <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-muted-foreground">
         Auto-run rule
       </dt>
       <dd className="flex items-center gap-3">
@@ -422,7 +422,7 @@ const TaskWorkflowStepSection = ({ taskId }: { taskId: string }) => {
 
   return (
     <div>
-      <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-primary">
+      <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-muted-foreground">
         Step
       </dt>
       <dd data-testid="task-workflow-step" className="font-mono text-label text-foreground">
@@ -466,7 +466,7 @@ const TracesSection = ({ taskId }: TracesProps) => {
   if (initial.isPending) {
     return (
       <div>
-        <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-primary">
+        <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-muted-foreground">
           Traces
         </dt>
         <dd className="text-muted-foreground">Loading…</dd>
@@ -476,7 +476,7 @@ const TracesSection = ({ taskId }: TracesProps) => {
   if (initial.isError || !initial.data) {
     return (
       <div>
-        <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-primary">
+        <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-muted-foreground">
           Traces
         </dt>
         <FallbackSurface error={initial.error} of="trace events" variant="inline" />
@@ -491,7 +491,7 @@ const TracesSection = ({ taskId }: TracesProps) => {
   if (events.length === 0) {
     return (
       <div>
-        <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-primary">
+        <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-muted-foreground">
           Traces
         </dt>
         <dd className="text-muted-foreground">No trace events</dd>
@@ -501,7 +501,7 @@ const TracesSection = ({ taskId }: TracesProps) => {
 
   return (
     <div>
-      <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-primary">
+      <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-muted-foreground">
         Traces
       </dt>
       <dd>
@@ -513,7 +513,7 @@ const TracesSection = ({ taskId }: TracesProps) => {
                 <span className={`font-mono text-micro uppercase ${e.severity !== 'info' ? 'font-semibold ' : ''}${severityColor(e.severity)}`}>
                   [{e.severity}]
                 </span>{' '}
-                <span className="font-mono text-micro text-primary">{e.kind}</span>
+                <span className="font-mono text-micro text-muted-foreground">{e.kind}</span>
                 {e.phase ? (
                   <span className="font-mono text-micro text-muted-foreground">
                     {' '}
@@ -556,7 +556,7 @@ const ProposalDetailSection = ({ proposalId }: { proposalId: string }) => {
   if (query.isPending) {
     return (
       <div>
-        <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-primary">
+        <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-muted-foreground">
           Proposal
         </dt>
         <dd className="text-muted-foreground">Loading…</dd>
@@ -567,7 +567,7 @@ const ProposalDetailSection = ({ proposalId }: { proposalId: string }) => {
   if (query.isError || !query.data) {
     return (
       <div>
-        <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-primary">
+        <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-muted-foreground">
           Proposal
         </dt>
         <dd className="text-muted-foreground">(could not load proposal)</dd>
@@ -581,7 +581,7 @@ const ProposalDetailSection = ({ proposalId }: { proposalId: string }) => {
     <>
       {p.problem ? (
         <div>
-          <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-primary">
+          <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-muted-foreground">
             Problem
           </dt>
           <dd className="max-w-[68ch] whitespace-pre-wrap leading-relaxed text-foreground">{p.problem}</dd>
@@ -589,7 +589,7 @@ const ProposalDetailSection = ({ proposalId }: { proposalId: string }) => {
       ) : null}
       {p.solution ? (
         <div>
-          <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-primary">
+          <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-muted-foreground">
             Solution
           </dt>
           <dd className="max-w-[68ch] whitespace-pre-wrap leading-relaxed text-foreground">{p.solution}</dd>
@@ -597,7 +597,7 @@ const ProposalDetailSection = ({ proposalId }: { proposalId: string }) => {
       ) : null}
       {p.userStories.length > 0 ? (
         <div>
-          <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-primary">
+          <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-muted-foreground">
             User stories
           </dt>
           <dd>
@@ -611,7 +611,7 @@ const ProposalDetailSection = ({ proposalId }: { proposalId: string }) => {
       ) : null}
       {p.outOfScope ? (
         <div>
-          <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-primary">
+          <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-muted-foreground">
             Out of scope
           </dt>
           <dd className="max-w-[68ch] whitespace-pre-wrap leading-relaxed text-foreground">{p.outOfScope}</dd>
@@ -619,7 +619,7 @@ const ProposalDetailSection = ({ proposalId }: { proposalId: string }) => {
       ) : null}
       {p.notes ? (
         <div>
-          <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-primary">
+          <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-muted-foreground">
             Notes
           </dt>
           <dd className="max-w-[68ch] whitespace-pre-wrap leading-relaxed text-foreground">{p.notes}</dd>
@@ -663,7 +663,7 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
           aria-label="Opening alert message from Mars"
         >
           <div className="mb-3 flex items-center gap-2 font-mono text-micro text-muted-foreground">
-            <span aria-hidden="true" className="flex h-5 w-5 items-center justify-center rounded-full bg-primary/15 text-label text-primary">M</span>
+            <span aria-hidden="true" className="flex h-5 w-5 items-center justify-center rounded-full bg-primary/15 text-label text-muted-foreground">M</span>
             <span className="text-foreground">Mars</span>
             <span aria-hidden="true">·</span>
             <span>{relativeTime(item.at)}</span>
@@ -671,7 +671,7 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
           </div>
           {/* Headline: original task id, kind badge, priority */}
           <div className="flex items-baseline gap-3">
-            <span className="break-all font-mono text-label uppercase text-primary">
+            <span className="break-all font-mono text-label uppercase text-muted-foreground">
               {item.entityId}
             </span>
             <span className="shrink-0 font-mono text-micro uppercase text-muted-foreground">
@@ -690,7 +690,7 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
             <h2 className="mt-2 break-all font-mono text-title text-foreground">
               {item.goal || '(no goal)'}
             </h2>
-            <p className="max-w-[68ch] mt-1 whitespace-pre-wrap leading-relaxed text-body text-foreground/80">
+            <p className="max-w-[68ch] mt-1 whitespace-pre-wrap leading-relaxed text-body text-foreground">
               {item.reason}
             </p>
           </>
@@ -701,7 +701,7 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
             </h2>
             {(isTaskFailureActionQueueKind(item.kind) || item.kind === 'awaiting-validation') &&
             item.body ? (
-              <p className="max-w-[68ch] mt-2 whitespace-pre-wrap leading-relaxed text-body text-foreground/80">
+              <p className="max-w-[68ch] mt-2 whitespace-pre-wrap leading-relaxed text-body text-foreground">
                 {item.body}
               </p>
             ) : null}
@@ -737,7 +737,7 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
           {item.kind === 'stale-worktree' && (
             <>
               <div>
-                <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-primary">
+                <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-muted-foreground">
                   Task prompt
                 </dt>
                 <dd className="max-w-[68ch] whitespace-pre-wrap leading-relaxed text-foreground">
@@ -747,7 +747,7 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
                 </dd>
               </div>
               <div>
-                <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-primary">
+                <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-muted-foreground">
                   Status · Age · Branch
                 </dt>
                 <dd className="text-foreground">
@@ -759,7 +759,7 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
                 </dd>
               </div>
               <div>
-                <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-primary">
+                <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-muted-foreground">
                   Investigation
                 </dt>
                 <dd>
@@ -785,7 +785,7 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
               before clicking Validate / Reject in the action bar above. */}
           {item.kind === 'awaiting-validation' && item.devServerUrl ? (
             <div>
-              <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-primary">
+              <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-muted-foreground">
                 Live preview
               </dt>
               <dd>
@@ -808,7 +808,7 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
           {/* Diagnosis before the origin chain so context is established first. */}
           {item.diagnosis ? (
             <div>
-              <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-primary">
+              <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-muted-foreground">
                 Diagnosis
               </dt>
               <dd>
@@ -847,7 +847,7 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
           {/* Details — shown for stale-worktree rows (body text). */}
           {item.kind === 'stale-worktree' ? (
             <div>
-              <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-primary">
+              <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-muted-foreground">
                 Details
               </dt>
               <dd className="max-w-[68ch] whitespace-pre-wrap leading-relaxed text-foreground">
@@ -862,7 +862,7 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
             <>
               {item.dag.proposalId && (
                 <div>
-                  <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-primary">
+                  <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-muted-foreground">
                     From proposal
                   </dt>
                   <dd className="text-foreground">{item.dag.proposalId}</dd>

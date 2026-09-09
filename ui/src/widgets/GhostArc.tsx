@@ -17,7 +17,7 @@ export const GhostArc = ({ entry, compensationArcId }: Props) => {
       data-arc-id={entry.id}
       data-compensation-target={compensationArcId}
       title={commitTip || undefined}
-      className="flex items-center gap-1.5 rounded border border-dashed border-border/40 bg-card/50 px-3 py-2 font-mono text-micro text-muted-foreground/60"
+      className="flex items-center gap-1.5 rounded border border-dashed border-border/40 bg-card/50 px-3 py-2 font-mono text-micro text-muted-foreground"
     >
       <span className="truncate">{entry.id}</span>
       <span aria-hidden="true">·</span>

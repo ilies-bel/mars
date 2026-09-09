@@ -49,7 +49,7 @@ const SOURCE_LABEL: Record<string, string> = {
 }
 
 const SOURCE_CHIP_CLASS: Record<string, string> = {
-  human: 'bg-primary/10 text-primary border-border',
+  human: 'bg-primary/10 text-muted-foreground border-border',
   reflection: 'bg-status-verifying/10 text-status-verifying border-status-verifying/20',
   'arc-verifier': 'bg-warn/10 text-warn border-warn/20',
   planner: 'bg-warn/10 text-warn border-warn/20',
@@ -186,7 +186,7 @@ const ProposalRow = ({ draft, onDismiss }: ProposalRowProps) => {
         >
           {sourceLabel}
         </span>
-        <span className="ml-auto text-label text-muted-foreground/60">
+        <span className="ml-auto text-label text-muted-foreground">
           {age}
         </span>
       </div>
@@ -216,7 +216,7 @@ const ProposalRow = ({ draft, onDismiss }: ProposalRowProps) => {
             <button
               type="button"
               onClick={handleToggleExpand}
-              className="mt-1 inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-label font-medium text-highlight transition-colors duration-[var(--dur-fast)] hover:bg-highlight/10 focus:outline-none"
+              className="mt-1 inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-label font-medium text-highlight transition-colors duration-[var(--dur-fast)] hover:bg-highlight/10"
               aria-expanded={expanded}
             >
               {expanded ? 'Show less' : 'Show more'}
@@ -401,7 +401,7 @@ export const ProposalsPage = () => {
               placeholder="Search proposals..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="h-7 w-full rounded-md border border-border bg-background pl-7.5 pr-2.5 text-label text-foreground shadow-[var(--shadow-e1)] transition-[border-color,box-shadow] duration-[var(--dur-fast)] placeholder:text-muted-foreground/70 focus:border-highlight/50 focus:outline-none focus:ring-2 focus:ring-highlight/15"
+              className="h-7 w-full rounded-md border border-border bg-background pl-7.5 pr-2.5 text-label text-foreground shadow-[var(--shadow-e1)] transition-[border-color,box-shadow] duration-[var(--dur-fast)] placeholder:text-muted-foreground focus:border-highlight/50"
             />
           </div>
           {/* Source filter chips */}
@@ -419,7 +419,7 @@ export const ProposalsPage = () => {
                     onClick={() => toggleSource(source)}
                     aria-pressed={isActive}
                     className={[
-                      'inline-flex h-6 items-center rounded-md border px-2 text-micro font-medium transition-[background-color,border-color,color] duration-[var(--dur-fast)] focus:outline-none',
+                      'inline-flex h-6 items-center rounded-md border px-2 text-micro font-medium transition-[background-color,border-color,color] duration-[var(--dur-fast)]',
                       isActive
                         ? colorClass
                         : 'border-transparent bg-foreground/[0.04] text-muted-foreground hover:bg-foreground/8 hover:text-foreground',

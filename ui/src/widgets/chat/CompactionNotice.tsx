@@ -35,7 +35,7 @@ export const CompactionNotice = ({ segment }: CompactionNoticeProps) => {
           type="button"
           aria-expanded={open}
           onClick={() => setOpen((v) => !v)}
-          className="shrink-0 rounded-sm px-1 py-0.5 underline decoration-dotted underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          className="shrink-0 rounded-sm px-1 py-0.5 underline decoration-dotted underline-offset-2 hover:text-foreground"
           data-testid="compaction-notice-toggle"
         >
           {/* The count is the honest headline: it says how much history this one

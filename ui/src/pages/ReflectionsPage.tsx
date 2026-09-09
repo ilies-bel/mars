@@ -1,3 +1,4 @@
+import { AlertTriangle, ArrowLeft } from 'lucide-react'
 /**
  * ReflectionsPage — list and detail view for arc reflection reports.
  *
@@ -146,7 +147,7 @@ const OutcomeTag = ({ outcome }: OutcomeTagProps) => {
       >
         <div className="flex items-center gap-2 flex-wrap">
           <span className="uppercase tracking-wide text-muted-foreground">Lever</span>
-          <span className="text-primary font-semibold">{id}</span>
+          <span className="text-muted-foreground font-semibold">{id}</span>
           <span className="text-muted-foreground text-micro uppercase">{family}</span>
           {currentValue !== null && (
             <>
@@ -159,7 +160,7 @@ const OutcomeTag = ({ outcome }: OutcomeTagProps) => {
         {gesture && (
           <div className="mt-1 text-micro text-foreground">
             <span className="text-muted-foreground uppercase tracking-wide text-micro">Gesture: </span>
-            <code className="text-primary">{gesture}</code>
+            <code className="text-muted-foreground">{gesture}</code>
           </div>
         )}
       </div>
@@ -238,7 +239,7 @@ export const LeverChangeCard = ({
         {proposalTargetId && (
           <a
             href={proposalHash(proposalTargetId, 'reflections')}
-            className="ml-auto text-micro text-muted-foreground hover:text-primary transition-colors"
+            className="ml-auto text-micro text-muted-foreground hover:text-muted-foreground transition-colors"
           >
             → proposal {proposalTargetId}
           </a>
@@ -256,7 +257,7 @@ export const LeverChangeCard = ({
       {lever.gesture && (
         <div className="mt-1">
           <span className="text-micro uppercase tracking-wide text-muted-foreground">CLI: </span>
-          <code data-testid={`lever-change-gesture-${index}`} className="text-primary select-all">{lever.gesture}</code>
+          <code data-testid={`lever-change-gesture-${index}`} className="text-muted-foreground select-all">{lever.gesture}</code>
         </div>
       )}
 
@@ -268,7 +269,7 @@ export const LeverChangeCard = ({
             <button
               data-testid={`lever-apply-btn-${index}`}
               onClick={onRequestConfirm}
-              className="border border-border bg-primary/10 px-2 py-1 text-micro text-primary hover:bg-primary/20 focus:outline-none focus:ring-1 focus:ring-primary transition-colors"
+              className="border border-border bg-primary/10 px-2 py-1 text-micro text-muted-foreground hover:bg-primary/20 transition-colors"
               aria-label={`Apply ${transitionLabel} (requires confirmation)`}
             >
               {transitionLabel}
@@ -278,7 +279,7 @@ export const LeverChangeCard = ({
             <button
               data-testid={`lever-apply-btn-${index}`}
               onClick={onApply}
-              className="border border-border bg-primary/10 px-2 py-1 text-micro text-primary hover:bg-primary/20 focus:outline-none focus:ring-1 focus:ring-primary transition-colors"
+              className="border border-border bg-primary/10 px-2 py-1 text-micro text-muted-foreground hover:bg-primary/20 transition-colors"
               aria-label={`Apply ${transitionLabel}`}
             >
               {transitionLabel}
@@ -306,7 +307,7 @@ export const LeverChangeCard = ({
               data-testid={`lever-confirm-blast-radius-${index}`}
               className="text-error text-micro mb-1"
             >
-              ⚠ Requires daemon reload — this will hard-stop{' '}
+              <AlertTriangle size={12} strokeWidth={2} aria-hidden="true" className="mr-1 inline-block align-[-2px]" /> Requires daemon reload — this will hard-stop{' '}
               <strong>{inFlightCount} in-flight task{inFlightCount !== 1 ? 's' : ''}</strong>{' '}
               and re-queue them.
             </div>
@@ -320,7 +321,7 @@ export const LeverChangeCard = ({
             <button
               data-testid={`lever-confirm-apply-btn-${index}`}
               onClick={onApply}
-              className="border border-warn/50 bg-warn/10 px-2 py-1 text-micro text-warn hover:bg-warn/20 focus:outline-none focus:ring-1 focus:ring-warn transition-colors"
+              className="border border-warn/50 bg-warn/10 px-2 py-1 text-micro text-warn hover:bg-warn/20 transition-colors"
               aria-label={`Confirm: ${transitionLabel}`}
             >
               Confirm: {transitionLabel}
@@ -328,7 +329,7 @@ export const LeverChangeCard = ({
             <button
               data-testid={`lever-confirm-cancel-btn-${index}`}
               onClick={onCancelConfirm}
-              className="border border-border px-2 py-1 text-micro text-muted-foreground hover:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-colors"
+              className="border border-border px-2 py-1 text-micro text-muted-foreground hover:text-foreground transition-colors"
               aria-label="Cancel"
             >
               Cancel
@@ -374,7 +375,7 @@ export const LeverChangeCard = ({
               <button
                 data-testid={`lever-retry-btn-${index}`}
                 onClick={onRequestConfirm}
-                className="border border-border bg-primary/10 px-2 py-1 text-micro text-primary hover:bg-primary/20 focus:outline-none focus:ring-1 focus:ring-primary transition-colors"
+                className="border border-border bg-primary/10 px-2 py-1 text-micro text-muted-foreground hover:bg-primary/20 transition-colors"
               >
                 Try again: {transitionLabel}
               </button>
@@ -382,7 +383,7 @@ export const LeverChangeCard = ({
               <button
                 data-testid={`lever-retry-btn-${index}`}
                 onClick={onApply}
-                className="border border-border bg-primary/10 px-2 py-1 text-micro text-primary hover:bg-primary/20 focus:outline-none focus:ring-1 focus:ring-primary transition-colors"
+                className="border border-border bg-primary/10 px-2 py-1 text-micro text-muted-foreground hover:bg-primary/20 transition-colors"
               >
                 Try again: {transitionLabel}
               </button>
@@ -497,7 +498,7 @@ const RunStateBanner = ({ autoRunReflect, autoEnqueue, lastReflectedAt, originId
                 text={reflectCmd}
                 label={reflectCmd}
                 aria-label={`Copy ${reflectCmd}`}
-                className="rounded border border-border px-1.5 py-0.5 text-micro text-primary/70 hover:bg-foreground/5 hover:text-primary"
+                className="rounded border border-border px-1.5 py-0.5 text-micro text-muted-foreground hover:bg-foreground/5 hover:text-muted-foreground"
               />
             </span>
           ) : onToggleAutoReflect ? (
@@ -555,7 +556,7 @@ const ReflectionRow = ({ report }: ReflectionRowProps) => (
         {statusLabel(report.status)}
       </span>
     </div>
-    <div className="flex items-center gap-4 text-micro text-muted-foreground">
+    <div className="flex items-center gap-4 text-label text-muted-foreground">
       <span className="font-mono">{report.originId}</span>
       {report.dissonantCallCount > 0 && (
         <span className="text-error">{report.dissonantCallCount} dissonant</span>
@@ -568,7 +569,7 @@ const ReflectionRow = ({ report }: ReflectionRowProps) => (
       )}
       <span>{report.totalToolCalls.toLocaleString()} tool call{report.totalToolCalls !== 1 ? 's' : ''}</span>
       {report.verdictResult.saved > 0 && (
-        <span className="text-primary">{report.verdictResult.saved} saved</span>
+        <span className="text-muted-foreground">{report.verdictResult.saved} saved</span>
       )}
     </div>
   </a>
@@ -593,7 +594,7 @@ const DissonantCallCard = ({ call, index }: DissonantCallCardProps) => (
         {severityLabel(call.severity)}
       </span>
       <span className="text-muted-foreground">·</span>
-      <span className="text-primary">{call.tool}</span>
+      <span className="text-muted-foreground">{call.tool}</span>
       {call.taskId && (
         <>
           <span className="text-muted-foreground">·</span>
@@ -728,7 +729,7 @@ export const ReflectionDetailView = ({ detail }: ReflectionDetailViewProps) => {
 
           <section>
             <SectionHeading>Root Cause</SectionHeading>
-            <p className="text-label text-primary border border-border bg-primary/5 p-3 leading-relaxed">
+            <p className="text-label text-muted-foreground border border-border bg-primary/5 p-3 leading-relaxed">
               {detail.report.rootCause}
             </p>
           </section>
@@ -810,7 +811,7 @@ export const ReflectionDetailView = ({ detail }: ReflectionDetailViewProps) => {
                   key={tool}
                   className="border border-border bg-card px-2 py-1 text-label"
                 >
-                  <span className="text-primary">{tool}</span>
+                  <span className="text-muted-foreground">{tool}</span>
                   <span className="text-muted-foreground"> {count}</span>
                 </div>
               ))}
@@ -830,9 +831,9 @@ export const ReflectionDetailView = ({ detail }: ReflectionDetailViewProps) => {
                   >
                     <a
                       href={proposalHash(s.targetId!, 'reflections')}
-                      className="flex items-center gap-2 hover:text-primary transition-colors"
+                      className="flex items-center gap-2 hover:text-muted-foreground transition-colors"
                     >
-                      <span className="text-primary flex-1">{s.title}</span>
+                      <span className="text-muted-foreground flex-1">{s.title}</span>
                       <span className="text-muted-foreground text-micro">→ proposal {s.targetId}</span>
                     </a>
                     <OutcomeTag outcome={s.outcome as SuggestionOutcome} />
@@ -974,9 +975,9 @@ export const ReflectionsPage = () => {
             <div className="flex items-center gap-2">
               <a
                 href="#/reflections"
-                className="text-label text-primary hover:text-foreground"
+                className="text-label text-muted-foreground hover:text-foreground"
               >
-                ← Reflections
+                <ArrowLeft size={12} strokeWidth={2} aria-hidden="true" /> Reflections
               </a>
             </div>
 
@@ -994,6 +995,11 @@ export const ReflectionsPage = () => {
           // ── List view ──
           <div className="flex flex-col gap-3">
             <PageHeader
+              /* Full-bleed inside a px-6 scroll container: -mx-6 cancels the
+                 wrapper gutter so the band spans edge to edge and the header's
+                 own px-6 lands the title at the same 248px as every other
+                 page. Without it the two paddings added to 48px. */
+              className="-mx-6 -mt-4"
               title="Reflections"
               actions={
                 listData ? (

@@ -1,3 +1,4 @@
+import { ChevronDown, ChevronRight, ChevronUp } from 'lucide-react'
 /**
  * ContextRail — collapsible right-hand panel on ChatPage.
  *
@@ -45,7 +46,7 @@ const STATUS_CHIP: Record<string, { label: string; className: string }> = {
   blocked: { label: 'blocked', className: 'text-muted-foreground' },
   under_investigation: { label: 'investigating', className: 'text-warn' },
   draft: { label: 'draft', className: 'text-muted-foreground' },
-  idle: { label: 'idle', className: 'text-muted-foreground/60' },
+  idle: { label: 'idle', className: 'text-muted-foreground' },
   throttled: { label: 'throttled', className: 'text-warn' },
 }
 
@@ -65,8 +66,8 @@ const DoneCriteriaSection = ({ task }: { task: ProgressTask }) => {
 
   return (
     <details className="mt-1">
-      <summary className="cursor-pointer list-none text-micro uppercase tracking-widest text-muted-foreground/60 hover:text-foreground transition-colors [&::-webkit-details-marker]:hidden">
-        Done criteria ▸
+      <summary className="cursor-pointer list-none text-micro uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors [&::-webkit-details-marker]:hidden">
+        Done criteria <ChevronRight size={11} strokeWidth={2} aria-hidden="true" />
       </summary>
       <div className="pt-1">
         {criteria && criteria.length > 0 && (
@@ -74,7 +75,7 @@ const DoneCriteriaSection = ({ task }: { task: ProgressTask }) => {
             {criteria.map((c, i) => (
               <li
                 key={i}
-                className="font-mono text-micro leading-snug text-foreground/80"
+                className="font-mono text-micro leading-snug text-foreground"
                 data-testid="done-criteria-item"
               >
                 ☐ {c}
@@ -84,7 +85,7 @@ const DoneCriteriaSection = ({ task }: { task: ProgressTask }) => {
         )}
         {verify && (
           <code
-            className="mt-1 block font-mono text-micro text-foreground/70 break-all"
+            className="mt-1 block font-mono text-micro text-foreground break-all"
             data-testid="done-criteria-verify"
           >
             {verify}
@@ -158,13 +159,13 @@ const FocusPanel = ({ threadDetail, isStreaming, focusResult, threadId }: FocusP
       return (
         <div className="flex flex-col gap-1 px-3 py-2">
           <span
-            className="text-micro uppercase tracking-widest text-muted-foreground/60"
+            className="text-micro uppercase tracking-widest text-muted-foreground"
             data-testid="focus-panel-kind-badge"
           >
             {kind}
           </span>
           <span
-            className="font-mono text-micro leading-snug text-foreground/80 line-clamp-2"
+            className="font-mono text-micro leading-snug text-foreground line-clamp-2"
             data-testid="focus-panel-title"
           >
             {task.intent ?? task.prompt}
@@ -187,13 +188,13 @@ const FocusPanel = ({ threadDetail, isStreaming, focusResult, threadId }: FocusP
     return (
       <div className="flex flex-col gap-1 px-3 py-2">
         <span
-          className="text-micro uppercase tracking-widest text-muted-foreground/60"
+          className="text-micro uppercase tracking-widest text-muted-foreground"
           data-testid="focus-panel-kind-badge"
         >
           {badgeLabel}
         </span>
         <span
-          className="font-mono text-micro leading-snug text-foreground/80 line-clamp-2"
+          className="font-mono text-micro leading-snug text-foreground line-clamp-2"
           data-testid="focus-panel-title"
         >
           {alertItem.title}
@@ -208,7 +209,7 @@ const FocusPanel = ({ threadDetail, isStreaming, focusResult, threadId }: FocusP
   // Fallback: unlinked thread — show thread title and status chip (slice 1 behaviour).
   if (!threadDetail) {
     return (
-      <p className="px-3 py-2 text-micro text-muted-foreground/60">
+      <p className="px-3 py-2 text-micro text-muted-foreground">
         No active thread
       </p>
     )
@@ -221,7 +222,7 @@ const FocusPanel = ({ threadDetail, isStreaming, focusResult, threadId }: FocusP
   return (
     <div className="flex flex-col gap-1 px-3 py-2">
       <span
-        className="font-mono text-micro leading-snug text-foreground/80"
+        className="font-mono text-micro leading-snug text-foreground"
         data-testid="focus-panel-title"
       >
         {title}
@@ -276,7 +277,7 @@ const GlossaryPanel = () => {
 
   if (data.length === 0) {
     return (
-      <p className="px-3 py-2 text-micro text-muted-foreground/60">
+      <p className="px-3 py-2 text-micro text-muted-foreground">
         No terms defined yet
       </p>
     )
@@ -290,11 +291,11 @@ const GlossaryPanel = () => {
           placeholder="Search terms…"
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
-          className="w-full rounded border border-border bg-card px-2 py-1 font-mono text-micro text-foreground placeholder:text-muted-foreground focus:border-border focus:outline-none"
+          className="w-full rounded border border-border bg-card px-2 py-1 font-mono text-micro text-foreground placeholder:text-muted-foreground focus:border-border"
         />
       </div>
       {visible.length === 0 ? (
-        <p className="px-3 py-1 text-micro text-muted-foreground/60">No matches</p>
+        <p className="px-3 py-1 text-micro text-muted-foreground">No matches</p>
       ) : (
         <ul className="flex flex-col gap-0.5 py-1">
           {visible.map((term) => (
@@ -304,13 +305,13 @@ const GlossaryPanel = () => {
                   {term.term}
                 </summary>
                 <div className="pb-1 pl-1 pr-1 pt-0.5">
-                  <p className="text-micro leading-snug text-foreground/80">
+                  <p className="text-micro leading-snug text-foreground">
                     {term.definition}
                   </p>
                   {term.avoid.length > 0 && (
                     <p className="mt-0.5 text-micro text-muted-foreground">
                       avoid:{' '}
-                      <span className="text-primary/60">
+                      <span className="text-muted-foreground">
                         {term.avoid.join(', ')}
                       </span>
                     </p>
@@ -348,7 +349,7 @@ interface RailSectionProps {
 
 const RailSection = ({ title, children }: RailSectionProps) => (
   <section className="border-b border-border px-3 py-2" aria-label={title}>
-    <h2 className="mb-1 text-micro uppercase tracking-widest text-muted-foreground/60">
+    <h2 className="mb-1 text-micro uppercase tracking-widest text-muted-foreground">
       {title}
     </h2>
     {children}
@@ -397,7 +398,7 @@ const RailPile = ({ title, count, children, pageSize }: RailPileProps) => {
             }
           }}
         >
-          {expanded ? 'Show less ▴' : `See all ${count} ▾`}
+          {expanded ? <>Show less <ChevronUp size={11} strokeWidth={2} aria-hidden="true" /></> : <>See all {count} <ChevronDown size={11} strokeWidth={2} aria-hidden="true" /></>}
         </button>
       )}
       {hasMore && (
@@ -406,7 +407,7 @@ const RailPile = ({ title, count, children, pageSize }: RailPileProps) => {
           className="mt-0.5 text-micro text-muted-foreground hover:text-foreground hover:underline"
           onClick={() => setPage((p) => p + 1)}
         >
-          {`Load ${Math.min(pageSize!, count - visibleCount)} more ▾`}
+          <>Load {Math.min(pageSize!, count - visibleCount)} more <ChevronDown size={11} strokeWidth={2} aria-hidden="true" /></>
         </button>
       )}
     </RailSection>
@@ -429,7 +430,7 @@ const AlertsPile = ({ items, onOpenWork }: AlertsPileProps) => {
               <button
                 type="button"
                 title={item.source === 'alert' ? item.item.title : item.task.title}
-                className="flex w-full items-start gap-1 text-left text-micro text-foreground/80 hover:text-foreground hover:underline"
+                className="flex w-full items-start gap-1 text-left text-micro text-foreground hover:text-foreground hover:underline"
                 onClick={() => onOpenWork?.(item)}
                 data-testid="context-rail-alert-row"
               >
@@ -453,7 +454,7 @@ const AlertsPile = ({ items, onOpenWork }: AlertsPileProps) => {
                     </span>
                     <span className="min-w-0 flex flex-col">
                       <span className="line-clamp-2">{item.task.title}</span>
-                      <span className="font-mono text-micro text-muted-foreground/70">blocked</span>
+                      <span className="font-mono text-micro text-muted-foreground">blocked</span>
                     </span>
                   </>
                 )}
@@ -488,7 +489,7 @@ const ProposalsPile = ({ proposals, onOpenProposal }: ProposalsPileProps) => {
                 <button
                   type="button"
                   title={draft.title}
-                  className="block w-full truncate text-left text-micro text-foreground/80 hover:text-foreground hover:underline"
+                  className="block w-full truncate text-left text-micro text-foreground hover:text-foreground hover:underline"
                   onClick={() => onOpenProposal(draft)}
                   data-testid="context-rail-proposal-row"
                 >
@@ -499,7 +500,7 @@ const ProposalsPile = ({ proposals, onOpenProposal }: ProposalsPileProps) => {
               <li key={draft.id}>
                 <span
                   title={draft.title}
-                  className="block w-full truncate font-mono text-micro text-foreground/80"
+                  className="block w-full truncate font-mono text-micro text-foreground"
                   data-testid="context-rail-proposal-row"
                 >
                   {draft.title}
@@ -537,7 +538,7 @@ const AdrsPile = ({ adrs, projectId }: AdrsPileProps) => {
                 <a
                   href={`/api/project/adrs/${encodeURIComponent(path)}${projectQuery}`}
                   title={`ADR ${adr.number}: ${adr.title}`}
-                  className="block truncate font-mono text-micro text-foreground/80 hover:text-foreground hover:underline"
+                  className="block truncate font-mono text-micro text-foreground hover:text-foreground hover:underline"
                   target="_blank"
                   rel="noopener noreferrer"
                   data-testid="context-rail-adr-row"
@@ -570,7 +571,7 @@ export const ArtifactsRail = ({ tasks, files, meta, projectId }: ArtifactsRailPr
               <li key={id}>
                 <a
                   href={taskHash(id, 'chat')}
-                  className="font-mono text-micro text-foreground/80 hover:text-foreground hover:underline"
+                  className="font-mono text-micro text-foreground hover:text-foreground hover:underline"
                   data-testid="context-rail-task-row"
                 >
                   Task {id}
@@ -588,7 +589,7 @@ export const ArtifactsRail = ({ tasks, files, meta, projectId }: ArtifactsRailPr
               <li key={`${file.path}-${index}`}>
                 <a
                   href={`/api/chat/uploads/${encodeURIComponent(file.path)}${projectQuery}`}
-                  className="font-mono text-micro text-foreground/80 hover:text-foreground hover:underline"
+                  className="font-mono text-micro text-foreground hover:text-foreground hover:underline"
                   target="_blank"
                   rel="noopener noreferrer"
                 >
@@ -609,7 +610,7 @@ export const ArtifactsRail = ({ tasks, files, meta, projectId }: ArtifactsRailPr
               <li>
                 <a
                   href={`/api/project/meta/vision${projectQuery}`}
-                  className="font-mono text-micro text-foreground/80 hover:text-foreground hover:underline"
+                  className="font-mono text-micro text-foreground hover:text-foreground hover:underline"
                   target="_blank"
                   rel="noopener noreferrer"
                 >
@@ -621,7 +622,7 @@ export const ArtifactsRail = ({ tasks, files, meta, projectId }: ArtifactsRailPr
               <li>
                 <a
                   href={`/api/project/meta/theme${projectQuery}`}
-                  className="font-mono text-micro text-foreground/80 hover:text-foreground hover:underline"
+                  className="font-mono text-micro text-foreground hover:text-foreground hover:underline"
                   target="_blank"
                   rel="noopener noreferrer"
                 >
@@ -643,7 +644,7 @@ export const ArtifactsRail = ({ tasks, files, meta, projectId }: ArtifactsRailPr
 const ActivityPanel = ({ feed }: { feed: ActivityEntry[] }) => {
   if (feed.length === 0) {
     return (
-      <p className="px-3 py-2 text-micro text-muted-foreground/60">
+      <p className="px-3 py-2 text-micro text-muted-foreground">
         No activity yet
       </p>
     )
@@ -665,7 +666,7 @@ const ActivityPanel = ({ feed }: { feed: ActivityEntry[] }) => {
             </span>
           ) : (
             <span
-              className="text-micro text-muted-foreground/60"
+              className="text-micro text-muted-foreground"
               aria-label="persisted"
             >
               ●
@@ -673,7 +674,7 @@ const ActivityPanel = ({ feed }: { feed: ActivityEntry[] }) => {
           )}
           <span
             className={`font-mono text-micro truncate ${
-              entry.state === 'live' ? 'text-foreground' : 'text-muted-foreground/70'
+              entry.state === 'live' ? 'text-foreground' : 'text-muted-foreground'
             }`}
           >
             {entry.toolName}

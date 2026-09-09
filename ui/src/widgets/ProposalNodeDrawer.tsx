@@ -30,14 +30,14 @@ const MINI_PAD_Y = 12
 // Mirror ProposalDetailDrawer so both drawers read as one visual family.
 
 const STATUS_BADGE: Record<string, string> = {
-  draft: 'bg-primary/10 text-primary',
+  draft: 'bg-primary/10 text-muted-foreground',
   'prd-ready': 'bg-warn/15 text-warn',
   sliced: 'bg-warn/15 text-warn',
-  dismissed: 'bg-primary/10 text-primary line-through',
+  dismissed: 'bg-primary/10 text-muted-foreground line-through',
 }
 
 const badgeClass = (status: string): string =>
-  STATUS_BADGE[status] ?? 'bg-primary/10 text-primary'
+  STATUS_BADGE[status] ?? 'bg-primary/10 text-muted-foreground'
 
 /**
  * Copy-pasteable CLI commands for each proposal status.
@@ -248,7 +248,7 @@ export const ProposalNodeDrawer = ({
               </div>
             </div>
           ) : (
-            <h2 className="text-title uppercase tracking-wide text-primary">
+            <h2 className="text-title uppercase tracking-wide text-muted-foreground">
               Proposal {proposalId}
             </h2>
           )}
@@ -257,7 +257,7 @@ export const ProposalNodeDrawer = ({
             onClick={handleClose}
             aria-label="Close proposal detail"
             data-testid="proposal-node-close"
-            className="shrink-0 rounded border border-border px-2 py-0.5 font-mono text-body text-primary hover:bg-foreground/5"
+            className="shrink-0 rounded border border-border px-2 py-0.5 font-mono text-body text-muted-foreground hover:bg-foreground/5"
           >
             Close
           </button>

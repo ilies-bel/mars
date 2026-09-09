@@ -122,7 +122,7 @@ const WorkerProfileCard = ({ profile }: { profile: PrimitiveWorkerProfile }) => 
       ) : null}
       <span className="text-micro text-muted-foreground">{profile.model}</span>
     </div>
-    <p className="mt-1 text-micro text-primary">
+    <p className="mt-1 text-micro text-muted-foreground">
       effort:{profile.effort} · permissions:{profile.permissionMode}
     </p>
     {profile.forfeitedTools.length > 0 ? (
@@ -187,14 +187,14 @@ const RunRow = ({ run, idx }: { run: PrimitiveRun; idx: number }) => {
           <a
             href={taskHash(run.taskId)}
             data-testid="primitive-run-task-link"
-            className="rounded border border-border px-1.5 py-0.5 font-mono text-micro text-primary hover:bg-foreground/5"
+            className="rounded border border-border px-1.5 py-0.5 font-mono text-micro text-muted-foreground hover:bg-foreground/5"
           >
             task →
           </a>
           <a
             href={studioHash(run.taskId)}
             data-testid="primitive-run-studio-link"
-            className="rounded border border-border px-1.5 py-0.5 font-mono text-micro text-primary hover:bg-foreground/5"
+            className="rounded border border-border px-1.5 py-0.5 font-mono text-micro text-muted-foreground hover:bg-foreground/5"
           >
             studio →
           </a>
@@ -325,7 +325,7 @@ export const PrimitiveDetailDrawer = ({
               <div className="flex flex-wrap items-center gap-2">
                 <span
                   data-testid="primitive-detail-executor"
-                  className="inline-flex items-center rounded bg-primary/10 px-1.5 py-0.5 text-micro font-semibold uppercase tracking-wide text-primary"
+                  className="inline-flex items-center rounded bg-primary/10 px-1.5 py-0.5 text-micro font-semibold uppercase tracking-wide text-muted-foreground"
                 >
                   {executorLabel(detail.primitive.executor)}
                 </span>
@@ -345,7 +345,7 @@ export const PrimitiveDetailDrawer = ({
             onClick={handleClose}
             aria-label="Close primitive detail"
             data-testid="primitive-detail-close"
-            className="shrink-0 rounded border border-border px-2 py-0.5 font-mono text-body text-primary hover:bg-foreground/5"
+            className="shrink-0 rounded border border-border px-2 py-0.5 font-mono text-body text-muted-foreground hover:bg-foreground/5"
           >
             Close
           </button>
@@ -403,7 +403,7 @@ export const PrimitiveDetailDrawer = ({
                             key={t.tool}
                             data-testid="primitive-observed-tool"
                             title={`last invoked ${relativeTime(t.lastInvokedAt)}`}
-                            className="rounded border border-border px-1.5 py-0.5 font-mono text-label text-primary"
+                            className="rounded border border-border px-1.5 py-0.5 font-mono text-label text-muted-foreground"
                           >
                             {t.tool} ×{t.count}
                           </li>
@@ -553,7 +553,7 @@ export const PrimitiveDetailDrawer = ({
                   <a
                     href={primitiveHash(sibling)}
                     data-testid="primitive-sibling-link"
-                    className="block rounded border border-border px-1.5 py-0.5 font-mono text-micro text-primary hover:bg-foreground/5"
+                    className="block rounded border border-border px-1.5 py-0.5 font-mono text-micro text-muted-foreground hover:bg-foreground/5"
                   >
                     {sibling}
                   </a>

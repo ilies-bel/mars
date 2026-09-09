@@ -1,3 +1,4 @@
+import { ChevronDown, ChevronRight } from 'lucide-react'
 /**
  * Release Notes modal — centered dialog listing landed arcs, opened via
  * `#/release-notes`. Mirrors the accessibility vocabulary of TaskDetailDrawer
@@ -45,7 +46,7 @@ const StringList = ({ items }: { items: readonly string[] }) =>
   items.length > 0 ? (
     <ul className="flex flex-col gap-0.5">
       {items.map((s) => (
-        <li key={s} className="break-all font-mono text-label text-primary">
+        <li key={s} className="break-all font-mono text-label text-muted-foreground">
           {s}
         </li>
       ))}
@@ -261,7 +262,7 @@ export const ReleaseNotesModal = ({ onClose }: ReleaseNotesModalProps) => {
           className="modal-panel flex w-full max-w-[560px] max-h-[85vh] min-h-[240px] flex-col rounded-lg border border-border bg-background shadow-2xl outline-none"
         >
           <header className="flex items-center justify-between border-b border-border px-4 py-3">
-            <h2 className="text-title uppercase tracking-wide text-primary">
+            <h2 className="text-title uppercase tracking-wide text-muted-foreground">
               Release Notes
             </h2>
             <button
@@ -269,7 +270,7 @@ export const ReleaseNotesModal = ({ onClose }: ReleaseNotesModalProps) => {
               onClick={handleClose}
               aria-label="Close release notes"
               data-testid="release-notes-close"
-              className="rounded border border-border px-2 py-0.5 font-mono text-body text-primary hover:bg-foreground/5"
+              className="rounded border border-border px-2 py-0.5 font-mono text-body text-muted-foreground hover:bg-foreground/5"
             >
               Close
             </button>
@@ -293,7 +294,7 @@ export const ReleaseNotesModal = ({ onClose }: ReleaseNotesModalProps) => {
             ) : data === undefined || data.length === 0 ? (
               <p
                 data-testid="release-notes-empty"
-                className="px-4 py-6 text-body text-primary"
+                className="px-4 py-6 text-body text-muted-foreground"
               >
                 No landed work
               </p>
@@ -340,7 +341,7 @@ export const ReleaseNotesModal = ({ onClose }: ReleaseNotesModalProps) => {
                               {stripMarkdown(entry.title).replace(/\s*-+\s*$/, '').trim()}
                             </p>
                             <div className="mt-0.5 flex flex-wrap items-center gap-2">
-                              <span className="font-mono text-label text-primary">
+                              <span className="font-mono text-label text-muted-foreground">
                                 {relativeTime(entry.landedAt)}
                               </span>
                               {entry.detail.recoveryCount > 0 ? (
@@ -357,7 +358,7 @@ export const ReleaseNotesModal = ({ onClose }: ReleaseNotesModalProps) => {
                             className="mt-1 shrink-0 font-mono text-micro text-muted-foreground"
                             aria-hidden="true"
                           >
-                            {isExpanded ? '▾' : '▸'}
+                            {isExpanded ? <ChevronDown size={11} strokeWidth={2} aria-hidden="true" /> : <ChevronRight size={11} strokeWidth={2} aria-hidden="true" />}
                           </span>
                         </button>
                         {isExpanded ? <EntryDetail entry={entry} /> : null}
@@ -371,7 +372,7 @@ export const ReleaseNotesModal = ({ onClose }: ReleaseNotesModalProps) => {
                       type="button"
                       data-testid="release-notes-load-more"
                       onClick={() => setVisibleCount((n) => n + PAGE_SIZE)}
-                      className="font-mono text-body text-primary hover:text-foreground"
+                      className="font-mono text-body text-muted-foreground hover:text-foreground"
                     >
                       Load {Math.min(PAGE_SIZE, data.length - visibleCount)} more
                     </button>

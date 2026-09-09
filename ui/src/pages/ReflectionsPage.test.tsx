@@ -559,7 +559,9 @@ describe('ReflectionsPage', () => {
     const html = renderToStaticMarkup(<ReflectionsPage />)
 
     expect(html).toContain('href="#/reflections"')
-    expect(html).toContain('← Reflections')
+    // The back arrow is a lucide <ArrowLeft>, not a '←' glyph.
+    expect(html).toContain('Reflections')
+    expect(html).toContain('lucide-arrow-left')
   })
 
   // -------------------------------------------------------------------------

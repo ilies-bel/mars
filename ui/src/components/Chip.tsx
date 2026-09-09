@@ -28,7 +28,7 @@ const TONE: Record<ChipTone, string> = {
   warn: 'bg-warn/12 text-warn',
   success: 'bg-success/10 text-success',
   accent: 'bg-highlight/10 text-highlight',
-  info: 'bg-primary/10 text-primary',
+  info: 'bg-primary/10 text-muted-foreground',
   trace: 'bg-trace-mars/10 text-trace-mars',
 }
 

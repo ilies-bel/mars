@@ -1,3 +1,4 @@
+import { ChevronDown, ChevronRight } from 'lucide-react'
 import { useState } from 'react'
 
 /**
@@ -75,7 +76,7 @@ export const ErrorFirstLog = ({
     return (
       <pre
         data-testid={testId}
-        className="max-h-48 overflow-y-auto whitespace-pre-wrap break-all rounded bg-secondary/60 p-1.5 font-mono text-micro text-primary"
+        className="max-h-48 overflow-y-auto whitespace-pre-wrap break-all rounded bg-secondary/60 p-1.5 font-mono text-micro text-muted-foreground"
       >
         {log}
       </pre>
@@ -104,7 +105,7 @@ export const ErrorFirstLog = ({
           >
             {passingLines.length} passing
             <span className="ml-1 text-micro" aria-hidden="true">
-              {showPassing ? '▾' : '▸'}
+              {showPassing ? <ChevronDown size={11} strokeWidth={2} aria-hidden="true" /> : <ChevronRight size={11} strokeWidth={2} aria-hidden="true" />}
             </span>
           </button>
         ) : null}
@@ -124,7 +125,7 @@ export const ErrorFirstLog = ({
       {neutralLines.length > 0 ? (
         <pre
           data-testid="error-first-log-neutral"
-          className="max-h-48 overflow-y-auto whitespace-pre-wrap break-all rounded bg-secondary/60 p-1.5 font-mono text-micro text-primary"
+          className="max-h-48 overflow-y-auto whitespace-pre-wrap break-all rounded bg-secondary/60 p-1.5 font-mono text-micro text-muted-foreground"
         >
           {neutralLines.join('\n')}
         </pre>

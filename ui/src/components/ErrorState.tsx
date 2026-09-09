@@ -1,3 +1,4 @@
+import { AlertTriangle } from 'lucide-react'
 /**
  * ErrorState — unified page-level error render seam with an optional Retry
  * button.
@@ -72,7 +73,7 @@ export const ErrorState = ({
         data-testid="error-state-inline"
         className={`flex flex-col gap-1 font-mono text-label ${fb.severity === 'warning' ? 'text-warn' : 'text-error'}`}
       >
-        <span>⚠ {fb.headline}</span>
+        <span className="inline-flex items-center gap-1"><AlertTriangle size={12} strokeWidth={2} aria-hidden="true" /> {fb.headline}</span>
         {fb.remedy !== null && (
           <span className="text-muted-foreground text-micro">{fb.remedy}</span>
         )}
@@ -97,14 +98,14 @@ export const ErrorState = ({
     >
       <div className="max-w-lg border border-border bg-primary/10 p-6 text-left">
         <p className="text-body uppercase tracking-wide text-foreground">
-          <span aria-hidden="true">⚠ </span>
+          <AlertTriangle size={12} strokeWidth={2} aria-hidden="true" className="mr-1 inline-block align-[-2px]" />
           {fb.headline}
         </p>
         {fb.remedy !== null && (
           <p className="mt-4 text-label text-muted-foreground">{fb.remedy}</p>
         )}
         {fb.detail !== null && (
-          <p className="mt-3 whitespace-pre-wrap break-all text-label text-primary">
+          <p className="mt-3 whitespace-pre-wrap break-all text-label text-muted-foreground">
             {fb.detail}
           </p>
         )}

@@ -160,7 +160,7 @@ export const ProposalActionRow = ({
     >
       {/* Promote */}
       {promoteState.kind === 'done' ? (
-        <span className="font-mono text-micro text-primary">
+        <span className="font-mono text-micro text-muted-foreground">
           {promoteState.taskId
             ? (
               <>
@@ -182,7 +182,7 @@ export const ProposalActionRow = ({
           onClick={() => { void handlePromote() }}
           disabled={promoteState.kind === 'pending' || !!bodyEmpty}
           title={bodyEmpty ? 'Fill in the problem or solution first' : undefined}
-          className="rounded border border-border px-2 py-0.5 font-mono text-body text-primary hover:bg-foreground/5 disabled:opacity-50"
+          className="rounded border border-border px-2 py-0.5 font-mono text-body text-muted-foreground hover:bg-foreground/5 disabled:opacity-50"
         >
           {promoteState.kind === 'pending' ? 'Promoting…' : 'Promote'}
         </button>
@@ -197,7 +197,7 @@ export const ProposalActionRow = ({
         data-testid="btn-grill"
         onClick={() => { void handleGrill() }}
         disabled={grillState.kind === 'pending'}
-        className="rounded border border-border px-2 py-0.5 font-mono text-body text-primary hover:bg-foreground/5 disabled:opacity-50"
+        className="rounded border border-border px-2 py-0.5 font-mono text-body text-muted-foreground hover:bg-foreground/5 disabled:opacity-50"
       >
         {grillState.kind === 'pending' ? 'Opening…' : 'Grill'}
       </button>
@@ -209,7 +209,7 @@ export const ProposalActionRow = ({
 
       {/* Mockup */}
       {mockupState.kind === 'done' ? (
-        <span className="font-mono text-micro text-primary">
+        <span className="font-mono text-micro text-muted-foreground">
           Mockup queued →{' '}
           <a href={taskHash(mockupState.taskId)} className="underline">
             {mockupState.taskId}
@@ -221,7 +221,7 @@ export const ProposalActionRow = ({
           data-testid="btn-mockup"
           onClick={() => { void handleMockup() }}
           disabled={mockupState.kind === 'pending'}
-          className="rounded border border-border px-2 py-0.5 font-mono text-body text-primary hover:bg-foreground/5 disabled:opacity-50"
+          className="rounded border border-border px-2 py-0.5 font-mono text-body text-muted-foreground hover:bg-foreground/5 disabled:opacity-50"
         >
           {mockupState.kind === 'pending' ? 'Queuing…' : 'Mockup'}
         </button>
@@ -232,7 +232,7 @@ export const ProposalActionRow = ({
 
       {/* Implement live */}
       {implementLiveState.kind === 'done' ? (
-        <span className="font-mono text-micro text-primary">
+        <span className="font-mono text-micro text-muted-foreground">
           Live task →{' '}
           <a
             href={taskHash(implementLiveState.taskId)}
@@ -248,7 +248,7 @@ export const ProposalActionRow = ({
           onClick={() => { void handleImplementLive() }}
           disabled={implementLiveState.kind === 'pending' || !!bodyEmpty}
           title={bodyEmpty ? 'Fill in the problem or solution first' : undefined}
-          className="rounded border border-border px-2 py-0.5 font-mono text-body text-primary hover:bg-foreground/5 disabled:opacity-50"
+          className="rounded border border-border px-2 py-0.5 font-mono text-body text-muted-foreground hover:bg-foreground/5 disabled:opacity-50"
         >
           {implementLiveState.kind === 'pending' ? 'Queuing…' : 'Implement live'}
         </button>

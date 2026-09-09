@@ -1,3 +1,4 @@
+import { Check } from 'lucide-react'
 import { SelectField } from '@/components/SelectField'
 import { useState, useMemo } from 'react'
 import { useScorerWorkflows } from '@/entities/watchtower/useScorerWorkflows'
@@ -61,7 +62,7 @@ export const LoopLedgerPanel = () => {
       ) : error ? (
         <p role="alert" className="text-error text-body">Couldn't load loop ledger</p>
       ) : entries.length === 0 ? (
-        <p className="text-primary text-body">No loop runs yet</p>
+        <p className="text-muted-foreground text-body">No loop runs yet</p>
       ) : (
         <table className="w-full text-body">
           <thead>
@@ -84,7 +85,7 @@ export const LoopLedgerPanel = () => {
                       <span className="text-foreground">{title}</span>
                       {title !== entry.runId && (
                         <span
-                          className="text-micro text-muted-foreground/60"
+                          className="text-micro text-muted-foreground"
                           title={entry.runId}
                         >
                           {entry.runId}
@@ -99,7 +100,7 @@ export const LoopLedgerPanel = () => {
                     {entry.score !== null ? entry.score.toFixed(2) : '—'}
                   </td>
                   <td className="py-0.5 pr-2">
-                    {entry.recorded ? '✓' : '—'}
+                    {entry.recorded ? <Check size={11} strokeWidth={2.5} aria-hidden="true" /> : '—'}
                   </td>
                   <td className="py-0.5 pr-2">
                     {entry.suggestion !== null

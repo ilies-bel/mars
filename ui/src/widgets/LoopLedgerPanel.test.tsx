@@ -133,8 +133,8 @@ describe('LoopLedgerPanel', () => {
     // Entry with review shows decision
     expect(html).toContain('accepted')
 
-    // Recorded column shows ✓ for recorded entries
-    expect(html).toContain('✓')
+    // Recorded column shows a lucide check for recorded entries
+    expect(html).toContain('lucide-check')
 
     // Entry without suggestion/review shows — (at least 2 dashes)
     const dashCount = (html.match(/—/g) ?? []).length
@@ -167,7 +167,7 @@ describe('LoopLedgerPanel', () => {
     expect(html).not.toContain('No loop runs yet')
     expect(html).toContain('mars-ba051780')
     // recorded: true renders as a tick, not as a timestamp
-    expect(html).toContain('✓')
+    expect(html).toContain('lucide-check')
   })
 
   it('selector onChange causes useLoopLedger to be called with the new workflow', async () => {

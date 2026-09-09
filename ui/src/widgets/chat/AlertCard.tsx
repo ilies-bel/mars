@@ -1,3 +1,4 @@
+import { ChevronDown, ChevronRight } from 'lucide-react'
 /**
  * AlertCard — rich alert card shared between chat transcript alert segments
  * and action-queue row detail views.
@@ -232,14 +233,14 @@ const OutputExpander = ({ signature, branch, worktree, rawOutput, tail }: Output
         type="button"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        className="font-mono text-micro text-primary/60 hover:text-primary transition-colors select-none"
+        className="font-mono text-micro text-muted-foreground hover:text-muted-foreground transition-colors select-none"
         data-testid="alert-output-toggle"
       >
-        Output {open ? '▾' : '▸'}
+        Output {open ? <ChevronDown size={11} strokeWidth={2} aria-hidden="true" /> : <ChevronRight size={11} strokeWidth={2} aria-hidden="true" />}
       </button>
       {open && (
         <pre
-          className="max-w-[68ch] mt-1 max-h-40 overflow-y-auto rounded bg-primary/10 p-1.5 text-micro text-primary/80 whitespace-pre-wrap leading-relaxed break-all"
+          className="max-w-[68ch] mt-1 max-h-40 overflow-y-auto rounded bg-primary/10 p-1.5 text-micro text-muted-foreground whitespace-pre-wrap leading-relaxed break-all"
           data-testid="alert-output-panel"
         >
           {content || 'No output was captured for this step.'}
@@ -271,10 +272,10 @@ const DetailExpander = ({ detail }: { detail: AlertHumanDetail }) => {
         type="button"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        className="font-mono text-micro text-primary/60 hover:text-primary transition-colors select-none"
+        className="font-mono text-micro text-muted-foreground hover:text-muted-foreground transition-colors select-none"
         data-testid="alert-detail-toggle"
       >
-        Details {open ? '▾' : '▸'}
+        Details {open ? <ChevronDown size={11} strokeWidth={2} aria-hidden="true" /> : <ChevronRight size={11} strokeWidth={2} aria-hidden="true" />}
       </button>
 
       {open && (
@@ -284,28 +285,28 @@ const DetailExpander = ({ detail }: { detail: AlertHumanDetail }) => {
         >
           {detail.failureSignature && (
             <div>
-              <dt className="text-micro uppercase text-primary/40">Failure</dt>
-              <dd className="font-mono text-micro text-primary">{detail.failureSignature}</dd>
+              <dt className="text-micro uppercase text-muted-foreground">Failure</dt>
+              <dd className="font-mono text-micro text-muted-foreground">{detail.failureSignature}</dd>
             </div>
           )}
           {detail.branch && (
             <div>
-              <dt className="font-mono text-micro uppercase text-primary/40">Branch</dt>
-              <dd className="font-mono text-micro text-primary">{detail.branch}</dd>
+              <dt className="font-mono text-micro uppercase text-muted-foreground">Branch</dt>
+              <dd className="font-mono text-micro text-muted-foreground">{detail.branch}</dd>
             </div>
           )}
           {detail.worktree && (
             <div>
-              <dt className="font-mono text-micro uppercase text-primary/40">Worktree</dt>
-              <dd className="font-mono text-micro text-primary break-all">{detail.worktree}</dd>
+              <dt className="font-mono text-micro uppercase text-muted-foreground">Worktree</dt>
+              <dd className="font-mono text-micro text-muted-foreground break-all">{detail.worktree}</dd>
             </div>
           )}
           {detail.rawError && (
             <div>
-              <dt className="font-mono text-micro uppercase text-primary/40">Error</dt>
+              <dt className="font-mono text-micro uppercase text-muted-foreground">Error</dt>
               <dd>
                 <pre
-                  className="max-w-[68ch] mt-0.5 max-h-32 overflow-y-auto rounded bg-primary/10 p-1.5 text-micro text-primary/80 whitespace-pre-wrap leading-relaxed break-all"
+                  className="max-w-[68ch] mt-0.5 max-h-32 overflow-y-auto rounded bg-primary/10 p-1.5 text-micro text-muted-foreground whitespace-pre-wrap leading-relaxed break-all"
                   data-testid="alert-detail-raw-error"
                 >
                   {detail.rawError}
@@ -315,7 +316,7 @@ const DetailExpander = ({ detail }: { detail: AlertHumanDetail }) => {
           )}
           {detail.changelog && (
             <div>
-              <dt className="text-micro uppercase text-primary/40">Changelog</dt>
+              <dt className="text-micro uppercase text-muted-foreground">Changelog</dt>
               <dd className="mt-0.5 chat-markdown prose prose-sm prose-invert max-w-none text-label">
                 <Response>{detail.changelog}</Response>
               </dd>
@@ -348,7 +349,7 @@ const SnoozeMenu = ({ onSelect, onClose, disabled }: SnoozeMenuProps) => (
         type="button"
         disabled={disabled}
         onClick={() => onSelect(value)}
-        className="block w-full px-4 py-1.5 text-left font-mono text-label text-primary hover:bg-primary/20 disabled:opacity-40 transition-colors"
+        className="block w-full px-4 py-1.5 text-left font-mono text-label text-muted-foreground hover:bg-primary/20 disabled:opacity-40 transition-colors"
         data-testid={`snooze-preset-${value}`}
       >
         {label}
@@ -357,7 +358,7 @@ const SnoozeMenu = ({ onSelect, onClose, disabled }: SnoozeMenuProps) => (
     <button
       type="button"
       onClick={onClose}
-      className="block w-full border-t border-border px-4 py-1.5 text-left text-micro text-primary/50 hover:bg-foreground/5 transition-colors"
+      className="block w-full border-t border-border px-4 py-1.5 text-left text-micro text-muted-foreground hover:bg-foreground/5 transition-colors"
     >
       Cancel
     </button>
@@ -498,8 +499,8 @@ export const AlertCard = ({
       >
         <div className="flex items-center gap-2">
           <span className="text-body" aria-hidden="true">{KIND_ICON[kind] ?? '•'}</span>
-          <span className="flex-1 font-mono text-label text-primary/60 line-clamp-1">{operatorGoal ?? summary}</span>
-          <span className="font-mono text-micro text-primary/40">
+          <span className="flex-1 font-mono text-label text-muted-foreground line-clamp-1">{operatorGoal ?? summary}</span>
+          <span className="font-mono text-micro text-muted-foreground">
             reappears in {reappearsIn(snoozedUntil)}
           </span>
         </div>
@@ -508,7 +509,7 @@ export const AlertCard = ({
             type="button"
             disabled={pendingOp !== null}
             onClick={() => void handleRestore()}
-            className="rounded border border-border px-2 py-0.5 font-mono text-micro text-primary hover:bg-primary/20 disabled:opacity-40 transition-colors"
+            className="rounded border border-border px-2 py-0.5 font-mono text-micro text-muted-foreground hover:bg-primary/20 disabled:opacity-40 transition-colors"
             data-testid="alert-card-restore"
           >
             {pendingOp === 'restore' ? '…' : 'Restore'}
@@ -567,7 +568,7 @@ export const AlertCard = ({
           )}
         </div>
         {resolved && (
-          <span className="ml-auto shrink-0 rounded bg-primary/20 px-1.5 py-0.5 font-mono text-micro text-primary/60">
+          <span className="ml-auto shrink-0 rounded bg-primary/20 px-1.5 py-0.5 font-mono text-micro text-muted-foreground">
             Resolved
           </span>
         )}
@@ -580,7 +581,7 @@ export const AlertCard = ({
       {isTaskBacked && (
         <a
           href={entityHash}
-          className="mb-1.5 block font-mono text-micro text-primary/40 truncate hover:text-primary/60 hover:underline transition-colors"
+          className="mb-1.5 block font-mono text-micro text-muted-foreground truncate hover:text-muted-foreground hover:underline transition-colors"
           data-testid="alert-card-entity-id"
           aria-label={`Open details for ${entityId}`}
         >
@@ -712,7 +713,7 @@ export const AlertCard = ({
           {bulkContinue && (
             <button
               type="button"
-              className="rounded px-3 py-1 text-label border border-border text-primary/60 hover:bg-foreground/5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              className="rounded px-3 py-1 text-label border border-border text-muted-foreground hover:bg-foreground/5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               disabled={bulkPending || pendingOp !== null}
               onClick={() => void handleBulkContinue()}
               data-testid="alert-card-bulk-continue"
@@ -767,7 +768,7 @@ export const AlertCard = ({
           className="mb-2 rounded border border-border bg-primary/5 p-2"
           data-testid="teach-recipe-prompt"
         >
-          <p className="text-label text-primary/80 mb-1.5">
+          <p className="text-label text-muted-foreground mb-1.5">
             Apply this automatically next time?
           </p>
           <div className="flex gap-1.5">
@@ -834,7 +835,7 @@ export const AlertCard = ({
         <div className="mt-3 flex items-center justify-end">
           <button
             type="button"
-            className="rounded bg-primary/5 px-1.5 py-0.5 font-mono text-micro text-primary/40 hover:text-primary/60 transition-colors select-all"
+            className="rounded bg-primary/5 px-1.5 py-0.5 font-mono text-micro text-muted-foreground hover:text-muted-foreground transition-colors select-all"
             title="Copy task id"
             onClick={() => void navigator.clipboard.writeText(entityId)}
             data-testid="alert-card-id-chip"

@@ -46,7 +46,7 @@ export const DomainFlowPanel = ({ arcId }: Props) => {
     // in TaskCard so the <details> toggle receives its own pointer events.
     <div className="relative z-10 border-t border-border/50 pt-2">
       <CollapsibleSection label="Domain Flow" defaultOpen data-testid="domain-flow-panel">
-        <div className="whitespace-pre-wrap font-mono text-label text-foreground/80">
+        <div className="whitespace-pre-wrap font-mono text-label text-foreground">
           {data.rendered}
         </div>
       </CollapsibleSection>

@@ -19,7 +19,7 @@ interface OriginTreeProps {
 // render and the `onNavigate` button render so the two stay in lockstep.
 const OriginNodeContent = ({ node }: { node: OriginNode }) => (
   <>
-    <span className="font-mono text-micro uppercase text-primary">
+    <span className="font-mono text-micro uppercase text-muted-foreground">
       {originKindLabel(node.kind)}
     </span>
     <span className="break-all font-mono text-micro text-muted-foreground">
@@ -101,7 +101,7 @@ export const OriginTree = ({ taskId, onNavigate, currentId }: OriginTreeProps) =
   if (query.isPending) {
     return (
       <div>
-        <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-primary">
+        <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-muted-foreground">
           Origins
         </dt>
         <dd>
@@ -113,7 +113,7 @@ export const OriginTree = ({ taskId, onNavigate, currentId }: OriginTreeProps) =
   if (query.isError || !query.data) {
     return (
       <div>
-        <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-primary">
+        <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-muted-foreground">
           Origins
         </dt>
         <FallbackSurface error={query.error} of="origin tasks" variant="inline" />
@@ -126,7 +126,7 @@ export const OriginTree = ({ taskId, onNavigate, currentId }: OriginTreeProps) =
   if (root.children.length === 0 && root.id === taskId) {
     return (
       <div>
-        <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-primary">
+        <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-muted-foreground">
           Origins
         </dt>
         <dd className="text-muted-foreground">No origin recorded for this task.</dd>
@@ -136,7 +136,7 @@ export const OriginTree = ({ taskId, onNavigate, currentId }: OriginTreeProps) =
 
   return (
     <div>
-      <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-primary">
+      <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-muted-foreground">
         Origins
       </dt>
       <dd data-testid="origin-tree">

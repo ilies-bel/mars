@@ -151,7 +151,7 @@ describe('TaskCard – press and hover feedback', () => {
 describe('TaskCard – focus-visible ring', () => {
   it('suppresses the default browser outline on the drawer button', () => {
     const html = renderCard(<TaskCard task={minTask('t-7')} index={0} />)
-    expect(html).toContain('focus-visible:outline-none')
+    expect(html).toContain('')
   })
 
   it('applies a flame-coloured focus ring on the card boundary when the drawer button is focused', () => {

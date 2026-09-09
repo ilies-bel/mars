@@ -134,7 +134,7 @@ const ProposalCard = ({ proposal }: { proposal: ProgressProposalNode }) => {
       data-proposal-card={proposal.id}
       role="button"
       tabIndex={0}
-      className="rounded-lg border border-dashed border-warn/50 bg-warn/10 p-2.5 flex flex-col gap-1.5 cursor-pointer hover:bg-warn/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className="rounded-lg border border-dashed border-warn/50 bg-warn/10 p-2.5 flex flex-col gap-1.5 cursor-pointer hover:bg-warn/15"
       onClick={(e) => {
         if ((e.target as HTMLElement).closest('a') !== null) return
         open()
@@ -309,7 +309,7 @@ export const BoardView = ({
       </main>
 
       {error ? (
-        <div className="border-t border-border bg-primary/10 px-6 py-1.5 font-mono text-label text-primary">
+        <div className="border-t border-border bg-primary/10 px-6 py-1.5 font-mono text-label text-muted-foreground">
           {error.message}
         </div>
       ) : null}
