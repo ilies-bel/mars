@@ -176,6 +176,20 @@ export type Recipe<K extends ActionQueueKind = ActionQueueKind> = {
    *   a per-member worktree-dirty check before bulk-restart is reasonable.
    */
   bulkResolveVerb?: RecipeVerb
+  /**
+   * Optional recipe-level override for the operator-facing goal string shown on
+   * the action-queue row.
+   *
+   * Return a non-null string to supply `operatorGoal` directly. Return `null`
+   * to let the view builder fall back to its default entity-based resolution
+   * chain (task intent for task-failure kinds; absent for everything else).
+   *
+   * Most recipes do not need this — it is reserved for kinds whose primary
+   * entity is not a task and therefore cannot be resolved via `taskById`. The
+   * canonical example is `slice-failed`, where the entity is a PRD (proposal):
+   * `taskById` never holds a proposal, so the default chain yields `null`.
+   */
+  operatorGoal?: (ctx: RecipeContext<K>) => string | null
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -513,6 +527,11 @@ const RECIPE_DEFINITIONS = {
       entityId: ctx.entityId,
       errorExcerpt: str(ctx.payload['error']),
     }),
+    // The entity for slice-failed is a proposal ID, not a task ID, so the view
+    // builder's default taskById resolution chain yields null. Declare
+    // operatorGoal here so the PRD title (carried in the payload since the
+    // raiser always stores it) reaches the operator without a task lookup.
+    operatorGoal: (ctx) => str(ctx.payload['proposalTitle']) || null,
     verbs: [],
     bulkResolveVerb: { op: 'proposal.slice', label: 'Retry', style: 'primary' as const },
   },

@@ -320,3 +320,46 @@ describe('awaiting-human verbs', () => {
     expect(verbs.find((v) => v.op === 'abort-release')).toBeUndefined()
   })
 })
+
+// ---------------------------------------------------------------------------
+// slice-failed recipe — operatorGoal carries the PRD title
+// ---------------------------------------------------------------------------
+
+describe('slice-failed operatorGoal', () => {
+  const recipe = lookupRecipe('slice-failed')
+
+  const makeCtx = (payload: Record<string, unknown>) => ({
+    kind: 'slice-failed' as const,
+    entityId: '04b4e4e0-queue-position-ordering-for-the-cas-merg',
+    payload,
+    context: {},
+    title: 'Slicer failed for PRD 04b4e4e0',
+    body: 'PRD 04b4e4e0 (Queue-position ordering for the CAS merge loop) could not be sliced',
+    raisedAt: '2026-09-10T00:00:00.000Z',
+  })
+
+  it('returns the PRD title from payload.proposalTitle', () => {
+    const ctx = makeCtx({
+      proposalId: '04b4e4e0-queue-position-ordering-for-the-cas-merg',
+      proposalTitle: 'Queue-position ordering for the CAS merge loop',
+      error: 'slicer process exited with code 1: model refused to slice',
+    })
+    expect(recipe.operatorGoal).toBeDefined()
+    // The built row should carry a non-null operatorGoal equal to the PRD title —
+    // the field the UI prefers for member-card labelling in cause-group rows.
+    expect(recipe.operatorGoal!(ctx as Parameters<NonNullable<typeof recipe.operatorGoal>>[0])).toBe(
+      'Queue-position ordering for the CAS merge loop',
+    )
+  })
+
+  it('returns null when proposalTitle is absent from the payload', () => {
+    const ctx = makeCtx({
+      proposalId: '04b4e4e0-queue-position-ordering-for-the-cas-merg',
+      error: 'slicer process exited with code 1: model refused to slice',
+    })
+    // operatorGoal is optional in SliceFailedPayload — a legacy row that pre-dates
+    // proposalTitle storage should not crash and should fall back to null so the
+    // view builder can try its own chain.
+    expect(recipe.operatorGoal!(ctx as Parameters<NonNullable<typeof recipe.operatorGoal>>[0])).toBeNull()
+  })
+})

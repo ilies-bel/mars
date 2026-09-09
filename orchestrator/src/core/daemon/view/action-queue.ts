@@ -1524,6 +1524,23 @@ export const buildActionQueueView = async ({
         operatorGoal = deriveOperatorGoal(task, taskById)
       }
     }
+    // Recipe-level fallback: for kinds whose entity is not a task (e.g.
+    // `slice-failed` where the entity is a proposal), the recipe can supply
+    // operatorGoal directly from the payload — taskById will never hold the id.
+    if (operatorGoal === null && isActionQueueKind(row.kind)) {
+      const _recipe = lookupRecipe(row.kind)
+      if (_recipe.operatorGoal) {
+        operatorGoal = _recipe.operatorGoal({
+          kind: row.kind,
+          entityId,
+          payload: row.payload,
+          context: row.context,
+          title,
+          body,
+          raisedAt: new Date(row.raisedAt).toISOString(),
+        })
+      }
+    }
 
     // Surface the live preview URL for awaiting-validation rows. The merge
     // primitive stamps it into the row payload at raise time (and persists the
@@ -2102,6 +2119,22 @@ export const buildActionQueueHistoryView = async ({
       const task = taskById.get(entityId)
       if (task) {
         operatorGoal = deriveOperatorGoal(task, taskById)
+      }
+    }
+    // Recipe-level fallback for kinds whose entity is not a task (same rule as
+    // the live view builder — see the mirrored block above).
+    if (operatorGoal === null && isActionQueueKind(row.kind)) {
+      const _recipe = lookupRecipe(row.kind)
+      if (_recipe.operatorGoal) {
+        operatorGoal = _recipe.operatorGoal({
+          kind: row.kind,
+          entityId,
+          payload: row.payload,
+          context: row.context,
+          title,
+          body,
+          raisedAt: new Date(row.raisedAt).toISOString(),
+        })
       }
     }
 
