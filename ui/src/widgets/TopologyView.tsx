@@ -142,7 +142,7 @@ const TaskNode = memo(({ data }: NodeProps<Node<TaskNodeData>>) => {
     >
       <FlowHandles />
       <span
-        className="line-clamp-2 font-sans text-label leading-tight"
+        className="line-clamp-2 font-sans text-label leading-snug"
         style={{ color: style.text }}
       >
         {data.label}
@@ -166,7 +166,7 @@ const ArcCardNode = memo(({ data }: NodeProps<Node<ArcCardNodeData>>) => {
     >
       <FlowHandles />
       <span
-        className="line-clamp-2 font-sans text-label font-semibold leading-tight"
+        className="line-clamp-2 font-sans text-label font-semibold leading-snug"
         style={{ color: data.isProposal ? PROPOSAL_TEXT : style.text }}
       >
         {data.label}
