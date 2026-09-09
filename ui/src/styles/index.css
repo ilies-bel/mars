@@ -392,15 +392,18 @@
  * produced nine treatments including the raw Chrome blue, because `<summary>`
  * is focusable and was not in the element list at all.
  *
- * `:is(*)` is the fix on both counts: it matches every focusable thing there
- * will ever be, and `:where(:not(#\0))` lifts the rule to id-specificity
- * (1,0,0) so no utility can outrank it. The component-level focus utilities
- * were deleted in the same change; this is now the only definition.
+ * `*` matches every focusable thing there will ever be, and the bare
+ * `:not(#\0)` lifts the rule to (1,1,0) so no class utility can outrank it.
+ * It must NOT be wrapped in :where() — :where() is defined to contribute
+ * zero specificity, which cancels the very thing the :not(#id) is there to
+ * do. With the wrapper this rule computed to (0,1,0), lost outline-color to
+ * every component class, and a tab pass still produced ten treatments while
+ * appearing to work (the width landed; only the colour lost).
  *
  * Colour: --color-flame (#9A4F00), 4.7:1 on the cream ground. The white halo
  * is what lets one ring work on both grounds — flame reads against the light
  * surface, the halo separates it from the near-black sidebar. */
-*:focus-visible:where(:not(#\0)) {
+*:focus-visible:not(#\0) {
   outline: 2px solid var(--color-flame);
   outline-offset: 2px;
   /* No border-radius here. Outline follows the element's own radius; setting
