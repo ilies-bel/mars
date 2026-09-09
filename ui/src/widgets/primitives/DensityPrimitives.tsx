@@ -21,6 +21,28 @@ import { cn } from '@/lib/utils'
  * All three consume theme tokens only; no raw palette classes.
  */
 
+/**
+ * The reading measure a list page holds its content to.
+ *
+ * PageBody already owns the page GUTTER — one number, applied once, so the
+ * shell does not jump sideways on navigation. This is the other half: the cap
+ * on how wide a column of cards may grow inside that gutter.
+ *
+ * It exists as a shared constant because the two pages that need it each
+ * invented their own and then drifted. Measured at 1512px before this was
+ * shared: Draft proposals put its h1 at x=248, its search field at 240 and its
+ * cards at 344 — three different left edges on one page, because the card list
+ * carried `mx-auto max-w-[1080px]` and centred itself inside the pane rather
+ * than aligning to the gutter its header used. Needs You had exactly the same
+ * defect and was fixed in isolation, which is how a fix stays local instead of
+ * becoming a rule.
+ *
+ * Apply it to the header toolbar and to the body content; never add a gutter
+ * alongside it — that belongs to PageBody or to the page's own scroll
+ * container, which is why this constant deliberately carries no `px-*`.
+ */
+export const PAGE_MEASURE = 'max-w-[1080px]'
+
 export function PageHeader({
   title,
   subtitle,

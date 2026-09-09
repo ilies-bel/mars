@@ -4,7 +4,7 @@ import { Chip, type ChipTone } from '@/components/Chip'
 import { AlertTriangle, Archive, ArrowRight, ChevronDown, ChevronRight, Circle, CircleDashed, Clock, FileText, Gauge, GitBranch, HelpCircle, MessageSquare, MoreHorizontal, PowerOff, RefreshCw, Search, SearchX, ShieldAlert, ShieldX, Sparkles, Undo2, UserCheck, XCircle, Zap } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { ActionButton, ActionLink } from '@/components/ActionButton'
-import { PageHeader } from '@/widgets/primitives/DensityPrimitives'
+import { PAGE_MEASURE, PageHeader } from '@/widgets/primitives/DensityPrimitives'
 /**
  * TriagePage — "Action Queue" ranked triage view.
  *
@@ -1384,15 +1384,7 @@ const EmptyState = ({ running, doneToday }: EmptyStateProps) => (
   </div>
 )
 
-/**
- * The page's one column.
- *
- * Applied to the header toolbar and to the list, so the search field and the
- * cards end at the same x. The page gutter is NOT part of this: PageHeader
- * applies its own `px-6`, and the list's scroll container applies the same,
- * so both start at the same x without this constant having to know about it.
- */
-const MEASURE = 'max-w-[1080px]'
+
 
 /**
  * Shown when the filters matched nothing — which is a different fact from an
@@ -1556,7 +1548,7 @@ export const TriagePage = () => {
         /* Search + kind filter — always visible so the operator can narrow a
            35-row wall without scrolling first. */
         toolbar={
-          <div className={`flex w-full items-center gap-2 ${MEASURE}`}>
+          <div className={`flex w-full items-center gap-2 ${PAGE_MEASURE}`}>
             <div className="relative flex-1">
               <Search
                 size={13}
@@ -1633,13 +1625,14 @@ export const TriagePage = () => {
                only showed up once the window was wide, which is where this
                page is looked at.
 
-               MEASURE is the page's one column, applied here and to the
-               toolbar, so the two cannot drift apart again. The cap itself
+               PAGE_MEASURE is the shared column, applied here and to the
+               toolbar, so the two cannot drift apart again — and shared with
+               Draft proposals, which had the identical defect. The cap itself
                earns its keep: at 1680px a queue card put its headline on the
                left, its timestamp 1500px away on the right, and nothing in
                between. The gutter belongs to the scroll container above, the
                same way PageHeader owns its own. */
-            className={`flex w-full flex-col gap-3 py-4 ${MEASURE}`}
+            className={`flex w-full flex-col gap-3 py-4 ${PAGE_MEASURE}`}
           >
             {/* Inline error cards — one per failing feed, never blanking the page */}
             {queueError && <FeedErrorCard label="action queue" error={queueError} />}

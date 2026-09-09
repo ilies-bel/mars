@@ -1,6 +1,6 @@
 import { ArrowRight, Check, ChevronDown, ChevronUp, Search } from 'lucide-react'
 import { ActionButton, ActionLink } from '@/components/ActionButton'
-import { PageHeader } from '@/widgets/primitives/DensityPrimitives'
+import { PageHeader, PAGE_MEASURE } from '@/widgets/primitives/DensityPrimitives'
 /**
  * ProposalsPage — operator-facing draft proposal triage surface.
  *
@@ -385,8 +385,11 @@ export const ProposalsPage = () => {
       />
 
       {/* Search + source chips */}
+      {/* px-6 is the page gutter PageHeader uses; this band used px-4, so the
+          search field started 8px left of the h1 above it. */}
       {!isPending && sorted.length > 0 && (
-        <div className="shrink-0 border-b border-border bg-background px-4 py-2 flex flex-col gap-2">
+        <div className="shrink-0 border-b border-border bg-background px-6 py-2">
+          <div className={`flex w-full flex-col gap-2 ${PAGE_MEASURE}`}>
           {/* Search input */}
           <div className="relative min-w-0">
             <Search
@@ -431,13 +434,18 @@ export const ProposalsPage = () => {
               })}
             </div>
           )}
+          </div>
         </div>
       )}
 
-      {/* List */}
-      <div className="flex-1 overflow-y-auto">
+      {/* List. `px-6` is the page gutter — the same one PageHeader and the
+          toolbar band apply — owned once here and inherited by every state
+          below rather than re-declared per branch. */}
+      <div className="flex-1 overflow-y-auto px-6">
         {/* A reading column, not the full viewport: these cards are prose, and
-            prose that runs to 1680px is unreadable no matter how it is set. */}
+            prose that runs to 1680px is unreadable no matter how it is set.
+            PAGE_MEASURE, shared with Needs You, so the two list pages cannot
+            drift apart again. */}
         {isPending ? (
           <ProposalsSkeleton />
         ) : sorted.length === 0 ? (
@@ -450,7 +458,7 @@ export const ProposalsPage = () => {
             </p>
           </div>
         ) : (
-          <div className="mx-auto flex w-full max-w-[1080px] flex-col gap-3 p-4">
+          <div className={`flex w-full flex-col gap-3 py-4 ${PAGE_MEASURE}`}>
             {filtered.map((draft) => (
               <ProposalRow key={draft.id} draft={draft} onDismiss={() => { void refetch() }} />
             ))}

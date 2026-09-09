@@ -1020,9 +1020,33 @@ const TimelineView = ({ events, now }: TimelineViewProps) => {
 
 const PAGE_LIMIT = 100
 
-export const EventsPage = () => {
+export const EventsPage = ({
+  initialView = 'timeline',
+}: {
+  /**
+   * Which view the page opens on. Defaults to Timeline; see `viewMode` below
+   * for why. Exposed so a test can pin the flat view explicitly instead of
+   * depending on which one happens to be the default — fourteen flat-view
+   * tests broke the day that default changed, none of them because the
+   * behaviour they cover had changed.
+   */
+  initialView?: EventsViewMode
+} = {}) => {
   const [state, setState] = useState<FilterState>(initialFilterState)
-  const [viewMode, setViewMode] = useState<EventsViewMode>('flat')
+  /**
+   * Timeline is the landing view.
+   *
+   * Flat is a single interleaved stream, and on a live repo it prints
+   * "run-agent step failed" twenty-two times in a row — measured — with no
+   * indication of which arc each belonged to, in two incompatible row layouts
+   * (aligned columns for some kinds, run-on mono for others). Timeline groups
+   * the same events by arc with an OK/FAILED outcome at the head, which is the
+   * shape the question "what happened" actually has.
+   *
+   * Flat is still a click away and is the right view when you are scanning for
+   * one kind across every arc at once.
+   */
+  const [viewMode, setViewMode] = useState<EventsViewMode>(initialView)
   const [extraPages, setExtraPages] = useState<TraceEvent[][]>([])
   /** Whether the secondary filter panel (kind/phase/id/time) is visible. */
   const [filtersOpen, setFiltersOpen] = useState(false)
@@ -1227,7 +1251,8 @@ export const EventsPage = () => {
 
             <div className="h-4 w-px shrink-0 bg-primary/20" aria-hidden="true" />
 
-            {(['flat', 'timeline'] as const).map((mode) => (
+            {/* Default first, so the strip reads in the order it behaves. */}
+            {(['timeline', 'flat'] as const).map((mode) => (
               <button
                 key={mode}
                 type="button"

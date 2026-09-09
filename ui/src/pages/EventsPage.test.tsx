@@ -106,10 +106,20 @@ const makeClient = (response: EventsResponse): QueryClient => {
   return qc
 }
 
-const renderPage = (qc: QueryClient): string =>
+/**
+ * Render the page on a named view.
+ *
+ * Defaults to `flat` because that is what every row-level test below is about
+ * — the flat list's grouping of consecutive identical events, tool calls and
+ * incidents. It is passed EXPLICITLY rather than inherited from the page's
+ * default: when Timeline became the landing view these fourteen tests all
+ * failed at once, none of them because the behaviour they cover had changed.
+ * A test that depends on a default is a test about the default.
+ */
+const renderPage = (qc: QueryClient, view: 'flat' | 'timeline' = 'flat'): string =>
   renderToStaticMarkup(
     <QueryClientProvider client={qc}>
-      <EventsPage />
+      <EventsPage initialView={view} />
     </QueryClientProvider>,
   )
 
@@ -337,7 +347,7 @@ describe('EventsPage render', () => {
     act(() => {
       root.render(
         <QueryClientProvider client={qc}>
-          <EventsPage />
+          <EventsPage initialView="flat" />
         </QueryClientProvider>,
       )
     })
@@ -765,7 +775,7 @@ describe('EventRow severity styling', () => {
     act(() => {
       root.render(
         <QueryClientProvider client={qc}>
-          <EventsPage />
+          <EventsPage initialView="flat" />
         </QueryClientProvider>,
       )
     })
@@ -807,7 +817,7 @@ describe('EventsPage severity segments — active vs inactive visual distinction
     act(() => {
       root.render(
         <QueryClientProvider client={qc}>
-          <EventsPage />
+          <EventsPage initialView="flat" />
         </QueryClientProvider>,
       )
     })
@@ -844,7 +854,7 @@ describe('EventsPage severity segments — active vs inactive visual distinction
     act(() => {
       root.render(
         <QueryClientProvider client={qc}>
-          <EventsPage />
+          <EventsPage initialView="flat" />
         </QueryClientProvider>,
       )
     })
@@ -876,7 +886,7 @@ describe('EventsPage severity segments — active vs inactive visual distinction
     act(() => {
       root.render(
         <QueryClientProvider client={qc}>
-          <EventsPage />
+          <EventsPage initialView="flat" />
         </QueryClientProvider>,
       )
     })
@@ -1625,7 +1635,7 @@ describe('EventsPage — incident grouping', () => {
     act(() => {
       root.render(
         <QueryClientProvider client={qc}>
-          <EventsPage />
+          <EventsPage initialView="flat" />
         </QueryClientProvider>,
       )
     })
@@ -1667,7 +1677,7 @@ describe('EventsPage — CLI chip', () => {
     act(() => {
       root.render(
         <QueryClientProvider client={qc}>
-          <EventsPage />
+          <EventsPage initialView="flat" />
         </QueryClientProvider>,
       )
     })
@@ -1690,7 +1700,7 @@ describe('EventsPage — CLI chip', () => {
     act(() => {
       root.render(
         <QueryClientProvider client={qc}>
-          <EventsPage />
+          <EventsPage initialView="flat" />
         </QueryClientProvider>,
       )
     })
@@ -1738,5 +1748,53 @@ describe('EventsPage — timeline view toggle', () => {
     const html = renderPage(qc)
     // Flat view renders event rows inside the virtualizer
     expect(html).toContain('data-testid="events-list"')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Which view the page opens on
+//
+// Flat is a single interleaved stream. On a live repo it printed "run-agent
+// step failed" twenty-two times in a row — measured — with no indication of
+// which arc each belonged to, in two incompatible row layouts (aligned columns
+// for some kinds, run-on mono for others). Timeline groups the same events by
+// arc with an OK/FAILED outcome at the head, which is the shape the question
+// "what happened" actually has.
+// ---------------------------------------------------------------------------
+
+describe('EventsPage — landing view', () => {
+  it('opens on Timeline', () => {
+    const qc = makeClient(makeResponse([makeEvent({ id: 'ev-default' })]))
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <EventsPage />
+      </QueryClientProvider>,
+    )
+    const timelineIdx = html.indexOf('data-testid="events-view-timeline"')
+    expect(timelineIdx).toBeGreaterThan(-1)
+    // The selected control carries the raised surface treatment. React emits
+    // `class` AFTER `data-testid`, so the slice runs forward to the tag's end.
+    const tag = html.slice(timelineIdx, html.indexOf('>', timelineIdx))
+    expect(tag).toContain('bg-surface')
+  })
+
+  it('lists the default first, so the strip reads in the order it behaves', () => {
+    const qc = makeClient(makeResponse([makeEvent({ id: 'ev-order' })]))
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <EventsPage />
+      </QueryClientProvider>,
+    )
+    expect(html.indexOf('data-testid="events-view-timeline"')).toBeLessThan(
+      html.indexOf('data-testid="events-view-flat"'),
+    )
+  })
+
+  it('still opens on flat when asked for it', () => {
+    // The escape hatch the row-level tests above rely on.
+    const qc = makeClient(makeResponse([makeEvent({ id: 'ev-flat' })]))
+    const html = renderPage(qc, 'flat')
+    const flatIdx = html.indexOf('data-testid="events-view-flat"')
+    expect(html.slice(flatIdx, html.indexOf('>', flatIdx))).toContain('bg-surface')
   })
 })
