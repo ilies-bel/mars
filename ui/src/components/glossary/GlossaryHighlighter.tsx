@@ -28,7 +28,7 @@ export function GlossaryHighlighter({ text, terms }: GlossaryHighlighterProps) {
               </span>
             </TooltipTrigger>
             <TooltipContent side="top" sideOffset={6}>
-              <p className="font-mono text-micro font-medium">{segment.term.term}</p>
+              <p className="text-micro font-medium">{segment.term.term}</p>
               <p className="mt-0.5 max-w-64 text-label leading-snug">{segment.term.definition}</p>
             </TooltipContent>
           </Tooltip>

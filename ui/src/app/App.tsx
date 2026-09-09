@@ -270,9 +270,9 @@ const AppInner = () => {
             aria-modal="true"
             aria-label="Proposal not found"
             data-testid="proposal-not-found"
-            className="fixed inset-y-0 right-0 z-50 flex w-[min(560px,100vw)] flex-col border-l border-primary/40 bg-background shadow-2xl"
+            className="fixed inset-y-0 right-0 z-50 flex w-[min(560px,100vw)] flex-col border-l border-border bg-background shadow-2xl"
           >
-            <header className="flex items-start justify-between gap-3 border-b border-primary/40 px-4 py-3">
+            <header className="flex items-start justify-between gap-3 border-b border-border px-4 py-3">
               <h2 className="break-words font-mono text-title font-semibold text-foreground">
                 Unknown proposal
               </h2>
@@ -283,7 +283,7 @@ const AppInner = () => {
                   navigateReplace(origin ? ROUTE_BASE[origin] : '#/progress')
                 }}
                 aria-label="Close"
-                className="shrink-0 rounded border border-primary/40 px-2 py-0.5 font-mono text-body text-primary hover:bg-primary/10"
+                className="shrink-0 rounded border border-border px-2 py-0.5 font-mono text-body text-primary hover:bg-foreground/5"
               >
                 Close
               </button>
@@ -324,9 +324,9 @@ const AppInner = () => {
             aria-modal="true"
             aria-label="Proposal not found"
             data-testid="proposal-node-not-found"
-            className="fixed inset-y-0 right-0 z-50 flex w-[min(560px,100vw)] flex-col border-l border-primary/40 bg-background shadow-2xl"
+            className="fixed inset-y-0 right-0 z-50 flex w-[min(560px,100vw)] flex-col border-l border-border bg-background shadow-2xl"
           >
-            <header className="flex items-start justify-between gap-3 border-b border-primary/40 px-4 py-3">
+            <header className="flex items-start justify-between gap-3 border-b border-border px-4 py-3">
               <h2 className="break-words font-mono text-title font-semibold text-foreground">
                 Unknown proposal
               </h2>
@@ -337,7 +337,7 @@ const AppInner = () => {
                   navigateReplace(origin ? ROUTE_BASE[origin] : '#/progress')
                 }}
                 aria-label="Close"
-                className="shrink-0 rounded border border-primary/40 px-2 py-0.5 font-mono text-body text-primary hover:bg-primary/10"
+                className="shrink-0 rounded border border-border px-2 py-0.5 font-mono text-body text-primary hover:bg-foreground/5"
               >
                 Close
               </button>
@@ -373,9 +373,9 @@ const AppInner = () => {
             aria-modal="true"
             aria-label="Primitive not found"
             data-testid="primitive-not-found"
-            className="fixed inset-y-0 right-0 z-50 flex w-[min(560px,100vw)] flex-col border-l border-primary/40 bg-background shadow-2xl"
+            className="fixed inset-y-0 right-0 z-50 flex w-[min(560px,100vw)] flex-col border-l border-border bg-background shadow-2xl"
           >
-            <header className="flex items-start justify-between gap-3 border-b border-primary/40 px-4 py-3">
+            <header className="flex items-start justify-between gap-3 border-b border-border px-4 py-3">
               <h2 className="break-words font-mono text-title font-semibold text-foreground">
                 Unknown primitive
               </h2>
@@ -383,7 +383,7 @@ const AppInner = () => {
                 type="button"
                 onClick={() => navigateReplace('#/progress')}
                 aria-label="Close"
-                className="shrink-0 rounded border border-primary/40 px-2 py-0.5 font-mono text-body text-primary hover:bg-primary/10"
+                className="shrink-0 rounded border border-border px-2 py-0.5 font-mono text-body text-primary hover:bg-foreground/5"
               >
                 Close
               </button>

@@ -1,3 +1,4 @@
+import { SelectField } from '@/components/SelectField'
 import { useState, useMemo } from 'react'
 import { useScorerWorkflows } from '@/entities/watchtower/useScorerWorkflows'
 import { useLoopLedger } from '@/entities/watchtower/useLoopLedger'
@@ -8,12 +9,12 @@ import { formatAbsoluteDateTime, relativeTime } from '@/shared/time'
 /**
  * Renders the Loop ledger subsection of the Watchtower panel.
  *
- * A workflow-kind <select> (defaulting to the first known workflow) sits above
+ * A workflow-kind <SelectField> (defaulting to the first known workflow) sits above
  * a table with columns [Run, Scored at, Score, Recorded, Suggest, Review].
  * Each row corresponds to one pass through the run→score→record→suggest→review
  * loop. Stages that have not yet completed render '—'.
  *
- * The <select> depends only on `workflows`, not the ledger query, so it is
+ * The <SelectField> depends only on `workflows`, not the ledger query, so it is
  * rendered unconditionally. The isLoading guard is moved to the table body
  * so the workflow selector stays visible while ledger data loads.
  */
@@ -44,7 +45,7 @@ export const LoopLedgerPanel = () => {
 
   return (
     <div className="flex flex-col gap-2">
-      <select
+      <SelectField
         value={workflow ?? ''}
         onChange={(e) => setSelected(e.target.value || null)}
         className="self-start rounded border border-border bg-card px-2 py-0.5 text-body"
@@ -54,7 +55,7 @@ export const LoopLedgerPanel = () => {
             {kind}
           </option>
         ))}
-      </select>
+      </SelectField>
       {isLoading ? (
         <SkeletonList rows={3} rowClassName="h-5 w-full mb-1" label="Loading loop ledger" />
       ) : error ? (
@@ -64,7 +65,7 @@ export const LoopLedgerPanel = () => {
       ) : (
         <table className="w-full text-body">
           <thead>
-            <tr className="text-left text-primary">
+            <tr className="text-left text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">
               <th className="pb-1 pr-2 font-normal">Run</th>
               <th className="pb-1 pr-2 font-normal">Scored at</th>
               <th className="pb-1 pr-2 font-normal">Score</th>

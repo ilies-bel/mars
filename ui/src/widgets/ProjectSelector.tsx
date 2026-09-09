@@ -137,7 +137,7 @@ export const ProjectSelectorInner = ({
           // overflow-y-auto: scroll internally when the list overflows the cap.
           // overflow-hidden: clips li backgrounds at the ul's rounded corners so
           // the selected row's bg-primary/30 doesn't bleed past the border-radius.
-          className="absolute left-0 top-full z-50 mt-1 min-w-[14rem] max-h-[60vh] overflow-y-auto overflow-hidden rounded border border-primary/30 bg-background shadow-lg outline-none"
+          className="absolute left-0 top-full z-50 mt-1 min-w-[14rem] max-h-[60vh] overflow-y-auto overflow-hidden rounded border border-border bg-background shadow-lg outline-none"
         >
           {projects.map((p, idx) => {
             const { name, icon } = projectIdentity(p)
@@ -160,7 +160,7 @@ export const ProjectSelectorInner = ({
                     ? 'bg-primary/30 text-foreground'
                     : isActive
                       ? 'bg-primary/10 text-foreground'
-                      : 'text-primary hover:bg-primary/10 hover:text-foreground',
+                      : 'text-primary hover:bg-foreground/5 hover:text-foreground',
                 ].join(' ')}
               >
                 <div className="flex items-center gap-1.5">
@@ -182,7 +182,7 @@ export const ProjectSelectorInner = ({
                           disabled={isStarting}
                           onClick={(e) => onStart(p.projectId, e)}
                           data-testid={`start-btn-${p.projectId}`}
-                          className="rounded border border-primary/40 px-1.5 py-0.5 font-mono text-micro uppercase text-foreground hover:bg-primary/20 disabled:opacity-50"
+                          className="rounded border border-border px-1.5 py-0.5 text-micro uppercase text-foreground hover:bg-primary/20 disabled:opacity-50"
                         >
                           {isStarting ? '…' : 'Start'}
                         </button>
@@ -193,7 +193,7 @@ export const ProjectSelectorInner = ({
                           disabled={isRestarting}
                           onClick={(e) => onRestart(p.projectId, e)}
                           data-testid={`restart-btn-${p.projectId}`}
-                          className="rounded border border-primary/40 px-1.5 py-0.5 font-mono text-micro uppercase text-foreground hover:bg-primary/20 disabled:opacity-50"
+                          className="rounded border border-border px-1.5 py-0.5 text-micro uppercase text-foreground hover:bg-primary/20 disabled:opacity-50"
                         >
                           {isRestarting ? '…' : 'Restart'}
                         </button>
@@ -204,7 +204,7 @@ export const ProjectSelectorInner = ({
                 {startError?.projectId === p.projectId && (
                   <p
                     data-testid={`start-error-${p.projectId}`}
-                    className="mt-1 font-mono text-micro text-error"
+                    className="mt-1 text-micro text-error"
                   >
                     {startError.message}
                   </p>
@@ -212,7 +212,7 @@ export const ProjectSelectorInner = ({
                 {restartError?.projectId === p.projectId && (
                   <p
                     data-testid={`restart-error-${p.projectId}`}
-                    className="mt-1 font-mono text-micro text-error"
+                    className="mt-1 text-micro text-error"
                   >
                     {restartError.message}
                   </p>

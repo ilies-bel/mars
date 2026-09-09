@@ -80,7 +80,7 @@ export const ErrorState = ({
           <button
             type="button"
             onClick={onRetry}
-            className="self-start rounded border border-primary/40 px-2 py-0.5 font-mono text-label text-foreground hover:bg-primary/10"
+            className="self-start rounded border border-border px-2 py-0.5 text-label text-foreground hover:bg-foreground/5"
           >
             Retry
           </button>
@@ -95,7 +95,7 @@ export const ErrorState = ({
       data-testid="error-state"
       className="flex h-full flex-col items-center justify-center px-6 text-center"
     >
-      <div className="max-w-lg border border-primary/40 bg-primary/10 p-6 font-mono text-left">
+      <div className="max-w-lg border border-border bg-primary/10 p-6 text-left">
         <p className="text-body uppercase tracking-wide text-foreground">
           <span aria-hidden="true">⚠ </span>
           {fb.headline}
@@ -112,7 +112,7 @@ export const ErrorState = ({
           <button
             type="button"
             onClick={onRetry}
-            className="mt-4 rounded border border-primary/50 px-3 py-1.5 font-mono text-label text-foreground hover:bg-primary/20"
+            className="mt-4 rounded border border-border px-3 py-1.5 text-label text-foreground hover:bg-primary/20"
           >
             Retry
           </button>

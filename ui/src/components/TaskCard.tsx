@@ -105,7 +105,7 @@ export const TaskCard = memo(({ task, index }: Props) => {
         </a>
         <div className="flex shrink-0 items-center gap-1.5">
           {isLive ? (
-            <span className="inline-flex items-center gap-1 font-mono text-micro font-semibold uppercase tracking-wide text-status-running">
+            <span className="inline-flex items-center gap-1 text-micro font-semibold uppercase tracking-wide text-status-running">
               <span
                 aria-hidden="true"
                 className="inline-block h-1.5 w-1.5 rounded-full bg-status-running motion-safe:animate-mars-pulse"
@@ -175,7 +175,7 @@ export const TaskCard = memo(({ task, index }: Props) => {
         <details
           className="relative z-10 border-t border-border/50 pt-2"
         >
-          <summary className="flex cursor-pointer list-none select-none items-center gap-1.5 py-0.5 font-mono text-micro font-semibold text-muted-foreground/80 hover:text-foreground">
+          <summary className="flex cursor-pointer list-none select-none items-center gap-1.5 py-0.5 text-micro font-semibold text-muted-foreground/80 hover:text-foreground">
             <span className="text-foreground/60">spec</span>
             <span className="opacity-40 text-micro">▾</span>
           </summary>

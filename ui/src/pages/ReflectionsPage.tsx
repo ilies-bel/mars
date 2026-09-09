@@ -130,7 +130,7 @@ const OutcomeTag = ({ outcome }: OutcomeTagProps) => {
     return (
       <div
         data-testid="outcome-unbound"
-        className="mt-2 border border-primary/20 bg-card px-2 py-1 font-mono text-micro text-muted-foreground inline-flex items-center gap-1"
+        className="mt-2 border border-border bg-card px-2 py-1 font-mono text-micro text-muted-foreground inline-flex items-center gap-1"
       >
         <span className="uppercase tracking-wide">No lever binding</span>
         <span className="text-micro">(predates binding feature)</span>
@@ -142,7 +142,7 @@ const OutcomeTag = ({ outcome }: OutcomeTagProps) => {
     return (
       <div
         data-testid="outcome-lever"
-        className="mt-2 border border-primary/30 bg-primary/5 px-2 py-1 font-mono text-micro"
+        className="mt-2 border border-border bg-primary/5 px-2 py-1 font-mono text-micro"
       >
         <div className="flex items-center gap-2 flex-wrap">
           <span className="uppercase tracking-wide text-muted-foreground">Lever</span>
@@ -223,7 +223,7 @@ export const LeverChangeCard = ({
   return (
     <div
       data-testid={`lever-change-${index}`}
-      className="border border-primary/30 bg-primary/5 p-2 font-mono text-label"
+      className="border border-border bg-primary/5 p-2 font-mono text-label"
     >
       {/* Header: id + family + optional proposal link */}
       <div className="flex items-center gap-2 mb-1">
@@ -257,13 +257,13 @@ export const LeverChangeCard = ({
 
       {/* Apply state: idle → show apply button or confirmation */}
       {applyState.status === 'idle' && !showConfirm && (
-        <div className="mt-2 border-t border-primary/10 pt-2">
+        <div className="mt-2 border-t border-border pt-2">
           {isGlobal ? (
             // Global levers: click opens confirmation step first
             <button
               data-testid={`lever-apply-btn-${index}`}
               onClick={onRequestConfirm}
-              className="border border-primary/50 bg-primary/10 px-2 py-1 text-micro text-primary hover:bg-primary/20 focus:outline-none focus:ring-1 focus:ring-primary transition-colors"
+              className="border border-border bg-primary/10 px-2 py-1 text-micro text-primary hover:bg-primary/20 focus:outline-none focus:ring-1 focus:ring-primary transition-colors"
               aria-label={`Apply ${transitionLabel} (requires confirmation)`}
             >
               {transitionLabel}
@@ -273,7 +273,7 @@ export const LeverChangeCard = ({
             <button
               data-testid={`lever-apply-btn-${index}`}
               onClick={onApply}
-              className="border border-primary/50 bg-primary/10 px-2 py-1 text-micro text-primary hover:bg-primary/20 focus:outline-none focus:ring-1 focus:ring-primary transition-colors"
+              className="border border-border bg-primary/10 px-2 py-1 text-micro text-primary hover:bg-primary/20 focus:outline-none focus:ring-1 focus:ring-primary transition-colors"
               aria-label={`Apply ${transitionLabel}`}
             >
               {transitionLabel}
@@ -323,7 +323,7 @@ export const LeverChangeCard = ({
             <button
               data-testid={`lever-confirm-cancel-btn-${index}`}
               onClick={onCancelConfirm}
-              className="border border-primary/20 px-2 py-1 text-micro text-muted-foreground hover:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-colors"
+              className="border border-border px-2 py-1 text-micro text-muted-foreground hover:text-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-colors"
               aria-label="Cancel"
             >
               Cancel
@@ -336,7 +336,7 @@ export const LeverChangeCard = ({
       {applyState.status === 'applying' && (
         <div
           data-testid={`lever-applying-${index}`}
-          className="mt-2 border-t border-primary/10 pt-2 text-micro text-muted-foreground"
+          className="mt-2 border-t border-border pt-2 text-micro text-muted-foreground"
           aria-live="polite"
         >
           Applying…
@@ -369,7 +369,7 @@ export const LeverChangeCard = ({
               <button
                 data-testid={`lever-retry-btn-${index}`}
                 onClick={onRequestConfirm}
-                className="border border-primary/50 bg-primary/10 px-2 py-1 text-micro text-primary hover:bg-primary/20 focus:outline-none focus:ring-1 focus:ring-primary transition-colors"
+                className="border border-border bg-primary/10 px-2 py-1 text-micro text-primary hover:bg-primary/20 focus:outline-none focus:ring-1 focus:ring-primary transition-colors"
               >
                 Try again: {transitionLabel}
               </button>
@@ -377,7 +377,7 @@ export const LeverChangeCard = ({
               <button
                 data-testid={`lever-retry-btn-${index}`}
                 onClick={onApply}
-                className="border border-primary/50 bg-primary/10 px-2 py-1 text-micro text-primary hover:bg-primary/20 focus:outline-none focus:ring-1 focus:ring-primary transition-colors"
+                className="border border-border bg-primary/10 px-2 py-1 text-micro text-primary hover:bg-primary/20 focus:outline-none focus:ring-1 focus:ring-primary transition-colors"
               >
                 Try again: {transitionLabel}
               </button>
@@ -390,7 +390,7 @@ export const LeverChangeCard = ({
       {lever.history.length > 0 && applyState.status !== 'applied' && (
         <div
           data-testid={`lever-history-${index}`}
-          className="mt-2 border-t border-primary/10 pt-1 text-micro text-muted-foreground"
+          className="mt-2 border-t border-border pt-1 text-micro text-muted-foreground"
         >
           Last applied: {fmtRelative(lever.history[0].appliedAt)}
           {lever.history[0].fromValue !== null && (
@@ -475,7 +475,7 @@ const RunStateBanner = ({ autoRunReflect, autoEnqueue, lastReflectedAt, originId
   return (
     <div
       data-testid="run-state-banner"
-      className="border border-primary/20 bg-card p-3 font-mono text-label"
+      className="border border-border bg-card p-3 font-mono text-label"
     >
       <span className="text-muted-foreground">{lastRan}</span>
       {' · '}
@@ -492,7 +492,7 @@ const RunStateBanner = ({ autoRunReflect, autoEnqueue, lastReflectedAt, originId
                 text={reflectCmd}
                 label={reflectCmd}
                 aria-label={`Copy ${reflectCmd}`}
-                className="rounded border border-primary/30 px-1.5 py-0.5 font-mono text-micro text-primary/70 hover:bg-primary/10 hover:text-primary"
+                className="rounded border border-border px-1.5 py-0.5 font-mono text-micro text-primary/70 hover:bg-foreground/5 hover:text-primary"
               />
             </span>
           ) : onToggleAutoReflect ? (
@@ -540,7 +540,7 @@ const ReflectionRow = ({ report }: ReflectionRowProps) => (
   <a
     href={reflectionDetailHash(report.originId, report.recordedAt)}
     data-testid={`reflection-row-${report.originId}`}
-    className="flex flex-col gap-1 border border-primary/20 bg-card p-3 hover:border-primary/50 hover:bg-card/80 transition-colors"
+    className="flex flex-col gap-1 border border-border bg-card p-3 hover:border-border hover:bg-card/80 transition-colors"
   >
     <div className="flex items-center gap-2">
       <span className="font-mono text-label text-foreground truncate flex-1">
@@ -581,7 +581,7 @@ interface DissonantCallCardProps {
 const DissonantCallCard = ({ call, index }: DissonantCallCardProps) => (
   <div
     data-testid={`dissonant-call-${index}`}
-    className="border border-primary/20 bg-card p-3 font-mono text-label"
+    className="border border-border bg-card p-3 font-mono text-label"
   >
     <div className="flex items-center gap-2 mb-1">
       <span className={`uppercase font-semibold ${severityClass(call.severity)}`}>
@@ -607,7 +607,7 @@ const DissonantCallCard = ({ call, index }: DissonantCallCardProps) => (
       </div>
     </div>
     {call.evidence && (
-      <div className="mt-2 text-micro text-muted-foreground border-t border-primary/10 pt-2">
+      <div className="mt-2 text-micro text-muted-foreground border-t border-border pt-2">
         <span className="uppercase tracking-wide">Evidence:</span>{' '}
         {call.evidence}
       </div>
@@ -688,7 +688,7 @@ export const ReflectionDetailView = ({ detail }: ReflectionDetailViewProps) => {
       />
 
       {/* Origin and metadata */}
-      <div className="border border-primary/20 bg-card p-4">
+      <div className="border border-border bg-card p-4">
         <div className="flex items-start justify-between gap-4">
           <div className="flex-1 min-w-0">
             <div className="font-mono text-micro uppercase tracking-wide text-muted-foreground mb-1">Arc</div>
@@ -716,14 +716,14 @@ export const ReflectionDetailView = ({ detail }: ReflectionDetailViewProps) => {
           {/* Summary + root cause — the headline, not buried */}
           <section>
             <SectionHeading>Summary</SectionHeading>
-            <p className="font-mono text-body text-foreground leading-relaxed border border-primary/20 bg-card p-3">
+            <p className="text-body text-foreground leading-relaxed border border-border bg-card p-3">
               {detail.report.summary}
             </p>
           </section>
 
           <section>
             <SectionHeading>Root Cause</SectionHeading>
-            <p className="font-mono text-label text-primary border border-primary/30 bg-primary/5 p-3 leading-relaxed">
+            <p className="text-label text-primary border border-border bg-primary/5 p-3 leading-relaxed">
               {detail.report.rootCause}
             </p>
           </section>
@@ -783,7 +783,7 @@ export const ReflectionDetailView = ({ detail }: ReflectionDetailViewProps) => {
                   <div
                     key={i}
                     data-testid={`thrashing-pattern-${i}`}
-                    className="border border-primary/20 bg-card p-3 font-mono text-label"
+                    className="border border-border bg-card p-3 font-mono text-label"
                   >
                     <div className="flex items-center gap-2 mb-1">
                       <span className="text-foreground">{p.pattern}</span>
@@ -803,7 +803,7 @@ export const ReflectionDetailView = ({ detail }: ReflectionDetailViewProps) => {
               {byNameEntries.map(([tool, count]) => (
                 <div
                   key={tool}
-                  className="border border-primary/20 bg-card px-2 py-1 font-mono text-label"
+                  className="border border-border bg-card px-2 py-1 font-mono text-label"
                 >
                   <span className="text-primary">{tool}</span>
                   <span className="text-muted-foreground"> {count}</span>
@@ -821,7 +821,7 @@ export const ReflectionDetailView = ({ detail }: ReflectionDetailViewProps) => {
                   <div
                     key={i}
                     data-testid={`filed-proposal-${i}`}
-                    className="border border-primary/20 bg-card p-2 font-mono text-label"
+                    className="border border-border bg-card p-2 font-mono text-label"
                   >
                     <a
                       href={proposalHash(s.targetId!, 'reflections')}
@@ -1022,7 +1022,7 @@ export const ReflectionsPage = () => {
             ) : listData?.reports.length === 0 ? (
               <div
                 data-testid="empty-state"
-                className="font-mono text-label text-muted-foreground border border-primary/20 bg-card p-4 text-center"
+                className="font-mono text-label text-muted-foreground border border-border bg-card p-4 text-center"
               >
                 No reports
               </div>

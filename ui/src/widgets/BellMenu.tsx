@@ -115,7 +115,7 @@ export const BellMenu = () => {
       {open && (
         <div className="mars-card absolute right-0 top-full z-50 mt-1 w-72 rounded bg-background p-2 text-label">
           <section>
-            <h2 className="px-1 pb-1 font-mono text-micro uppercase tracking-wide text-primary">
+            <h2 className="px-1 pb-1 text-micro uppercase tracking-wide text-primary">
               Needs You
             </h2>
             {sorted.length === 0 ? (
@@ -127,10 +127,10 @@ export const BellMenu = () => {
                   return (
                     <li
                       key={item.id}
-                      className="flex items-start gap-2 rounded px-1 py-1 hover:bg-primary/10"
+                      className="flex items-start gap-2 rounded px-1 py-1 hover:bg-foreground/5"
                     >
                       {isNotice ? (
-                        <span className="mt-0.5 shrink-0 font-mono text-micro uppercase text-muted-dark">
+                        <span className="mt-0.5 shrink-0 text-micro uppercase text-muted-dark">
                           Notice
                         </span>
                       ) : (

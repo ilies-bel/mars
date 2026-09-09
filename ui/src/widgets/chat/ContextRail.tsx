@@ -65,7 +65,7 @@ const DoneCriteriaSection = ({ task }: { task: ProgressTask }) => {
 
   return (
     <details className="mt-1">
-      <summary className="cursor-pointer list-none font-mono text-micro uppercase tracking-widest text-muted-foreground/60 hover:text-foreground transition-colors [&::-webkit-details-marker]:hidden">
+      <summary className="cursor-pointer list-none text-micro uppercase tracking-widest text-muted-foreground/60 hover:text-foreground transition-colors [&::-webkit-details-marker]:hidden">
         Done criteria ▸
       </summary>
       <div className="pt-1">
@@ -158,7 +158,7 @@ const FocusPanel = ({ threadDetail, isStreaming, focusResult, threadId }: FocusP
       return (
         <div className="flex flex-col gap-1 px-3 py-2">
           <span
-            className="font-mono text-micro uppercase tracking-widest text-muted-foreground/60"
+            className="text-micro uppercase tracking-widest text-muted-foreground/60"
             data-testid="focus-panel-kind-badge"
           >
             {kind}
@@ -170,7 +170,7 @@ const FocusPanel = ({ threadDetail, isStreaming, focusResult, threadId }: FocusP
             {task.intent ?? task.prompt}
           </span>
           <span
-            className={`font-mono text-micro uppercase ${chip.className}`}
+            className={`text-micro uppercase ${chip.className}`}
             data-testid="focus-panel-status-chip"
           >
             {chip.label}
@@ -187,7 +187,7 @@ const FocusPanel = ({ threadDetail, isStreaming, focusResult, threadId }: FocusP
     return (
       <div className="flex flex-col gap-1 px-3 py-2">
         <span
-          className="font-mono text-micro uppercase tracking-widest text-muted-foreground/60"
+          className="text-micro uppercase tracking-widest text-muted-foreground/60"
           data-testid="focus-panel-kind-badge"
         >
           {badgeLabel}
@@ -208,7 +208,7 @@ const FocusPanel = ({ threadDetail, isStreaming, focusResult, threadId }: FocusP
   // Fallback: unlinked thread — show thread title and status chip (slice 1 behaviour).
   if (!threadDetail) {
     return (
-      <p className="px-3 py-2 font-mono text-micro text-muted-foreground/60">
+      <p className="px-3 py-2 text-micro text-muted-foreground/60">
         No active thread
       </p>
     )
@@ -227,7 +227,7 @@ const FocusPanel = ({ threadDetail, isStreaming, focusResult, threadId }: FocusP
         {title}
       </span>
       <span
-        className={`font-mono text-micro uppercase ${chip.className}`}
+        className={`text-micro uppercase ${chip.className}`}
         data-testid="focus-panel-status-chip"
       >
         {chip.label}
@@ -251,7 +251,7 @@ const GlossaryPanel = () => {
 
   if (isLoading) {
     return (
-      <p className="px-3 py-2 font-mono text-micro text-muted-foreground animate-pulse">
+      <p className="px-3 py-2 text-micro text-muted-foreground animate-pulse">
         Loading…
       </p>
     )
@@ -259,7 +259,7 @@ const GlossaryPanel = () => {
 
   if (isError || !data) {
     return (
-      <p className="px-3 py-2 font-mono text-micro text-error/70">
+      <p className="px-3 py-2 text-micro text-error/70">
         Glossary unavailable
       </p>
     )
@@ -276,7 +276,7 @@ const GlossaryPanel = () => {
 
   if (data.length === 0) {
     return (
-      <p className="px-3 py-2 font-mono text-micro text-muted-foreground/60">
+      <p className="px-3 py-2 text-micro text-muted-foreground/60">
         No terms defined yet
       </p>
     )
@@ -290,25 +290,25 @@ const GlossaryPanel = () => {
           placeholder="Search terms…"
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
-          className="w-full rounded border border-primary/30 bg-card px-2 py-1 font-mono text-micro text-foreground placeholder:text-muted-foreground focus:border-primary/60 focus:outline-none"
+          className="w-full rounded border border-border bg-card px-2 py-1 font-mono text-micro text-foreground placeholder:text-muted-foreground focus:border-border focus:outline-none"
         />
       </div>
       {visible.length === 0 ? (
-        <p className="px-3 py-1 font-mono text-micro text-muted-foreground/60">No matches</p>
+        <p className="px-3 py-1 text-micro text-muted-foreground/60">No matches</p>
       ) : (
         <ul className="flex flex-col gap-0.5 py-1">
           {visible.map((term) => (
             <li key={term.term}>
               <details className="px-2">
-                <summary className="cursor-pointer list-none rounded px-1 py-1 font-mono text-micro text-foreground hover:bg-primary/10 [&::-webkit-details-marker]:hidden">
+                <summary className="cursor-pointer list-none rounded px-1 py-1 text-micro text-foreground hover:bg-foreground/5 [&::-webkit-details-marker]:hidden">
                   {term.term}
                 </summary>
                 <div className="pb-1 pl-1 pr-1 pt-0.5">
-                  <p className="font-mono text-micro leading-snug text-foreground/80">
+                  <p className="text-micro leading-snug text-foreground/80">
                     {term.definition}
                   </p>
                   {term.avoid.length > 0 && (
-                    <p className="mt-0.5 font-mono text-micro text-muted-foreground">
+                    <p className="mt-0.5 text-micro text-muted-foreground">
                       avoid:{' '}
                       <span className="text-primary/60">
                         {term.avoid.join(', ')}
@@ -347,8 +347,8 @@ interface RailSectionProps {
 }
 
 const RailSection = ({ title, children }: RailSectionProps) => (
-  <section className="border-b border-primary/20 px-3 py-2" aria-label={title}>
-    <h2 className="mb-1 font-mono text-micro uppercase tracking-widest text-muted-foreground/60">
+  <section className="border-b border-border px-3 py-2" aria-label={title}>
+    <h2 className="mb-1 text-micro uppercase tracking-widest text-muted-foreground/60">
       {title}
     </h2>
     {children}
@@ -386,7 +386,7 @@ const RailPile = ({ title, count, children, pageSize }: RailPileProps) => {
       {showToggle && (
         <button
           type="button"
-          className="mt-1 font-mono text-micro text-muted-foreground hover:text-foreground hover:underline"
+          className="mt-1 text-micro text-muted-foreground hover:text-foreground hover:underline"
           aria-expanded={expanded}
           onClick={() => {
             if (expanded) {
@@ -403,7 +403,7 @@ const RailPile = ({ title, count, children, pageSize }: RailPileProps) => {
       {hasMore && (
         <button
           type="button"
-          className="mt-0.5 font-mono text-micro text-muted-foreground hover:text-foreground hover:underline"
+          className="mt-0.5 text-micro text-muted-foreground hover:text-foreground hover:underline"
           onClick={() => setPage((p) => p + 1)}
         >
           {`Load ${Math.min(pageSize!, count - visibleCount)} more ▾`}
@@ -429,7 +429,7 @@ const AlertsPile = ({ items, onOpenWork }: AlertsPileProps) => {
               <button
                 type="button"
                 title={item.source === 'alert' ? item.item.title : item.task.title}
-                className="flex w-full items-start gap-1 text-left font-mono text-micro text-foreground/80 hover:text-foreground hover:underline"
+                className="flex w-full items-start gap-1 text-left text-micro text-foreground/80 hover:text-foreground hover:underline"
                 onClick={() => onOpenWork?.(item)}
                 data-testid="context-rail-alert-row"
               >
@@ -488,7 +488,7 @@ const ProposalsPile = ({ proposals, onOpenProposal }: ProposalsPileProps) => {
                 <button
                   type="button"
                   title={draft.title}
-                  className="block w-full truncate text-left font-mono text-micro text-foreground/80 hover:text-foreground hover:underline"
+                  className="block w-full truncate text-left text-micro text-foreground/80 hover:text-foreground hover:underline"
                   onClick={() => onOpenProposal(draft)}
                   data-testid="context-rail-proposal-row"
                 >
@@ -643,7 +643,7 @@ export const ArtifactsRail = ({ tasks, files, meta, projectId }: ArtifactsRailPr
 const ActivityPanel = ({ feed }: { feed: ActivityEntry[] }) => {
   if (feed.length === 0) {
     return (
-      <p className="px-3 py-2 font-mono text-micro text-muted-foreground/60">
+      <p className="px-3 py-2 text-micro text-muted-foreground/60">
         No activity yet
       </p>
     )
@@ -698,10 +698,10 @@ const PanelSection = ({ title, defaultOpen = true, children }: PanelSectionProps
   const [open, setOpen] = useState(defaultOpen)
 
   return (
-    <div className="border-b border-primary/20">
+    <div className="border-b border-border">
       <button
         type="button"
-        className="flex w-full items-center justify-between px-3 py-2 font-mono text-micro uppercase tracking-wider text-muted-foreground hover:text-foreground transition-colors"
+        className="flex w-full items-center justify-between px-3 py-2 text-micro uppercase tracking-wider text-muted-foreground hover:text-foreground transition-colors"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
       >
@@ -790,12 +790,12 @@ export const ContextRail = ({
   if (collapsed) {
     return (
       <aside
-        className="flex w-8 flex-shrink-0 flex-col items-center border-l border-primary/30 bg-background py-2 gap-3"
+        className="flex w-8 flex-shrink-0 flex-col items-center border-l border-border bg-background py-2 gap-3"
         aria-label="Context rail (collapsed)"
       >
         <button
           type="button"
-          className="rounded p-1 font-mono text-label text-muted-foreground hover:bg-primary/10 hover:text-foreground transition-colors"
+          className="rounded p-1 text-label text-muted-foreground hover:bg-foreground/5 hover:text-foreground transition-colors"
           onClick={() => onToggleCollapse?.()}
           title="Expand context rail"
           aria-label="Expand context rail"
@@ -808,16 +808,16 @@ export const ContextRail = ({
 
   return (
     <aside
-      className="flex w-56 flex-shrink-0 flex-col border-l border-primary/30 bg-background overflow-y-auto"
+      className="flex w-56 flex-shrink-0 flex-col border-l border-border bg-background overflow-y-auto"
       aria-label="Context rail"
     >
-      <div className="flex items-center justify-between border-b border-primary/20 px-3 py-2">
-        <span className="font-mono text-micro uppercase tracking-wider text-muted-foreground">
+      <div className="flex items-center justify-between border-b border-border px-3 py-2">
+        <span className="text-micro uppercase tracking-wider text-muted-foreground">
           Context
         </span>
         <button
           type="button"
-          className="rounded p-0.5 font-mono text-label text-muted-foreground hover:bg-primary/10 hover:text-foreground transition-colors"
+          className="rounded p-0.5 text-label text-muted-foreground hover:bg-foreground/5 hover:text-foreground transition-colors"
           onClick={() => onToggleCollapse?.()}
           title="Collapse context rail"
           aria-label="Collapse context rail"

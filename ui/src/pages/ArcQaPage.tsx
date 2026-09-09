@@ -87,7 +87,7 @@ export const ArcQaPage = ({ originId }: ArcQaPageProps) => {
         <p className="text-label text-muted-foreground">No QA report exists for this arc.</p>
         <a
           href="#/progress"
-          className="mt-4 self-start rounded border border-primary/40 px-2 py-1 font-mono text-body text-primary hover:bg-primary/10"
+          className="mt-4 self-start rounded border border-border px-2 py-1 text-body text-primary hover:bg-foreground/5"
         >
           ← Back to Progress
         </a>
@@ -120,7 +120,7 @@ export const ArcQaPage = ({ originId }: ArcQaPageProps) => {
               open={isStoppedCriterion}
               data-testid={`criterion-${ci}`}
             >
-              <summary className="cursor-pointer select-none rounded px-2 py-1 text-label font-medium text-foreground hover:bg-primary/10">
+              <summary className="cursor-pointer select-none rounded px-2 py-1 text-label font-medium text-foreground hover:bg-foreground/5">
                 {criterion.text}
               </summary>
               <ol className="mt-1 flex flex-col gap-1 pl-4">
@@ -133,8 +133,8 @@ export const ArcQaPage = ({ originId }: ArcQaPageProps) => {
                         open={isStopped}
                         data-testid={`step-${ci}-${si}`}
                       >
-                        <summary className="flex cursor-pointer items-center gap-2 rounded px-2 py-0.5 text-label text-foreground hover:bg-primary/10">
-                          <span className="font-mono text-micro text-muted-foreground">
+                        <summary className="flex cursor-pointer items-center gap-2 rounded px-2 py-0.5 text-label text-foreground hover:bg-foreground/5">
+                          <span className="text-micro text-muted-foreground">
                             {si + 1}.
                           </span>
                           <span className="flex-1">{step.text}</span>

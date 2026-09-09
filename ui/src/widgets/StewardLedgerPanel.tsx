@@ -56,17 +56,17 @@ export const StewardLedgerPanel = ({ targetKind, targetId }: StewardLedgerPanelP
       data-testid="steward-ledger-panel"
       data-target-kind={targetKind}
       data-target-id={targetId}
-      className="border-t border-primary/20 px-4 py-3"
+      className="border-t border-border px-4 py-3"
     >
       <h3 className="font-mono text-label uppercase tracking-[0.1em] text-muted-foreground">
         Steward timeline · {targetLabel}
       </h3>
       {isPending ? (
-        <p className="mt-2 font-mono text-label text-muted-foreground">Loading Steward timeline…</p>
+        <p className="mt-2 text-label text-muted-foreground">Loading Steward timeline…</p>
       ) : isError ? (
-        <p className="mt-2 font-mono text-label text-error/80">Could not load Steward interventions.</p>
+        <p className="mt-2 text-label text-error/80">Could not load Steward interventions.</p>
       ) : entries.length === 0 ? (
-        <p data-testid="steward-ledger-empty" className="mt-2 font-mono text-label text-muted-foreground">
+        <p data-testid="steward-ledger-empty" className="mt-2 text-label text-muted-foreground">
           No Steward interventions recorded.
         </p>
       ) : (
@@ -78,12 +78,12 @@ export const StewardLedgerPanel = ({ targetKind, targetId }: StewardLedgerPanelP
                 <li
                   key={entry.id}
                   data-testid="steward-ledger-row"
-                  className="rounded border border-primary/20 bg-card px-3 py-2"
+                  className="rounded border border-border bg-card px-3 py-2"
                 >
                   <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 font-mono text-label">
                     <span className="font-semibold text-foreground" title={entry.targetId}>
                       {entry.targetKind.charAt(0).toUpperCase() + entry.targetKind.slice(1)}{' '}
-                      <span className="font-mono">{entry.targetId}</span>
+                      <span className="">{entry.targetId}</span>
                     </span>
                     <time dateTime={entry.ts} className="text-muted-foreground" title={entry.ts}>
                       {smartTimestamp(entry.ts)}
@@ -116,7 +116,7 @@ export const StewardLedgerPanel = ({ targetKind, targetId }: StewardLedgerPanelP
                       <span data-testid="steward-outcome-label">{outcomeLabel}</span>
                       {outcomeDetail !== null && (
                         <details className="mt-1">
-                          <summary className="cursor-pointer select-none font-mono text-micro text-muted-foreground hover:text-foreground">
+                          <summary className="cursor-pointer select-none text-micro text-muted-foreground hover:text-foreground">
                             Technical details
                           </summary>
                           <pre
@@ -150,7 +150,7 @@ export const StewardLedgerPanel = ({ targetKind, targetId }: StewardLedgerPanelP
             <button
               data-testid="steward-ledger-show-more"
               onClick={() => setVisibleCount((c) => c + INITIAL_VISIBLE)}
-              className="mt-3 w-full rounded border border-primary/20 px-3 py-2 font-mono text-label text-muted-foreground hover:border-primary/40 hover:text-foreground transition-colors"
+              className="mt-3 w-full rounded border border-border px-3 py-2 text-label text-muted-foreground hover:border-border hover:text-foreground transition-colors"
             >
               Show more ({remaining} remaining)
             </button>

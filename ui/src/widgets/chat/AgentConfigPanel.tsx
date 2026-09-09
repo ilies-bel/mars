@@ -18,13 +18,13 @@ import { fetchChatConfig } from '@/shared/api'
 import type { ChatConfig, ChatConfigTool } from '@/shared/schemas'
 
 const SectionHeading = ({ children }: { children: string }) => (
-  <h3 className="mt-4 font-mono text-micro uppercase tracking-wider text-primary/60">{children}</h3>
+  <h3 className="mt-4 text-micro uppercase tracking-wider text-primary/60">{children}</h3>
 )
 
 const ToolList = ({ tools, testId }: { tools: ChatConfigTool[]; testId: string }) => (
   <ul data-testid={testId} className="mt-1 space-y-1.5">
     {tools.map((t) => (
-      <li key={t.name} className="font-mono text-label">
+      <li key={t.name} className="text-label">
         <span className="text-foreground">{t.name}</span>
         {t.description && <p className="mt-0.5 text-micro leading-snug text-primary/70">{t.description}</p>}
       </li>
@@ -35,10 +35,10 @@ const ToolList = ({ tools, testId }: { tools: ChatConfigTool[]; testId: string }
 export const AgentConfigContent = ({ config }: { config: ChatConfig }) => (
   <div className="px-3 pb-4">
     <SectionHeading>Model</SectionHeading>
-    <p data-testid="agent-config-model" className="mt-1 font-mono text-label text-foreground">{config.model}</p>
+    <p data-testid="agent-config-model" className="mt-1 text-label text-foreground">{config.model}</p>
 
     <SectionHeading>Conversation memory</SectionHeading>
-    <dl data-testid="agent-config-memory" className="mt-1 grid grid-cols-2 gap-x-2 gap-y-1 font-mono text-micro">
+    <dl data-testid="agent-config-memory" className="mt-1 grid grid-cols-2 gap-x-2 gap-y-1 text-micro">
       <dt className="text-primary/60">Cache retention</dt>
       <dd>{Math.round(config.retentionMs / 60_000)} min</dd>
       <dt className="text-primary/60">Reusable prefix</dt>
@@ -49,7 +49,7 @@ export const AgentConfigContent = ({ config }: { config: ChatConfig }) => (
 
     <SectionHeading>System prompt</SectionHeading>
     <details className="mt-1">
-      <summary className="cursor-pointer font-mono text-label text-foreground hover:text-primary">
+      <summary className="cursor-pointer text-label text-foreground hover:text-primary">
         {config.systemPromptSource === 'override'
           ? 'Override — .mars/chat-system-prompt.md'
           : 'Built-in'}
@@ -57,7 +57,7 @@ export const AgentConfigContent = ({ config }: { config: ChatConfig }) => (
       </summary>
       <pre
         data-testid="agent-config-system-prompt"
-        className="mt-2 max-h-64 overflow-y-auto whitespace-pre-wrap border border-primary/30 bg-primary/5 p-2 font-mono text-micro leading-relaxed text-primary"
+        className="mt-2 max-h-64 overflow-y-auto whitespace-pre-wrap border border-border bg-primary/5 p-2 font-mono text-micro leading-relaxed text-primary"
       >
         {config.systemPrompt}
       </pre>
@@ -68,11 +68,11 @@ export const AgentConfigContent = ({ config }: { config: ChatConfig }) => (
 
     <SectionHeading>MCP servers</SectionHeading>
     {config.mcpServers.length === 0 && (
-      <p className="mt-1 font-mono text-micro text-primary/50">None configured (.mcp.json)</p>
+      <p className="mt-1 text-micro text-primary/50">None configured (.mcp.json)</p>
     )}
     {config.mcpServers.map((server) => (
       <div key={server.name} data-testid={`agent-config-mcp-${server.name}`} className="mt-1.5">
-        <p className="font-mono text-label text-foreground">
+        <p className="text-label text-foreground">
           <span
             aria-label={server.status}
             className={`mr-1.5 inline-block h-1.5 w-1.5 rounded-full ${
@@ -85,7 +85,7 @@ export const AgentConfigContent = ({ config }: { config: ChatConfig }) => (
         {server.status === 'failed' ? (
           <p className="mt-0.5 font-mono text-micro text-error">not connected</p>
         ) : (
-          <div className="border-l border-primary/20 pl-2">
+          <div className="border-l border-border pl-2">
             <ToolList tools={server.tools} testId={`agent-config-mcp-tools-${server.name}`} />
           </div>
         )}
@@ -94,10 +94,10 @@ export const AgentConfigContent = ({ config }: { config: ChatConfig }) => (
 
     <SectionHeading>Skills</SectionHeading>
     <details className="mt-1">
-      <summary className="cursor-pointer font-mono text-label text-foreground hover:text-primary">
+      <summary className="cursor-pointer text-label text-foreground hover:text-primary">
         {config.skills.length} skill{config.skills.length === 1 ? '' : 's'} (.claude/skills)
       </summary>
-      <div className="border-l border-primary/20 pl-2">
+      <div className="border-l border-border pl-2">
         <ToolList tools={config.skills} testId="agent-config-skills" />
       </div>
     </details>
@@ -118,7 +118,7 @@ export const AgentConfigPanel = ({ projectId }: { projectId?: string }) => {
         type="button"
         data-testid="agent-config-trigger"
         onClick={() => setOpen(true)}
-        className="flex w-full items-center gap-1.5 rounded border border-primary/30 px-2 py-1 font-mono text-label text-primary hover:bg-primary/20 hover:text-foreground"
+        className="flex w-full items-center gap-1.5 rounded border border-border px-2 py-1 font-mono text-label text-primary hover:bg-primary/20 hover:text-foreground"
       >
         <Settings2Icon className="h-3 w-3" />
         Agent config
@@ -129,10 +129,10 @@ export const AgentConfigPanel = ({ projectId }: { projectId?: string }) => {
           data-testid="agent-config-panel"
           role="dialog"
           aria-label="Agent configuration"
-          className="fixed inset-y-0 right-0 z-50 flex w-[380px] max-w-full flex-col border-l border-primary/40 bg-background shadow-2xl"
+          className="fixed inset-y-0 right-0 z-50 flex w-[380px] max-w-full flex-col border-l border-border bg-background shadow-2xl"
         >
-          <div className="flex items-center justify-between border-b border-primary/30 px-3 py-2">
-            <h2 className="font-mono text-label uppercase tracking-wider text-primary">Agent configuration</h2>
+          <div className="flex items-center justify-between border-b border-border px-3 py-2">
+            <h2 className="text-label uppercase tracking-wider text-primary">Agent configuration</h2>
             <button
               type="button"
               aria-label="Close"
@@ -143,9 +143,9 @@ export const AgentConfigPanel = ({ projectId }: { projectId?: string }) => {
             </button>
           </div>
           <div className="flex-1 overflow-y-auto">
-            {isLoading && <p className="px-3 py-4 font-mono text-label text-primary/60">Loading…</p>}
+            {isLoading && <p className="px-3 py-4 text-label text-primary/60">Loading…</p>}
             {isError && (
-              <p className="px-3 py-4 font-mono text-label text-error">
+              <p className="px-3 py-4 text-label text-error">
                 Could not load the agent configuration — is the daemon running?
               </p>
             )}

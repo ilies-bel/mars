@@ -336,9 +336,13 @@ export const severityColor = (severity: TraceEvent['severity']): string => {
  * the `border` width utility (e.g. `border ${severityRowClass(s)}`).
  */
 export const severityRowClass = (severity: TraceEvent['severity']): string => {
-  if (severity === 'error') return 'border-error/40 bg-error/5'
-  if (severity === 'warn') return 'border-warn/40 bg-warn/5'
-  return 'border-primary/30 bg-primary/5'
+  // A left accent rail, not a full box. Every row used to carry its own
+  // rounded border plus a tinted fill, so a screen of log lines read as a
+  // stack of ~20 buttons and the eye had no continuous column to run down.
+  // Info rows get no accent at all: the common case should be silent.
+  if (severity === 'error') return 'border-l-error bg-error/[0.045]'
+  if (severity === 'warn') return 'border-l-warn bg-warn/[0.04]'
+  return 'border-l-transparent'
 }
 
 /**

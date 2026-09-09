@@ -50,7 +50,7 @@ const laneCardClass = (active: boolean): string =>
 
 const laneHeaderClass = (active: boolean): string =>
   [
-    'flex items-center gap-2 font-mono text-label font-semibold uppercase tracking-wider',
+    'flex items-center gap-2 text-label font-semibold uppercase tracking-wider',
     active ? 'text-success' : 'text-muted-foreground',
   ].join(' ')
 
@@ -249,10 +249,10 @@ export const CapRatchet = ({
       {/* Raw transitions — collapsed by default, available for exact sequence inspection */}
       {entries.length > 0 && (
         <details className="mt-1">
-          <summary className="cursor-pointer font-mono text-micro text-muted-foreground/40 hover:text-muted-foreground/70 select-none">
+          <summary className="cursor-pointer text-micro text-muted-foreground/40 hover:text-muted-foreground/70 select-none">
             ▸ raw transitions
           </summary>
-          <div className="mt-1 flex flex-wrap items-center gap-1 font-mono text-micro text-muted-foreground">
+          <div className="mt-1 flex flex-wrap items-center gap-1 text-micro text-muted-foreground">
             <span className="text-primary">{baseline}</span>
             {entries.map((e) => (
               <span key={e.timestamp} className="flex items-center gap-1">
@@ -299,7 +299,7 @@ const RuntimeTuningLane = ({ data }: { data: StewardView['runtimeTuning'] }) => 
             {formatLastActivity(lastActivity)}
           </span>
         </div>
-        <p className="mt-1 font-mono text-micro text-muted-foreground">
+        <p className="mt-1 text-micro text-muted-foreground">
           Trigger: backlog sustained {'>'} {Math.floor(liveCap * thresholdFactor)} tasks for {sustainMs / 1000}s —
           bump cap by ×{bumpFactor} up to ceiling {ceiling}. Checked every {checkMs / 1000}s.
         </p>
@@ -315,11 +315,11 @@ const RuntimeTuningLane = ({ data }: { data: StewardView['runtimeTuning'] }) => 
 
       {/* Acks — Steward's own first-person voice, newest first */}
       <div className="space-y-2">
-        <div className="font-mono text-micro uppercase tracking-wide text-muted-foreground/70">
+        <div className="text-micro uppercase tracking-wide text-muted-foreground/70">
           Steward acknowledgments ({acks.length})
         </div>
         {acks.length === 0 ? (
-          <p className="font-mono text-micro text-muted-foreground">No acknowledgments yet.</p>
+          <p className="text-micro text-muted-foreground">No acknowledgments yet.</p>
         ) : (
           acks.map((ack, i) => (
             <div
@@ -327,8 +327,8 @@ const RuntimeTuningLane = ({ data }: { data: StewardView['runtimeTuning'] }) => 
               className="rounded border border-success/20 bg-success/[0.03] px-3 py-2"
               data-testid={i === 0 ? 'steward-ack-latest' : undefined}
             >
-              <p className="font-mono text-label text-foreground">{ack.text}</p>
-              <time className="font-mono text-micro text-muted-foreground">
+              <p className="text-label text-foreground">{ack.text}</p>
+              <time className="text-micro text-muted-foreground">
                 {formatAbsoluteDateTime(ack.timestamp)}
               </time>
             </div>
@@ -387,10 +387,10 @@ const SignatureStormLane = ({ data }: { data: StewardView['signatureStorm'] }) =
           role="alert"
           data-testid="storm-disagree-banner"
         >
-          <p className="font-mono text-label font-semibold text-warn">
+          <p className="text-label font-semibold text-warn">
             State disagreement detected
           </p>
-          <p className="mt-0.5 font-mono text-micro text-warn/80">
+          <p className="mt-0.5 text-micro text-warn/80">
             Breaker is {tripped ? 'tripped' : 'clear'} in Postgres, but dispatch is{' '}
             {isPaused ? 'paused' : 'running'} in memory. The daemon was likely restarted while the
             breaker was {tripped ? 'tripped' : 'clear'}. Run{' '}
@@ -401,7 +401,7 @@ const SignatureStormLane = ({ data }: { data: StewardView['signatureStorm'] }) =
 
       <div className="grid grid-cols-2 gap-3">
         <div className="rounded border border-border/50 bg-muted/20 p-3">
-          <div className="font-mono text-micro uppercase tracking-wide text-muted-foreground/70">
+          <div className="text-micro uppercase tracking-wide text-muted-foreground/70">
             Breaker (Postgres)
           </div>
           <div
@@ -411,13 +411,13 @@ const SignatureStormLane = ({ data }: { data: StewardView['signatureStorm'] }) =
             {tripped ? 'Tripped' : 'Clear'}
           </div>
           {updated_at && (
-            <time className="font-mono text-micro text-muted-foreground">
+            <time className="text-micro text-muted-foreground">
               {formatAbsoluteDateTime(updated_at)}
             </time>
           )}
         </div>
         <div className="rounded border border-border/50 bg-muted/20 p-3">
-          <div className="font-mono text-micro uppercase tracking-wide text-muted-foreground/70">
+          <div className="text-micro uppercase tracking-wide text-muted-foreground/70">
             Dispatch (in-memory)
           </div>
           <div
@@ -426,13 +426,13 @@ const SignatureStormLane = ({ data }: { data: StewardView['signatureStorm'] }) =
           >
             {isPaused ? 'Paused' : 'Running'}
           </div>
-          <p className="font-mono text-micro text-muted-foreground">resets on daemon restart</p>
+          <p className="text-micro text-muted-foreground">resets on daemon restart</p>
         </div>
       </div>
 
       <div className="mt-3 space-y-1">
         <div className="flex items-baseline gap-2">
-          <span className="font-mono text-micro text-muted-foreground/70 uppercase tracking-wide w-28">
+          <span className="text-micro text-muted-foreground/70 uppercase tracking-wide w-28">
             Streak count
           </span>
           <span className="font-mono text-body font-semibold text-foreground" data-testid="storm-streak">
@@ -463,7 +463,7 @@ const SignatureStormLane = ({ data }: { data: StewardView['signatureStorm'] }) =
         )}
         {signatureStormAqCount > 0 && (
           <div className="flex items-baseline gap-2">
-            <span className="font-mono text-micro text-muted-foreground/70 uppercase tracking-wide w-28">
+            <span className="text-micro text-muted-foreground/70 uppercase tracking-wide w-28">
               AQ items
             </span>
             <span className="font-mono text-label text-error" data-testid="storm-aq-count">
@@ -495,13 +495,13 @@ const WorkflowPatchesLane = ({ data }: { data: StewardView['workflowPatches'] })
               built — no callers
             </span>
           </div>
-          <p className="mt-1 font-mono text-micro text-muted-foreground">
+          <p className="mt-1 text-micro text-muted-foreground">
             stewardProposeWorkflowPatch, applyWorkflowPatch, and rejectWorkflowPatch are implemented
             but have no call sites outside their own module and tests. This lane cannot execute.
           </p>
         </header>
         <p
-          className="font-mono text-micro text-muted-foreground"
+          className="text-micro text-muted-foreground"
           data-testid="patches-empty-state"
         >
           No proposals
@@ -522,7 +522,7 @@ const WorkflowPatchesLane = ({ data }: { data: StewardView['workflowPatches'] })
             arc-verifier
           </span>
         </div>
-        <p className="mt-1 font-mono text-micro text-muted-foreground">
+        <p className="mt-1 text-micro text-muted-foreground">
           Trigger: N consecutive arc E2E passes end CAN'T-VERIFY because E2E tooling is missing.
           The arc-verifier proposes removing the behaviour-verify step so the operator can decide
           whether to fix the environment or drop the step.
@@ -530,7 +530,7 @@ const WorkflowPatchesLane = ({ data }: { data: StewardView['workflowPatches'] })
       </header>
       {rows.length === 0 ? (
         <p
-          className="font-mono text-micro text-muted-foreground"
+          className="text-micro text-muted-foreground"
           data-testid="patches-empty-state"
         >
           No pending workflow-patch proposals.
@@ -593,22 +593,22 @@ const GateHealthLane = ({
             standing registry
           </span>
         </div>
-        <p className="mt-1 font-mono text-micro text-muted-foreground">
+        <p className="mt-1 text-micro text-muted-foreground">
           Health of the registered verification gates. Quarantined gates can be restored from this page.
         </p>
       </header>
 
       {isLoading ? (
-        <p className="font-mono text-micro text-muted-foreground" role="status">
+        <p className="text-micro text-muted-foreground" role="status">
           Loading verify gates…
         </p>
       ) : error !== null ? (
         <div role="alert">
-          <p className="font-mono text-micro text-error">Daemon error while loading verify gates.</p>
+          <p className="text-micro text-error">Daemon error while loading verify gates.</p>
           <FallbackSurface error={error} of="verify gates" variant="pane" />
         </div>
       ) : data === undefined || data.scopes.length === 0 ? (
-        <p className="font-mono text-micro text-muted-foreground" data-testid="gate-health-empty-state">
+        <p className="text-micro text-muted-foreground" data-testid="gate-health-empty-state">
           No verify gates are registered.
         </p>
       ) : (
@@ -639,7 +639,7 @@ const GateHealthLane = ({
                       {gate.evidence !== null && <p>Evidence: {gate.evidence}</p>}
                     </div>
                     {gate.state === 'quarantined' && (
-                      <div className="mt-2 space-y-1 font-mono text-micro text-error">
+                      <div className="mt-2 space-y-1 text-micro text-error">
                         <p>
                           This check was temporarily disabled
                           {gate.quarantinedAt !== null
@@ -668,7 +668,7 @@ const GateHealthLane = ({
                       </div>
                     )}
                     {(gate.lastFailureSignature !== null || gate.lastFailureOriginId !== null || gate.lastFailureAt !== null) && (
-                      <div className="mt-2 border-t border-border/30 pt-2 font-mono text-micro text-muted-foreground">
+                      <div className="mt-2 border-t border-border/30 pt-2 text-micro text-muted-foreground">
                         <p>
                           Last failed
                           {gate.lastFailureAt !== null ? ` on ${formatAbsoluteDateTime(gate.lastFailureAt)}` : ''}.
@@ -772,7 +772,7 @@ export const StewardPage = () => {
 
       {/* Agent spec footer */}
       <footer className="mt-2 rounded border border-border/30 bg-muted/10 px-4 py-3">
-        <div className="mb-1 font-mono text-micro uppercase tracking-wide text-muted-foreground/70">
+        <div className="mb-1 text-micro uppercase tracking-wide text-muted-foreground/70">
           Agent spec — {data.agentSpec.name} ({data.agentSpec.dispatchSites} dispatch site{data.agentSpec.dispatchSites !== 1 ? 's' : ''})
         </div>
         <div className="flex flex-wrap gap-x-4 gap-y-1 font-mono text-micro text-muted-foreground">

@@ -1,3 +1,4 @@
+import { SelectField } from '@/components/SelectField'
 import { Chip, type ChipTone } from '@/components/Chip'
 import { ArrowRight, Search } from 'lucide-react'
 import { ActionButton } from '@/components/ActionButton'
@@ -231,7 +232,7 @@ const TriageClusterRow = ({ kind, count, latestAt }: TriageClusterRowProps) => {
 
   return (
     <div
-      className="mars-card relative rounded-lg bg-card px-4 py-3"
+      className="mars-card group/row relative rounded-lg bg-card px-4 py-3"
     >
       {/* Top row: kind chip + age */}
       <div className="mb-1.5 flex items-center gap-2">
@@ -453,7 +454,7 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
 
   return (
     <div
-      className="mars-card relative rounded-lg bg-card px-4 py-3 transition-opacity"
+      className="mars-card group/row relative rounded-lg bg-card px-4 py-3"
     >
       {/* Top row: kind chip + priority badge + age */}
       <div className="mb-1.5 flex items-center gap-2">
@@ -552,7 +553,7 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
       {hasResolvableTask(item) && (
         <a
           href={taskHash(item.entityId, 'triage')}
-          className="mb-2 inline-flex w-fit items-center gap-1 rounded text-label font-medium text-primary transition-colors duration-[var(--dur-fast)] hover:text-foreground hover:underline"
+          className="mb-2 inline-flex w-fit items-center gap-1 rounded text-label font-medium text-highlight transition-colors duration-[var(--dur-fast)] hover:text-foreground hover:underline"
           data-testid="triage-entity-link"
           title={item.entityId}
         >
@@ -620,7 +621,7 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
                 className="mt-1 flex w-full flex-col gap-2 rounded border border-warn/30 bg-warn/5 px-3 py-2"
                 data-testid="triage-recovery-exhausted"
               >
-                <p className="font-mono text-micro text-warn">
+                <p className="text-micro text-warn">
                   Recovery spent — carry the work forward:
                 </p>
                 <div className="flex flex-wrap items-center gap-2">
@@ -630,7 +631,7 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
                   <button
                     disabled={pending !== null}
                     onClick={() => void handleVerb('remerge')}
-                    className="rounded border border-warn/60 bg-warn/10 px-2 py-1 font-mono text-micro text-warn transition-colors hover:bg-warn/20 disabled:opacity-50"
+                    className="rounded border border-warn/60 bg-warn/10 px-2 py-1 text-micro text-warn transition-colors hover:bg-warn/20 disabled:opacity-50"
                     data-testid="triage-remerge"
                   >
                     {pending === 'remerge' ? '…' : 'Remerge'}
@@ -643,7 +644,7 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
                   <button
                     disabled={pending !== null}
                     onClick={() => void handleVerb('supersede')}
-                    className="rounded border border-warn/40 px-2 py-1 font-mono text-micro text-warn transition-colors hover:bg-warn/10 disabled:opacity-50"
+                    className="rounded border border-warn/40 px-2 py-1 text-micro text-warn transition-colors hover:bg-warn/10 disabled:opacity-50"
                     data-testid="triage-supersede"
                   >
                     {pending === 'supersede' ? '…' : 'Supersede'}
@@ -692,7 +693,7 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
               <button
                 disabled={pending !== null}
                 onClick={() => void handleVerb('supersede')}
-                className="rounded border border-warn/40 px-2 py-1 font-mono text-micro text-warn transition-colors hover:bg-warn/10 disabled:opacity-50"
+                className="rounded border border-warn/40 px-2 py-1 text-micro text-warn transition-colors hover:bg-warn/10 disabled:opacity-50"
                 data-testid="triage-supersede"
               >
                 {pending === 'supersede' ? '…' : 'Supersede — run from checkpoint'}
@@ -803,7 +804,7 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
                 <button
                   disabled={pending !== null}
                   onClick={() => void handleVerb('restart')}
-                  className="shrink-0 rounded border border-error/60 bg-error/10 px-2 py-1 font-mono text-micro text-error transition-colors hover:bg-error/20 disabled:opacity-50"
+                  className="shrink-0 rounded border border-error/60 bg-error/10 px-2 py-1 text-micro text-error transition-colors hover:bg-error/20 disabled:opacity-50"
                   data-testid="triage-restart-confirm-yes"
                 >
                   {pending === 'restart' ? '…' : 'Yes, discard & restart'}
@@ -811,7 +812,7 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
                 <button
                   disabled={pending !== null}
                   onClick={() => setConfirmRestart(false)}
-                  className="shrink-0 rounded border border-border px-2 py-1 font-mono text-micro text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+                  className="shrink-0 rounded border border-border px-2 py-1 text-micro text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
                   data-testid="triage-restart-cancel"
                 >
                   Cancel
@@ -838,7 +839,7 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
       {/* Error feedback — shown inline below the actions row */}
       {error && (
         <p
-          className="mt-1 font-mono text-micro text-error"
+          className="mt-1 text-micro text-error"
           data-testid="triage-error"
         >
           {error}
@@ -851,7 +852,7 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
           row returns to normal state so the operator can see it persists. */}
       {settling && (
         <p
-          className="mt-1 font-mono text-micro text-muted-foreground"
+          className="mt-1 text-micro text-muted-foreground"
           data-testid="triage-settling"
         >
           Checking…
@@ -974,7 +975,7 @@ export const TriageCauseGroupRow = ({
           <button
             disabled={pending !== null}
             onClick={() => void handleBulkAction()}
-            className="shrink-0 rounded border border-primary/30 bg-primary/10 px-2 py-1 font-mono text-micro font-medium text-primary transition-colors hover:bg-primary/20 disabled:opacity-50"
+            className="shrink-0 rounded border border-border bg-primary/10 px-2 py-1 text-micro font-medium text-primary transition-colors hover:bg-primary/20 disabled:opacity-50"
             data-testid="cause-group-bulk-action"
           >
             {progress !== null
@@ -985,7 +986,7 @@ export const TriageCauseGroupRow = ({
         <button
           disabled={pending !== null}
           onClick={() => void handleSnoozeAll()}
-          className="shrink-0 rounded border border-border px-2 py-1 font-mono text-micro text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+          className="shrink-0 rounded border border-border px-2 py-1 text-micro text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
           data-testid="cause-group-snooze-all"
         >
           Snooze all
@@ -994,7 +995,7 @@ export const TriageCauseGroupRow = ({
 
       {error && (
         <p
-          className="mt-1 font-mono text-micro text-error"
+          className="mt-1 text-micro text-error"
           data-testid="cause-group-error"
         >
           {error}
@@ -1041,7 +1042,7 @@ const FeedErrorCard = ({ label, error }: FeedErrorCardProps) => {
       data-testid={`triage-feed-error-${label.replace(/\s+/g, '-')}`}
       role="alert"
     >
-      <p className="font-mono text-label text-error">
+      <p className="text-label text-error">
         {message} — {label} is unavailable
       </p>
       {remedy && (
@@ -1109,7 +1110,7 @@ const LoadingState = () => (
     <span className="mb-3 text-4xl text-muted-foreground opacity-30" aria-hidden="true">
       ◌
     </span>
-    <p className="font-mono text-label text-muted-foreground">Loading…</p>
+    <p className="text-label text-muted-foreground">Loading…</p>
   </div>
 )
 
@@ -1123,7 +1124,7 @@ const EmptyState = ({ running, doneToday }: EmptyStateProps) => (
       ◆
     </span>
     <p className="mb-1 text-title font-medium text-foreground">All quiet</p>
-    <p className="font-mono text-label text-muted-foreground">
+    <p className="text-label text-muted-foreground">
       {running > 0 ? `${running} running` : 'nothing running'}
       {doneToday > 0 ? ` · ${doneToday} done today` : ''}
     </p>
@@ -1239,10 +1240,9 @@ export const TriagePage = () => {
                 data-testid="triage-search"
               />
             </div>
-            <select
+            <SelectField
               value={kindFilter}
               onChange={(e) => setKindFilter(e.target.value)}
-              className="h-7 shrink-0 rounded-md border border-border bg-surface px-2 text-label text-foreground shadow-[var(--shadow-e1)] transition-colors duration-[var(--dur-fast)] hover:bg-background focus:border-highlight/50 focus:outline-none focus:ring-2 focus:ring-highlight/15"
               data-testid="triage-kind-filter"
             >
               <option value="">All kinds</option>
@@ -1252,7 +1252,7 @@ export const TriagePage = () => {
                     k.replace(/-/g, ' ')}
                 </option>
               ))}
-            </select>
+            </SelectField>
           </>
         }
       />

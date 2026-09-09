@@ -37,7 +37,7 @@ export const PromotionLedgerTable = ({ workflow }: Props) => {
   return (
     <table className="w-full text-body">
       <thead>
-        <tr className="text-left text-primary">
+        <tr className="text-left text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">
           <th className="pb-1 pr-2 font-normal">Timestamp</th>
           <th className="pb-1 pr-2 font-normal">Workflow</th>
           <th className="pb-1 pr-2 font-normal">Decision</th>

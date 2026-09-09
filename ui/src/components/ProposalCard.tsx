@@ -66,7 +66,7 @@ export const ProposalCard = memo(({ proposal }: Props) => {
             rel="noopener noreferrer"
             data-testid="proposal-card-mockup-chip"
             onClick={(e) => e.stopPropagation()}
-            className="rounded border border-primary/40 px-1.5 py-0.5 font-mono text-micro text-primary hover:bg-primary/10"
+            className="rounded border border-border px-1.5 py-0.5 font-mono text-micro text-primary hover:bg-foreground/5"
           >
             mockup ready ↗
           </a>

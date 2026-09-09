@@ -15,7 +15,7 @@ export const KpiVector = () => {
     return (
       <div className="flex flex-wrap gap-3" aria-busy="true" aria-label="Loading KPIs">
         {[0, 1, 2, 3, 4].map((i) => (
-          <SkeletonBlock key={i} className="w-[180px] min-h-[120px] rounded border border-primary/10" />
+          <SkeletonBlock key={i} className="w-[180px] min-h-[120px] rounded border border-border" />
         ))}
       </div>
     )

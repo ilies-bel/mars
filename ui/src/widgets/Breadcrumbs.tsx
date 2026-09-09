@@ -93,7 +93,7 @@ export const Breadcrumbs = ({ hash }: BreadcrumbsProps) => {
   return (
     <nav
       aria-label="Breadcrumb"
-      className="flex shrink-0 items-center gap-1.5 border-b border-primary/20 bg-secondary px-4 py-1"
+      className="flex shrink-0 items-center gap-1.5 border-b border-border bg-secondary px-4 py-1"
     >
       {crumbs.map((crumb, i) => (
         <span key={i} className="flex items-center gap-1.5">

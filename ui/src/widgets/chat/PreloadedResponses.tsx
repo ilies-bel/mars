@@ -66,7 +66,7 @@ export const PreloadedResponses = ({
             type="button"
             disabled={disabled}
             onClick={() => { void choose(response) }}
-            className="rounded border border-primary/30 px-3 py-1 font-mono text-label text-primary transition-colors hover:bg-primary/20 disabled:cursor-not-allowed disabled:opacity-40"
+            className="rounded border border-border px-3 py-1 font-mono text-label text-primary transition-colors hover:bg-primary/20 disabled:cursor-not-allowed disabled:opacity-40"
             data-testid={`preloaded-response-${response.id}`}
           >
             {resolved

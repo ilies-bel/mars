@@ -17,7 +17,7 @@ const PastSubthreadMessages = ({ threadId, projectId }: { threadId: string; proj
   })
 
   if (isLoading) {
-    return <p className="px-3 pb-3 font-mono text-label text-muted-foreground">Loading messages…</p>
+    return <p className="px-3 pb-3 text-label text-muted-foreground">Loading messages…</p>
   }
 
   return (
@@ -42,10 +42,10 @@ const PastSubthreadBlock = ({ thread, projectId }: { thread: ThreadSummary; proj
   const panelId = `past-subthread-${thread.id}`
 
   return (
-    <article data-testid="past-subthread" className="border-b border-primary/15">
+    <article data-testid="past-subthread" className="border-b border-border">
       <button
         type="button"
-        className="flex w-full items-center gap-3 px-3 py-2 text-left transition-colors hover:bg-primary/5"
+        className="flex w-full items-center gap-3 px-3 py-2 text-left transition-colors hover:bg-foreground/5"
         aria-expanded={expanded}
         aria-controls={panelId}
         onClick={() => setExpanded((value) => !value)}
@@ -70,7 +70,7 @@ export const PastSubthreadsColumn = ({ pastThreads, projectId }: PastSubthreadsC
   if (pastThreads.length === 0) return null
 
   return (
-    <section data-testid="past-subthreads-column" aria-label="Past Subthreads" className="mb-4 border-y border-primary/15">
+    <section data-testid="past-subthreads-column" aria-label="Past Subthreads" className="mb-4 border-y border-border">
       {pastThreads
         .slice()
         .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt))

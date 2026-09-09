@@ -1,3 +1,7 @@
+import { SelectField } from '@/components/SelectField'
+import { RefreshCw, Search, SlidersHorizontal } from 'lucide-react'
+import { ActionButton } from '@/components/ActionButton'
+import { Segmented } from '@/components/Segmented'
 import { memo, useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query'
@@ -176,10 +180,10 @@ const applyLocalPhaseFilter = (
 
 const chipClass = (active: boolean): string =>
   [
-    'rounded border px-2 py-0.5 font-mono text-micro uppercase tracking-wide transition-colors',
+    'rounded border px-2 py-0.5 text-micro uppercase tracking-wide transition-colors',
     active
       ? 'border-primary bg-primary/15 font-semibold text-foreground'
-      : 'border-dashed border-border/50 bg-transparent text-muted-foreground/60 hover:border-primary/40 hover:text-muted-foreground',
+      : 'border-dashed border-border/50 bg-transparent text-muted-foreground/60 hover:border-border hover:text-muted-foreground',
   ].join(' ')
 
 interface MultiSelectProps<T extends string> {
@@ -200,7 +204,7 @@ const MultiSelect = <T extends string>({
   displayLabel,
 }: MultiSelectProps<T>) => (
   <div className="flex flex-wrap items-center gap-1" data-testid={testId}>
-    <span className="self-center font-mono text-micro uppercase tracking-wide text-muted-foreground/60">
+    <span className="self-center text-micro uppercase tracking-wide text-muted-foreground/60">
       {label}:
     </span>
     {options.map((opt) => {
@@ -288,14 +292,19 @@ const EventRow = memo(({ event, now, fieldsExpanded, onToggleFields }: EventRowP
 
   const body = (
     <>
-      <div className="grid items-baseline gap-x-2" style={{ gridTemplateColumns: '4.5rem 2.5rem 4rem 6rem auto' }}>
+      <div
+        className="grid items-baseline gap-x-2.5"
+        style={{ gridTemplateColumns: '3.5rem 2.75rem 3.75rem 5.5rem minmax(0, 1fr)' }}
+      >
         <span className="truncate text-muted-foreground">{relativeTime(event.timestamp, now)}</span>
         <span
-          className={`font-mono text-micro uppercase ${event.severity !== 'info' ? 'font-semibold ' : ''}${severityColor(event.severity)}`}
+          className={`text-micro uppercase ${event.severity !== 'info' ? 'font-semibold ' : ''}${severityColor(event.severity)}`}
         >
           {event.severity}
         </span>
-        <span className="truncate rounded bg-primary/10 px-1 text-center font-mono text-micro text-primary">{humanizeKind(event.kind)}</span>
+        <span className="truncate rounded bg-foreground/6 px-1 text-center font-mono text-micro text-muted-foreground">
+          {humanizeKind(event.kind)}
+        </span>
         <span className="truncate font-mono text-micro text-muted-foreground">
           {callerSource ?? ''}
           {event.phase ? ` · ${humanizePhase(event.phase)}` : ''}
@@ -312,7 +321,7 @@ const EventRow = memo(({ event, now, fieldsExpanded, onToggleFields }: EventRowP
           ) : null}
           {logLineSource && logLineSource !== callerSource ? (
             <span
-              className="shrink-0 rounded bg-primary/20 px-1 font-mono text-micro text-muted-foreground"
+              className="shrink-0 rounded bg-foreground/8 px-1 font-mono text-micro text-muted-foreground"
               data-testid={`event-row-source-${event.id}`}
             >
               {logLineSource}
@@ -328,7 +337,7 @@ const EventRow = memo(({ event, now, fieldsExpanded, onToggleFields }: EventRowP
                 e.stopPropagation()
                 toggleFields()
               }}
-              className="-my-1 inline-flex min-h-[24px] shrink-0 items-center px-2 py-1 font-mono text-micro text-muted-foreground underline hover:text-primary"
+              className="-my-1 inline-flex min-h-[24px] shrink-0 items-center px-2 py-1 text-micro text-muted-foreground underline decoration-dotted underline-offset-2 hover:text-foreground"
               data-testid={`event-row-fields-toggle-${event.id}`}
             >
               {fieldsExpanded ? 'hide fields' : 'fields'}
@@ -349,7 +358,7 @@ const EventRow = memo(({ event, now, fieldsExpanded, onToggleFields }: EventRowP
   if (href === undefined) {
     return (
       <div
-        className={`block rounded border ${severityRowClass(event.severity)}${ageOpacity ? ` ${ageOpacity}` : ''} px-3 py-1.5 font-mono text-body text-foreground`}
+        className={`block border-b border-l-2 border-b-border/45 ${severityRowClass(event.severity)}${ageOpacity ? ` ${ageOpacity}` : ''} px-3 py-1.5 font-mono text-body text-foreground`}
         data-testid={`event-row-${event.id}`}
       >
         {body}
@@ -368,7 +377,7 @@ const EventRow = memo(({ event, now, fieldsExpanded, onToggleFields }: EventRowP
         e.preventDefault()
         window.location.hash = href
       }}
-      className={`block cursor-pointer rounded border ${severityRowClass(event.severity)}${ageOpacity ? ` ${ageOpacity}` : ''} px-3 py-1.5 font-mono text-body text-foreground hover:bg-primary/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary`}
+      className={`block cursor-pointer border-b border-l-2 border-b-border/45 ${severityRowClass(event.severity)}${ageOpacity ? ` ${ageOpacity}` : ''} px-3 py-1.5 font-mono text-body text-foreground transition-colors duration-[var(--dur-fast)] hover:bg-foreground/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-highlight/40`}
       data-testid={`event-row-${event.id}`}
     >
       {body}
@@ -509,7 +518,7 @@ const GroupedRow = memo(({
         <button
           type="button"
           onClick={handleToggle}
-          className="mb-1 flex w-full items-center gap-2 rounded border border-primary/30 bg-primary/10 px-3 py-1 font-mono text-micro text-primary hover:text-foreground"
+          className="mb-1 flex w-full items-center gap-2 rounded border border-border bg-primary/10 px-3 py-1 font-mono text-micro text-primary hover:text-foreground"
           data-testid={`group-row-${first.id}`}
         >
           <span>▾</span>
@@ -517,7 +526,7 @@ const GroupedRow = memo(({
           <span className="text-muted-foreground">{relativeTime(first.timestamp, now)} – {relativeTime(last.timestamp, now)}</span>
           <span className="min-w-0 truncate">{summarizeTraceEvent(first)}</span>
         </button>
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col">
           {events.map((e) => (
             <EventRow
               key={e.id}
@@ -536,7 +545,7 @@ const GroupedRow = memo(({
     <button
       type="button"
       onClick={handleToggle}
-      className="flex w-full items-center gap-2 rounded border border-primary/20 bg-primary/5 px-3 py-1.5 font-mono text-body text-foreground hover:bg-primary/15"
+      className="flex w-full items-center gap-2 rounded border border-border bg-primary/5 px-3 py-1.5 font-mono text-body text-foreground hover:bg-primary/15"
       data-testid={`group-row-${first.id}`}
     >
       <span className="shrink-0 text-micro text-muted-foreground">{relativeTime(first.timestamp, now)}</span>
@@ -621,7 +630,7 @@ const IncidentGroup = memo(({
         <button
           type="button"
           onClick={handleToggle}
-          className={`mb-1 flex w-full items-center gap-2 rounded border px-3 py-1 font-mono text-micro hover:text-foreground ${severityRowClass(worst)}`}
+          className={`flex w-full items-center gap-2 border-b border-l-2 border-b-border/45 px-3 py-1 font-mono text-micro transition-colors duration-[var(--dur-fast)] hover:bg-foreground/5 hover:text-foreground ${severityRowClass(worst)}`}
           data-testid={`incident-group-row-${first.id}`}
         >
           <span>▾</span>
@@ -630,7 +639,7 @@ const IncidentGroup = memo(({
           {taskId ? <span className="text-muted-foreground">{fullId(taskId)}</span> : null}
           <span className="min-w-0 truncate">{summary}</span>
         </button>
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col">
           {events.map((e) => (
             <EventRow
               key={e.id}
@@ -649,7 +658,7 @@ const IncidentGroup = memo(({
     <button
       type="button"
       onClick={handleToggle}
-      className={`flex w-full items-center gap-2 rounded border px-3 py-1.5 font-mono text-body hover:bg-primary/15 ${severityRowClass(worst)}`}
+      className={`flex w-full items-center gap-2 border-b border-l-2 border-b-border/45 px-3 py-1.5 font-mono text-body transition-colors duration-[var(--dur-fast)] hover:bg-foreground/5 ${severityRowClass(worst)}`}
       data-testid={`incident-group-row-${first.id}`}
     >
       <span className="shrink-0 text-micro text-muted-foreground">{relativeTime(first.timestamp, now)}</span>
@@ -711,14 +720,14 @@ const ToolCallGroup = memo(({
         <button
           type="button"
           onClick={handleToggle}
-          className="mb-1 flex w-full items-center gap-2 rounded border border-primary/30 bg-primary/10 px-3 py-1 font-mono text-micro text-primary hover:text-foreground"
+          className="mb-1 flex w-full items-center gap-2 rounded border border-border bg-primary/10 px-3 py-1 font-mono text-micro text-primary hover:text-foreground"
           data-testid={`tool-group-row-${first.id}`}
         >
           <span>▾</span>
           <span>{label}</span>
           <span className="text-muted-foreground">{relativeTime(first.timestamp, now)}</span>
         </button>
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col">
           {events.map((e) => (
             <EventRow
               key={e.id}
@@ -737,7 +746,7 @@ const ToolCallGroup = memo(({
     <button
       type="button"
       onClick={handleToggle}
-      className="flex w-full items-center gap-2 rounded border border-primary/20 bg-primary/5 px-3 py-1.5 font-mono text-body text-muted-foreground hover:bg-primary/15"
+      className="flex w-full items-center gap-2 rounded border border-border bg-primary/5 px-3 py-1.5 font-mono text-body text-muted-foreground hover:bg-primary/15"
       data-testid={`tool-group-row-${first.id}`}
     >
       <span className="shrink-0 text-micro">{relativeTime(first.timestamp, now)}</span>
@@ -788,7 +797,7 @@ const TimelineStep = ({ group, now }: TimelineStepProps) => {
       <button
         type="button"
         onClick={() => setExpanded((e) => !e)}
-        className="flex w-full items-center gap-2 py-0.5 text-left font-mono text-label"
+        className="flex w-full items-center gap-2 py-0.5 text-left text-label"
       >
         <span className="shrink-0 text-micro text-muted-foreground">
           {expanded ? '▾' : '▸'}
@@ -805,7 +814,7 @@ const TimelineStep = ({ group, now }: TimelineStepProps) => {
         )}
       </button>
       {expanded && group.tools.length > 0 && (
-        <div className="ml-5 border-l border-primary/20 pl-2">
+        <div className="ml-5 border-l border-border pl-2">
           {group.tools.map((tool) => (
             <div
               key={tool.id}
@@ -842,7 +851,7 @@ const TimelineTaskGroup = ({ group, now }: TimelineTaskGroupProps) => {
   )
 
   return (
-    <div className="border-l-2 border-primary/20 pl-3">
+    <div className="border-l-2 border-border pl-3">
       <button
         type="button"
         onClick={() => setExpanded((e) => !e)}
@@ -883,7 +892,7 @@ const TimelineTaskGroup = ({ group, now }: TimelineTaskGroupProps) => {
           {nonStepEvents.map((e) => (
             <div
               key={e.id}
-              className={`ml-2 flex items-baseline gap-1 rounded border px-2 py-0.5 font-mono text-micro ${severityRowClass(e.severity)}`}
+              className={`ml-2 flex items-baseline gap-1 rounded border-l-2 px-2 py-0.5 font-mono text-micro ${severityRowClass(e.severity)}`}
             >
               <span className="shrink-0 text-muted-foreground">
                 {relativeTime(e.timestamp, now)}
@@ -935,7 +944,7 @@ const TimelineArcGroup = ({ group, now }: TimelineArcGroupProps) => {
               : group.arcId}
         </span>
         <span
-          className={`rounded px-1.5 py-0.5 font-mono text-micro uppercase ${
+          className={`rounded px-1.5 py-0.5 text-micro uppercase ${
             group.severity === 'error'
               ? 'bg-error/10 text-error'
               : group.severity === 'warn'
@@ -1215,10 +1224,11 @@ export const EventsPage = () => {
                 onClick={() => setViewMode(mode)}
                 data-testid={`events-view-${mode}`}
                 className={[
-                  'rounded px-2 py-0.5 font-mono text-micro uppercase tracking-wide transition-colors',
+                  'inline-flex h-6 items-center rounded px-2 text-micro font-medium capitalize',
+                  'transition-[background-color,color,box-shadow] duration-[var(--dur-fast)]',
                   viewMode === mode
-                    ? 'bg-primary/30 text-foreground'
-                    : 'text-primary hover:text-foreground',
+                    ? 'bg-surface text-foreground shadow-[var(--shadow-e1)]'
+                    : 'text-muted-foreground hover:text-foreground',
                 ].join(' ')}
               >
                 {mode}
@@ -1229,14 +1239,20 @@ export const EventsPage = () => {
               onClick={onRefresh}
               disabled={initial.isFetching}
               data-testid="events-refresh"
-              className="rounded border border-primary/40 px-2 py-0.5 font-mono text-micro uppercase tracking-wide text-foreground hover:bg-primary/15 disabled:opacity-50"
+              className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-label font-medium text-muted-foreground transition-colors duration-[var(--dur-fast)] hover:bg-foreground/5 hover:text-foreground disabled:opacity-45"
             >
+              <RefreshCw
+                size={13}
+                strokeWidth={1.75}
+                aria-hidden="true"
+                className={initial.isFetching ? 'animate-spin' : undefined}
+              />
               {initial.isFetching ? 'Refreshing…' : 'Refresh'}
             </button>
             {fetchedAt !== null ? (
               <span
                 data-testid="events-fetched-at"
-                className={`font-mono text-micro ${fetchedAtIsStale ? 'text-warn' : 'text-muted-foreground'}`}
+                className={`text-micro tabular-nums ${fetchedAtIsStale ? 'text-warn' : 'text-muted-foreground'}`}
               >
                 {fetchedAt}
               </span>
@@ -1252,57 +1268,61 @@ export const EventsPage = () => {
       <div className="flex flex-col gap-1.5">
         {/* Primary row */}
         <div className="flex flex-wrap items-center gap-2">
-          <MultiSelect
+          <Segmented
             label="Severity"
-            options={SEVERITY_OPTIONS}
+            showLabel
+            data-testid="events-severity"
+            options={SEVERITY_OPTIONS.map((v) => ({
+              value: v,
+              label: v,
+              'data-testid': `events-severity-${v}`,
+            }))}
             selected={state.severities}
             onToggle={(v) => toggleIn<Severity>('severities', v)}
-            testId="events-severity"
           />
 
-          <div className="h-4 w-px shrink-0 bg-primary/20" aria-hidden="true" />
-
           {/* Free-text / payload search */}
-          <div className="flex flex-1 items-center gap-1 min-w-[160px]">
-            <span className="font-mono text-micro uppercase tracking-wide text-muted-foreground/60">
-              Search:
-            </span>
+          <div className="relative flex min-w-[180px] flex-1 items-center">
+            <Search
+              size={13}
+              strokeWidth={1.75}
+              aria-hidden="true"
+              className="pointer-events-none absolute left-2.5 text-muted-foreground"
+            />
             <input
               type="text"
               aria-label="Search payload"
               data-testid="events-q"
-              placeholder="payload contains…"
+              placeholder="Filter by payload…"
               value={state.q}
               onChange={(e) =>
                 setState((prev) => ({ ...prev, q: e.target.value }))
               }
-              className="flex-1 rounded border border-primary/30 bg-primary/5 px-2 py-0.5 font-mono text-label text-foreground placeholder-muted-foreground/40 focus:border-primary/60 focus:outline-none"
+              className="h-7 w-full rounded-md border border-border bg-background pl-7.5 pr-2.5 text-label text-foreground shadow-[var(--shadow-e1)] transition-[border-color,box-shadow] duration-[var(--dur-fast)] placeholder:text-muted-foreground/70 focus:border-highlight/50 focus:outline-none focus:ring-2 focus:ring-highlight/15"
             />
           </div>
 
-          <div className="h-4 w-px shrink-0 bg-primary/20" aria-hidden="true" />
-
           {/* Filters toggle */}
-          <button
-            type="button"
+          <ActionButton
             aria-expanded={filtersOpen}
             onClick={() => setFiltersOpen((o) => !o)}
-            className="rounded border border-primary/30 bg-primary/5 px-2 py-0.5 font-mono text-micro uppercase tracking-wide text-foreground hover:bg-primary/15"
+            variant={filtersOpen ? 'secondary' : 'ghost'}
           >
-            Filters {filtersOpen ? '▴' : '▾'}
-          </button>
+            <SlidersHorizontal size={13} strokeWidth={1.75} aria-hidden="true" />
+            Filters
+          </ActionButton>
         </div>
 
         {/* Secondary panel — always in DOM (hidden attr keeps tests green) */}
-        <div hidden={!filtersOpen} className="flex flex-col gap-2 rounded border border-primary/10 bg-primary/[0.02] p-2">
+        <div hidden={!filtersOpen} className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-3 shadow-[var(--shadow-e1)]">
           {/* Row: time · KIND */}
           <div className="flex flex-wrap items-center gap-3">
             {/* Time range */}
             <div className="flex items-center gap-1">
-              <span className="font-mono text-micro uppercase tracking-wide text-muted-foreground/60">
+              <span className="text-micro uppercase tracking-wide text-muted-foreground/60">
                 Time:
               </span>
-              <select
+              <SelectField
                 aria-label="Time range"
                 data-testid="events-time-range"
                 value={state.range}
@@ -1312,14 +1332,14 @@ export const EventsPage = () => {
                     range: e.target.value as TimeRange,
                   }))
                 }
-                className="rounded border border-primary/30 bg-primary/5 px-2 py-0.5 font-mono text-label text-foreground focus:border-primary/60 focus:outline-none"
+                className="rounded border border-border bg-primary/5 px-2 py-0.5 font-mono text-label text-foreground focus:border-border focus:outline-none"
               >
                 {TIME_RANGE_OPTIONS.map((o) => (
                   <option key={o.value} value={o.value}>
                     {o.label}
                   </option>
                 ))}
-              </select>
+              </SelectField>
             </div>
 
             <div className="h-4 w-px shrink-0 bg-primary/20" aria-hidden="true" />
@@ -1361,7 +1381,7 @@ export const EventsPage = () => {
                 onChange={(e) =>
                   setState((prev) => ({ ...prev, taskId: e.target.value }))
                 }
-                className="rounded border border-primary/30 bg-primary/5 px-2 py-0.5 font-mono text-label text-foreground placeholder-muted-foreground/40 focus:border-primary/60 focus:outline-none"
+                className="rounded border border-border bg-primary/5 px-2 py-0.5 font-mono text-label text-foreground placeholder-muted-foreground/40 focus:border-border focus:outline-none"
               />
             </div>
 
@@ -1379,7 +1399,7 @@ export const EventsPage = () => {
                 onChange={(e) =>
                   setState((prev) => ({ ...prev, originId: e.target.value }))
                 }
-                className="rounded border border-primary/30 bg-primary/5 px-2 py-0.5 font-mono text-label text-foreground placeholder-muted-foreground/40 focus:border-primary/60 focus:outline-none"
+                className="rounded border border-border bg-primary/5 px-2 py-0.5 font-mono text-label text-foreground placeholder-muted-foreground/40 focus:border-border focus:outline-none"
               />
             </div>
           </div>
@@ -1429,7 +1449,7 @@ export const EventsPage = () => {
                     left: 0,
                     width: '100%',
                     transform: `translateY(${vItem.start}px)`,
-                    paddingBottom: '4px',
+                    paddingBottom: '0px',
                   }}
                 >
                   {hasSeverityTransition ? (
@@ -1487,7 +1507,7 @@ export const EventsPage = () => {
               disabled={more.isPending}
               onClick={() => more.mutate(nextCursor)}
               data-testid="events-load-more"
-              className="font-mono text-micro uppercase text-foreground underline disabled:opacity-50"
+              className="text-micro uppercase text-foreground underline disabled:opacity-50"
             >
               {more.isPending ? 'Loading…' : 'Load more'}
             </button>

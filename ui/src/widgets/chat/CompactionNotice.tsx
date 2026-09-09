@@ -55,7 +55,7 @@ export const CompactionNotice = ({ segment }: CompactionNoticeProps) => {
             {segment.summary}
           </p>
           {refs.length > 0 && (
-            <p className="mt-2 font-mono text-micro text-muted-foreground">
+            <p className="mt-2 text-micro text-muted-foreground">
               {/* Refs are carried forward across checkpoints precisely so they
                   survive compaction; surfacing them here is what makes the
                   claim "nothing was lost" checkable rather than a promise. */}

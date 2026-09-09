@@ -17,7 +17,7 @@ export const CostPerMergedTaskTile = () => {
 
   if (isLoading) {
     return (
-      <SkeletonBlock className="w-[180px] min-h-[120px] rounded border border-primary/10" />
+      <SkeletonBlock className="w-[180px] min-h-[120px] rounded border border-border" />
     )
   }
 
@@ -49,7 +49,7 @@ export const CostPerMergedTaskTile = () => {
     return (
       <a
         href={kpiHash('cost-per-merged-task')}
-        className="kpi-tile--low-confidence flex w-[180px] min-h-[120px] flex-col items-center justify-center rounded border border-primary/20 bg-card px-4 py-2 font-mono text-muted-foreground text-body no-underline hover:bg-primary/5 focus:outline-none focus:ring-2 focus:ring-primary/40"
+        className="kpi-tile--low-confidence flex w-[180px] min-h-[120px] flex-col items-center justify-center rounded border border-border bg-card px-4 py-2 font-mono text-muted-foreground text-body no-underline hover:bg-foreground/5 focus:outline-none focus:ring-2 focus:ring-primary/40"
         aria-label="View Cost / merged task details"
       >
         Cost / merged task: insufficient data
@@ -79,7 +79,7 @@ export const CostPerMergedTaskTile = () => {
   return (
     <a
       href={kpiHash('cost-per-merged-task')}
-      className="flex w-[180px] min-h-[120px] flex-col items-center justify-between rounded border border-primary/20 bg-card px-4 py-2 font-mono no-underline hover:bg-primary/5 focus:outline-none focus:ring-2 focus:ring-primary/40"
+      className="flex w-[180px] min-h-[120px] flex-col items-center justify-between rounded border border-border bg-card px-4 py-2 font-mono no-underline hover:bg-foreground/5 focus:outline-none focus:ring-2 focus:ring-primary/40"
       aria-label="View Cost / merged task details"
     >
       <span className="text-micro uppercase tracking-wide text-muted-foreground">

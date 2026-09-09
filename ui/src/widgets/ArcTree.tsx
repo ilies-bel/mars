@@ -184,7 +184,7 @@ export const ArcTree = ({ dag, entityId, entityStatus, onOpenTask }: ArcTreeProp
                 }
               }}
               className={[
-                'flex w-full items-baseline gap-2 rounded px-1 text-left hover:bg-primary/10',
+                'flex w-full items-baseline gap-2 rounded px-1 text-left hover:bg-foreground/5',
                 row.isCenter ? 'font-bold' : '',
               ]
                 .filter(Boolean)
@@ -211,7 +211,7 @@ export const ArcTree = ({ dag, entityId, entityStatus, onOpenTask }: ArcTreeProp
                 </span>
               )}
               {/* Status — right-aligned, muted secondary metadata */}
-              <span className="ml-auto font-mono text-micro uppercase text-muted-foreground">
+              <span className="ml-auto text-micro uppercase text-muted-foreground">
                 {row.status}
               </span>
             </button>

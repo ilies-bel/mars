@@ -168,7 +168,7 @@ export const HeroSuggestions = ({ alerts, onAlertClick, onChipClick, onWhatHappe
     <div className="w-full max-w-2xl space-y-3">
       {topAlert && (
         <article
-          className="rounded-lg border border-primary/25 bg-card p-4 text-left shadow-sm"
+          className="rounded-lg border border-border bg-card p-4 text-left shadow-sm"
           data-testid="hero-alert-preview"
           aria-label="Most important conversation"
         >
@@ -186,7 +186,7 @@ export const HeroSuggestions = ({ alerts, onAlertClick, onChipClick, onWhatHappe
             <button
               type="button"
               data-testid="hero-alert-open"
-              className="shrink-0 rounded-md border border-primary/40 px-3 py-1.5 font-mono text-micro uppercase text-foreground transition-colors hover:bg-primary/10 active:scale-[0.98]"
+              className="shrink-0 rounded-md border border-border px-3 py-1.5 text-micro uppercase text-foreground transition-colors hover:bg-foreground/5 active:scale-[0.98]"
               onClick={() => onAlertClick(topAlert)}
             >
               Open conversation
@@ -208,7 +208,7 @@ export const HeroSuggestions = ({ alerts, onAlertClick, onChipClick, onWhatHappe
                 type="button"
                 data-testid="hero-alert-option"
                 title={alert.title}
-                className="flex min-w-0 max-w-full items-center gap-1.5 rounded-full border border-primary/25 px-3 py-1.5 font-mono text-label text-primary transition-colors hover:bg-primary/10 hover:text-foreground active:scale-[0.98]"
+                className="flex min-w-0 max-w-full items-center gap-1.5 rounded-full border border-border px-3 py-1.5 font-mono text-label text-primary transition-colors hover:bg-foreground/5 hover:text-foreground active:scale-[0.98]"
                 onClick={() => onAlertClick(alert)}
               >
                 <span aria-hidden="true">{KIND_ICON[alert.kind] ?? '•'}</span>
@@ -224,7 +224,7 @@ export const HeroSuggestions = ({ alerts, onAlertClick, onChipClick, onWhatHappe
           <button
             key={chip.label}
             type="button"
-            className="rounded-full border border-primary/25 px-3.5 py-1.5 font-mono text-label text-primary transition-colors hover:border-primary/50 hover:bg-primary/10 hover:text-foreground active:scale-[0.98]"
+            className="rounded-full border border-border px-3.5 py-1.5 text-label text-primary transition-colors hover:border-border hover:bg-foreground/5 hover:text-foreground active:scale-[0.98]"
             onClick={() =>
               'action' in chip && chip.action === 'what-happened'
                 ? onWhatHappened()
@@ -247,7 +247,7 @@ type UIPart = MarsUIMessage['parts'][number]
 
 /** Render an arbitrary tool output value inside the AI-Elements ToolOutput. */
 const ToolResultBox = ({ value }: { value: unknown }) => (
-  <pre className="max-h-60 overflow-auto whitespace-pre-wrap font-mono text-label leading-relaxed">
+  <pre className="max-w-[68ch] max-h-60 overflow-auto whitespace-pre-wrap text-label leading-relaxed">
     {typeof value === 'string' ? value : JSON.stringify(value, null, 2)}
   </pre>
 )
@@ -447,7 +447,7 @@ export const FeedbackControls = ({ messageId, feedback, onFeedbackChange }: Feed
           type="text"
           aria-label="What went wrong? (optional)"
           placeholder="What went wrong? (optional)"
-          className="w-full max-w-xs rounded border border-primary/30 bg-card px-2 py-1 font-mono text-label text-foreground placeholder:text-primary/40 focus:border-primary/60 focus:outline-none"
+          className="w-full max-w-xs rounded border border-border bg-card px-2 py-1 font-mono text-label text-foreground placeholder:text-primary/40 focus:border-border focus:outline-none"
           value={noteInput}
           onChange={(e) => setNoteInput(e.target.value)}
           onKeyDown={(e) => {
@@ -458,7 +458,7 @@ export const FeedbackControls = ({ messageId, feedback, onFeedbackChange }: Feed
         />
       )}
       {error && (
-        <p className="font-mono text-micro text-error">{error}</p>
+        <p className="text-micro text-error">{error}</p>
       )}
     </div>
   )
@@ -487,7 +487,7 @@ export const AttachmentDisplay = ({ attachment }: { attachment: ChatSegmentAttac
         <img
           src={src}
           alt={attachment.name}
-          className="max-h-64 rounded border border-primary/20 object-contain"
+          className="max-h-64 rounded border border-border object-contain"
         />
       </a>
     )
@@ -497,7 +497,7 @@ export const AttachmentDisplay = ({ attachment }: { attachment: ChatSegmentAttac
       <div className="my-1" data-testid="attachment-audio">
         {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
         <audio controls src={src} className="w-full max-w-sm" />
-        <p className="mt-0.5 font-mono text-micro text-primary/60 truncate">{attachment.name}</p>
+        <p className="mt-0.5 text-micro text-primary/60 truncate">{attachment.name}</p>
       </div>
     )
   }
@@ -505,8 +505,8 @@ export const AttachmentDisplay = ({ attachment }: { attachment: ChatSegmentAttac
     return (
       <div className="my-1" data-testid="attachment-video">
         {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-        <video controls src={src} className="max-h-64 w-full rounded border border-primary/20 object-contain" />
-        <p className="mt-0.5 font-mono text-micro text-primary/60 truncate">{attachment.name}</p>
+        <video controls src={src} className="max-h-64 w-full rounded border border-border object-contain" />
+        <p className="mt-0.5 text-micro text-primary/60 truncate">{attachment.name}</p>
       </div>
     )
   }
@@ -734,14 +734,14 @@ const renderPart = (
       <div
         key={key}
         data-testid="proposed-tool-call"
-        className="my-2 rounded-md border border-highlight/30 bg-highlight/5 px-3 py-2 font-mono text-body"
+        className="my-2 rounded-md border border-highlight/30 bg-highlight/5 px-3 py-2 text-body"
       >
         <p className="font-semibold text-highlight uppercase tracking-wide text-micro">
           Proposed — awaiting your confirmation
         </p>
         <p className="mt-1 text-foreground">{part.data.toolName}</p>
         {part.data.input != null && (
-          <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap text-label text-muted-foreground leading-relaxed">
+          <pre className="max-w-[68ch] mt-1 max-h-32 overflow-auto whitespace-pre-wrap text-label text-muted-foreground leading-relaxed">
             {JSON.stringify(part.data.input, null, 2)}
           </pre>
         )}
@@ -800,7 +800,7 @@ export const MessageView = ({
       <div className="flex flex-col">
         <MessageContent
           variant={isUser ? 'contained' : 'flat'}
-          className={!isUser ? 'border border-primary/20 bg-card px-3 py-2' : undefined}
+          className={!isUser ? 'border border-border bg-card px-3 py-2' : undefined}
         >
           {parts.map((p, i) => renderPart(p, i, onRetry, terms, isUser))}
           {!isUser && (
@@ -891,7 +891,7 @@ const ThreadItem = ({ thread, isSelected, onSelect, onRename, indented = false, 
         // Unselected: subtle indent rule for subthread hierarchy.
         isSelected
           ? `border-l-2 border-l-highlight bg-card text-foreground ${indented ? 'ml-3 pl-2 pr-2' : 'px-2'}`
-          : `border-b border-primary/10 ${indented ? 'ml-3 border-l border-primary/15 pl-2 pr-2' : 'px-2'} text-primary hover:bg-accent hover:text-foreground`,
+          : `border-b border-border ${indented ? 'ml-3 border-l border-border pl-2 pr-2' : 'px-2'} text-primary hover:bg-accent hover:text-foreground`,
       ].join(' ')}
       role="button"
       tabIndex={0}
@@ -1003,7 +1003,7 @@ const ThreadItem = ({ thread, isSelected, onSelect, onRename, indented = false, 
         <p
           data-testid="subthread-objective"
           title={objective}
-          className="mt-0.5 truncate pl-[18px] font-mono text-micro text-muted-foreground"
+          className="mt-0.5 truncate pl-[18px] text-micro text-muted-foreground"
         >
           {objective}
         </p>
@@ -1052,7 +1052,7 @@ export const ThinkingIndicator = () => (
  */
 export const LiveAssistantBubble = ({ buffer, terms = [] }: { buffer: LiveBuffer; terms?: GlossaryTerm[] }): ReactNode => (
   <Message from="assistant" data-message-role="assistant">
-    <MessageContent variant="flat" className="border border-primary/20 bg-card px-3 py-2">
+    <MessageContent variant="flat" className="border border-border bg-card px-3 py-2">
       {buffer.segments.length === 0 && !buffer.done ? (
         // No segments yet — show the bouncing-dot placeholder (same as ThinkingIndicator).
         <ThinkingIndicator />
@@ -1355,7 +1355,7 @@ const ChatConversation = ({
         <ConversationContent>
           {showWelcome ? (
             <ConversationEmptyState>
-              <p className="font-mono text-body text-muted-foreground">
+              <p className="text-body text-muted-foreground">
                 What would you like to do?
               </p>
               <Suggestions className="justify-center">
@@ -1397,7 +1397,7 @@ const ChatConversation = ({
           <button
             type="button"
             data-testid="end-subthread"
-            className="font-mono text-micro text-muted-foreground hover:text-foreground"
+            className="text-micro text-muted-foreground hover:text-foreground"
             disabled={isEndingSubthread || isBusy || serverRunning}
             onClick={() => endSubthread()}
           >
@@ -1456,7 +1456,7 @@ const SlashPalette = ({ matches, activeIndex, onSelect, onActivate }: SlashPalet
   return (
     <div
       role="listbox"
-      className="absolute bottom-full left-0 mb-1 w-full rounded border border-primary/30 bg-background shadow-lg"
+      className="absolute bottom-full left-0 mb-1 w-full rounded border border-border bg-background shadow-lg"
     >
       {matches.map(({ cmd, prompt }, index) => (
         <button
@@ -2222,7 +2222,7 @@ export const Composer = ({
           >
             <span className="flex-1 truncate font-mono opacity-70">{queuedNext.text}</span>
             {queuedNext.attachmentCount > 0 && (
-              <span className="font-mono text-micro opacity-60">{queuedNext.attachmentCount} att.</span>
+              <span className="text-micro opacity-60">{queuedNext.attachmentCount} att.</span>
             )}
             <button
               type="button"
@@ -2453,11 +2453,11 @@ export const ThreadSidebar = ({
   const visibleLiveThreads = liveThreads.filter((t) => !isStaleUntitled(t))
 
   return (
-    <aside className="flex w-64 flex-shrink-0 flex-col border-r border-primary/30 bg-background">
-      <div className="border-b border-primary/30 px-2 py-2">
+    <aside className="flex w-64 flex-shrink-0 flex-col border-r border-border bg-background">
+      <div className="border-b border-border px-2 py-2">
         <button
           type="button"
-          className="w-full rounded-md border border-border-dark bg-surface-dark px-2 py-1.5 font-mono text-label font-medium text-fg-dark transition-colors hover:bg-surface-dark/80"
+          className="w-full rounded-md border border-border-dark bg-surface-dark px-2 py-1.5 text-label font-medium text-fg-dark transition-colors hover:bg-surface-dark/80"
           onClick={() => create()}
         >
           + New thread
@@ -2480,7 +2480,7 @@ export const ThreadSidebar = ({
           />
         ) : allThreads.length === 0 ? (
           <p
-            className="px-2 py-3 font-mono text-micro text-primary/40"
+            className="px-2 py-3 text-micro text-primary/40"
             data-testid="empty-rail"
           >
             {filters.query.trim() ? 'No matches' : 'No items'}
@@ -2503,7 +2503,7 @@ export const ThreadSidebar = ({
             <button
               type="button"
               data-testid="stale-untitled-toggle"
-              className="w-full border-t border-border px-2 py-2 text-left font-mono text-micro text-muted-foreground transition-colors hover:text-foreground"
+              className="w-full border-t border-border px-2 py-2 text-left text-micro text-muted-foreground transition-colors hover:text-foreground"
               onClick={() => setStaleUntitledOpen((v) => !v)}
               aria-expanded={staleUntitledOpen}
             >
@@ -2528,7 +2528,7 @@ export const ThreadSidebar = ({
             <button
               type="button"
               data-testid="archived-toggle"
-              className="w-full border-t border-border px-2 py-2 text-left font-mono text-micro text-muted-foreground transition-colors hover:text-foreground"
+              className="w-full border-t border-border px-2 py-2 text-left text-micro text-muted-foreground transition-colors hover:text-foreground"
               onClick={() => setArchivedOpen((v) => !v)}
               aria-expanded={archivedOpen}
             >
@@ -2549,7 +2549,7 @@ export const ThreadSidebar = ({
           </div>
         )}
 
-        <div className="mt-2 border-t border-primary/15 px-2 pt-2" aria-label="Archive fork filters">
+        <div className="mt-2 border-t border-border px-2 pt-2" aria-label="Archive fork filters">
           <button
             type="button"
             data-testid="forks-of-thread-filter"
@@ -2577,7 +2577,7 @@ export const ThreadSidebar = ({
 
       {/* Agent configuration — read-only view of the model, system prompt,
           tools, skills, and MCP servers backing every conversation. */}
-      <div className="border-t border-primary/30 px-2 py-2">
+      <div className="border-t border-border px-2 py-2">
         <AgentConfigPanel projectId={projectId} />
       </div>
 
@@ -3018,7 +3018,7 @@ export const ChatPage = () => {
       {codexAuthState?.needsAuth && (
         <div
           data-testid="codex-auth-banner"
-          className="flex items-center gap-3 border-b border-warn/40 bg-warn/10 px-4 py-2 font-mono text-label text-warn"
+          className="flex items-center gap-3 border-b border-warn/40 bg-warn/10 px-4 py-2 text-label text-warn"
         >
           <span>Chat credentials are unavailable — run codex login in your terminal. After completing the terminal login, retry.</span>
           <button
@@ -3078,7 +3078,7 @@ export const ChatPage = () => {
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         {/* Page header — hamburger (mobile only) + "context ▸" toggle (always).
             Always rendered so the context toggle is reachable at every width. */}
-        <div className="flex items-center border-b border-primary/30 px-3 py-2">
+        <div className="flex items-center border-b border-border px-3 py-2">
           {!isMdScreen && (
             <button
               type="button"
@@ -3105,14 +3105,14 @@ export const ChatPage = () => {
             data-testid="resolved-pane"
             className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center"
           >
-            <p className="font-mono text-body text-foreground">This item has been resolved.</p>
-            <p className="font-mono text-label text-primary">
+            <p className="text-body text-foreground">This item has been resolved.</p>
+            <p className="text-label text-primary">
               It was removed from the action queue.
             </p>
             <div className="flex gap-3">
               <button
                 type="button"
-                className="border border-primary/40 px-3 py-1 font-mono text-label text-primary hover:bg-primary/10"
+                className="border border-border px-3 py-1 font-mono text-label text-primary hover:bg-foreground/5"
                 onClick={() => {
                   const id = selectedQueueItemId!
                   window.location.hash = taskHash(
@@ -3125,7 +3125,7 @@ export const ChatPage = () => {
               </button>
               <button
                 type="button"
-                className="border border-primary/40 px-3 py-1 font-mono text-label text-primary hover:bg-primary/10"
+                className="border border-border px-3 py-1 text-label text-primary hover:bg-foreground/5"
                 onClick={() => setSelectedQueueItemId(null)}
               >
                 ← Back to chat
@@ -3196,7 +3196,7 @@ export const ChatPage = () => {
                   // and duplicating it here would go stale the moment the
                   // thread's own state diverges from the workspace summary.
                   <p
-                    className="font-mono text-title text-foreground"
+                    className="text-title text-foreground"
                     data-testid="selected-thread-title"
                   >
                     {smartTitle(
@@ -3261,7 +3261,7 @@ export const ChatPage = () => {
               aria-hidden={!isScrolledUp}
               tabIndex={isScrolledUp ? 0 : -1}
               className={[
-                'mx-auto mb-1 flex items-center gap-1 rounded-full border border-primary/30 px-3 py-1 font-mono text-micro text-primary transition-opacity',
+                'mx-auto mb-1 flex items-center gap-1 rounded-full border border-border px-3 py-1 font-mono text-micro text-primary transition-opacity',
                 isScrolledUp ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none',
               ].join(' ')}
               onClick={scrollToBottom}
@@ -3291,7 +3291,7 @@ export const ChatPage = () => {
               <p
                 role="alert"
                 data-testid="hero-send-error"
-                className="pb-2 text-center font-mono text-label text-error"
+                className="pb-2 text-center text-label text-error"
               >
                 {sendError}
               </p>

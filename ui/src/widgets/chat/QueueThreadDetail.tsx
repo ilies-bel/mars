@@ -46,7 +46,7 @@ interface ResolutionBlockProps {
 
 const ResolutionBlock = ({ resolution }: ResolutionBlockProps) => (
   <div data-testid="resolution-block">
-    <dt className="mb-2 border-b border-primary/20 pb-1 text-micro uppercase tracking-wider text-primary">
+    <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-primary">
       Resolution
     </dt>
     <dd className="flex flex-col gap-1">
@@ -58,13 +58,13 @@ const ResolutionBlock = ({ resolution }: ResolutionBlockProps) => (
         {resolution.resolvedBy ? ` · ${resolution.resolvedBy}` : null}
       </span>
       {resolution.resolutionNote ? (
-        <p className="whitespace-pre-wrap font-mono text-label text-primary">
+        <p className="max-w-[68ch] whitespace-pre-wrap leading-relaxed text-label text-primary">
           {resolution.resolutionNote}
         </p>
       ) : null}
       {resolution.rootCause ? (
         <div className="mt-1">
-          <span className="font-mono text-micro uppercase tracking-wider text-muted-foreground">
+          <span className="text-micro uppercase tracking-wider text-muted-foreground">
             Root cause:{' '}
           </span>
           <span className="font-mono text-label text-primary">
@@ -264,7 +264,7 @@ export const ActionBar = ({ item }: ActionBarProps) => {
         }
       }}
     >
-      <dt className="mb-2 border-b border-primary/20 pb-1 text-micro uppercase tracking-wider text-primary">
+      <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-primary">
         Move forward
       </dt>
       <dd className="flex flex-wrap gap-2">
@@ -274,7 +274,7 @@ export const ActionBar = ({ item }: ActionBarProps) => {
               key={action.id}
               text={action.hint ?? action.label}
               label={action.label}
-              className="rounded-md border border-primary/30 px-3 py-1.5 font-mono text-label text-primary transition hover:bg-primary/10 active:scale-[0.97]"
+              className="rounded-md border border-border px-3 py-1.5 font-mono text-label text-primary transition hover:bg-foreground/5 active:scale-[0.97]"
             />
           ) : (
             <button
@@ -290,7 +290,7 @@ export const ActionBar = ({ item }: ActionBarProps) => {
                   ? 'border-error bg-error/10 text-error'
                   : action.needsConfirm
                     ? 'border-error/50 text-error hover:bg-error/10'
-                    : 'border-primary/40 text-foreground hover:bg-primary/20',
+                    : 'border-border text-foreground hover:bg-primary/20',
               ].join(' ')}
             >
               {pendingConfirmId === action.id
@@ -305,14 +305,14 @@ export const ActionBar = ({ item }: ActionBarProps) => {
         )}
       </dd>
       {errorMsg ? (
-        <p className="mt-2 font-mono text-micro text-error">{errorMsg}</p>
+        <p className="mt-2 text-micro text-error">{errorMsg}</p>
       ) : null}
       {teachPromptOp && item.failureReasonCode ? (
         <div
-          className="mt-3 rounded-md border border-primary/30 bg-card px-3 py-2"
+          className="mt-3 rounded-md border border-border bg-card px-3 py-2"
           data-testid="teach-prompt"
         >
-          <p className="font-mono text-label text-foreground">
+          <p className="text-label text-foreground">
             Apply <span className="uppercase">{teachPromptOp}</span> automatically next time?
           </p>
           <div className="mt-2 flex gap-2">
@@ -321,7 +321,7 @@ export const ActionBar = ({ item }: ActionBarProps) => {
               disabled={teachStatus === 'saving'}
               onClick={() => { void handleTeachYes() }}
               data-testid="teach-yes"
-              className="rounded-md border border-primary/40 px-3 py-1 font-mono text-micro uppercase text-foreground transition hover:bg-primary/20 disabled:opacity-50"
+              className="rounded-md border border-border px-3 py-1 text-micro uppercase text-foreground transition hover:bg-primary/20 disabled:opacity-50"
             >
               {teachStatus === 'saving' ? 'Saving…' : 'Yes'}
             </button>
@@ -329,7 +329,7 @@ export const ActionBar = ({ item }: ActionBarProps) => {
               type="button"
               onClick={() => setTeachPromptOp(null)}
               data-testid="teach-dismiss"
-              className="font-mono text-micro uppercase text-muted-foreground transition hover:text-foreground"
+              className="text-micro uppercase text-muted-foreground transition hover:text-foreground"
             >
               No thanks
             </button>
@@ -338,7 +338,7 @@ export const ActionBar = ({ item }: ActionBarProps) => {
       ) : null}
       {teachStatus === 'saved' && !teachPromptOp ? (
         <p
-          className="mt-2 font-mono text-micro text-foreground"
+          className="mt-2 text-micro text-foreground"
           data-testid="teach-saved"
         >
           ✓ Mars will auto-apply this next time.
@@ -376,11 +376,11 @@ const LearnedRecipeSection = ({ failureSignature }: { failureSignature: string }
 
   return (
     <div data-testid="learned-recipe-section">
-      <dt className="mb-2 border-b border-primary/20 pb-1 text-micro uppercase tracking-wider text-primary">
+      <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-primary">
         Auto-run rule
       </dt>
       <dd className="flex items-center gap-3">
-        <span className="font-mono text-label text-foreground">
+        <span className="text-label text-foreground">
           Mars will auto-<span className="uppercase">{stored.actionOp}</span> on next occurrence
         </span>
         <button
@@ -388,7 +388,7 @@ const LearnedRecipeSection = ({ failureSignature }: { failureSignature: string }
           disabled={unlearnMutation.isPending}
           onClick={() => unlearnMutation.mutate()}
           data-testid="unlearn-recipe"
-          className="border border-primary/40 px-2 py-0.5 font-mono text-micro uppercase text-muted-foreground transition hover:border-error/50 hover:text-error disabled:opacity-50"
+          className="border border-border px-2 py-0.5 text-micro uppercase text-muted-foreground transition hover:border-error/50 hover:text-error disabled:opacity-50"
         >
           {unlearnMutation.isPending ? 'Removing…' : 'Un-teach'}
         </button>
@@ -422,7 +422,7 @@ const TaskWorkflowStepSection = ({ taskId }: { taskId: string }) => {
 
   return (
     <div>
-      <dt className="mb-2 border-b border-primary/20 pb-1 text-micro uppercase tracking-wider text-primary">
+      <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-primary">
         Step
       </dt>
       <dd data-testid="task-workflow-step" className="font-mono text-label text-foreground">
@@ -466,7 +466,7 @@ const TracesSection = ({ taskId }: TracesProps) => {
   if (initial.isPending) {
     return (
       <div>
-        <dt className="mb-2 border-b border-primary/20 pb-1 text-micro uppercase tracking-wider text-primary">
+        <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-primary">
           Traces
         </dt>
         <dd className="text-muted-foreground">Loading…</dd>
@@ -476,7 +476,7 @@ const TracesSection = ({ taskId }: TracesProps) => {
   if (initial.isError || !initial.data) {
     return (
       <div>
-        <dt className="mb-2 border-b border-primary/20 pb-1 text-micro uppercase tracking-wider text-primary">
+        <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-primary">
           Traces
         </dt>
         <FallbackSurface error={initial.error} of="trace events" variant="inline" />
@@ -491,7 +491,7 @@ const TracesSection = ({ taskId }: TracesProps) => {
   if (events.length === 0) {
     return (
       <div>
-        <dt className="mb-2 border-b border-primary/20 pb-1 text-micro uppercase tracking-wider text-primary">
+        <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-primary">
           Traces
         </dt>
         <dd className="text-muted-foreground">No trace events</dd>
@@ -501,14 +501,14 @@ const TracesSection = ({ taskId }: TracesProps) => {
 
   return (
     <div>
-      <dt className="mb-2 border-b border-primary/20 pb-1 text-micro uppercase tracking-wider text-primary">
+      <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-primary">
         Traces
       </dt>
       <dd>
         <div className="max-h-64 overflow-y-auto pr-1">
           <ul className="flex flex-col gap-1">
             {events.map((e) => (
-              <li key={e.id} className={`rounded border ${severityRowClass(e.severity)} px-2 py-1 text-foreground`}>
+              <li key={e.id} className={`border-l-2 ${severityRowClass(e.severity)} px-2 py-1 text-foreground`}>
                 <span className="text-muted-foreground">{relativeTime(e.timestamp)}</span>{' '}
                 <span className={`font-mono text-micro uppercase ${e.severity !== 'info' ? 'font-semibold ' : ''}${severityColor(e.severity)}`}>
                   [{e.severity}]
@@ -531,7 +531,7 @@ const TracesSection = ({ taskId }: TracesProps) => {
             type="button"
             disabled={more.isPending}
             onClick={() => more.mutate(nextCursor)}
-            className="mt-1 inline-flex min-h-[24px] items-center px-2 py-1 font-mono text-micro uppercase text-foreground underline disabled:opacity-50"
+            className="mt-1 inline-flex min-h-[24px] items-center px-2 py-1 text-micro uppercase text-foreground underline disabled:opacity-50"
           >
             {more.isPending ? 'Loading…' : 'Load more'}
           </button>
@@ -556,7 +556,7 @@ const ProposalDetailSection = ({ proposalId }: { proposalId: string }) => {
   if (query.isPending) {
     return (
       <div>
-        <dt className="mb-2 border-b border-primary/20 pb-1 text-micro uppercase tracking-wider text-primary">
+        <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-primary">
           Proposal
         </dt>
         <dd className="text-muted-foreground">Loading…</dd>
@@ -567,7 +567,7 @@ const ProposalDetailSection = ({ proposalId }: { proposalId: string }) => {
   if (query.isError || !query.data) {
     return (
       <div>
-        <dt className="mb-2 border-b border-primary/20 pb-1 text-micro uppercase tracking-wider text-primary">
+        <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-primary">
           Proposal
         </dt>
         <dd className="text-muted-foreground">(could not load proposal)</dd>
@@ -581,23 +581,23 @@ const ProposalDetailSection = ({ proposalId }: { proposalId: string }) => {
     <>
       {p.problem ? (
         <div>
-          <dt className="mb-2 border-b border-primary/20 pb-1 text-micro uppercase tracking-wider text-primary">
+          <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-primary">
             Problem
           </dt>
-          <dd className="whitespace-pre-wrap text-foreground">{p.problem}</dd>
+          <dd className="max-w-[68ch] whitespace-pre-wrap leading-relaxed text-foreground">{p.problem}</dd>
         </div>
       ) : null}
       {p.solution ? (
         <div>
-          <dt className="mb-2 border-b border-primary/20 pb-1 text-micro uppercase tracking-wider text-primary">
+          <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-primary">
             Solution
           </dt>
-          <dd className="whitespace-pre-wrap text-foreground">{p.solution}</dd>
+          <dd className="max-w-[68ch] whitespace-pre-wrap leading-relaxed text-foreground">{p.solution}</dd>
         </div>
       ) : null}
       {p.userStories.length > 0 ? (
         <div>
-          <dt className="mb-2 border-b border-primary/20 pb-1 text-micro uppercase tracking-wider text-primary">
+          <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-primary">
             User stories
           </dt>
           <dd>
@@ -611,18 +611,18 @@ const ProposalDetailSection = ({ proposalId }: { proposalId: string }) => {
       ) : null}
       {p.outOfScope ? (
         <div>
-          <dt className="mb-2 border-b border-primary/20 pb-1 text-micro uppercase tracking-wider text-primary">
+          <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-primary">
             Out of scope
           </dt>
-          <dd className="whitespace-pre-wrap text-foreground">{p.outOfScope}</dd>
+          <dd className="max-w-[68ch] whitespace-pre-wrap leading-relaxed text-foreground">{p.outOfScope}</dd>
         </div>
       ) : null}
       {p.notes ? (
         <div>
-          <dt className="mb-2 border-b border-primary/20 pb-1 text-micro uppercase tracking-wider text-primary">
+          <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-primary">
             Notes
           </dt>
-          <dd className="whitespace-pre-wrap text-foreground">{p.notes}</dd>
+          <dd className="max-w-[68ch] whitespace-pre-wrap leading-relaxed text-foreground">{p.notes}</dd>
         </div>
       ) : null}
       <div>
@@ -658,7 +658,7 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
     <div className="flex h-full min-w-0 flex-col overflow-auto">
       <div className="px-4 pt-4">
         <header
-          className="min-w-0 rounded-lg border border-primary/25 bg-card px-4 py-3 shadow-sm"
+          className="min-w-0 rounded-lg border border-border bg-card px-4 py-3 shadow-sm"
           data-testid="queue-opening-message"
           aria-label="Opening alert message from Mars"
         >
@@ -678,7 +678,7 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
               {kindBadgeLabel(item.kind)}
             </span>
           <span
-            className={`ml-auto font-mono text-micro uppercase ${priorityBadgeClass(item.priority)}`}
+            className={`ml-auto text-micro uppercase ${priorityBadgeClass(item.priority)}`}
           >
             {item.priority}
           </span>
@@ -690,7 +690,7 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
             <h2 className="mt-2 break-all font-mono text-title text-foreground">
               {item.goal || '(no goal)'}
             </h2>
-            <p className="mt-1 whitespace-pre-wrap font-mono text-body text-foreground/80">
+            <p className="max-w-[68ch] mt-1 whitespace-pre-wrap leading-relaxed text-body text-foreground/80">
               {item.reason}
             </p>
           </>
@@ -701,7 +701,7 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
             </h2>
             {(isTaskFailureActionQueueKind(item.kind) || item.kind === 'awaiting-validation') &&
             item.body ? (
-              <p className="mt-2 whitespace-pre-wrap font-mono text-body text-foreground/80">
+              <p className="max-w-[68ch] mt-2 whitespace-pre-wrap leading-relaxed text-body text-foreground/80">
                 {item.body}
               </p>
             ) : null}
@@ -712,7 +712,7 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
             type="button"
             data-testid="aq-open-task-detail"
             onClick={() => openTask(item.entityId)}
-            className="mt-3 border border-primary/40 px-3 py-1.5 font-mono text-micro uppercase text-foreground transition-colors hover:bg-primary/20"
+            className="mt-3 border border-border px-3 py-1.5 font-mono text-micro uppercase text-foreground transition-colors hover:bg-primary/20"
           >
             Open task detail
           </button>
@@ -737,17 +737,17 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
           {item.kind === 'stale-worktree' && (
             <>
               <div>
-                <dt className="mb-2 border-b border-primary/20 pb-1 text-micro uppercase tracking-wider text-primary">
+                <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-primary">
                   Task prompt
                 </dt>
-                <dd className="whitespace-pre-wrap text-foreground">
+                <dd className="max-w-[68ch] whitespace-pre-wrap leading-relaxed text-foreground">
                   {item.staleWorktreeDetail.prompt ?? (
                     <span className="text-muted-foreground">absent (no matching task)</span>
                   )}
                 </dd>
               </div>
               <div>
-                <dt className="mb-2 border-b border-primary/20 pb-1 text-micro uppercase tracking-wider text-primary">
+                <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-primary">
                   Status · Age · Branch
                 </dt>
                 <dd className="text-foreground">
@@ -759,7 +759,7 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
                 </dd>
               </div>
               <div>
-                <dt className="mb-2 border-b border-primary/20 pb-1 text-micro uppercase tracking-wider text-primary">
+                <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-primary">
                   Investigation
                 </dt>
                 <dd>
@@ -768,7 +768,7 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
                       <p className="mb-1 text-micro text-muted-foreground" title={formatAbsoluteDateTime(item.staleWorktreeDetail.updatedAt)}>
                         {relativeTime(item.staleWorktreeDetail.updatedAt)}
                       </p>
-                      <p className="whitespace-pre-wrap text-foreground">
+                      <p className="max-w-[68ch] whitespace-pre-wrap leading-relaxed text-foreground">
                         {item.staleWorktreeDetail.investigation}
                       </p>
                     </>
@@ -785,7 +785,7 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
               before clicking Validate / Reject in the action bar above. */}
           {item.kind === 'awaiting-validation' && item.devServerUrl ? (
             <div>
-              <dt className="mb-2 border-b border-primary/20 pb-1 text-micro uppercase tracking-wider text-primary">
+              <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-primary">
                 Live preview
               </dt>
               <dd>
@@ -808,14 +808,14 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
           {/* Diagnosis before the origin chain so context is established first. */}
           {item.diagnosis ? (
             <div>
-              <dt className="mb-2 border-b border-primary/20 pb-1 text-micro uppercase tracking-wider text-primary">
+              <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-primary">
                 Diagnosis
               </dt>
               <dd>
                 <p className="mb-1 text-micro text-muted-foreground" title={formatAbsoluteDateTime(item.diagnosis.diagnosedAt)}>
                   {relativeTime(item.diagnosis.diagnosedAt)}
                 </p>
-                <p className="whitespace-pre-wrap text-foreground">
+                <p className="max-w-[68ch] whitespace-pre-wrap leading-relaxed text-foreground">
                   {item.diagnosis.text}
                 </p>
               </dd>
@@ -847,10 +847,10 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
           {/* Details — shown for stale-worktree rows (body text). */}
           {item.kind === 'stale-worktree' ? (
             <div>
-              <dt className="mb-2 border-b border-primary/20 pb-1 text-micro uppercase tracking-wider text-primary">
+              <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-primary">
                 Details
               </dt>
-              <dd className="whitespace-pre-wrap text-foreground">
+              <dd className="max-w-[68ch] whitespace-pre-wrap leading-relaxed text-foreground">
                 {item.body.trim() || (
                   <span className="text-muted-foreground">(no details recorded)</span>
                 )}
@@ -862,7 +862,7 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
             <>
               {item.dag.proposalId && (
                 <div>
-                  <dt className="mb-2 border-b border-primary/20 pb-1 text-micro uppercase tracking-wider text-primary">
+                  <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-primary">
                     From proposal
                   </dt>
                   <dd className="text-foreground">{item.dag.proposalId}</dd>
@@ -883,7 +883,7 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
           ) : null}
         </dl>
       </main>
-      <footer className="border-t border-primary/30 px-6 py-3 font-mono text-micro text-muted-foreground">
+      <footer className="border-t border-border px-6 py-3 font-mono text-micro text-muted-foreground">
         {isRealFailedTask ? 'Failed' : 'Last activity'}: {relativeTime(item.at)}
       </footer>
     </div>

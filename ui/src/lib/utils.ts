@@ -32,7 +32,7 @@ const FONT_SIZES = [
 
 const COLORS = [
   // semantic surface / ink
-  'bg', 'surface', 'panel', 'fg', 'muted', 'border', 'highlight',
+  'bg', 'surface', 'panel', 'fg', 'muted', 'muted-2', 'border', 'highlight',
   'bg-dark', 'surface-dark', 'fg-dark', 'muted-dark', 'border-dark',
   'accent-on-dark',
   // state

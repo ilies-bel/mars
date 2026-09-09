@@ -28,7 +28,7 @@ const OriginNodeContent = ({ node }: { node: OriginNode }) => (
     <span className="break-words">
       {node.title.length > 70 ? `${node.title.slice(0, 69)}…` : node.title}
     </span>
-    <span className="ml-auto font-mono text-micro uppercase text-muted-foreground">
+    <span className="ml-auto text-micro uppercase text-muted-foreground">
       {node.status}
     </span>
   </>
@@ -60,7 +60,7 @@ const OriginNodeRow = ({
           <button
             type="button"
             onClick={() => onNavigate(node.id)}
-            className="flex w-full cursor-pointer items-baseline gap-2 rounded text-left hover:bg-primary/10"
+            className="flex w-full cursor-pointer items-baseline gap-2 rounded text-left hover:bg-foreground/5"
           >
             <OriginNodeContent node={node} />
           </button>
@@ -101,7 +101,7 @@ export const OriginTree = ({ taskId, onNavigate, currentId }: OriginTreeProps) =
   if (query.isPending) {
     return (
       <div>
-        <dt className="mb-2 border-b border-primary/20 pb-1 text-micro uppercase tracking-wider text-primary">
+        <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-primary">
           Origins
         </dt>
         <dd>
@@ -113,7 +113,7 @@ export const OriginTree = ({ taskId, onNavigate, currentId }: OriginTreeProps) =
   if (query.isError || !query.data) {
     return (
       <div>
-        <dt className="mb-2 border-b border-primary/20 pb-1 text-micro uppercase tracking-wider text-primary">
+        <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-primary">
           Origins
         </dt>
         <FallbackSurface error={query.error} of="origin tasks" variant="inline" />
@@ -126,7 +126,7 @@ export const OriginTree = ({ taskId, onNavigate, currentId }: OriginTreeProps) =
   if (root.children.length === 0 && root.id === taskId) {
     return (
       <div>
-        <dt className="mb-2 border-b border-primary/20 pb-1 text-micro uppercase tracking-wider text-primary">
+        <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-primary">
           Origins
         </dt>
         <dd className="text-muted-foreground">No origin recorded for this task.</dd>
@@ -136,7 +136,7 @@ export const OriginTree = ({ taskId, onNavigate, currentId }: OriginTreeProps) =
 
   return (
     <div>
-      <dt className="mb-2 border-b border-primary/20 pb-1 text-micro uppercase tracking-wider text-primary">
+      <dt className="mb-2 border-b border-border pb-1 text-micro uppercase tracking-wider text-primary">
         Origins
       </dt>
       <dd data-testid="origin-tree">

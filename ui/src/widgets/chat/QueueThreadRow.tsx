@@ -116,7 +116,7 @@ export const QueueThreadRow = memo(({
           <span aria-hidden="true" className="shrink-0 text-label text-primary">{KIND_ICON[item.kind]}</span>
           <span className="shrink-0 font-mono text-micro text-foreground">Mars</span>
           <span aria-hidden="true" className="text-muted-foreground">·</span>
-          <span className="shrink-0 font-mono text-micro uppercase text-muted-foreground">{kindBadgeLabel(item.kind)}</span>
+          <span className="shrink-0 text-micro uppercase text-muted-foreground">{kindBadgeLabel(item.kind)}</span>
           {kindChip === 'alert' && (
             <span
               className="shrink-0 rounded bg-error/15 px-1.5 py-0.5 text-micro font-medium text-error"
@@ -144,7 +144,7 @@ export const QueueThreadRow = memo(({
             </span>
           )}
           <span
-            className={`ml-auto shrink-0 font-mono text-micro uppercase ${priorityBadgeClass(item.priority)}`}
+            className={`ml-auto shrink-0 text-micro uppercase ${priorityBadgeClass(item.priority)}`}
           >
             {item.priority}
           </span>
@@ -237,7 +237,7 @@ export const QueueThreadRow = memo(({
             {nonRestartActions.slice(0, 3).map((a) => (
               <span
                 key={a.id}
-                className="border border-primary/20 px-1 font-mono text-micro uppercase text-muted-foreground"
+                className="border border-border px-1 font-mono text-micro uppercase text-muted-foreground"
               >
                 {a.label}
               </span>
@@ -262,10 +262,10 @@ export const QueueThreadRow = memo(({
                   onAction?.(action, item)
                 }}
                 className={[
-                  'border px-2 py-0.5 font-mono text-micro uppercase transition active:scale-[0.97]',
+                  'border px-2 py-0.5 text-micro uppercase transition active:scale-[0.97]',
                   DESTRUCTIVE_OPS_INLINE.has(action.op)
                     ? 'border-error/50 text-error hover:bg-error/10'
-                    : 'border-primary/40 text-foreground hover:bg-primary/20',
+                    : 'border-border text-foreground hover:bg-primary/20',
                 ].join(' ')}
               >
                 {action.label}

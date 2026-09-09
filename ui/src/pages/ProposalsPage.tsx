@@ -1,3 +1,5 @@
+import { Search } from 'lucide-react'
+import { PageHeader } from '@/widgets/primitives/DensityPrimitives'
 /**
  * ProposalsPage — operator-facing draft proposal triage surface.
  *
@@ -46,7 +48,7 @@ const SOURCE_LABEL: Record<string, string> = {
 }
 
 const SOURCE_CHIP_CLASS: Record<string, string> = {
-  human: 'bg-primary/10 text-primary border-primary/20',
+  human: 'bg-primary/10 text-primary border-border',
   reflection: 'bg-status-verifying/10 text-status-verifying border-status-verifying/20',
   'arc-verifier': 'bg-warn/10 text-warn border-warn/20',
   planner: 'bg-warn/10 text-warn border-warn/20',
@@ -323,7 +325,7 @@ export const ProposalsPage = () => {
     return (
       <div className="flex h-full flex-col overflow-hidden bg-background" data-testid="proposals-page">
         <div className="flex shrink-0 items-center border-b border-border px-5 py-3">
-          <h1 className="font-mono text-title font-semibold text-foreground">Draft proposals</h1>
+          <h1 className="text-heading font-semibold text-foreground">Draft proposals</h1>
         </div>
         <ErrorState error={error} of="proposals" onRetry={() => refetch()} />
       </div>
@@ -365,43 +367,33 @@ export const ProposalsPage = () => {
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-background" data-testid="proposals-page">
-      {/* Header strip */}
-      <div className="flex shrink-0 items-center border-b border-border px-5 py-3">
-        <h1 className="font-mono text-title font-semibold text-foreground">
-          Draft proposals
-        </h1>
-        {/* Count = `total` (all matching drafts, before pagination), NOT
-            `sorted.length` (this page only, capped at the fetch limit). The
-            list below is paginated; the badge is a population count and must
-            match the triage page's `draft-proposal` cluster row, which counts
-            the same population. */}
-        {!isPending && total > 0 && (
-          <span
-            aria-label={`${total} draft proposals awaiting review`}
-            className="ml-2 rounded-full bg-primary/15 px-2 py-0.5 font-mono text-micro font-medium leading-none text-primary"
-          >
-            {total}
-          </span>
-        )}
-        {/* Filtered count — shown when a filter is active */}
-        {!isPending && isFiltered && totalCount > 0 && (
-          <span className="ml-3 text-label text-muted-foreground">
-            Showing {showingCount} of {totalCount}
-          </span>
-        )}
-      </div>
+      {/* Count = `total` (all matching drafts, before pagination), NOT
+          `sorted.length` (this page only, capped at the fetch limit). The list
+          below is paginated; the badge is a population count and must match
+          the triage page's `draft-proposal` cluster row, which counts the same
+          population. */}
+      <PageHeader
+        title="Draft proposals"
+        count={!isPending ? total : null}
+        countLabel={`${total} draft proposals awaiting review`}
+        subtitle={
+          !isPending && isFiltered && totalCount > 0
+            ? `Showing ${showingCount} of ${totalCount}`
+            : undefined
+        }
+      />
 
       {/* Search + source chips */}
       {!isPending && sorted.length > 0 && (
         <div className="shrink-0 border-b border-border bg-background px-4 py-2 flex flex-col gap-2">
           {/* Search input */}
           <div className="relative min-w-0">
-            <span
-              className="pointer-events-none absolute inset-y-0 left-2 flex select-none items-center text-muted-foreground/60"
+            <Search
+              size={13}
+              strokeWidth={1.75}
               aria-hidden="true"
-            >
-              ⌕
-            </span>
+              className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground"
+            />
             <input
               type="text"
               aria-label="Search proposals"
@@ -449,7 +441,7 @@ export const ProposalsPage = () => {
         ) : filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-center">
             <p className="text-title font-medium text-foreground">No matches</p>
-            <p className="mt-1 font-mono text-label text-muted-foreground">
+            <p className="mt-1 text-label text-muted-foreground">
               Try a different search or clear the source filter.
             </p>
           </div>

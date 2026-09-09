@@ -431,7 +431,7 @@ describe('EventsPage render', () => {
     const qc = makeClient(EMPTY_RESPONSE)
     const html = renderPage(qc)
     // Each label appears as plain text in the HTML — not wrapped in a <button>.
-    expect(html).toContain('>Severity:<')
+    expect(html).toContain('>Severity<')
     expect(html).toContain('>Kind:<')
     expect(html).toContain('>Phase:<')
     // The pill buttons carry aria-pressed; the labels must NOT carry aria-pressed.
@@ -561,8 +561,8 @@ describe('EventRow log_line rendering', () => {
     )
     const html = renderPage(qc)
     // Error severity → row tinting and badge styling from severityRowClass / severityColor.
-    expect(html).toContain('border-error/40')
-    expect(html).toContain('bg-error/5')
+    expect(html).toContain('border-l-error')
+    expect(html).toContain('bg-error/[0.045]')
   })
 
   it('shows a fields toggle button when payload.fields is non-empty', () => {
@@ -664,9 +664,9 @@ describe('EventRow log_line rendering', () => {
 // INFO rows must stay calm — no error/warn tinting.
 //
 // Class names are driven by severityRowClass() in shared/actionQueueDetail.ts:
-//   error → border-error/40  bg-error/5
-//   warn  → border-warn/40   bg-warn/5
-//   info  → border-primary/30 bg-primary/5
+//   error → border-l-error  bg-error/[0.045]
+//   warn  → border-l-warn    bg-warn/[0.04]
+//   info  → border-l-transparent  (no tint — the common case stays silent)
 //
 // If those classes change, update the toContain() assertions below too.
 // ---------------------------------------------------------------------------
@@ -677,8 +677,8 @@ describe('EventRow severity styling', () => {
       makeResponse([makeEvent({ id: 'ev-err', severity: 'error', taskId: null })]),
     )
     const html = renderPage(qc)
-    expect(html).toContain('border-error/40')
-    expect(html).toContain('bg-error/5')
+    expect(html).toContain('border-l-error')
+    expect(html).toContain('bg-error/[0.045]')
   })
 
   it('WARN row has warn-tinted border and background', () => {
@@ -694,8 +694,8 @@ describe('EventRow severity styling', () => {
       ]),
     )
     const html = renderPage(qc)
-    expect(html).toContain('border-warn/40')
-    expect(html).toContain('bg-warn/5')
+    expect(html).toContain('border-l-warn')
+    expect(html).toContain('bg-warn/[0.04]')
   })
 
   it('INFO row keeps calm neutral styling and has no error/warn tinting', () => {
@@ -712,8 +712,8 @@ describe('EventRow severity styling', () => {
       ]),
     )
     const html = renderPage(qc)
-    expect(html).toContain('border-primary/30')
-    expect(html).toContain('bg-primary/5')
+    expect(html).toContain('border-l-transparent')
+    expect(html).toContain('border-l-transparent')
     expect(html).not.toContain('border-error')
     expect(html).not.toContain('border-warn')
   })
@@ -794,11 +794,12 @@ describe('EventRow severity styling', () => {
 //      full active→inactive transition via DOM).
 // ---------------------------------------------------------------------------
 
-describe('EventsPage filter chips — active vs inactive visual distinction', () => {
-  it('active chip carries font-semibold and aria-pressed="true"', () => {
-    // WARN and ERROR chips start active (default severity = WARN+ERROR).
-    // Each must carry font-semibold so the enabled state is legible by weight
-    // alone, not colour alone.
+describe('EventsPage severity segments — active vs inactive visual distinction', () => {
+  it('active segment is raised (surface + shadow) and aria-pressed="true"', () => {
+    // WARN and ERROR start active (default severity = WARN+ERROR). The
+    // segmented control signals the on state by raising the segment onto a
+    // lit surface with a shadow — a non-colour cue, so the state survives
+    // greyscale and low-vision viewing.
     const qc = makeClient(EMPTY_RESPONSE)
     const container = document.createElement('div')
     const root = createRoot(container)
@@ -816,23 +817,24 @@ describe('EventsPage filter chips — active vs inactive visual distinction', ()
       '[data-testid="events-severity-warn"]',
     )!
     expect(warnChip.getAttribute('aria-pressed')).toBe('true')
-    expect(warnChip.className).toContain('font-semibold')
+    expect(warnChip.className).toContain('bg-surface')
+    expect(warnChip.className).toContain('shadow-')
 
     // INFO starts inactive — not in the WARN+ERROR default
     const infoChip = container.querySelector<HTMLButtonElement>(
       '[data-testid="events-severity-info"]',
     )!
     expect(infoChip.getAttribute('aria-pressed')).toBe('false')
-    expect(infoChip.className).not.toContain('font-semibold')
+    expect(infoChip.className).not.toContain('bg-surface')
+    expect(infoChip.className).not.toContain('shadow-')
 
     act(() => { root.unmount() })
     container.remove()
   })
 
-  it('inactive chip (after toggle) carries border-dashed, lacks font-semibold, and has aria-pressed="false"', () => {
-    // Toggling a chip off must produce a visually distinct state:
-    //   - border-dashed distinguishes the border style from the solid active border.
-    //   - No font-semibold so active/inactive differ by weight too.
+  it('inactive segment (after toggle) drops the raised surface and has aria-pressed="false"', () => {
+    // Toggling a segment off must produce a visually distinct state:
+    //   - the raised surface and its shadow are dropped (non-colour cue).
     //   - aria-pressed="false" exposes the state to assistive tech.
     // Error chip starts active (part of the WARN+ERROR default); we toggle it off.
     const qc = makeClient(EMPTY_RESPONSE)
@@ -856,17 +858,17 @@ describe('EventsPage filter chips — active vs inactive visual distinction', ()
     act(() => { errorChip.click() })
 
     expect(errorChip.getAttribute('aria-pressed')).toBe('false')
-    expect(errorChip.className).toContain('border-dashed')
-    expect(errorChip.className).not.toContain('font-semibold')
+    expect(errorChip.className).not.toContain('bg-surface')
+    expect(errorChip.className).not.toContain('shadow-')
 
     act(() => { root.unmount() })
     container.remove()
   })
 
-  it('toggling does not shift the chip footprint — padding and border-width class stay constant', () => {
-    // The chip must occupy the same physical size in both active and inactive
-    // states so the filter row does not reflow on toggle. Both states share
-    // the base 'border' (1 px) class; only border-colour and border-style change.
+  it('toggling does not shift the segment footprint — height and padding stay constant', () => {
+    // The segment must occupy the same physical size in both states so the
+    // filter row never reflows on toggle. Height, padding and font-weight are
+    // identical; only the surface, shadow and text colour change.
     const qc = makeClient(EMPTY_RESPONSE)
     const container = document.createElement('div')
     const root = createRoot(container)
@@ -886,14 +888,12 @@ describe('EventsPage filter chips — active vs inactive visual distinction', ()
     act(() => { warnChip.click() })
     const inactiveClass = warnChip.className
 
-    // Border width: both states include 'border' (not 'border-2'), so 1 px only.
-    expect(activeClass).toMatch(/\bborder\b/)
-    expect(inactiveClass).toMatch(/\bborder\b/)
-    // Padding identical in both states.
-    expect(activeClass).toContain('px-2')
-    expect(inactiveClass).toContain('px-2')
-    expect(activeClass).toContain('py-0.5')
-    expect(inactiveClass).toContain('py-0.5')
+    // Height, padding and weight are identical in both states.
+    for (const cls of [activeClass, inactiveClass]) {
+      expect(cls).toContain('h-6')
+      expect(cls).toContain('px-2')
+      expect(cls).toContain('font-medium')
+    }
 
     act(() => { root.unmount() })
     container.remove()

@@ -1,3 +1,4 @@
+import { SelectField } from '@/components/SelectField'
 /**
  * StudioIndexPage — the Studio landing at `#/studio` (bare, no task id).
  *
@@ -58,7 +59,7 @@ export const StudioIndexPage = () => {
         {/* Workflow selector — mirrors LoopLedgerPanel; hidden when no workflows known yet */}
         {(workflows ?? []).length > 0 && (
           <div className="mb-4">
-            <select
+            <SelectField
               value={workflow ?? ''}
               onChange={(e) => setSelected(e.target.value || null)}
               aria-label="Select workflow"
@@ -69,7 +70,7 @@ export const StudioIndexPage = () => {
                   {kind}
                 </option>
               ))}
-            </select>
+            </SelectField>
           </div>
         )}
 
@@ -87,7 +88,7 @@ export const StudioIndexPage = () => {
             data-testid="studio-index-empty"
             className="flex flex-col gap-3 rounded border border-border p-6"
           >
-            <p className="font-mono text-title font-semibold text-foreground">
+            <p className="text-title font-semibold text-foreground">
               No scored runs yet
             </p>
             <p className="text-body text-muted-foreground">
@@ -110,7 +111,7 @@ export const StudioIndexPage = () => {
         ) : (
           <table className="w-full text-body">
             <thead>
-              <tr className="text-left text-primary">
+              <tr className="text-left text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">
                 <th className="pb-2 pr-4 font-normal">Task</th>
                 <th className="pb-2 pr-4 font-normal">Scored</th>
                 <th className="pb-2 font-normal">Score</th>

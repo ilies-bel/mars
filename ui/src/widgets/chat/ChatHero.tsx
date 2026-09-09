@@ -75,7 +75,7 @@ export interface ChatHeroProps {
 
 // ── Section header class ──────────────────────────────────────────────────────
 
-const SECTION_HEADER = 'font-mono text-label uppercase tracking-[0.1em] text-muted-foreground mb-2'
+const SECTION_HEADER = 'text-label uppercase tracking-[0.1em] text-muted-foreground mb-2'
 const SECTION_WRAPPER = 'flex flex-col gap-0.5'
 const ITEM_ROW = 'font-mono text-body text-foreground/80'
 const TASK_ID = 'text-primary font-semibold mr-1'
@@ -100,7 +100,7 @@ export const ChatHero = ({ delta, onBack }: ChatHeroProps) => {
   return (
     <div className="flex h-full flex-col overflow-hidden">
       {/* Header bar */}
-      <div className="flex items-center border-b border-primary/30 px-4 py-2">
+      <div className="flex items-center border-b border-border px-4 py-2">
         <button
           type="button"
           data-testid="chat-hero-back"
@@ -114,7 +114,7 @@ export const ChatHero = ({ delta, onBack }: ChatHeroProps) => {
       {/* Delta sections */}
       <div className="flex-1 overflow-y-auto px-4 py-4">
         {!hasContent ? (
-          <p className="font-mono text-body text-muted-foreground">
+          <p className="text-body text-muted-foreground">
             Nothing new since your last visit.
           </p>
         ) : (

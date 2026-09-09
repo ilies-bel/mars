@@ -90,7 +90,7 @@ export const liveElapsedLabel = (startedAt: string, nowMs: number): string => {
 // ── Panels ────────────────────────────────────────────────────────────────────
 
 const PANEL_SUMMARY_CLASS =
-  'cursor-pointer list-none rounded border border-primary/30 px-2 py-0.5 font-mono text-micro text-primary hover:bg-primary/10 [&::-webkit-details-marker]:hidden'
+  'cursor-pointer list-none rounded border border-border px-2 py-0.5 font-mono text-micro text-primary hover:bg-foreground/5 [&::-webkit-details-marker]:hidden'
 
 /** Space-key toggle for <details>, mirroring the drawer's step cards. */
 const toggleOnSpace = (e: React.KeyboardEvent): void => {
@@ -116,18 +116,18 @@ const PromptBody = ({
   withCopy: boolean
 }) => {
   if (isLoading && prompt === undefined) {
-    return <p className="font-mono text-label text-muted-foreground">Loading prompt…</p>
+    return <p className="text-label text-muted-foreground">Loading prompt…</p>
   }
   if (error !== null && prompt === undefined) {
     return (
-      <p className="font-mono text-label text-error/80">
+      <p className="text-label text-error/80">
         Could not load the prompt ({error.message}).
       </p>
     )
   }
   if (prompt === undefined || prompt.prompt === null) {
     return (
-      <p data-testid="studio-prompt-empty" className="font-mono text-label text-muted-foreground">
+      <p data-testid="studio-prompt-empty" className="text-label text-muted-foreground">
         No prompt recorded for this step — the run predates prompt persistence
         and no transcript could be recovered.
       </p>
@@ -146,7 +146,7 @@ const PromptBody = ({
         ) : (
           <span
             data-testid="studio-prompt-source"
-            className="rounded border border-primary/30 px-1 py-0.5 font-mono text-micro text-muted-foreground"
+            className="rounded border border-border px-1 py-0.5 font-mono text-micro text-muted-foreground"
           >
             persisted
           </span>
@@ -161,7 +161,7 @@ const PromptBody = ({
             text={prompt.prompt}
             data-testid="studio-prompt-copy"
             aria-label="Copy the composed prompt"
-            className="ml-auto shrink-0 rounded border border-primary/40 px-2 py-0.5 font-mono text-micro text-primary hover:bg-primary/10"
+            className="ml-auto shrink-0 rounded border border-border px-2 py-0.5 font-mono text-micro text-primary hover:bg-foreground/5"
           />
         ) : null}
       </div>
@@ -188,7 +188,7 @@ const PhaseChip = ({ phase, stepName }: { phase: string; stepName: string }) => 
   const primitive = primitiveForStep(phase, stepName)
   if (primitive === null) {
     return (
-      <span className="rounded border border-primary/30 px-1 font-mono text-micro text-muted-foreground">
+      <span className="rounded border border-border px-1 font-mono text-micro text-muted-foreground">
         {phase}
       </span>
     )
@@ -198,7 +198,7 @@ const PhaseChip = ({ phase, stepName }: { phase: string; stepName: string }) => 
       href={primitiveHash(primitive)}
       data-testid="studio-node-primitive-link"
       title={`Open the ${primitive} primitive — tool surface and run history`}
-      className="rounded border border-primary/30 px-1 font-mono text-micro text-muted-foreground hover:bg-primary/10 hover:text-foreground"
+      className="rounded border border-border px-1 font-mono text-micro text-muted-foreground hover:bg-foreground/5 hover:text-foreground"
     >
       {phase}
     </a>
@@ -247,7 +247,7 @@ const StudioNode = ({
         ? 'border-error/40'
         : entry.outcome === 'killed'
           ? 'border-warn/40'
-          : 'border-primary/20'
+          : 'border-border'
   const bgClass =
     entry.outcome === 'running'
       ? 'bg-warn/5'
@@ -291,7 +291,7 @@ const StudioNode = ({
           {entry.outcome === 'failed' || entry.outcome === 'killed' ? (
             <p
               data-testid="studio-node-failure"
-              className={`font-mono text-label ${entry.outcome === 'failed' ? 'text-error' : 'text-warn'}`}
+              className={`text-label ${entry.outcome === 'failed' ? 'text-error' : 'text-warn'}`}
             >
               {entry.failureReason ?? entry.outcome}
             </p>
@@ -299,7 +299,7 @@ const StudioNode = ({
           {(() => {
             const label = formatTokensLabel(entry.inputTokens, entry.outputTokens, entry.cacheReadTokens)
             return label !== null ? (
-              <p data-testid="studio-node-tokens" className="font-mono text-micro text-muted-foreground">
+              <p data-testid="studio-node-tokens" className="text-micro text-muted-foreground">
                 {label}
               </p>
             ) : null
@@ -325,7 +325,7 @@ const StudioNode = ({
           <summary tabIndex={0} className={PANEL_SUMMARY_CLASS} onKeyDown={toggleOnSpace}>
             Input
           </summary>
-          <div className="mt-1.5 border-t border-primary/15 pt-1.5">
+          <div className="mt-1.5 border-t border-border pt-1.5">
             {isLlmStep ? (
               <PromptBody
                 prompt={prompt}
@@ -334,7 +334,7 @@ const StudioNode = ({
                 withCopy={false}
               />
             ) : (
-              <p className="font-mono text-label text-muted-foreground">
+              <p className="text-label text-muted-foreground">
                 Non-worker step — it consumes workflow state, not a prompt. No
                 input is recorded for this step.
               </p>
@@ -346,7 +346,7 @@ const StudioNode = ({
           <summary tabIndex={0} className={PANEL_SUMMARY_CLASS} onKeyDown={toggleOnSpace}>
             Output
           </summary>
-          <div className="mt-1.5 border-t border-primary/15 pt-1.5">
+          <div className="mt-1.5 border-t border-border pt-1.5">
             {entry.resultJson != null ? (
               <pre
                 data-testid="studio-output-json"
@@ -361,7 +361,7 @@ const StudioNode = ({
                 })()}
               </pre>
             ) : (
-              <p className="font-mono text-label text-muted-foreground">
+              <p className="text-label text-muted-foreground">
                 {entry.outcome === 'running'
                   ? 'Still running — no output yet.'
                   : 'No output recorded for this step.'}
@@ -378,7 +378,7 @@ const StudioNode = ({
           <summary tabIndex={0} className={PANEL_SUMMARY_CLASS} onKeyDown={toggleOnSpace}>
             Show trace
           </summary>
-          <div className="mt-1.5 border-t border-primary/15 pt-1.5">
+          <div className="mt-1.5 border-t border-border pt-1.5">
             {isLlmStep ? (
               <PromptBody
                 prompt={prompt}
@@ -388,7 +388,7 @@ const StudioNode = ({
                 withCopy
               />
             ) : (
-              <p className="font-mono text-label text-muted-foreground">
+              <p className="text-label text-muted-foreground">
                 Non-worker step — no worker session or prompt to trace.
               </p>
             )}
@@ -401,7 +401,7 @@ const StudioNode = ({
       {!isLast ? (
         <div
           data-testid="studio-connector"
-          className="mx-5 h-5 w-0 border-l-2 border-primary/30"
+          className="mx-5 h-5 w-0 border-l-2 border-border"
           aria-hidden="true"
         />
       ) : null}

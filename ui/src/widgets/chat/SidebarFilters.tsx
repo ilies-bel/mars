@@ -1,3 +1,4 @@
+import { SelectField } from '@/components/SelectField'
 import {
   filterByQuery,
   subtitleFor,
@@ -32,7 +33,7 @@ export const SidebarFilters = ({ value, onChange, onFastAction }: SidebarFilters
   const canRestart = selected?.actions.some((action) => action.op === 'restart')
 
   return (
-    <div className="space-y-2 border-b border-primary/30 px-2 py-2">
+    <div className="space-y-2 border-b border-border px-2 py-2">
       <input
         type="search"
         value={value.query}
@@ -40,26 +41,26 @@ export const SidebarFilters = ({ value, onChange, onFastAction }: SidebarFilters
         placeholder="Search open threads…"
         aria-label="Search threads"
         data-testid="thread-search"
-        className="w-full border border-primary/30 bg-background px-2 py-1 font-mono text-body text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/50"
+        className="h-7 w-full rounded-md border border-border bg-background px-2.5 text-label text-foreground shadow-[var(--shadow-e1)] transition-[border-color,box-shadow] duration-[var(--dur-fast)] placeholder:text-muted-foreground/70 focus:border-highlight/50 focus:outline-none focus:ring-2 focus:ring-highlight/15"
       />
       <div className="flex items-center gap-1">
-        <select
+        <SelectField
           aria-label="Filter by thread origin"
           data-testid="sidebar-filter-origin"
           value={value.origin}
           onChange={(e) => onChange({ ...value, origin: e.target.value as 'all' | 'alerts' | 'operator' })}
-          className="flex-1 border border-primary/30 bg-background px-1.5 py-0.5 font-mono text-micro text-foreground focus:outline-none focus:ring-1 focus:ring-primary/50"
+          className="flex-1"
         >
           <option value="all">Any origin</option>
           <option value="alerts">Alerts</option>
           <option value="operator">Operator</option>
-        </select>
+        </SelectField>
         {canRestart && (
           <button
             type="button"
             data-testid="restart-selected"
             title={restartContext ? `Restart: ${restartContext}` : 'Restart selected thread'}
-            className="border border-highlight/50 px-1.5 py-0.5 font-mono text-micro uppercase text-highlight hover:bg-highlight/10"
+            className="rounded-md border border-highlight/40 px-2 py-1 text-micro font-medium text-highlight transition-colors duration-[var(--dur-fast)] hover:bg-highlight/10"
             onClick={() => onFastAction('restart')}
           >
             Restart selected

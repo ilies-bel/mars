@@ -78,7 +78,7 @@ export const FrameworkUpdateBannerInner = ({
           className={
             isUpdating
               ? 'cursor-not-allowed rounded px-2 py-0.5 opacity-40 ring-1 ring-primary/40'
-              : 'rounded px-2 py-0.5 ring-1 ring-primary/40 hover:bg-primary/10'
+              : 'rounded px-2 py-0.5 ring-1 ring-primary/40 hover:bg-foreground/5'
           }
         >
           {isUpdating ? 'Updating…' : 'Update now'}

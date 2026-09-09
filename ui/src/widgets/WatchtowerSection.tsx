@@ -53,14 +53,14 @@ const AcceptButton = ({ scorer, accept, isPending }: AcceptButtonProps) => {
             setConfirming(false)
           }}
           disabled={isPending}
-          className="rounded border border-primary px-1.5 py-0.5 font-mono text-micro text-primary hover:bg-primary/10 disabled:opacity-50"
+          className="rounded border border-primary px-1.5 py-0.5 font-mono text-micro text-primary hover:bg-foreground/5 disabled:opacity-50"
           aria-label={`Confirm accepting scorer: ${scorer.title}`}
         >
           {isPending ? 'Accepting…' : 'Confirm'}
         </button>
         <button
           onClick={() => setConfirming(false)}
-          className="rounded border border-border px-1.5 py-0.5 font-mono text-micro text-muted-foreground hover:bg-muted"
+          className="rounded border border-border px-1.5 py-0.5 text-micro text-muted-foreground hover:bg-muted"
           aria-label="Cancel accept"
         >
           Cancel
@@ -73,7 +73,7 @@ const AcceptButton = ({ scorer, accept, isPending }: AcceptButtonProps) => {
     <button
       onClick={() => setConfirming(true)}
       disabled={isPending}
-      className="rounded border border-border px-1.5 py-0.5 font-mono text-micro text-muted-foreground hover:border-primary hover:text-primary disabled:opacity-50"
+      className="rounded border border-border px-1.5 py-0.5 text-micro text-muted-foreground hover:border-primary hover:text-primary disabled:opacity-50"
       aria-label={`Accept scorer: ${scorer.title}`}
     >
       Accept
@@ -181,19 +181,19 @@ const ScoreTrends = () => {
 
 export const WatchtowerSection = () => (
   <div className="flex flex-col gap-3">
-    <h3 className="font-mono text-label uppercase tracking-wide text-primary">Watchtower</h3>
+    <h3 className="text-label uppercase tracking-wide text-primary">Watchtower</h3>
     <div className="flex flex-col gap-3">
       {/* Score trends — live data via useScorerWorkflows + WatchtowerTrendChart */}
       <div className="flex flex-col gap-2 rounded border border-border p-4">
-        <h4 className="font-mono text-label uppercase tracking-wide text-primary">Score trends</h4>
+        <h4 className="text-label uppercase tracking-wide text-primary">Score trends</h4>
         <ScoreTrends />
       </div>
       <div className="flex flex-col gap-2 rounded border border-border p-4">
-        <h4 className="font-mono text-label uppercase tracking-wide text-primary">Promotion ledger</h4>
+        <h4 className="text-label uppercase tracking-wide text-primary">Promotion ledger</h4>
         <PromotionLedgerTable />
       </div>
       <div className="flex flex-col gap-2 rounded border border-border p-4">
-        <h4 className="font-mono text-label uppercase tracking-wide text-primary">Loop ledger</h4>
+        <h4 className="text-label uppercase tracking-wide text-primary">Loop ledger</h4>
         <LoopLedgerPanel />
       </div>
     </div>

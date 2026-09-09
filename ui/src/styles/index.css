@@ -91,7 +91,11 @@
   --color-surface:   #FFFFFF;
   --color-panel:     #FCFAF7;   /* neutral-50  */
   --color-fg:        #1A0F0A;   /* neutral-900 */
-  --color-muted:     #705F50;   /* was #7A6B5C (neutral-500) — darkened for 4.9:1 on bg */
+  --color-muted:     #6B5B4C;   /* 5.3:1 on --color-bg */
+  /* Secondary muted for de-emphasised metadata on LIGHT surfaces. Pages used
+   * to reach for --color-muted-dark here, which is a DARK-chrome token and
+   * measured 2.43:1 on the cream ground. */
+  --color-muted-2:   #8A7A69;   /* 3.6:1 — non-text / large-text only */
   --color-border:    #E8E1D8;   /* neutral-200 */
 
   /* ── Mars brand aliases ── */
@@ -186,11 +190,15 @@
    * micro   11px  chip labels, counters, dense metadata  (FLOOR — never below)
    * label   12px  metadata rows, secondary labels
    * body    13px  primary body copy, most UI prose
-   * title   14px  card titles, prominent action text
-   * section 15px  subsection headings
-   * heading 18px  panel / page-section headings
-   * display 22px  page titles
-   * metric  28px  KPI figures and other single-glance numbers
+   * title   15px  card titles, prominent action text
+   * section 17px  subsection headings
+   * heading 20px  panel / page-section headings
+   * display 24px  page titles
+   * metric  32px  KPI figures and other single-glance numbers
+   *
+   * The upper steps used to sit at 14/15/18/22/28, which packed five values
+   * into the 11-15px band — body (13) and title (14) were not separable at a
+   * glance, so hierarchy was carried entirely by colour.
    *
    * NOTE: micro was 10px. 10px is below the legibility floor of every major
    * design system (Apple HIG 11, Material 11) and it was the most-used size
@@ -208,24 +216,24 @@
   --text-body--line-height: 1.5385;
   --text-body--letter-spacing: 0em;
 
-  --text-title: 0.875rem;                  /* 14px */
-  --text-title--line-height: 1.4286;
+  --text-title: 0.9375rem;                 /* 15px */
+  --text-title--line-height: 1.4667;
   --text-title--letter-spacing: -0.005em;
 
-  --text-section: 0.9375rem;               /* 15px */
-  --text-section--line-height: 1.4;
+  --text-section: 1.0625rem;               /* 17px */
+  --text-section--line-height: 1.4118;
   --text-section--letter-spacing: -0.01em;
 
-  --text-heading: 1.125rem;                /* 18px */
-  --text-heading--line-height: 1.3333;
+  --text-heading: 1.25rem;                 /* 20px */
+  --text-heading--line-height: 1.4;
   --text-heading--letter-spacing: -0.015em;
 
-  --text-display: 1.375rem;                /* 22px */
-  --text-display--line-height: 1.2727;
+  --text-display: 1.5rem;                  /* 24px */
+  --text-display--line-height: 1.3333;
   --text-display--letter-spacing: -0.021em;
 
-  --text-metric: 1.75rem;                  /* 28px */
-  --text-metric--line-height: 1.1429;
+  --text-metric: 2rem;                     /* 32px */
+  --text-metric--line-height: 1.125;
   --text-metric--letter-spacing: -0.025em;
 
   /* ── Motion ──────────────────────────────────────────────────────────────
@@ -264,12 +272,19 @@
   --shadow-e5: 0 8px 16px rgba(26, 15, 10, 0.08),
                0 24px 56px rgba(26, 15, 10, 0.16);
 
-  /* Spacing unit pinned to 3.5px — the value 0.25rem resolved to under the
-   * old 14px root. Holding it constant is what lets the root font-size be
-   * corrected to 16px without reflowing every padding, gap and size utility
-   * in the app. Tailwind derives p-*, m-*, gap-*, w-*, h-*, size-* and
-   * space-* from this. */
-  --spacing: 0.21875rem;
+  /* Spacing unit — 4px, Tailwind's default.
+   *
+   * This was briefly pinned to 0.21875rem (3.5px) to hold layout geometry
+   * still while the root font-size was corrected from 14px to 16px. That was
+   * a mistake: it made the type scale honest and left the spacing scale on
+   * the old 87.5% grid, so text grew 14% and its containers did not. Every
+   * control ended up cramped — p-2 was 7px, h-8 was 28px, buttons measured
+   * 21px tall, and interactive hit targets fell below the WCAG 2.5.8 floor
+   * of 24x24.
+   *
+   * Half-migrating a scale is worse than either endpoint. The one-time
+   * reflow is the correct price. */
+  --spacing: 0.25rem;
 
   --font-sans: "Inter", "Inter Fallback", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", "JetBrains Mono Fallback", ui-monospace, SFMono-Regular, monospace;
@@ -344,17 +359,37 @@
  *   --color-amber  (#E8A33D)  →  8.3:1 on --color-surface-dark (#251812)  dark DAG canvas
  *   (amber fails on light bg at 1.9:1, so it is scoped to .dag-canvas only.)
  * ---------------------------------------------------------------------------*/
-:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible {
+  /* NOT :where(). Zero specificity meant any component carrying its own
+   * focus-visible:ring-* utility won, and a tab pass through the app produced
+   * seven different indicator colours — including the lowest-contrast token in
+   * the palette on the nav. One ring, everywhere.
+   *
+   * The white halo in the box-shadow is what lets a single ring work on both
+   * the cream ground and the near-black sidebar: the flame ring reads against
+   * the light surface, the halo separates it from the dark one. */
   outline: 2px solid var(--color-flame);
   outline-offset: 2px;
-  border-radius: 2px;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.85);
+  border-radius: 3px;
 }
 
 /* Dark-surface override — the G6 DAG canvas (.dag-canvas) has a near-black
  * background (#251812); --color-flame would give only ~2.9:1 there, below the
  * 3:1 target. --color-amber gives 8.3:1 on that dark surface instead. */
-.dag-canvas :where(a, button, input, select, textarea, [tabindex]):focus-visible {
+.dag-canvas a:focus-visible,
+.dag-canvas button:focus-visible,
+.dag-canvas input:focus-visible,
+.dag-canvas select:focus-visible,
+.dag-canvas textarea:focus-visible,
+.dag-canvas [tabindex]:focus-visible {
   outline-color: var(--color-amber);
+  box-shadow: 0 0 0 1px rgba(26, 15, 10, 0.7);
 }
 
 /* Root font-size is the browser default (16px) so that every rem-based token
@@ -367,6 +402,17 @@
  * body inherits --text-body explicitly; before, unstyled text picked up the
  * bare 14px root, which is why prose and chrome disagreed by a pixel in places
  * no component was choosing a size. */
+/* Press feedback. Nothing in the app reacted to a pointer-down, so every
+ * control — including one that deletes a task branch — felt inert. A 1.5%
+ * scale-down for 90ms is the smallest gesture that still registers. */
+@media (prefers-reduced-motion: no-preference) {
+  button:not(:disabled):active,
+  [role="button"]:not([aria-disabled="true"]):active,
+  a[href]:active {
+    transform: scale(0.985);
+  }
+}
+
 html, body, #root {
   height: 100%;
   margin: 0;
@@ -383,6 +429,10 @@ html, body, #root {
 
 html {
   font-size: 100%;
+  /* Without this, a dark-preference viewer gets light-themed scrollbars and
+   * native select chrome rendered against the dark topbar, plus a white flash
+   * on load. The app is light-only by design; say so. */
+  color-scheme: light;
 }
 
 @keyframes mars-pulse {
@@ -483,10 +533,12 @@ html {
       transform 160ms ease-out;
   }
   .mars-card:hover {
-    border-color: color-mix(in srgb, var(--color-border) 80%, transparent);
-    box-shadow:
-      0 4px 12px rgba(26, 15, 10, 0.09),
-      0 2px 5px rgba(26, 15, 10, 0.04);
+    border-color: color-mix(in srgb, var(--color-border) 90%, transparent);
+    /* A queue row is the unit of interaction; it has to answer the pointer.
+     * One elevation step plus a warm tint — no transform, so a list of rows
+     * never jitters as the cursor crosses it. */
+    background-color: color-mix(in srgb, var(--color-panel) 60%, var(--color-surface));
+    box-shadow: var(--shadow-e3);
   }
 }
 /* ── In-progress card breathe ───────────────────────────────────────────────

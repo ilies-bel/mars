@@ -64,7 +64,7 @@ export const FallbackSurface = ({ error, of, variant = 'pane', repoRoot }: Fallb
       data-testid="api-error-panel"
       className="flex h-full flex-col items-center justify-center px-6 text-center"
     >
-      <div className="max-w-lg border border-primary/40 bg-primary/10 p-6 font-mono text-left">
+      <div className="max-w-lg border border-border bg-primary/10 p-6 text-left">
         <p className="text-body uppercase tracking-wide text-foreground">{fb.headline}</p>
         {fb.remedy !== null && (
           <p className="mt-4 text-label text-muted-foreground">{fb.remedy}</p>

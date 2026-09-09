@@ -187,7 +187,7 @@ export const DenseColumn = ({ label, qualifier, count, children, tooltip }: Dens
     className="flex flex-col gap-2 min-w-0 min-h-0"
   >
     <header className="flex items-center justify-between border-b border-border pb-2" title={tooltip}>
-      <span className="font-mono text-micro font-semibold uppercase tracking-[0.1em] text-muted-foreground">
+      <span className="text-micro font-semibold uppercase tracking-[0.1em] text-muted-foreground">
         {qualifier === undefined ? label.toUpperCase() : `${label.toUpperCase()} (${qualifier.toUpperCase()})`}
       </span>
       <span

@@ -38,7 +38,7 @@ function TaskTracePanel({ taskId }: { taskId: string }) {
     return <SkeletonList rows={3} rowClassName="h-4 w-full mb-1" label="Loading traces" />
   }
   if (!data || data.events.length === 0) {
-    return <p className="font-mono text-label text-muted-foreground">No trace events</p>
+    return <p className="text-label text-muted-foreground">No trace events</p>
   }
 
   return (
@@ -100,7 +100,7 @@ export default function ArcChainRail({
               onClick={() => handleNodeClick(node)}
               className={[
                 'flex w-full items-baseline gap-1.5 rounded px-2 py-1 text-left font-mono text-label',
-                'transition-colors hover:bg-primary/10',
+                'transition-colors hover:bg-foreground/5',
                 selectedId === node.id ? 'bg-primary/15 font-bold text-foreground' : 'text-foreground/80',
               ].join(' ')}
             >

@@ -202,9 +202,11 @@ describe('WatchtowerSection Score trends', () => {
   it('renders one <svg> per mocked workflow kind', async () => {
     const { WatchtowerSection } = await import('./WatchtowerSection')
     const html = renderToStaticMarkup(<WatchtowerSection />)
-    // Two workflow kinds → two SVGs
-    const svgCount = (html.match(/<svg/g) ?? []).length
-    expect(svgCount).toBe(2)
+    // Two workflow kinds → two trend charts. Lucide icons are also <svg>, so
+    // the count has to exclude them or it silently tracks the icon budget
+    // instead of the chart count (the workflow-kind <select> contributes one).
+    const chartCount = (html.match(/<svg(?![^>]*lucide)/g) ?? []).length
+    expect(chartCount).toBe(2)
   })
 
   it('renders all workflow kind labels in the output', async () => {

@@ -174,11 +174,11 @@ const CostPerMergedTaskDetailSection = () => {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="rounded border border-primary/20 bg-card p-4">
+      <div className="rounded border border-border bg-card p-4">
         <Sparkline points={sparklinePoints} width={320} height={48} />
         {excluded > 0 && (
           <p
-            className="mt-2 font-mono text-label text-muted-foreground"
+            className="mt-2 text-label text-muted-foreground"
             data-testid="excluded-cost-null-count"
           >
             {excluded} task{excluded !== 1 ? 's' : ''} excluded — no cost data recorded
@@ -187,7 +187,7 @@ const CostPerMergedTaskDetailSection = () => {
       </div>
 
       <div>
-        <div className="mb-1 flex items-center border-b border-primary/20 pb-1 font-mono text-micro uppercase tracking-wide text-muted-foreground">
+        <div className="mb-1 flex items-center border-b border-border pb-1 text-micro uppercase tracking-wide text-muted-foreground">
           <span className="w-32 shrink-0">Day</span>
           <span className="w-24 shrink-0 text-right">Merged</span>
           <span className="min-w-0 flex-1 text-right">Avg cost / merge</span>
@@ -195,7 +195,7 @@ const CostPerMergedTaskDetailSection = () => {
         {trend.map((row) => (
           <div
             key={row.day}
-            className="flex items-center border-b border-primary/10 py-1 font-mono text-title hover:bg-primary/5"
+            className="flex items-center border-b border-border py-1 font-mono text-title hover:bg-foreground/5"
           >
             <span className="w-32 shrink-0 text-muted-foreground">{row.day}</span>
             <span className="w-24 shrink-0 text-right text-foreground">{row.mergedCount}</span>
@@ -228,7 +228,7 @@ export const KpiDetailPage = ({ kpiKey }: KpiDetailPageProps) => {
       <div className="flex h-full flex-col overflow-hidden bg-background">
         <PageHeader title="Cost / merged task" />
         <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
-          <p className="mb-4 font-mono text-label text-muted-foreground">
+          <p className="mb-4 text-label text-muted-foreground">
             {KPI_DESCRIPTIONS['cost-per-merged-task']}
           </p>
           <CostPerMergedTaskDetailSection />
@@ -267,7 +267,7 @@ export const KpiDetailPage = ({ kpiKey }: KpiDetailPageProps) => {
       : arcs.filter((a) => (arcFilter === 'pass') === a.passed)
 
   const arcRowClass = (passed: boolean): string => {
-    if (kpiKey === 'cost_per_arc') return 'border-b border-primary/10 hover:bg-primary/5'
+    if (kpiKey === 'cost_per_arc') return 'border-b border-border hover:bg-foreground/5'
     return passed
       ? 'border-b border-success/20 bg-success/[0.03] hover:bg-success/[0.06]'
       : 'border-b border-error/20 bg-error/[0.03] hover:bg-error/[0.06]'
@@ -280,7 +280,7 @@ export const KpiDetailPage = ({ kpiKey }: KpiDetailPageProps) => {
         {/* KPI summary card — min-h reserves space while kpi data loads */}
         <div className="mb-4 min-h-[110px]">
           {kpi && !kpi.lowConfidence && cue ? (
-            <div className="flex flex-col gap-2 rounded border border-primary/20 bg-card p-4">
+            <div className="flex flex-col gap-2 rounded border border-border bg-card p-4">
               <div className="flex flex-wrap items-baseline gap-4">
                 <span className="font-mono text-3xl font-bold text-foreground">
                   {formatKpiValue(kpiKey, kpi.currentValue)}
@@ -313,26 +313,26 @@ export const KpiDetailPage = ({ kpiKey }: KpiDetailPageProps) => {
               <Sparkline points={(kpi.series ?? []).map((p) => p.value)} width={240} height={32} />
             </div>
           ) : kpi?.lowConfidence ? (
-            <div className="rounded border border-primary/20 bg-card p-4 text-title text-muted-foreground">
+            <div className="rounded border border-border bg-card p-4 text-title text-muted-foreground">
               {label}: insufficient samples
             </div>
           ) : null}
         </div>
 
         {/* Description */}
-        <p className="mb-4 font-mono text-label text-muted-foreground">
+        <p className="mb-4 text-label text-muted-foreground">
           {KPI_DESCRIPTIONS[kpiKey]}
         </p>
 
         {/* Diagnostic action */}
-        <div className="mb-6 rounded border border-primary/20 bg-card">
+        <div className="mb-6 rounded border border-border bg-card">
           <div className="flex items-center justify-between px-4 py-2.5">
             <SectionLabel>Diagnostic</SectionLabel>
             <button
               type="button"
               disabled={diagnostic.status === 'running' || arcsLoading || arcs.length === 0}
               onClick={onRunDiagnostic}
-              className="rounded border border-primary/40 px-3 py-1 font-mono text-micro uppercase tracking-wide text-foreground transition-colors hover:bg-primary/15 disabled:opacity-40 disabled:cursor-not-allowed"
+              className="rounded border border-border px-3 py-1 text-micro uppercase tracking-wide text-foreground transition-colors hover:bg-primary/15 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               {diagnostic.status === 'running'
                 ? 'Analyzing…'
@@ -342,8 +342,8 @@ export const KpiDetailPage = ({ kpiKey }: KpiDetailPageProps) => {
             </button>
           </div>
           {diagnostic.status === 'done' && (
-            <div className="border-t border-primary/20 px-4 py-3">
-              <p className="mb-3 font-mono text-label text-muted-foreground">
+            <div className="border-t border-border px-4 py-3">
+              <p className="mb-3 text-label text-muted-foreground">
                 {diagnostic.report.summary}
               </p>
               <div className="flex flex-col gap-2">
@@ -355,28 +355,28 @@ export const KpiDetailPage = ({ kpiKey }: KpiDetailPageProps) => {
                         ? 'border-warn/30 bg-warn/[0.04]'
                         : f.severity === 'warn'
                           ? 'border-error/30 bg-error/[0.04]'
-                          : 'border-primary/20 bg-primary/[0.03]'
+                          : 'border-border bg-primary/[0.03]'
                     }`}
                   >
-                    <p className={`font-mono text-label font-semibold ${
+                    <p className={`text-label font-semibold ${
                       f.severity === 'action' ? 'text-warn' : f.severity === 'warn' ? 'text-error' : 'text-foreground'
                     }`}>
                       {f.severity === 'action' ? '→ ' : ''}{f.label}
                     </p>
-                    <p className="mt-0.5 font-mono text-micro text-muted-foreground">
+                    <p className="mt-0.5 text-micro text-muted-foreground">
                       {f.detail}
                     </p>
                   </div>
                 ))}
               </div>
-              <p className="mt-2 font-mono text-micro text-muted-foreground">
+              <p className="mt-2 text-micro text-muted-foreground">
                 Run at {new Date(diagnostic.report.runAt).toLocaleTimeString()}
               </p>
             </div>
           )}
           {diagnostic.status === 'error' && (
-            <div className="border-t border-primary/20 px-4 py-2">
-              <p className="font-mono text-micro text-error">{diagnostic.message}</p>
+            <div className="border-t border-border px-4 py-2">
+              <p className="text-micro text-error">{diagnostic.message}</p>
             </div>
           )}
         </div>
@@ -393,7 +393,7 @@ export const KpiDetailPage = ({ kpiKey }: KpiDetailPageProps) => {
                     type="button"
                     onClick={() => setArcFilter(f)}
                     className={[
-                      'rounded px-2 py-0.5 font-mono text-micro uppercase transition-colors',
+                      'rounded px-2 py-0.5 text-micro uppercase transition-colors',
                       arcFilter === f
                         ? 'bg-primary/30 text-foreground'
                         : 'text-muted-foreground hover:text-foreground',
@@ -425,7 +425,7 @@ export const KpiDetailPage = ({ kpiKey }: KpiDetailPageProps) => {
           {!isLoading && filteredArcs.length > 0 && (
             <div className="flex flex-col gap-0.5" role="list">
               {/* Header */}
-              <div className="flex items-center border-b border-primary/20 pb-1 font-mono text-micro uppercase tracking-wide text-muted-foreground">
+              <div className="flex items-center border-b border-border pb-1 text-micro uppercase tracking-wide text-muted-foreground">
                 <span className="w-16 shrink-0">Status</span>
                 <span className="w-24 shrink-0">
                   {kpiKey === 'cost_per_arc' ? 'Cost' : 'Result'}

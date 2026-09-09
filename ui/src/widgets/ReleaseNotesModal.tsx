@@ -38,7 +38,7 @@ interface ReleaseNotesModalProps {
 
 // ── Section label shared across the detail expand panel ───────────────────
 
-const SECTION_LABEL = 'font-mono text-label uppercase tracking-[0.1em] text-muted-foreground'
+const SECTION_LABEL = 'text-label uppercase tracking-[0.1em] text-muted-foreground'
 
 /** Renders a bullet list; omits itself when the array is empty. */
 const StringList = ({ items }: { items: readonly string[] }) =>
@@ -63,7 +63,7 @@ const EntryDetail = ({ entry }: EntryDetailProps) => {
   return (
     <div
       data-testid="release-note-detail"
-      className="flex flex-col gap-3 border-t border-primary/20 bg-background px-4 py-3"
+      className="flex flex-col gap-3 border-t border-border bg-background px-4 py-3"
     >
       {/* Prompt */}
       <div>
@@ -79,7 +79,7 @@ const EntryDetail = ({ entry }: EntryDetailProps) => {
           <p className={SECTION_LABEL}>Spec</p>
           {spec.files.length > 0 ? (
             <div>
-              <p className="font-mono text-micro uppercase tracking-[0.08em] text-muted-foreground">
+              <p className="text-micro uppercase tracking-[0.08em] text-muted-foreground">
                 Files
               </p>
               <StringList items={spec.files} />
@@ -97,7 +97,7 @@ const EntryDetail = ({ entry }: EntryDetailProps) => {
           ) : null}
           {spec.doneCriteria.length > 0 ? (
             <div>
-              <p className="font-mono text-micro uppercase tracking-[0.08em] text-muted-foreground">
+              <p className="text-micro uppercase tracking-[0.08em] text-muted-foreground">
                 Done
               </p>
               <StringList items={spec.doneCriteria} />
@@ -258,10 +258,10 @@ export const ReleaseNotesModal = ({ onClose }: ReleaseNotesModalProps) => {
           data-testid="release-notes-drawer"
           data-closing={closing ? 'true' : undefined}
           tabIndex={-1}
-          className="modal-panel flex w-full max-w-[560px] max-h-[85vh] min-h-[240px] flex-col rounded-lg border border-primary/40 bg-background shadow-2xl outline-none"
+          className="modal-panel flex w-full max-w-[560px] max-h-[85vh] min-h-[240px] flex-col rounded-lg border border-border bg-background shadow-2xl outline-none"
         >
-          <header className="flex items-center justify-between border-b border-primary/40 px-4 py-3">
-            <h2 className="font-mono text-title uppercase tracking-wide text-primary">
+          <header className="flex items-center justify-between border-b border-border px-4 py-3">
+            <h2 className="text-title uppercase tracking-wide text-primary">
               Release Notes
             </h2>
             <button
@@ -269,7 +269,7 @@ export const ReleaseNotesModal = ({ onClose }: ReleaseNotesModalProps) => {
               onClick={handleClose}
               aria-label="Close release notes"
               data-testid="release-notes-close"
-              className="rounded border border-primary/40 px-2 py-0.5 font-mono text-body text-primary hover:bg-primary/10"
+              className="rounded border border-border px-2 py-0.5 font-mono text-body text-primary hover:bg-foreground/5"
             >
               Close
             </button>
@@ -286,14 +286,14 @@ export const ReleaseNotesModal = ({ onClose }: ReleaseNotesModalProps) => {
             ) : isError ? (
               <p
                 data-testid="release-notes-error"
-                className="px-4 py-6 font-mono text-body text-error"
+                className="px-4 py-6 text-body text-error"
               >
                 Failed to load release notes.
               </p>
             ) : data === undefined || data.length === 0 ? (
               <p
                 data-testid="release-notes-empty"
-                className="px-4 py-6 font-mono text-body text-primary"
+                className="px-4 py-6 text-body text-primary"
               >
                 No landed work
               </p>
@@ -318,7 +318,7 @@ export const ReleaseNotesModal = ({ onClose }: ReleaseNotesModalProps) => {
                           className="flex items-center gap-2 px-4 py-1.5"
                         >
                           <span className="h-px flex-1 bg-highlight/40" aria-hidden="true" />
-                          <span className="font-mono text-micro uppercase tracking-[0.1em] text-highlight">
+                          <span className="text-micro uppercase tracking-[0.1em] text-highlight">
                             new since you were away
                           </span>
                           <span className="h-px flex-1 bg-highlight/40" aria-hidden="true" />
@@ -333,7 +333,7 @@ export const ReleaseNotesModal = ({ onClose }: ReleaseNotesModalProps) => {
                           type="button"
                           onClick={() => toggleExpand(entry.originId)}
                           aria-expanded={isExpanded}
-                          className="flex w-full items-start gap-2 border-b border-primary/20 px-4 py-3 text-left hover:bg-primary/5"
+                          className="flex w-full items-start gap-2 border-b border-border px-4 py-3 text-left hover:bg-foreground/5"
                         >
                           <div className="min-w-0 flex-1">
                             <p className="break-words text-title font-medium text-foreground">
@@ -346,7 +346,7 @@ export const ReleaseNotesModal = ({ onClose }: ReleaseNotesModalProps) => {
                               {entry.detail.recoveryCount > 0 ? (
                                 <span
                                   data-testid="recovery-badge"
-                                  className="rounded border border-primary/30 px-1 font-mono text-micro text-muted-foreground"
+                                  className="rounded border border-border px-1 font-mono text-micro text-muted-foreground"
                                 >
                                   +{entry.detail.recoveryCount} recovery
                                 </span>
@@ -366,7 +366,7 @@ export const ReleaseNotesModal = ({ onClose }: ReleaseNotesModalProps) => {
                   )
                 })}
                 {visibleCount < data.length ? (
-                  <li className="flex justify-center border-t border-primary/20 px-4 py-3">
+                  <li className="flex justify-center border-t border-border px-4 py-3">
                     <button
                       type="button"
                       data-testid="release-notes-load-more"

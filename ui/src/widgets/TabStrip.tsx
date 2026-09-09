@@ -7,7 +7,7 @@ interface TabStripProps {
 
 const tabClass = (active: boolean): string =>
   [
-    '-mb-px px-3 pb-2 pt-1.5 font-mono text-label uppercase tracking-wide transition-colors border-b-2',
+    '-mb-px px-3 pb-2 pt-1.5 text-label uppercase tracking-wide transition-colors border-b-2',
     active
       ? 'border-highlight text-foreground font-medium'
       : 'border-transparent text-muted-foreground hover:text-foreground',

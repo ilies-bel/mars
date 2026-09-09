@@ -43,7 +43,7 @@ export const EnterSessionButton = ({ taskId, worktreePath }: EnterSessionButtonP
       onClick={() => {
         void handleEnterSession(taskId)
       }}
-      className="font-mono text-label border border-primary/40 px-3 py-1.5 rounded text-primary hover:bg-primary/10 transition-colors"
+      className="font-mono text-label border border-border px-3 py-1.5 rounded text-primary hover:bg-foreground/5 transition-colors"
     >
       Enter session
     </button>

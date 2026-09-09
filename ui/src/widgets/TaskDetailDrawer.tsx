@@ -482,7 +482,7 @@ export const runStepToCard = (
 // drawer shell so it renders synchronously in unit tests (the drawer's own
 // fetch effect never fires under renderToStaticMarkup).
 
-const SECTION_LABEL = 'font-mono text-label uppercase tracking-[0.1em] text-muted-foreground'
+const SECTION_LABEL = 'text-label uppercase tracking-[0.1em] text-muted-foreground'
 
 /** A section header in the drawer body, matching the existing "Context" style. */
 const SectionLabel = ({ children }: { children: ReactNode }) => (
@@ -574,7 +574,7 @@ export const RecoveryCommands = ({
   return (
     <div data-testid="task-actions" className="mt-2">
       {actionError ? (
-        <p className="mb-2 font-mono text-micro text-error">{actionError}</p>
+        <p className="mb-2 text-micro text-error">{actionError}</p>
       ) : null}
 
       {/* Restart confirm dialog */}
@@ -599,7 +599,7 @@ export const RecoveryCommands = ({
             <button
               data-testid="restart-confirm-cancel"
               onClick={() => setConfirming(null)}
-              className="rounded border border-primary/30 px-3 py-1 font-mono text-label text-primary hover:bg-primary/10"
+              className="rounded border border-border px-3 py-1 text-label text-primary hover:bg-foreground/5"
             >
               Cancel
             </button>
@@ -630,7 +630,7 @@ export const RecoveryCommands = ({
             <button
               data-testid="drop-confirm-cancel"
               onClick={() => setConfirming(null)}
-              className="rounded border border-primary/30 px-3 py-1 font-mono text-label text-primary hover:bg-primary/10"
+              className="rounded border border-border px-3 py-1 text-label text-primary hover:bg-foreground/5"
             >
               Cancel
             </button>
@@ -665,7 +665,7 @@ export const RecoveryCommands = ({
               data-testid="supersede-btn"
               onClick={() => void invoke('supersede')}
               disabled={loading !== null || confirming !== null}
-              className="rounded border border-primary/30 bg-primary/5 px-3 py-1 font-mono text-label text-primary hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-40"
+              className="rounded border border-border bg-primary/5 px-3 py-1 font-mono text-label text-primary hover:bg-foreground/5 disabled:cursor-not-allowed disabled:opacity-40"
             >
               {loading === 'supersede' ? 'Superseding…' : 'Supersede'}
             </button>
@@ -693,7 +693,7 @@ export const RecoveryCommands = ({
 
       {/* CLI equivalent — keeps text strings for terminal users and tests. */}
       <details className="mt-2">
-        <summary className="cursor-pointer select-none font-mono text-micro text-muted-foreground">
+        <summary className="cursor-pointer select-none text-micro text-muted-foreground">
           Show CLI equivalent
         </summary>
         <div className="mt-1 space-y-0.5">
@@ -779,7 +779,7 @@ const BlockersSection = ({ taskId, blockedBy }: { taskId: string; blockedBy: str
   return (
     <div data-testid="blockers-section" className="flex flex-col gap-1">
       {error ? (
-        <p className="font-mono text-micro text-error">{error}</p>
+        <p className="text-micro text-error">{error}</p>
       ) : null}
       {blockedBy.length > 0 ? (
         <ul className="flex flex-col gap-0.5">
@@ -792,7 +792,7 @@ const BlockersSection = ({ taskId, blockedBy }: { taskId: string; blockedBy: str
                 data-testid={`unblock-${bid}`}
                 onClick={() => handleUnblock(bid)}
                 disabled={loading !== null}
-                className="shrink-0 rounded border border-primary/30 px-2 py-0.5 font-mono text-micro text-primary hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-40"
+                className="shrink-0 rounded border border-border px-2 py-0.5 font-mono text-micro text-primary hover:bg-foreground/5 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {loading === `remove:${bid}` ? '…' : 'Unblock'}
               </button>
@@ -800,7 +800,7 @@ const BlockersSection = ({ taskId, blockedBy }: { taskId: string; blockedBy: str
           ))}
         </ul>
       ) : (
-        <p className="font-mono text-micro text-muted-foreground">No blockers.</p>
+        <p className="text-micro text-muted-foreground">No blockers.</p>
       )}
       <div className="mt-1 flex gap-2">
         <input
@@ -810,13 +810,13 @@ const BlockersSection = ({ taskId, blockedBy }: { taskId: string; blockedBy: str
           onChange={(e) => setAddInput(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') handleAdd() }}
           placeholder="Task id to add as blocker…"
-          className="flex-1 rounded border border-primary/20 bg-transparent px-2 py-0.5 font-mono text-label text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/50"
+          className="flex-1 rounded border border-border bg-transparent px-2 py-0.5 font-mono text-label text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-border"
         />
         <button
           data-testid="add-blocker-btn"
           onClick={handleAdd}
           disabled={loading !== null || addInput.trim() === ''}
-          className="shrink-0 rounded border border-primary/30 px-2 py-0.5 font-mono text-micro text-primary hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-40"
+          className="shrink-0 rounded border border-border px-2 py-0.5 font-mono text-micro text-primary hover:bg-foreground/5 disabled:cursor-not-allowed disabled:opacity-40"
         >
           Add
         </button>
@@ -829,10 +829,10 @@ const BlockersSection = ({ taskId, blockedBy }: { taskId: string; blockedBy: str
 
 const statusPillClass: Record<string, string> = {
   A: 'bg-success/10 text-success border-success/30',
-  M: 'bg-primary/10 text-primary border-primary/30',
+  M: 'bg-primary/10 text-primary border-border',
   D: 'bg-error/10 text-error border-error/30',
   R: 'bg-warn/10 text-warn border-warn/30',
-  C: 'bg-primary/10 text-primary border-primary/30',
+  C: 'bg-primary/10 text-primary border-border',
 }
 
 interface ChangesSectionProps {
@@ -917,18 +917,18 @@ const ChangesSection = ({ taskId, taskStatus, changesData: injected, projectId, 
     return (
       <div data-testid="changes-section">
         <SectionLabel>Changes</SectionLabel>
-        <p className="font-mono text-label text-muted-foreground" data-testid="changes-unsupported">
+        <p className="text-label text-muted-foreground" data-testid="changes-unsupported">
           Restart the background engine to see changes for this task.
         </p>
         {restartError ? (
-          <p className="mt-1 font-mono text-micro text-error">{restartError}</p>
+          <p className="mt-1 text-micro text-error">{restartError}</p>
         ) : null}
         <button
           type="button"
           data-testid="changes-restart-btn"
           onClick={handleRestart}
           disabled={restartLoading}
-          className="mt-2 rounded border border-primary/30 px-3 py-1 font-mono text-label text-primary hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-40"
+          className="mt-2 rounded border border-border px-3 py-1 font-mono text-label text-primary hover:bg-foreground/5 disabled:cursor-not-allowed disabled:opacity-40"
         >
           {restartLoading ? 'Restarting…' : 'Restart'}
         </button>
@@ -965,7 +965,7 @@ const ChangesSection = ({ taskId, taskStatus, changesData: injected, projectId, 
           <button
             type="button"
             onClick={handleCopyPatch}
-            className="font-mono text-micro text-muted-foreground hover:text-foreground transition-colors"
+            className="text-micro text-muted-foreground hover:text-foreground transition-colors"
             data-testid="copy-patch-btn"
           >
             {copyDone ? 'Copied!' : 'Copy patch'}
@@ -992,11 +992,11 @@ const ChangesSection = ({ taskId, taskStatus, changesData: injected, projectId, 
           ) : null}
         </div>
       ) : isEmptyDiff ? (
-        <p className="font-mono text-label text-muted-foreground" data-testid="changes-empty">This task changed no files.</p>
+        <p className="text-label text-muted-foreground" data-testid="changes-empty">This task changed no files.</p>
       ) : (
         <div className="flex flex-col gap-2">
           {/* Summary line */}
-          <p className="font-mono text-label text-muted-foreground" data-testid="changes-summary">
+          <p className="text-label text-muted-foreground" data-testid="changes-summary">
             {landedSha != null ? (
               <>Landed on main as <span className="text-primary">{landedSha.slice(0, 7)}</span> · </>
             ) : null}
@@ -1013,7 +1013,7 @@ const ChangesSection = ({ taskId, taskStatus, changesData: injected, projectId, 
 
           {/* Gate checks: show what was verified before this task landed */}
           {gateChecks !== null && gateChecks.length > 0 && (
-            <p className="font-mono text-micro text-muted-foreground" data-testid="gate-checks-summary">
+            <p className="text-micro text-muted-foreground" data-testid="gate-checks-summary">
               {'Checks: '}
               {gateChecks.map((check, i) => {
                 const totalMs = gateChecks.reduce((s, c) => s + (c.durationMs ?? 0), 0)
@@ -1050,7 +1050,7 @@ const ChangesSection = ({ taskId, taskStatus, changesData: injected, projectId, 
                     aria-expanded={hasHunks ? isExpanded : undefined}
                   >
                     <span
-                      className={`rounded border px-1 font-mono text-micro uppercase ${statusPillClass[f.status] ?? ''}`}
+                      className={`rounded border px-1 text-micro uppercase ${statusPillClass[f.status] ?? ''}`}
                     >
                       {f.status}
                     </span>
@@ -1166,7 +1166,7 @@ export const TaskDetailBody = ({
         <div className="mt-1 flex items-baseline gap-2">
           <span
             data-testid="task-detail-status"
-            className="font-mono text-body uppercase tracking-wide text-primary"
+            className="text-body uppercase tracking-wide text-primary"
           >
             {task.status}
           </span>
@@ -1195,7 +1195,7 @@ export const TaskDetailBody = ({
           data-testid="task-detail-error"
           className="rounded border border-error/50 bg-error/5 px-3 py-2"
         >
-          <p className="font-mono text-label uppercase tracking-[0.1em] text-error">
+          <p className="text-label uppercase tracking-[0.1em] text-error">
             {task.status === 'failed' ? 'Failure' : isBlocked ? 'Blocked' : 'Error'}
           </p>
           {isBlocked ? (
@@ -1251,7 +1251,7 @@ export const TaskDetailBody = ({
                 </pre>
               ) : null}
               {task.failureSignature != null ? (
-                <p className="mt-1 font-mono text-micro uppercase tracking-[0.08em] text-error/50">
+                <p className="mt-1 text-micro uppercase tracking-[0.08em] text-error/50">
                   {task.failureSignature}
                 </p>
               ) : null}
@@ -1299,7 +1299,7 @@ export const TaskDetailBody = ({
       {currentStep != null ? (
         <div data-testid="task-detail-current-step">
           <SectionLabel>Step</SectionLabel>
-          <p className="font-mono text-label text-foreground">
+          <p className="text-label text-foreground">
             {currentStep.stepName}
             <span className="text-muted-foreground"> · {relativeTime(currentStep.startedAt)}</span>
           </p>
@@ -1352,7 +1352,7 @@ export const TaskDetailBody = ({
           ) : null}
           {task.blockedBy.length > 0 ? (
             <div>
-              <dt className="font-mono text-micro uppercase tracking-[0.08em] text-muted-foreground">
+              <dt className="text-micro uppercase tracking-[0.08em] text-muted-foreground">
                 Blocked by
               </dt>
               <dd>
@@ -1388,7 +1388,7 @@ const EvalChip = ({ label, value, warn }: { label: string; value: number | strin
       className={`rounded border px-1 py-0.5 font-mono text-micro ${
         warn
           ? 'border-warn/40 bg-warn/5 text-warn'
-          : 'border-primary/30 text-muted-foreground'
+          : 'border-border text-muted-foreground'
       }`}
     >
       {label} {String(value)}
@@ -1472,7 +1472,7 @@ const AgentToolCallRow = ({ call }: { call: AgentToolCall }) => {
   return (
     <div
       data-testid="agent-tool-row"
-      className="border-t border-primary/10 py-1.5"
+      className="border-t border-border py-1.5"
     >
       <div className="flex flex-wrap items-center gap-2">
         {/* Success / error badge */}
@@ -1538,7 +1538,7 @@ const ToolInvocationRow = ({
   return (
     <div
       data-testid="step-tool-row"
-      className="border-t border-primary/10 py-1.5"
+      className="border-t border-border py-1.5"
     >
       <div className="flex flex-wrap items-center gap-2">
         {/* Exit-code badge */}
@@ -1582,7 +1582,7 @@ const ToolInvocationRow = ({
         ) : (
           /* Other steps: hide behind a disclosure to keep the card compact */
           <details className="mt-1">
-            <summary className="cursor-pointer font-mono text-micro text-muted-foreground">
+            <summary className="cursor-pointer text-micro text-muted-foreground">
               output
             </summary>
             <div className="mt-1 space-y-1">
@@ -1649,7 +1649,7 @@ const StepCard = ({
         ? 'border-error/40'
         : entry.outcome === 'killed'
           ? 'border-warn/40'
-          : 'border-primary/20'
+          : 'border-border'
 
   const bgClass =
     entry.outcome === 'running'
@@ -1700,7 +1700,7 @@ const StepCard = ({
             ) : null}
           </div>
           {summary ? (
-            <p className="font-mono text-label text-muted-foreground">{summary}</p>
+            <p className="text-label text-muted-foreground">{summary}</p>
           ) : null}
           {entry.evalResults && entry.evalResults.length > 0 ? (
             <div className="mt-0.5 flex flex-wrap gap-1">
@@ -1720,19 +1720,19 @@ const StepCard = ({
       </summary>
 
       {/* Expanded content — always in DOM, hidden by <details> when closed */}
-      <div data-testid="step-card-expanded" className="border-t border-primary/15 px-3 pb-3">
+      <div data-testid="step-card-expanded" className="border-t border-border px-3 pb-3">
         {/* Token counts (LLM-backed steps) */}
         {(() => {
           const label = formatTokensLabel(entry.inputTokens, entry.outputTokens, entry.cacheReadTokens)
           return label !== null ? (
-            <p data-testid="step-card-tokens" className="pt-2 font-mono text-micro text-muted-foreground">
+            <p data-testid="step-card-tokens" className="pt-2 text-micro text-muted-foreground">
               {label}
             </p>
           ) : null
         })()}
         {entry.claudeSessionId != null ? (
           <p
-            className="pt-1 font-mono text-micro text-muted-foreground"
+            className="pt-1 text-micro text-muted-foreground"
             title={entry.claudeSessionId}
           >
             session:{entry.claudeSessionId.slice(0, 8)}
@@ -1760,17 +1760,17 @@ const StepCard = ({
             ))}
           </div>
         ) : toolEvents.length === 0 && entry.claudeSessionId == null ? (
-          <p className="pt-2 font-mono text-label text-muted-foreground/60">
+          <p className="pt-2 text-label text-muted-foreground/60">
             No tool invocations recorded
           </p>
         ) : null}
 
         {/* Input — collapsed by default; keyboard-accessible via <details>/<summary> */}
         {entry.inputJson != null ? (
-          <details className="mt-2 border-t border-primary/10 pt-1.5">
+          <details className="mt-2 border-t border-border pt-1.5">
             <summary
               tabIndex={0}
-              className="cursor-pointer font-mono text-micro text-muted-foreground [&::-webkit-details-marker]:hidden"
+              className="cursor-pointer text-micro text-muted-foreground [&::-webkit-details-marker]:hidden"
               onKeyDown={(e) => {
                 if (e.key === ' ') {
                   e.preventDefault()
@@ -1798,10 +1798,10 @@ const StepCard = ({
 
         {/* Output — collapsed by default; keyboard-accessible via <details>/<summary> */}
         {entry.resultJson != null ? (
-          <details className="mt-2 border-t border-primary/10 pt-1.5">
+          <details className="mt-2 border-t border-border pt-1.5">
             <summary
               tabIndex={0}
-              className="cursor-pointer font-mono text-micro text-muted-foreground [&::-webkit-details-marker]:hidden"
+              className="cursor-pointer text-micro text-muted-foreground [&::-webkit-details-marker]:hidden"
               onKeyDown={(e) => {
                 if (e.key === ' ') {
                   e.preventDefault()
@@ -1870,10 +1870,10 @@ const StepCardList = ({
 }) => (
   <section
     data-testid="step-card-list"
-    className="border-b border-primary/20 px-4 py-3"
+    className="border-b border-border px-4 py-3"
   >
     <div className="mb-3 flex items-baseline justify-between">
-      <h3 className="font-mono text-label uppercase tracking-[0.1em] text-muted-foreground">
+      <h3 className="text-label uppercase tracking-[0.1em] text-muted-foreground">
         Steps
       </h3>
       {studioHref !== undefined ? (
@@ -1887,7 +1887,7 @@ const StepCardList = ({
       ) : null}
     </div>
     {cards.length === 0 ? (
-      <p className="font-mono text-body text-primary">No steps recorded yet</p>
+      <p className="text-body text-primary">No steps recorded yet</p>
     ) : (
       <div className="flex flex-col">
         {cards.map((card, i) => {
@@ -1912,7 +1912,7 @@ const StepCardList = ({
               />
               {i < cards.length - 1 ? (
                 <div
-                  className="mx-4 h-4 border-l-2 border-dashed border-primary/25"
+                  className="mx-4 h-4 border-l-2 border-dashed border-border"
                   aria-hidden="true"
                 />
               ) : null}
@@ -2020,10 +2020,10 @@ const ProposalStepTimeline = ({
   }
 
   return (
-    <div className="border-b border-primary/20">
+    <div className="border-b border-border">
       {/* ── Proposal steps group ─────────────────────────────────────────── */}
       <section data-testid="step-group-proposal" className="px-4 py-3">
-        <h3 className="mb-2 font-mono text-label uppercase tracking-[0.1em] text-muted-foreground">
+        <h3 className="mb-2 text-label uppercase tracking-[0.1em] text-muted-foreground">
           Proposal steps
         </h3>
         {otherProposalSpans.length > 0 ? (
@@ -2033,7 +2033,7 @@ const ProposalStepTimeline = ({
         ) : null}
         {autoLinkerSpans.length > 0 ? (
           <details className="mt-1">
-            <summary className="cursor-pointer font-mono text-label text-muted-foreground">
+            <summary className="cursor-pointer text-label text-muted-foreground">
               auto-linker-direction &times; {autoLinkerSpans.length} ({formatDuration(autoLinkerTotalMs)})
             </summary>
             <ol className="mt-1 flex flex-col">
@@ -2042,7 +2042,7 @@ const ProposalStepTimeline = ({
           </details>
         ) : null}
         {proposalSpans.length === 0 ? (
-          <p className="font-mono text-body text-primary">No proposal-level steps recorded</p>
+          <p className="text-body text-primary">No proposal-level steps recorded</p>
         ) : null}
       </section>
 
@@ -2051,7 +2051,7 @@ const ProposalStepTimeline = ({
         <section
           key={taskId}
           data-testid={`step-group-${taskId}`}
-          className="border-t border-primary/20 px-4 py-3"
+          className="border-t border-border px-4 py-3"
         >
           <h3 className="mb-2 font-mono text-label uppercase tracking-[0.1em] text-muted-foreground">
             {taskId} &middot; {taskSpans.length} steps
@@ -2425,10 +2425,10 @@ export const TaskDetailDrawer = ({
         data-state={state.kind}
         data-closing={closing ? 'true' : undefined}
         tabIndex={-1}
-        className="drawer-panel fixed inset-0 z-50 flex w-full flex-col border-primary/40 bg-background outline-none xl:inset-y-0 xl:left-auto xl:right-0 xl:w-[min(560px,100vw)] xl:border-l xl:shadow-2xl"
+        className="drawer-panel fixed inset-0 z-50 flex w-full flex-col border-border bg-background outline-none xl:inset-y-0 xl:left-auto xl:right-0 xl:w-[min(560px,100vw)] xl:border-l xl:shadow-2xl"
       >
-      <header className="flex items-center justify-between border-b border-primary/40 px-4 py-3">
-        <h2 className="min-w-0 flex-1 truncate font-mono text-title text-primary">
+      <header className="flex items-center justify-between border-b border-border px-4 py-3">
+        <h2 className="min-w-0 flex-1 truncate text-title text-primary">
           {readyTask ? taskTitle(readyTask) : 'Task'}
         </h2>
         <button
@@ -2436,7 +2436,7 @@ export const TaskDetailDrawer = ({
           onClick={handleClose}
           aria-label="Close task detail"
           data-testid="task-detail-close"
-          className="rounded border border-primary/40 px-2 py-0.5 font-mono text-body text-primary hover:bg-primary/10"
+          className="rounded border border-border px-2 py-0.5 font-mono text-body text-primary hover:bg-foreground/5"
         >
           Close
         </button>
@@ -2447,7 +2447,7 @@ export const TaskDetailDrawer = ({
         <nav
           data-testid="task-detail-breadcrumb"
           aria-label="Task drill-in trail"
-          className="flex flex-wrap items-center gap-1 border-b border-primary/20 px-4 py-2 font-mono text-label"
+          className="flex flex-wrap items-center gap-1 border-b border-border px-4 py-2 font-mono text-label"
         >
           {trail.map((id, i) => {
             const isCurrent = i === trail.length - 1
@@ -2477,9 +2477,9 @@ export const TaskDetailDrawer = ({
       {subgraph != null && state.kind !== 'not-found' ? (
         <section
           data-testid="task-detail-subgraph"
-          className="border-b border-primary/20 px-4 py-3"
+          className="border-b border-border px-4 py-3"
         >
-          <h3 className="mb-2 font-mono text-label uppercase tracking-[0.1em] text-muted-foreground">
+          <h3 className="mb-2 text-label uppercase tracking-[0.1em] text-muted-foreground">
             Context
           </h3>
           {/* Flex-wrap chip layout — each node is an HTML anchor chip so labels
@@ -2591,7 +2591,7 @@ export const TaskDetailDrawer = ({
           data-testid="task-detail-not-found"
           className="flex flex-1 items-center justify-center p-6"
         >
-          <p className="max-w-[40ch] text-center font-mono text-title text-primary">
+          <p className="max-w-[40ch] text-center text-title text-primary">
             Task not found. It may have been purged.
           </p>
         </div>

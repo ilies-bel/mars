@@ -156,7 +156,7 @@ export const ProposalActionRow = ({
   return (
     <div
       data-testid="proposal-action-row"
-      className="flex items-center gap-2 border-b border-primary/40 px-4 py-2"
+      className="flex items-center gap-2 border-b border-border px-4 py-2"
     >
       {/* Promote */}
       {promoteState.kind === 'done' ? (
@@ -182,7 +182,7 @@ export const ProposalActionRow = ({
           onClick={() => { void handlePromote() }}
           disabled={promoteState.kind === 'pending' || !!bodyEmpty}
           title={bodyEmpty ? 'Fill in the problem or solution first' : undefined}
-          className="rounded border border-primary/40 px-2 py-0.5 font-mono text-body text-primary hover:bg-primary/10 disabled:opacity-50"
+          className="rounded border border-border px-2 py-0.5 font-mono text-body text-primary hover:bg-foreground/5 disabled:opacity-50"
         >
           {promoteState.kind === 'pending' ? 'Promoting…' : 'Promote'}
         </button>
@@ -197,7 +197,7 @@ export const ProposalActionRow = ({
         data-testid="btn-grill"
         onClick={() => { void handleGrill() }}
         disabled={grillState.kind === 'pending'}
-        className="rounded border border-primary/40 px-2 py-0.5 font-mono text-body text-primary hover:bg-primary/10 disabled:opacity-50"
+        className="rounded border border-border px-2 py-0.5 font-mono text-body text-primary hover:bg-foreground/5 disabled:opacity-50"
       >
         {grillState.kind === 'pending' ? 'Opening…' : 'Grill'}
       </button>
@@ -221,7 +221,7 @@ export const ProposalActionRow = ({
           data-testid="btn-mockup"
           onClick={() => { void handleMockup() }}
           disabled={mockupState.kind === 'pending'}
-          className="rounded border border-primary/40 px-2 py-0.5 font-mono text-body text-primary hover:bg-primary/10 disabled:opacity-50"
+          className="rounded border border-border px-2 py-0.5 font-mono text-body text-primary hover:bg-foreground/5 disabled:opacity-50"
         >
           {mockupState.kind === 'pending' ? 'Queuing…' : 'Mockup'}
         </button>
@@ -248,7 +248,7 @@ export const ProposalActionRow = ({
           onClick={() => { void handleImplementLive() }}
           disabled={implementLiveState.kind === 'pending' || !!bodyEmpty}
           title={bodyEmpty ? 'Fill in the problem or solution first' : undefined}
-          className="rounded border border-primary/40 px-2 py-0.5 font-mono text-body text-primary hover:bg-primary/10 disabled:opacity-50"
+          className="rounded border border-border px-2 py-0.5 font-mono text-body text-primary hover:bg-foreground/5 disabled:opacity-50"
         >
           {implementLiveState.kind === 'pending' ? 'Queuing…' : 'Implement live'}
         </button>
@@ -259,14 +259,14 @@ export const ProposalActionRow = ({
 
       {/* Dismiss */}
       {dismissState.kind === 'done' ? (
-        <span className="font-mono text-micro text-muted-foreground">Dismissed</span>
+        <span className="text-micro text-muted-foreground">Dismissed</span>
       ) : (
         <button
           type="button"
           data-testid="btn-dismiss"
           onClick={() => { void handleDismiss() }}
           disabled={dismissState.kind === 'pending'}
-          className="rounded border border-primary/40 px-2 py-0.5 font-mono text-body text-muted-foreground hover:bg-primary/5 disabled:opacity-50"
+          className="rounded border border-border px-2 py-0.5 font-mono text-body text-muted-foreground hover:bg-foreground/5 disabled:opacity-50"
         >
           {dismissState.kind === 'pending' ? 'Dismissing…' : 'Dismiss'}
         </button>

@@ -36,16 +36,16 @@ const VARIANT: Record<ActionVariant, string> = {
   ghost:
     'text-muted-foreground hover:bg-foreground/5 hover:text-foreground active:bg-foreground/10',
   danger:
-    'border border-transparent bg-transparent text-error/85 hover:border-error/40 hover:bg-error/8 hover:text-error active:bg-error/14',
+    'border border-error/25 bg-transparent text-error hover:border-error/60 hover:bg-error/10 active:bg-error/20',
   // For a destructive verb repeated down a list. `danger` puts error-red text
   // on every row, and twelve red words in a column stop reading as a warning
   // and start reading as decoration. This one is neutral until pointed at.
   'danger-ghost':
-    'text-muted-foreground hover:bg-error/8 hover:text-error active:bg-error/14',
+    'text-muted-foreground hover:bg-error/10 hover:text-error active:bg-error/20',
 }
 
 const SIZE: Record<ActionSize, string> = {
-  sm: 'h-6 gap-1.5 rounded px-2 text-micro',
+  sm: 'h-6 gap-1.5 rounded-md px-2 text-micro',
   md: 'h-7 gap-1.5 rounded-md px-2.5 text-label',
 }
 

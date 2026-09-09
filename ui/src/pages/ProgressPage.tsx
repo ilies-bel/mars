@@ -55,7 +55,7 @@ const HotPathsSection = ({
     >
       {/* Controls */}
       <div className="mb-4 flex flex-wrap items-center gap-3">
-        <span className="font-mono text-label text-muted-foreground uppercase tracking-wide">Window</span>
+        <span className="text-label text-muted-foreground uppercase tracking-wide">Window</span>
         {WINDOWS.map((w) => (
           <button
             key={w}
@@ -67,7 +67,7 @@ const HotPathsSection = ({
             {w}
           </button>
         ))}
-        <span className="ml-4 font-mono text-label text-muted-foreground uppercase tracking-wide">Group</span>
+        <span className="ml-4 text-label text-muted-foreground uppercase tracking-wide">Group</span>
         {GROUPS.map((g) => (
           <button
             key={g}

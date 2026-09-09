@@ -138,10 +138,10 @@ export const LiveTaskPanel = ({ taskId, fetchImpl, postActionImpl }: LiveTaskPan
     return (
       <section
         data-testid="live-task-panel"
-        className="border-b border-primary/20 px-4 py-3"
+        className="border-b border-border px-4 py-3"
         aria-busy="true"
       >
-        <p className="font-mono text-label text-muted-foreground">Loading live task…</p>
+        <p className="text-label text-muted-foreground">Loading live task…</p>
       </section>
     )
   }
@@ -157,7 +157,7 @@ export const LiveTaskPanel = ({ taskId, fetchImpl, postActionImpl }: LiveTaskPan
   return (
     <section
       data-testid="live-task-panel"
-      className="border-b border-primary/20 px-4 py-3 flex flex-col gap-4"
+      className="border-b border-border px-4 py-3 flex flex-col gap-4"
     >
       {/* ── Enter session action ─────────────────────────────────────────── */}
       {data.worktreePath ? (
@@ -192,7 +192,7 @@ export const LiveTaskPanel = ({ taskId, fetchImpl, postActionImpl }: LiveTaskPan
                   className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
                     c.checked
                       ? 'border-done/60 bg-done/15 text-done'
-                      : 'border-primary/40 bg-transparent text-transparent'
+                      : 'border-border bg-transparent text-transparent'
                   }`}
                 >
                   {c.checked ? (
@@ -229,7 +229,7 @@ export const LiveTaskPanel = ({ taskId, fetchImpl, postActionImpl }: LiveTaskPan
           {actionError ? (
             <p
               data-testid="merge-gate-action-error"
-              className="font-mono text-label text-destructive"
+              className="text-label text-destructive"
             >
               {actionError}
             </p>
@@ -267,7 +267,7 @@ export const LiveTaskPanel = ({ taskId, fetchImpl, postActionImpl }: LiveTaskPan
       <div data-testid="live-notes">
         <h3 className={`mb-1.5 ${SECTION_LABEL}`}>Progress journal</h3>
         {notesNewestFirst.length === 0 ? (
-          <p className="font-mono text-label text-muted-foreground">(none)</p>
+          <p className="text-label text-muted-foreground">(none)</p>
         ) : (
           <ol className="flex flex-col gap-1.5">
             {notesNewestFirst.map((n, i) => (

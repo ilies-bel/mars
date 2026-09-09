@@ -177,7 +177,7 @@ export const BodySection = ({
   return (
     <section
       data-testid={testId}
-      className={`${editable ? 'group ' : ''}border-b border-primary/40 px-4 py-3`}
+      className={`${editable ? 'group ' : ''}border-b border-border px-4 py-3`}
     >
       <CollapsibleSection label={label} defaultOpen>
         {isEditing ? (
@@ -189,14 +189,14 @@ export const BodySection = ({
               disabled={editState === 'saving'}
               autoFocus
               aria-label={`Edit ${label}`}
-              className="min-h-[80px] w-full resize-y rounded border border-primary/40 bg-background px-2 py-1 font-mono text-body text-foreground focus:outline-none focus:ring-1 focus:ring-primary/60 disabled:opacity-50"
+              className="min-h-[80px] w-full resize-y rounded border border-border bg-background px-2 py-1 text-body text-foreground focus:outline-none focus:ring-1 focus:ring-primary/60 disabled:opacity-50"
             />
             <div className="flex items-center gap-2">
               <button
                 type="button"
                 onClick={() => { void handleSave() }}
                 disabled={editState === 'saving'}
-                className="rounded border border-primary/40 px-2 py-0.5 font-mono text-body text-primary hover:bg-primary/10 disabled:opacity-50"
+                className="rounded border border-border px-2 py-0.5 font-mono text-body text-primary hover:bg-foreground/5 disabled:opacity-50"
               >
                 {editState === 'saving' ? 'Saving…' : 'Save'}
               </button>
@@ -204,7 +204,7 @@ export const BodySection = ({
                 type="button"
                 onClick={handleCancel}
                 disabled={editState === 'saving'}
-                className="rounded border border-primary/40 px-2 py-0.5 font-mono text-body text-muted-foreground hover:bg-primary/5 disabled:opacity-50"
+                className="rounded border border-border px-2 py-0.5 font-mono text-body text-muted-foreground hover:bg-foreground/5 disabled:opacity-50"
               >
                 Cancel
               </button>
@@ -220,7 +220,7 @@ export const BodySection = ({
                 type="button"
                 onClick={handleEdit}
                 aria-label={`Edit ${label}`}
-                className="absolute right-0 top-0 rounded px-1 py-0.5 font-mono text-body text-primary opacity-0 transition-opacity hover:bg-primary/10 group-hover:opacity-100"
+                className="absolute right-0 top-0 rounded px-1 py-0.5 font-mono text-body text-primary opacity-0 transition-opacity hover:bg-foreground/5 group-hover:opacity-100"
               >
                 ✎
               </button>
@@ -244,7 +244,7 @@ export const BodySection = ({
               <button
                 type="button"
                 onClick={() => setExpanded((v) => !v)}
-                className="mt-1.5 font-mono text-micro text-primary underline hover:text-foreground"
+                className="mt-1.5 text-micro text-primary underline hover:text-foreground"
               >
                 {expanded ? 'Show less' : 'Read more'}
               </button>
@@ -422,13 +422,13 @@ export const ProposalDetailDrawer = ({
         data-testid="proposal-detail-drawer"
         data-closing={closing ? 'true' : undefined}
         tabIndex={-1}
-        className="drawer-panel fixed inset-y-0 right-0 z-50 flex w-[min(560px,100vw)] flex-col border-l border-primary/40 bg-background shadow-2xl outline-none"
+        className="drawer-panel fixed inset-y-0 right-0 z-50 flex w-[min(560px,100vw)] flex-col border-l border-border bg-background shadow-2xl outline-none"
       >
-      <header className="flex items-start justify-between gap-3 border-b border-primary/40 px-4 py-3">
+      <header className="flex items-start justify-between gap-3 border-b border-border px-4 py-3">
         <div className="flex min-w-0 flex-col gap-2">
           <h2
             data-testid="proposal-detail-title"
-            className="break-words font-mono text-title text-foreground"
+            className="break-words text-title text-foreground"
           >
             {proposal.title}
           </h2>
@@ -436,7 +436,7 @@ export const ProposalDetailDrawer = ({
             <span
               data-testid="proposal-detail-status"
               aria-label={`status ${proposal.status}`}
-              className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-micro font-semibold uppercase tracking-wide ${badgeClass(
+              className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-micro font-semibold uppercase tracking-wide ${badgeClass(
                 proposal.status,
               )}`}
             >
@@ -444,7 +444,7 @@ export const ProposalDetailDrawer = ({
             </span>
             <span
               data-testid="proposal-detail-source"
-              className="font-mono text-micro uppercase tracking-wide text-muted-foreground"
+              className="text-micro uppercase tracking-wide text-muted-foreground"
             >
               {proposal.source}
             </span>
@@ -467,7 +467,7 @@ export const ProposalDetailDrawer = ({
             {proposal.userStories.length > 0 && (
               <span
                 data-testid="proposal-detail-story-count"
-                className="font-mono text-micro uppercase tracking-wide text-muted-foreground"
+                className="text-micro uppercase tracking-wide text-muted-foreground"
               >
                 {proposal.userStories.length}{' '}
                 {proposal.userStories.length === 1 ? 'story' : 'stories'}
@@ -483,7 +483,7 @@ export const ProposalDetailDrawer = ({
               target="_blank"
               rel="noopener noreferrer"
               data-testid="link-view-mockup"
-              className="inline-flex w-fit items-center gap-1 rounded border border-primary/40 px-2 py-0.5 font-mono text-body text-primary hover:bg-primary/10"
+              className="inline-flex w-fit items-center gap-1 rounded border border-border px-2 py-0.5 font-mono text-body text-primary hover:bg-foreground/5"
             >
               View mockup ↗
             </a>
@@ -494,7 +494,7 @@ export const ProposalDetailDrawer = ({
           onClick={handleClose}
           aria-label="Close proposal detail"
           data-testid="proposal-detail-close"
-          className="shrink-0 rounded border border-primary/40 px-2 py-0.5 font-mono text-body text-primary hover:bg-primary/10"
+          className="shrink-0 rounded border border-border px-2 py-0.5 font-mono text-body text-primary hover:bg-foreground/5"
         >
           Close
         </button>
@@ -537,7 +537,7 @@ export const ProposalDetailDrawer = ({
         {(stories.length > 0 || isDraft) ? (
           <section
             data-testid="proposal-detail-stories"
-            className="border-b border-primary/40 px-4 py-3"
+            className="border-b border-border px-4 py-3"
           >
             <CollapsibleSection label="User stories" defaultOpen>
               {stories.length > 0 ? (
@@ -575,13 +575,13 @@ export const ProposalDetailDrawer = ({
               {isDraft ? (
                 <div className="mt-2">
                   {storyOpState === 'error' && storyOpError ? (
-                    <p className="mb-1.5 font-mono text-micro text-error">{storyOpError}</p>
+                    <p className="mb-1.5 text-micro text-error">{storyOpError}</p>
                   ) : null}
                   {!addingStory ? (
                     <button
                       type="button"
                       data-testid="btn-add-story"
-                      className="font-mono text-body text-primary underline hover:text-foreground"
+                      className="text-body text-primary underline hover:text-foreground"
                       onClick={() => setAddingStory(true)}
                     >
                       Add story
@@ -593,13 +593,13 @@ export const ProposalDetailDrawer = ({
                         value={newStoryText}
                         onChange={(e) => setNewStoryText(e.target.value)}
                         placeholder="As a user, I want…"
-                        className="rounded border border-primary/40 bg-background px-2 py-1 font-mono text-body text-foreground"
+                        className="rounded border border-border bg-background px-2 py-1 text-body text-foreground"
                       />
                       <div className="flex gap-2">
                         <button
                           type="button"
                           disabled={storyOpState === 'pending' || !newStoryText.trim()}
-                          className="font-mono text-body text-primary underline hover:text-foreground disabled:opacity-50"
+                          className="text-body text-primary underline hover:text-foreground disabled:opacity-50"
                           onClick={async () => {
                             const trimmed = newStoryText.trim()
                             if (!trimmed) return
@@ -621,7 +621,7 @@ export const ProposalDetailDrawer = ({
                         </button>
                         <button
                           type="button"
-                          className="font-mono text-body text-muted-foreground underline hover:text-foreground"
+                          className="text-body text-muted-foreground underline hover:text-foreground"
                           onClick={() => {
                             setAddingStory(false)
                             setNewStoryText('')
@@ -665,9 +665,9 @@ export const ProposalDetailDrawer = ({
         {childTasks.length > 0 ? (
           <section
             data-testid="sliced-tasks"
-            className="flex flex-col gap-2 border-b border-primary/40 px-4 py-3"
+            className="flex flex-col gap-2 border-b border-border px-4 py-3"
           >
-            <h3 className="font-mono text-micro uppercase tracking-wide text-muted-foreground">
+            <h3 className="text-micro uppercase tracking-wide text-muted-foreground">
               Sliced tasks
             </h3>
             <ul className="flex flex-col gap-1.5">
@@ -675,7 +675,7 @@ export const ProposalDetailDrawer = ({
                 <li key={task.id}>
                   <a
                     href={taskHash(task.id)}
-                    className="flex items-center gap-2 rounded border border-primary/20 px-2 py-1.5 font-mono text-body transition-colors hover:bg-primary/5"
+                    className="flex items-center gap-2 rounded border border-border px-2 py-1.5 font-mono text-body transition-colors hover:bg-foreground/5"
                   >
                     <span className="shrink-0 text-primary">{task.id}</span>
                     <span
@@ -696,7 +696,7 @@ export const ProposalDetailDrawer = ({
 
       {/* CLI commands — read-only, status-appropriate, copy-to-clipboard.
           Collapsed behind a <details> so the drawer footer stays compact. */}
-      <section className="border-t border-primary/40 px-4 py-3">
+      <section className="border-t border-border px-4 py-3">
         <details>
           <summary className="cursor-pointer select-none font-mono text-body text-primary hover:text-foreground">
             Copy command ▾

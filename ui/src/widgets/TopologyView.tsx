@@ -551,7 +551,7 @@ const TopologyViewInner = ({
             <button
               data-testid="clear-proposal-filter"
               onClick={() => onSelectProposal?.(null)}
-              className="mt-1 rounded border border-border px-3 py-1.5 font-mono text-label text-muted-foreground transition-colors hover:border-foreground/40 hover:text-foreground"
+              className="mt-1 rounded border border-border px-3 py-1.5 text-label text-muted-foreground transition-colors hover:border-foreground/40 hover:text-foreground"
             >
               Clear filter
             </button>
@@ -631,7 +631,7 @@ const TopologyViewInner = ({
         </div>
       )}
       {/* Navigation hint — quiet, top-left under the breadcrumb spot when free. */}
-      <div className="pointer-events-none absolute bottom-10 right-3 z-10 text-right font-mono text-label leading-relaxed text-muted-foreground">
+      <div className="pointer-events-none absolute bottom-10 right-3 z-10 text-right text-label leading-relaxed text-muted-foreground">
         scroll = zoom · drag = pan
         <br />
         {hintText ? (

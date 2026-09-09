@@ -239,7 +239,7 @@ const OutputExpander = ({ signature, branch, worktree, rawOutput, tail }: Output
       </button>
       {open && (
         <pre
-          className="mt-1 max-h-40 overflow-y-auto rounded bg-primary/10 p-1.5 font-mono text-micro text-primary/80 whitespace-pre-wrap break-all"
+          className="max-w-[68ch] mt-1 max-h-40 overflow-y-auto rounded bg-primary/10 p-1.5 text-micro text-primary/80 whitespace-pre-wrap leading-relaxed break-all"
           data-testid="alert-output-panel"
         >
           {content || 'No output was captured for this step.'}
@@ -284,7 +284,7 @@ const DetailExpander = ({ detail }: { detail: AlertHumanDetail }) => {
         >
           {detail.failureSignature && (
             <div>
-              <dt className="font-mono text-micro uppercase text-primary/40">Failure</dt>
+              <dt className="text-micro uppercase text-primary/40">Failure</dt>
               <dd className="font-mono text-micro text-primary">{detail.failureSignature}</dd>
             </div>
           )}
@@ -305,7 +305,7 @@ const DetailExpander = ({ detail }: { detail: AlertHumanDetail }) => {
               <dt className="font-mono text-micro uppercase text-primary/40">Error</dt>
               <dd>
                 <pre
-                  className="mt-0.5 max-h-32 overflow-y-auto rounded bg-primary/10 p-1.5 font-mono text-micro text-primary/80 whitespace-pre-wrap break-all"
+                  className="max-w-[68ch] mt-0.5 max-h-32 overflow-y-auto rounded bg-primary/10 p-1.5 text-micro text-primary/80 whitespace-pre-wrap leading-relaxed break-all"
                   data-testid="alert-detail-raw-error"
                 >
                   {detail.rawError}
@@ -315,7 +315,7 @@ const DetailExpander = ({ detail }: { detail: AlertHumanDetail }) => {
           )}
           {detail.changelog && (
             <div>
-              <dt className="font-mono text-micro uppercase text-primary/40">Changelog</dt>
+              <dt className="text-micro uppercase text-primary/40">Changelog</dt>
               <dd className="mt-0.5 chat-markdown prose prose-sm prose-invert max-w-none text-label">
                 <Response>{detail.changelog}</Response>
               </dd>
@@ -339,7 +339,7 @@ interface SnoozeMenuProps {
 
 const SnoozeMenu = ({ onSelect, onClose, disabled }: SnoozeMenuProps) => (
   <div
-    className="absolute z-10 mt-1 rounded border border-primary/30 bg-card shadow-lg"
+    className="absolute z-10 mt-1 rounded border border-border bg-card shadow-lg"
     data-testid="snooze-menu"
   >
     {SNOOZE_PRESETS.map(({ value, label }) => (
@@ -357,7 +357,7 @@ const SnoozeMenu = ({ onSelect, onClose, disabled }: SnoozeMenuProps) => (
     <button
       type="button"
       onClick={onClose}
-      className="block w-full border-t border-primary/20 px-4 py-1.5 text-left font-mono text-micro text-primary/50 hover:bg-primary/10 transition-colors"
+      className="block w-full border-t border-border px-4 py-1.5 text-left text-micro text-primary/50 hover:bg-foreground/5 transition-colors"
     >
       Cancel
     </button>
@@ -508,7 +508,7 @@ export const AlertCard = ({
             type="button"
             disabled={pendingOp !== null}
             onClick={() => void handleRestore()}
-            className="rounded border border-primary/30 px-2 py-0.5 font-mono text-micro text-primary hover:bg-primary/20 disabled:opacity-40 transition-colors"
+            className="rounded border border-border px-2 py-0.5 font-mono text-micro text-primary hover:bg-primary/20 disabled:opacity-40 transition-colors"
             data-testid="alert-card-restore"
           >
             {pendingOp === 'restore' ? '…' : 'Restore'}
@@ -590,7 +590,7 @@ export const AlertCard = ({
 
       {/* Resolution success message */}
       {resolvedOp !== null && (
-        <p className="mb-2 font-mono text-micro text-success" data-testid="alert-card-resolved-state">
+        <p className="mb-2 text-micro text-success" data-testid="alert-card-resolved-state">
           ✓ {resolvedOp} completed
         </p>
       )}
@@ -712,7 +712,7 @@ export const AlertCard = ({
           {bulkContinue && (
             <button
               type="button"
-              className="rounded px-3 py-1 font-mono text-label border border-primary/20 text-primary/60 hover:bg-primary/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              className="rounded px-3 py-1 text-label border border-border text-primary/60 hover:bg-foreground/5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               disabled={bulkPending || pendingOp !== null}
               onClick={() => void handleBulkContinue()}
               data-testid="alert-card-bulk-continue"
@@ -764,10 +764,10 @@ export const AlertCard = ({
       {/* Secondary teach-recipe prompt */}
       {teachPrompt && !teachPending && (
         <div
-          className="mb-2 rounded border border-primary/20 bg-primary/5 p-2"
+          className="mb-2 rounded border border-border bg-primary/5 p-2"
           data-testid="teach-recipe-prompt"
         >
-          <p className="font-mono text-label text-primary/80 mb-1.5">
+          <p className="text-label text-primary/80 mb-1.5">
             Apply this automatically next time?
           </p>
           <div className="flex gap-1.5">
@@ -806,7 +806,7 @@ export const AlertCard = ({
 
       {/* Action error */}
       {actionError && (
-        <p className="mb-2 font-mono text-micro text-error" data-testid="alert-card-error">
+        <p className="mb-2 text-micro text-error" data-testid="alert-card-error">
           {actionError}
         </p>
       )}

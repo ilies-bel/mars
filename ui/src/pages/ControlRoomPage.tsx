@@ -267,18 +267,18 @@ const LeversSection = () => {
                 </DialogDescription>
               </DialogHeader>
               {actError && (
-                <p className="font-mono text-label text-error">{actError}</p>
+                <p className="text-label text-error">{actError}</p>
               )}
               <DialogFooter>
                 <DialogClose asChild>
-                  <button className="rounded border border-border px-3 py-1.5 font-mono text-label text-foreground/70 hover:border-border/80">
+                  <button className="rounded border border-border px-3 py-1.5 text-label text-foreground/70 hover:border-border/80">
                     Cancel
                   </button>
                 </DialogClose>
                 <button
                   onClick={() => { void confirm() }}
                   disabled={acting}
-                  className="rounded border border-primary/50 bg-primary/10 px-3 py-1.5 font-mono text-label text-foreground hover:bg-primary/20 disabled:opacity-50"
+                  className="rounded border border-border bg-primary/10 px-3 py-1.5 text-label text-foreground hover:bg-primary/20 disabled:opacity-50"
                 >
                   {acting ? 'Working…' : copy.button}
                 </button>
@@ -557,12 +557,12 @@ const GatesSection = () => {
             </DialogDescription>
           </DialogHeader>
           {actError && (
-            <p className="font-mono text-label text-error">{actError}</p>
+            <p className="text-label text-error">{actError}</p>
           )}
           <DialogFooter>
             <DialogClose asChild>
               <button
-                className="rounded-md border border-border px-4 py-2 font-mono text-label text-foreground hover:bg-surface transition-colors"
+                className="rounded-md border border-border px-4 py-2 text-label text-foreground hover:bg-surface transition-colors"
                 disabled={acting}
               >
                 Cancel
@@ -672,7 +672,7 @@ const Stat = ({ label, value, colorClass }: StatProps) => (
     >
       {value}
     </span>
-    <span className="mt-0.5 font-mono text-micro uppercase tracking-widest text-muted-foreground">
+    <span className="mt-0.5 text-micro uppercase tracking-widest text-muted-foreground">
       {label}
     </span>
   </div>
@@ -751,17 +751,17 @@ const EngineSection = () => {
       <section data-testid="engine-drift-section">
         <SectionHeading>Engine</SectionHeading>
         <div className="mars-card rounded border border-warn/30 bg-warn/5 px-4 py-3">
-          <p className="font-mono text-body font-medium text-warn">
+          <p className="text-body font-medium text-warn">
             {driftItem.title ?? 'Engine update available'}
           </p>
           {driftItem.body && (
-            <p className="mt-1 font-mono text-micro text-muted-foreground">
+            <p className="mt-1 text-micro text-muted-foreground">
               {driftItem.body}
             </p>
           )}
           {runningCount > 0 && (
             <p
-              className="mt-2 font-mono text-micro text-muted-foreground/70"
+              className="mt-2 text-micro text-muted-foreground/70"
               data-testid="engine-running-count"
             >
               {runningCount} task{runningCount !== 1 ? 's are' : ' is'} currently running — will be
@@ -770,7 +770,7 @@ const EngineSection = () => {
           )}
           {timedOut && (
             <p
-              className="mt-2 font-mono text-label text-error"
+              className="mt-2 text-label text-error"
               data-testid="engine-timeout-msg"
             >
               Daemon did not respond. Run{' '}
@@ -781,7 +781,7 @@ const EngineSection = () => {
             </p>
           )}
           {restartError && (
-            <p className="mt-2 font-mono text-label text-error" data-testid="engine-restart-error">
+            <p className="mt-2 text-label text-error" data-testid="engine-restart-error">
               {restartError}
             </p>
           )}
@@ -789,7 +789,7 @@ const EngineSection = () => {
             <button
               onClick={handleRestartClick}
               disabled={restarting}
-              className="rounded-md border border-warn/50 bg-warn/10 px-3 py-1.5 font-mono text-label text-warn hover:bg-warn/20 disabled:opacity-50 transition-colors"
+              className="rounded-md border border-warn/50 bg-warn/10 px-3 py-1.5 text-label text-warn hover:bg-warn/20 disabled:opacity-50 transition-colors"
               data-testid="restart-engine-btn"
             >
               {restarting ? 'Restarting…' : 'Restart engine'}
@@ -829,11 +829,11 @@ const EngineSection = () => {
             )}
           </ul>
           {restartError && (
-            <p className="font-mono text-label text-error">{restartError}</p>
+            <p className="text-label text-error">{restartError}</p>
           )}
           <DialogFooter>
             <DialogClose asChild>
-              <button className="rounded border border-border px-3 py-1.5 font-mono text-label text-foreground/70 hover:border-border/80">
+              <button className="rounded border border-border px-3 py-1.5 text-label text-foreground/70 hover:border-border/80">
                 Cancel
               </button>
             </DialogClose>
@@ -888,7 +888,7 @@ const AdvisorySection = () => {
       </div>
 
       {advisories.length === 0 ? (
-        <p className="font-mono text-label text-muted-foreground/50">No pending advisories.</p>
+        <p className="text-label text-muted-foreground/50">No pending advisories.</p>
       ) : (
         <ul className="space-y-2">
           {advisories.map((item) => (
@@ -897,13 +897,13 @@ const AdvisorySection = () => {
               className="mars-card rounded bg-surface px-3 py-2"
             >
               <div className="flex items-start gap-2">
-                <span className="mt-0.5 shrink-0 rounded bg-primary/10 px-1.5 py-0.5 font-mono text-micro uppercase tracking-wide text-primary/60">
+                <span className="mt-0.5 shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-micro uppercase tracking-wide text-primary/60">
                   {ADVISORY_LABELS[item.kind] ?? item.kind.replace(/-/g, ' ')}
                 </span>
-                <span className="font-mono text-body text-foreground/80">{item.title}</span>
+                <span className="text-body text-foreground/80">{item.title}</span>
               </div>
               {item.body && (
-                <p className="mt-1 font-mono text-label text-muted-foreground leading-snug">
+                <p className="mt-1 text-label text-muted-foreground leading-snug">
                   {item.body}
                 </p>
               )}
@@ -966,7 +966,7 @@ const RulesSection = () => {
             placeholder="Filter glossary + ADRs…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full rounded border border-border bg-transparent px-3 py-1.5 font-mono text-label text-foreground placeholder:text-muted-foreground/40 focus:border-primary/50 focus:outline-none"
+            className="w-full rounded border border-border bg-transparent px-3 py-1.5 font-mono text-label text-foreground placeholder:text-muted-foreground/40 focus:border-border focus:outline-none"
           />
 
           {filteredTerms.length > 0 && (
@@ -977,7 +977,7 @@ const RulesSection = () => {
                   <span
                     key={t.term}
                     title={t.definition}
-                    className="rounded border border-border px-2 py-0.5 font-mono text-label text-foreground/80 hover:border-primary/40 hover:text-foreground"
+                    className="rounded border border-border px-2 py-0.5 font-mono text-label text-foreground/80 hover:border-border hover:text-foreground"
                   >
                     {t.term}
                   </span>
@@ -1003,7 +1003,7 @@ const RulesSection = () => {
           )}
 
           {filteredTerms.length === 0 && filteredAdrs.length === 0 && (
-            <p className="font-mono text-label text-muted-foreground/50">
+            <p className="text-label text-muted-foreground/50">
               {q ? 'No matches.' : 'No glossary terms or ADRs found.'}
             </p>
           )}
@@ -1055,7 +1055,7 @@ const StewardHistorySection = () => {
 
       {data && (
         <div className="mars-card mb-4 rounded bg-surface px-4 py-3">
-          <div className="mb-1 font-mono text-micro uppercase tracking-widest text-muted-foreground">
+          <div className="mb-1 text-micro uppercase tracking-widest text-muted-foreground">
             Concurrency cap ratchet
           </div>
           <CapRatchet
@@ -1342,7 +1342,7 @@ const HotPathSection = () => {
                       textAnchor="middle"
                       fontSize={Math.min(11, c.r * 0.38)}
                       fill="white"
-                      style={{ pointerEvents: 'none', fontFamily: 'monospace', fontWeight: 500 }}
+                      style={{ pointerEvents: 'none', fontFamily: 'var(--font-mono)', fontWeight: 500 }}
                     >
                       {leafLabel(c.path)}
                     </text>
@@ -1356,7 +1356,7 @@ const HotPathSection = () => {
                       fontSize={9}
                       fill="currentColor"
                       fillOpacity={0.7}
-                      style={{ pointerEvents: 'none', fontFamily: 'monospace' }}
+                      style={{ pointerEvents: 'none', fontFamily: 'var(--font-mono)' }}
                     >
                       copied
                     </text>
@@ -1390,7 +1390,7 @@ const HotPathSection = () => {
                       y={ty + 16}
                       fontSize={10}
                       fill="currentColor"
-                      style={{ fontFamily: 'monospace' }}
+                      style={{ fontFamily: 'var(--font-mono)' }}
                     >
                       {shortTooltipPath}
                     </text>
@@ -1400,7 +1400,7 @@ const HotPathSection = () => {
                       fontSize={10}
                       fill="currentColor"
                       fillOpacity={0.55}
-                      style={{ fontFamily: 'monospace' }}
+                      style={{ fontFamily: 'var(--font-mono)' }}
                     >
                       {tooltip.changes} commits
                     </text>

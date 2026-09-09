@@ -160,7 +160,7 @@ export const ConversationTimeline = ({
         <p
           role="alert"
           data-testid="conversation-load-error"
-          className="font-mono text-label text-error"
+          className="text-label text-error"
         >
           {message}
         </p>
@@ -175,7 +175,7 @@ export const ConversationTimeline = ({
           type="button"
           onClick={() => setVisibleSubjectCount((c) => c + INITIAL_SUBJECTS)}
           data-testid="show-earlier-button"
-          className="inline-flex min-h-[24px] items-center px-2 py-1 font-mono text-micro uppercase text-foreground underline"
+          className="inline-flex min-h-[24px] items-center px-2 py-1 text-micro uppercase text-foreground underline"
         >
           Show {hiddenSubjectCount} earlier
         </button>
@@ -217,14 +217,27 @@ export const ConversationTimeline = ({
                   data-testid={isNotice ? `notice-card-${entry.id}` : undefined}
                   className={isNotice ? 'mars-card rounded-md bg-card p-3' : undefined}
                 >
-                  <header className="mb-1 flex items-center gap-2 font-mono text-micro text-muted-foreground">
+                  <header className="mb-1.5 flex items-center gap-2 text-micro text-muted-foreground">
                     {isNotice ? (
-                      <span className="text-foreground">Mars</span>
+                      <span className="shrink-0 font-medium text-foreground">Mars</span>
                     ) : (
-                      <span>{entry.subjectTitle || 'Untitled subject'}</span>
+                      <span
+                        className="min-w-0 max-w-[42ch] truncate"
+                        title={entry.subjectTitle || undefined}
+                      >
+                        {entry.subjectTitle || 'Untitled subject'}
+                      </span>
                     )}
-                    {!isNotice && <span>closed</span>}
-                    <span className={isNotice ? 'rounded bg-muted-foreground/[0.08] px-1.5 py-0.5' : undefined}>{entry.role} · {friendlyKind(entry.kind)}</span>
+                    {!isNotice && <span className="shrink-0">closed</span>}
+                    <span
+                      className={
+                        isNotice
+                          ? 'shrink-0 rounded bg-muted-foreground/[0.08] px-1.5 py-0.5'
+                          : 'shrink-0 font-medium text-foreground/70'
+                      }
+                    >
+                      {entry.role} · {friendlyKind(entry.kind)}
+                    </span>
                     {entry.backingEntityId && (
                       <details className="inline">
                         <summary className="cursor-pointer font-mono text-micro text-muted-foreground/60 underline decoration-dotted">
@@ -237,7 +250,7 @@ export const ConversationTimeline = ({
                       <span data-testid="conversation-message-resolved">Resolved</span>
                     )}
                   </header>
-                  <p className="whitespace-pre-wrap font-mono text-body text-foreground">{body}</p>
+                  <p className="max-w-[68ch] whitespace-pre-wrap text-body leading-relaxed text-foreground">{body}</p>
                 </article>
                 {hasMemoryCut && <MemoryBoundaryLine />}
               </Fragment>
@@ -305,7 +318,7 @@ export const ConversationTimeline = ({
                 data-testid={isNotice ? `notice-card-${entry.id}` : undefined}
                 className={isNotice ? 'mars-card rounded-md bg-card p-3' : undefined}
               >
-                <header className="mb-1 flex items-center gap-2 font-mono text-micro text-muted-foreground">
+                <header className="mb-1.5 flex items-center gap-2 text-micro text-muted-foreground">
                   {isNotice ? (
                     <span className="text-foreground">Mars</span>
                   ) : (
@@ -329,10 +342,10 @@ export const ConversationTimeline = ({
                   <TypedBody
                     id={entry.id}
                     text={body}
-                    className="whitespace-pre-wrap font-mono text-body text-foreground"
+                    className="max-w-[68ch] whitespace-pre-wrap text-body leading-relaxed text-foreground"
                   />
                 ) : (
-                  <p className="whitespace-pre-wrap font-mono text-body text-foreground">{body}</p>
+                  <p className="max-w-[68ch] whitespace-pre-wrap text-body leading-relaxed text-foreground">{body}</p>
                 )}
                 {entry.segments.filter(isOfferSegment).map((segment) => (
                   <PreloadedResponses

@@ -219,15 +219,15 @@ export const ProposalNodeDrawer = ({
         data-testid="proposal-node-drawer"
         data-closing={closing ? 'true' : undefined}
         tabIndex={-1}
-        className="drawer-panel fixed inset-0 z-50 flex w-full flex-col border-primary/40 bg-background outline-none xl:inset-y-0 xl:left-auto xl:right-0 xl:w-[min(560px,100vw)] xl:border-l xl:shadow-2xl"
+        className="drawer-panel fixed inset-0 z-50 flex w-full flex-col border-border bg-background outline-none xl:inset-y-0 xl:left-auto xl:right-0 xl:w-[min(560px,100vw)] xl:border-l xl:shadow-2xl"
       >
         {/* Header — rich when DraftFeature is available, minimal fallback otherwise */}
-        <header className="flex items-start justify-between gap-3 border-b border-primary/40 px-4 py-3">
+        <header className="flex items-start justify-between gap-3 border-b border-border px-4 py-3">
           {proposal ? (
             <div className="flex min-w-0 flex-col gap-2">
               <h2
                 data-testid="proposal-node-title"
-                className="break-words font-mono text-title text-foreground"
+                className="break-words text-title text-foreground"
               >
                 {proposal.title}
               </h2>
@@ -235,20 +235,20 @@ export const ProposalNodeDrawer = ({
                 <span
                   data-testid="proposal-node-status"
                   aria-label={`status ${proposal.status}`}
-                  className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-micro font-semibold uppercase tracking-wide ${badgeClass(proposal.status)}`}
+                  className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-micro font-semibold uppercase tracking-wide ${badgeClass(proposal.status)}`}
                 >
                   {proposal.status}
                 </span>
                 <span
                   data-testid="proposal-node-source"
-                  className="font-mono text-micro uppercase tracking-wide text-muted-foreground"
+                  className="text-micro uppercase tracking-wide text-muted-foreground"
                 >
                   {proposal.source}
                 </span>
               </div>
             </div>
           ) : (
-            <h2 className="font-mono text-title uppercase tracking-wide text-primary">
+            <h2 className="text-title uppercase tracking-wide text-primary">
               Proposal {proposalId}
             </h2>
           )}
@@ -257,7 +257,7 @@ export const ProposalNodeDrawer = ({
             onClick={handleClose}
             aria-label="Close proposal detail"
             data-testid="proposal-node-close"
-            className="shrink-0 rounded border border-primary/40 px-2 py-0.5 font-mono text-body text-primary hover:bg-primary/10"
+            className="shrink-0 rounded border border-border px-2 py-0.5 font-mono text-body text-primary hover:bg-foreground/5"
           >
             Close
           </button>
@@ -273,7 +273,7 @@ export const ProposalNodeDrawer = ({
           {proposal?.problem.trim() ? (
             <section
               data-testid="proposal-node-problem"
-              className="border-b border-primary/40 px-4 py-3"
+              className="border-b border-border px-4 py-3"
             >
               <p className="mb-2 font-mono text-micro uppercase tracking-wide text-muted-foreground">
                 Problem
@@ -285,7 +285,7 @@ export const ProposalNodeDrawer = ({
           {proposal?.solution.trim() ? (
             <section
               data-testid="proposal-node-solution"
-              className="border-b border-primary/40 px-4 py-3"
+              className="border-b border-border px-4 py-3"
             >
               <p className="mb-2 font-mono text-micro uppercase tracking-wide text-muted-foreground">
                 Solution
@@ -297,9 +297,9 @@ export const ProposalNodeDrawer = ({
           {(proposal?.userStories.length ?? 0) > 0 ? (
             <section
               data-testid="proposal-node-stories"
-              className="border-b border-primary/40 px-4 py-3"
+              className="border-b border-border px-4 py-3"
             >
-              <p className="mb-2 font-mono text-micro uppercase tracking-wide text-muted-foreground">
+              <p className="mb-2 text-micro uppercase tracking-wide text-muted-foreground">
                 User stories
               </p>
               <ol className="flex flex-col gap-1.5">
@@ -316,9 +316,9 @@ export const ProposalNodeDrawer = ({
           {/* Local subgraph: proposal node + sliced tasks */}
           <section
             data-testid="proposal-node-subgraph"
-            className="border-b border-primary/20 px-4 py-3"
+            className="border-b border-border px-4 py-3"
           >
-            <h3 className="mb-2 font-mono text-label uppercase tracking-[0.1em] text-muted-foreground">
+            <h3 className="mb-2 text-label uppercase tracking-[0.1em] text-muted-foreground">
               Sliced tasks
             </h3>
             <div className="overflow-x-auto">
@@ -372,7 +372,7 @@ export const ProposalNodeDrawer = ({
                         x={6}
                         y={MINI_NODE_H / 2 + 4}
                         fontSize={10}
-                        fontFamily="monospace"
+                        fontFamily="var(--font-mono)"
                         style={{ fill: s.text }}
                       >
                         {node.label}
@@ -404,7 +404,7 @@ export const ProposalNodeDrawer = ({
 
         {/* CLI commands — shown when DraftFeature is available */}
         {proposal ? (
-          <section className="border-t border-primary/40 px-4 py-3">
+          <section className="border-t border-border px-4 py-3">
             <p className="mb-2 font-mono text-micro uppercase tracking-wide text-muted-foreground">CLI</p>
             {(STATUS_CLI_VERBS[proposal.status] ?? ['show']).map((verb) => {
               const cmd = `mars proposal ${verb} ${proposal.id}`
