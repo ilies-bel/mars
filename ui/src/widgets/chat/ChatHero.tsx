@@ -76,7 +76,7 @@ export interface ChatHeroProps {
 
 // ── Section header class ──────────────────────────────────────────────────────
 
-const SECTION_HEADER = 'text-label uppercase tracking-[0.1em] text-muted-foreground mb-2'
+const SECTION_HEADER = 'eyebrow text-muted-foreground mb-2'
 const SECTION_WRAPPER = 'flex flex-col gap-0.5'
 const ITEM_ROW = 'font-mono text-body text-foreground'
 const TASK_ID = 'text-muted-foreground font-semibold mr-1'

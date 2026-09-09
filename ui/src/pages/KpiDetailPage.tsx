@@ -188,7 +188,7 @@ const CostPerMergedTaskDetailSection = () => {
       </div>
 
       <div>
-        <div className="text-micro font-semibold uppercase tracking-[0.07em] mb-1 flex items-center border-b border-border pb-1 text-muted-foreground">
+        <div className="eyebrow mb-1 flex items-center border-b border-border pb-1 text-muted-foreground">
           <span className="w-32 shrink-0">Day</span>
           <span className="w-24 shrink-0 text-right">Merged</span>
           <span className="min-w-0 flex-1 text-right">Avg cost / merge</span>
@@ -333,7 +333,7 @@ export const KpiDetailPage = ({ kpiKey }: KpiDetailPageProps) => {
               type="button"
               disabled={diagnostic.status === 'running' || arcsLoading || arcs.length === 0}
               onClick={onRunDiagnostic}
-              className="text-micro font-semibold uppercase tracking-[0.07em] rounded border border-border px-3 py-1 text-foreground transition-colors hover:bg-primary/15 disabled:opacity-40 disabled:cursor-not-allowed"
+              className="eyebrow rounded border border-border px-3 py-1 text-foreground transition-colors hover:bg-primary/15 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               {diagnostic.status === 'running'
                 ? 'Analyzing…'
@@ -394,7 +394,7 @@ export const KpiDetailPage = ({ kpiKey }: KpiDetailPageProps) => {
                     type="button"
                     onClick={() => setArcFilter(f)}
                     className={[
-                      'rounded px-2 py-0.5 text-micro uppercase transition-colors',
+                      'rounded px-2 py-0.5 eyebrow transition-colors',
                       arcFilter === f
                         ? 'bg-primary/30 text-foreground'
                         : 'text-muted-foreground hover:text-foreground',
@@ -426,7 +426,7 @@ export const KpiDetailPage = ({ kpiKey }: KpiDetailPageProps) => {
           {!isLoading && filteredArcs.length > 0 && (
             <div className="flex flex-col gap-0.5" role="list">
               {/* Header */}
-              <div className="text-micro font-semibold uppercase tracking-[0.07em] flex items-center border-b border-border pb-1 text-muted-foreground">
+              <div className="eyebrow flex items-center border-b border-border pb-1 text-muted-foreground">
                 <span className="w-16 shrink-0">Status</span>
                 <span className="w-24 shrink-0">
                   {kpiKey === 'cost_per_arc' ? 'Cost' : 'Result'}

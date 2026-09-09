@@ -66,7 +66,7 @@ const DoneCriteriaSection = ({ task }: { task: ProgressTask }) => {
 
   return (
     <details className="mt-1">
-      <summary className="text-micro font-semibold uppercase tracking-[0.07em] cursor-pointer list-none text-muted-foreground hover:text-foreground transition-colors [&::-webkit-details-marker]:hidden">
+      <summary className="eyebrow cursor-pointer list-none text-muted-foreground hover:text-foreground transition-colors [&::-webkit-details-marker]:hidden">
         Done criteria <ChevronRight size={11} strokeWidth={2} aria-hidden="true" />
       </summary>
       <div className="pt-1">
@@ -159,7 +159,7 @@ const FocusPanel = ({ threadDetail, isStreaming, focusResult, threadId }: FocusP
       return (
         <div className="flex flex-col gap-1 px-3 py-2">
           <span
-            className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground"
+            className="eyebrow text-muted-foreground"
             data-testid="focus-panel-kind-badge"
           >
             {kind}
@@ -171,7 +171,7 @@ const FocusPanel = ({ threadDetail, isStreaming, focusResult, threadId }: FocusP
             {task.intent ?? task.prompt}
           </span>
           <span
-            className={`text-micro font-semibold uppercase tracking-[0.07em] ${chip.className} text-muted-foreground`}
+            className={`eyebrow ${chip.className} text-muted-foreground`}
             data-testid="focus-panel-status-chip"
           >
             {chip.label}
@@ -188,7 +188,7 @@ const FocusPanel = ({ threadDetail, isStreaming, focusResult, threadId }: FocusP
     return (
       <div className="flex flex-col gap-1 px-3 py-2">
         <span
-          className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground"
+          className="eyebrow text-muted-foreground"
           data-testid="focus-panel-kind-badge"
         >
           {badgeLabel}
@@ -228,7 +228,7 @@ const FocusPanel = ({ threadDetail, isStreaming, focusResult, threadId }: FocusP
         {title}
       </span>
       <span
-        className={`text-micro font-semibold uppercase tracking-[0.07em] ${chip.className} text-muted-foreground`}
+        className={`eyebrow ${chip.className} text-muted-foreground`}
         data-testid="focus-panel-status-chip"
       >
         {chip.label}
@@ -349,7 +349,7 @@ interface RailSectionProps {
 
 const RailSection = ({ title, children }: RailSectionProps) => (
   <section className="border-b border-border px-3 py-2" aria-label={title}>
-    <h2 className="text-micro font-semibold uppercase tracking-[0.07em] mb-1 text-muted-foreground">
+    <h2 className="eyebrow mb-1 text-muted-foreground">
       {title}
     </h2>
     {children}
@@ -702,12 +702,17 @@ const PanelSection = ({ title, defaultOpen = true, children }: PanelSectionProps
     <div className="border-b border-border">
       <button
         type="button"
-        className="text-micro font-semibold uppercase tracking-[0.07em] flex w-full items-center justify-between px-3 py-2 text-muted-foreground hover:text-foreground transition-colors"
+        className="eyebrow flex w-full items-center justify-between px-3 py-2 text-muted-foreground hover:text-foreground transition-colors"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
       >
         <span>{title}</span>
-        <span className="text-micro">{open ? '▾' : '▸'}</span>
+        <ChevronRight
+          size={11}
+          strokeWidth={2.5}
+          aria-hidden="true"
+          className={`shrink-0 transition-transform duration-150 ${open ? 'rotate-90' : ''}`}
+        />
       </button>
       {open && <div className="pb-1">{children}</div>}
     </div>
@@ -813,7 +818,7 @@ export const ContextRail = ({
       aria-label="Context rail"
     >
       <div className="flex items-center justify-between border-b border-border px-3 py-2">
-        <span className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">
+        <span className="eyebrow text-muted-foreground">
           Context
         </span>
         <button
@@ -823,7 +828,7 @@ export const ContextRail = ({
           title="Collapse context rail"
           aria-label="Collapse context rail"
         >
-          ▸
+          <ChevronRight size={13} strokeWidth={2.5} aria-hidden="true" />
         </button>
       </div>
 

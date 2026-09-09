@@ -37,12 +37,12 @@ export const PromotionLedgerTable = ({ workflow }: Props) => {
   return (
     <table className="w-full text-body">
       <thead>
-        <tr className="text-micro font-semibold uppercase tracking-[0.07em] text-left text-muted-foreground">
-          <th className="pb-1 pr-2 font-normal">Timestamp</th>
-          <th className="pb-1 pr-2 font-normal">Workflow</th>
-          <th className="pb-1 pr-2 font-normal">Decision</th>
-          <th className="pb-1 pr-2 font-normal">Versions</th>
-          <th className="pb-1 font-normal">Scores</th>
+        <tr className="eyebrow text-left text-muted-foreground">
+          <th className="pb-1 pr-2">Timestamp</th>
+          <th className="pb-1 pr-2">Workflow</th>
+          <th className="pb-1 pr-2">Decision</th>
+          <th className="pb-1 pr-2">Versions</th>
+          <th className="pb-1">Scores</th>
         </tr>
       </thead>
       <tbody>

@@ -177,7 +177,7 @@ export const HeroSuggestions = ({ alerts, onAlertClick, onChipClick, onWhatHappe
             <span>Mars</span>
             <span aria-hidden="true">·</span>
             <span>{kindBadgeLabel(topAlert.kind)}</span>
-            <span className={`text-micro font-semibold uppercase tracking-[0.07em] ml-auto ${priorityBadgeClass(topAlert.priority)} text-muted-foreground`}>{topAlert.priority}</span>
+            <span className={`eyebrow ml-auto ${priorityBadgeClass(topAlert.priority)} text-muted-foreground`}>{topAlert.priority}</span>
           </div>
           <h2 className="mt-2 font-mono text-title font-semibold text-foreground">{topAlert.title}</h2>
           <p className="mt-1 line-clamp-2 font-mono text-body leading-relaxed text-muted-foreground">{topAlert.body}</p>
@@ -186,7 +186,7 @@ export const HeroSuggestions = ({ alerts, onAlertClick, onChipClick, onWhatHappe
             <button
               type="button"
               data-testid="hero-alert-open"
-              className="text-micro font-semibold uppercase tracking-[0.07em] shrink-0 rounded-md border border-border px-3 py-1.5 text-foreground transition-colors hover:bg-foreground/5 active:scale-[0.98]"
+              className="eyebrow shrink-0 rounded-md border border-border px-3 py-1.5 text-foreground transition-colors hover:bg-foreground/5 active:scale-[0.98]"
               onClick={() => onAlertClick(topAlert)}
             >
               Open conversation
@@ -736,7 +736,7 @@ const renderPart = (
         data-testid="proposed-tool-call"
         className="my-2 rounded-md border border-highlight/30 bg-highlight/5 px-3 py-2 text-body"
       >
-        <p className="text-micro font-semibold uppercase tracking-[0.07em] text-highlight">
+        <p className="eyebrow text-highlight">
           Proposed — awaiting your confirmation
         </p>
         <p className="mt-1 text-foreground">{part.data.toolName}</p>
@@ -3028,7 +3028,7 @@ export const ChatPage = () => {
           <span>Chat credentials are unavailable — run codex login in your terminal. After completing the terminal login, retry.</span>
           <button
             type="button"
-            className="text-micro font-semibold uppercase tracking-[0.07em] ml-auto border border-warn/40 px-2 py-0.5 hover:bg-warn/10 active:scale-[0.97] text-muted-foreground"
+            className="eyebrow ml-auto border border-warn/40 px-2 py-0.5 hover:bg-warn/10 active:scale-[0.97] text-muted-foreground"
             onClick={() => retryCodexAuth()}
           >
             Retry

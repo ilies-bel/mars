@@ -148,7 +148,7 @@ export function SectionHeading({
 /** A small uppercase rail / column label. Not a section heading — see above. */
 export function SectionLabel({ children }: { children: ReactNode }): JSX.Element {
   return (
-    <span className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">
+    <span className="eyebrow text-muted-foreground">
       {children}
     </span>
   )

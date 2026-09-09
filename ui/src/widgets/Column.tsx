@@ -187,7 +187,7 @@ export const DenseColumn = ({ label, qualifier, count, children, tooltip }: Dens
     className="flex flex-col gap-2 min-w-0 min-h-0"
   >
     <header className="flex items-center justify-between border-b border-border pb-2" title={tooltip}>
-      <span className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">
+      <span className="eyebrow text-muted-foreground">
         {qualifier === undefined ? label.toUpperCase() : `${label.toUpperCase()} (${qualifier.toUpperCase()})`}
       </span>
       <span
@@ -315,7 +315,7 @@ export const ArcColumn = ({ label, arcs, accent = 'muted', expandAll = false, pu
                       arc {arc.id}
                     </span>
                     {substep ? (
-                      <span className="text-micro font-semibold uppercase tracking-[0.07em] mt-1 block text-status-running">
+                      <span className="eyebrow mt-1 block text-status-running">
                         {substep}
                       </span>
                     ) : null}

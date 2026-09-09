@@ -1,3 +1,4 @@
+import { ChevronRight } from 'lucide-react'
 import type { ReactNode } from 'react'
 
 interface CollapsibleSectionProps {
@@ -35,14 +36,16 @@ export const CollapsibleSection = ({
     data-testid={testId}
     className={`group ${className}`}
   >
-    <summary className="text-micro font-semibold uppercase tracking-[0.07em] flex cursor-pointer list-none items-center gap-1.5 py-0.5 text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
-      {/* Rotate chevron 90° when the <details> is open via the group-open variant */}
-      <span
-        className="inline-block text-micro transition-transform group-open:rotate-90"
+    <summary className="eyebrow flex cursor-pointer list-none items-center gap-1.5 py-0.5 text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
+      {/* A real chevron, not a "▸" text glyph: the character's metrics and
+          vertical centring vary per font, and it cannot take a stroke weight.
+          Rotates 90° when the <details> is open via the group-open variant. */}
+      <ChevronRight
+        size={11}
+        strokeWidth={2.5}
+        className="shrink-0 transition-transform duration-150 group-open:rotate-90"
         aria-hidden="true"
-      >
-        ▸
-      </span>
+      />
       {label}
     </summary>
     <div className="mt-1.5">

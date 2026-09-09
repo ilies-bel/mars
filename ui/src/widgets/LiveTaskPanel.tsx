@@ -83,7 +83,7 @@ export interface LiveTaskPanelProps {
 export const liveTaskQueryKey = (taskId: string) =>
   ['task', taskId, 'live'] as const
 
-const SECTION_LABEL = 'font-mono text-label uppercase tracking-[0.1em] text-muted-foreground'
+const SECTION_LABEL = 'eyebrow text-muted-foreground'
 
 /**
  * LiveTaskPanel — renders the live briefing for an awaiting-human task.

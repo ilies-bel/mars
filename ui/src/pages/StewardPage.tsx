@@ -51,7 +51,7 @@ const laneCardClass = (active: boolean): string =>
 
 const laneHeaderClass = (active: boolean): string =>
   [
-    'flex items-center gap-2 text-label font-semibold uppercase tracking-wider',
+    'flex items-center gap-2 eyebrow',
     active ? 'text-success' : 'text-muted-foreground',
   ].join(' ')
 
@@ -281,7 +281,7 @@ const RuntimeTuningLane = ({ data }: { data: StewardView['runtimeTuning'] }) => 
           <StatusDot active={false} label="not Steward-driven" />
           <span>Runtime tuning</span>
           <span
-            className="ml-auto rounded bg-muted/30 px-1.5 py-0.5 text-micro text-muted-foreground"
+            className="ml-auto rounded bg-muted/30 px-1.5 py-0.5 text-muted-foreground"
             data-testid="runtime-tuning-status-chip"
           >
             {formatLastActivity(lastActivity)}
@@ -303,7 +303,7 @@ const RuntimeTuningLane = ({ data }: { data: StewardView['runtimeTuning'] }) => 
 
       {/* Acks — Steward's own first-person voice, newest first */}
       <div className="space-y-2">
-        <div className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">
+        <div className="eyebrow text-muted-foreground">
           Steward acknowledgments ({acks.length})
         </div>
         {acks.length === 0 ? (
@@ -358,7 +358,7 @@ const SignatureStormLane = ({ data }: { data: StewardView['signatureStorm'] }) =
               breaker tripped
             </span>
           ) : (
-            <span className="ml-auto rounded bg-success/20 px-1.5 py-0.5 text-micro text-success">
+            <span className="ml-auto rounded bg-success/20 px-1.5 py-0.5 text-success">
               breaker clear
             </span>
           )}
@@ -389,7 +389,7 @@ const SignatureStormLane = ({ data }: { data: StewardView['signatureStorm'] }) =
 
       <div className="grid grid-cols-2 gap-3">
         <div className="rounded border border-border/50 bg-muted/20 p-3">
-          <div className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">
+          <div className="eyebrow text-muted-foreground">
             Breaker (Postgres)
           </div>
           <div
@@ -405,7 +405,7 @@ const SignatureStormLane = ({ data }: { data: StewardView['signatureStorm'] }) =
           )}
         </div>
         <div className="rounded border border-border/50 bg-muted/20 p-3">
-          <div className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">
+          <div className="eyebrow text-muted-foreground">
             Dispatch (in-memory)
           </div>
           <div
@@ -420,7 +420,7 @@ const SignatureStormLane = ({ data }: { data: StewardView['signatureStorm'] }) =
 
       <div className="mt-3 space-y-1">
         <div className="flex items-baseline gap-2">
-          <span className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground w-28">
+          <span className="eyebrow text-muted-foreground w-28">
             Streak count
           </span>
           <span className="font-mono text-body font-semibold text-foreground" data-testid="storm-streak">
@@ -430,7 +430,7 @@ const SignatureStormLane = ({ data }: { data: StewardView['signatureStorm'] }) =
         </div>
         {current_signature !== null && (
           <div className="flex items-baseline gap-2">
-            <span className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground w-28">
+            <span className="eyebrow text-muted-foreground w-28">
               Signature
             </span>
             <code
@@ -443,7 +443,7 @@ const SignatureStormLane = ({ data }: { data: StewardView['signatureStorm'] }) =
         )}
         {last_task_id !== null && (
           <div className="flex items-baseline gap-2">
-            <span className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground w-28">
+            <span className="eyebrow text-muted-foreground w-28">
               Last task
             </span>
             <code className="font-mono text-micro text-muted-foreground">{last_task_id}</code>
@@ -451,7 +451,7 @@ const SignatureStormLane = ({ data }: { data: StewardView['signatureStorm'] }) =
         )}
         {signatureStormAqCount > 0 && (
           <div className="flex items-baseline gap-2">
-            <span className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground w-28">
+            <span className="eyebrow text-muted-foreground w-28">
               AQ items
             </span>
             <span className="font-mono text-label text-error" data-testid="storm-aq-count">
@@ -479,7 +479,7 @@ const WorkflowPatchesLane = ({ data }: { data: StewardView['workflowPatches'] })
           <div className={laneHeaderClass(false)}>
             <StatusDot active={false} />
             <span>Workflow patches</span>
-            <span className="ml-auto rounded bg-muted/30 px-1.5 py-0.5 text-micro text-muted-foreground">
+            <span className="ml-auto rounded bg-muted/30 px-1.5 py-0.5 text-muted-foreground">
               built — no callers
             </span>
           </div>
@@ -506,7 +506,7 @@ const WorkflowPatchesLane = ({ data }: { data: StewardView['workflowPatches'] })
         <div className={laneHeaderClass(true)}>
           <StatusDot active={true} />
           <span>Workflow patches</span>
-          <span className="ml-auto rounded bg-success/20 px-1.5 py-0.5 text-micro text-success">
+          <span className="ml-auto rounded bg-success/20 px-1.5 py-0.5 text-success">
             arc-verifier
           </span>
         </div>
@@ -577,7 +577,7 @@ const GateHealthLane = ({
         <div className={laneHeaderClass(true)}>
           <StatusDot active={true} />
           <span>Verify gates</span>
-          <span className="ml-auto rounded bg-success/20 px-1.5 py-0.5 text-micro text-success">
+          <span className="ml-auto rounded bg-success/20 px-1.5 py-0.5 text-success">
             standing registry
           </span>
         </div>
@@ -760,7 +760,7 @@ export const StewardPage = () => {
 
       {/* Agent spec footer */}
       <footer className="mt-2 rounded border border-border/30 bg-muted/10 px-4 py-3">
-        <div className="text-micro font-semibold uppercase tracking-[0.07em] mb-1 text-muted-foreground">
+        <div className="eyebrow mb-1 text-muted-foreground">
           Agent spec — {data.agentSpec.name} ({data.agentSpec.dispatchSites} dispatch site{data.agentSpec.dispatchSites !== 1 ? 's' : ''})
         </div>
         <div className="flex flex-wrap gap-x-4 gap-y-1 font-mono text-micro text-muted-foreground">

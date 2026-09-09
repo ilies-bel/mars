@@ -46,7 +46,7 @@ interface ResolutionBlockProps {
 
 const ResolutionBlock = ({ resolution }: ResolutionBlockProps) => (
   <div data-testid="resolution-block">
-    <dt className="text-micro font-semibold uppercase tracking-[0.07em] mb-2 border-b border-border pb-1 text-muted-foreground">
+    <dt className="eyebrow mb-2 border-b border-border pb-1 text-muted-foreground">
       Resolution
     </dt>
     <dd className="flex flex-col gap-1">
@@ -64,7 +64,7 @@ const ResolutionBlock = ({ resolution }: ResolutionBlockProps) => (
       ) : null}
       {resolution.rootCause ? (
         <div className="mt-1">
-          <span className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">
+          <span className="eyebrow text-muted-foreground">
             Root cause:{' '}
           </span>
           <span className="font-mono text-label text-muted-foreground">
@@ -264,7 +264,7 @@ export const ActionBar = ({ item }: ActionBarProps) => {
         }
       }}
     >
-      <dt className="text-micro font-semibold uppercase tracking-[0.07em] mb-2 border-b border-border pb-1 text-muted-foreground">
+      <dt className="eyebrow mb-2 border-b border-border pb-1 text-muted-foreground">
         Move forward
       </dt>
       <dd className="flex flex-wrap gap-2">
@@ -285,7 +285,7 @@ export const ActionBar = ({ item }: ActionBarProps) => {
               data-testid={action.needsConfirm ? `confirm-step-${action.id}` : undefined}
               data-confirm-pending={pendingConfirmId === action.id ? 'true' : undefined}
               className={[
-                'rounded-md border px-3 py-1.5 font-mono text-label uppercase transition active:scale-[0.97] disabled:opacity-50',
+                'rounded-md border px-3 py-1.5 eyebrow transition active:scale-[0.97] disabled:opacity-50',
                 pendingConfirmId === action.id
                   ? 'border-error bg-error/10 text-error'
                   : action.needsConfirm
@@ -313,7 +313,7 @@ export const ActionBar = ({ item }: ActionBarProps) => {
           data-testid="teach-prompt"
         >
           <p className="text-label text-foreground">
-            Apply <span className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">{teachPromptOp}</span> automatically next time?
+            Apply <span className="eyebrow text-muted-foreground">{teachPromptOp}</span> automatically next time?
           </p>
           <div className="mt-2 flex gap-2">
             <button
@@ -321,7 +321,7 @@ export const ActionBar = ({ item }: ActionBarProps) => {
               disabled={teachStatus === 'saving'}
               onClick={() => { void handleTeachYes() }}
               data-testid="teach-yes"
-              className="text-micro font-semibold uppercase tracking-[0.07em] rounded-md border border-border px-3 py-1 text-foreground transition hover:bg-primary/20 disabled:opacity-50"
+              className="eyebrow rounded-md border border-border px-3 py-1 text-foreground transition hover:bg-primary/20 disabled:opacity-50"
             >
               {teachStatus === 'saving' ? 'Saving…' : 'Yes'}
             </button>
@@ -329,7 +329,7 @@ export const ActionBar = ({ item }: ActionBarProps) => {
               type="button"
               onClick={() => setTeachPromptOp(null)}
               data-testid="teach-dismiss"
-              className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground transition hover:text-foreground"
+              className="eyebrow text-muted-foreground transition hover:text-foreground"
             >
               No thanks
             </button>
@@ -376,19 +376,19 @@ const LearnedRecipeSection = ({ failureSignature }: { failureSignature: string }
 
   return (
     <div data-testid="learned-recipe-section">
-      <dt className="text-micro font-semibold uppercase tracking-[0.07em] mb-2 border-b border-border pb-1 text-muted-foreground">
+      <dt className="eyebrow mb-2 border-b border-border pb-1 text-muted-foreground">
         Auto-run rule
       </dt>
       <dd className="flex items-center gap-3">
         <span className="text-label text-foreground">
-          Mars will auto-<span className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">{stored.actionOp}</span> on next occurrence
+          Mars will auto-<span className="eyebrow text-muted-foreground">{stored.actionOp}</span> on next occurrence
         </span>
         <button
           type="button"
           disabled={unlearnMutation.isPending}
           onClick={() => unlearnMutation.mutate()}
           data-testid="unlearn-recipe"
-          className="text-micro font-semibold uppercase tracking-[0.07em] border border-border px-2 py-0.5 text-muted-foreground transition hover:border-error/50 hover:text-error disabled:opacity-50"
+          className="eyebrow border border-border px-2 py-0.5 text-muted-foreground transition hover:border-error/50 hover:text-error disabled:opacity-50"
         >
           {unlearnMutation.isPending ? 'Removing…' : 'Un-teach'}
         </button>
@@ -422,7 +422,7 @@ const TaskWorkflowStepSection = ({ taskId }: { taskId: string }) => {
 
   return (
     <div>
-      <dt className="text-micro font-semibold uppercase tracking-[0.07em] mb-2 border-b border-border pb-1 text-muted-foreground">
+      <dt className="eyebrow mb-2 border-b border-border pb-1 text-muted-foreground">
         Step
       </dt>
       <dd data-testid="task-workflow-step" className="font-mono text-label text-foreground">
@@ -466,7 +466,7 @@ const TracesSection = ({ taskId }: TracesProps) => {
   if (initial.isPending) {
     return (
       <div>
-        <dt className="text-micro font-semibold uppercase tracking-[0.07em] mb-2 border-b border-border pb-1 text-muted-foreground">
+        <dt className="eyebrow mb-2 border-b border-border pb-1 text-muted-foreground">
           Traces
         </dt>
         <dd className="text-muted-foreground">Loading…</dd>
@@ -476,7 +476,7 @@ const TracesSection = ({ taskId }: TracesProps) => {
   if (initial.isError || !initial.data) {
     return (
       <div>
-        <dt className="text-micro font-semibold uppercase tracking-[0.07em] mb-2 border-b border-border pb-1 text-muted-foreground">
+        <dt className="eyebrow mb-2 border-b border-border pb-1 text-muted-foreground">
           Traces
         </dt>
         <FallbackSurface error={initial.error} of="trace events" variant="inline" />
@@ -491,7 +491,7 @@ const TracesSection = ({ taskId }: TracesProps) => {
   if (events.length === 0) {
     return (
       <div>
-        <dt className="text-micro font-semibold uppercase tracking-[0.07em] mb-2 border-b border-border pb-1 text-muted-foreground">
+        <dt className="eyebrow mb-2 border-b border-border pb-1 text-muted-foreground">
           Traces
         </dt>
         <dd className="text-muted-foreground">No trace events</dd>
@@ -501,7 +501,7 @@ const TracesSection = ({ taskId }: TracesProps) => {
 
   return (
     <div>
-      <dt className="text-micro font-semibold uppercase tracking-[0.07em] mb-2 border-b border-border pb-1 text-muted-foreground">
+      <dt className="eyebrow mb-2 border-b border-border pb-1 text-muted-foreground">
         Traces
       </dt>
       <dd>
@@ -510,7 +510,7 @@ const TracesSection = ({ taskId }: TracesProps) => {
             {events.map((e) => (
               <li key={e.id} className={`border-l-2 ${severityRowClass(e.severity)} px-2 py-1 text-foreground`}>
                 <span className="text-muted-foreground">{relativeTime(e.timestamp)}</span>{' '}
-                <span className={`text-micro font-semibold uppercase tracking-[0.07em] ${e.severity !== 'info' ? 'font-semibold ' : ''}${severityColor(e.severity)} text-muted-foreground`}>
+                <span className={`eyebrow ${e.severity !== 'info' ? 'font-semibold ' : ''}${severityColor(e.severity)} text-muted-foreground`}>
                   [{e.severity}]
                 </span>{' '}
                 <span className="font-mono text-micro text-muted-foreground">{e.kind}</span>
@@ -531,7 +531,7 @@ const TracesSection = ({ taskId }: TracesProps) => {
             type="button"
             disabled={more.isPending}
             onClick={() => more.mutate(nextCursor)}
-            className="text-micro font-semibold uppercase tracking-[0.07em] mt-1 inline-flex min-h-[24px] items-center px-2 py-1 text-foreground underline disabled:opacity-50"
+            className="eyebrow mt-1 inline-flex min-h-[24px] items-center px-2 py-1 text-foreground underline disabled:opacity-50"
           >
             {more.isPending ? 'Loading…' : 'Load more'}
           </button>
@@ -556,7 +556,7 @@ const ProposalDetailSection = ({ proposalId }: { proposalId: string }) => {
   if (query.isPending) {
     return (
       <div>
-        <dt className="text-micro font-semibold uppercase tracking-[0.07em] mb-2 border-b border-border pb-1 text-muted-foreground">
+        <dt className="eyebrow mb-2 border-b border-border pb-1 text-muted-foreground">
           Proposal
         </dt>
         <dd className="text-muted-foreground">Loading…</dd>
@@ -567,7 +567,7 @@ const ProposalDetailSection = ({ proposalId }: { proposalId: string }) => {
   if (query.isError || !query.data) {
     return (
       <div>
-        <dt className="text-micro font-semibold uppercase tracking-[0.07em] mb-2 border-b border-border pb-1 text-muted-foreground">
+        <dt className="eyebrow mb-2 border-b border-border pb-1 text-muted-foreground">
           Proposal
         </dt>
         <dd className="text-muted-foreground">(could not load proposal)</dd>
@@ -581,7 +581,7 @@ const ProposalDetailSection = ({ proposalId }: { proposalId: string }) => {
     <>
       {p.problem ? (
         <div>
-          <dt className="text-micro font-semibold uppercase tracking-[0.07em] mb-2 border-b border-border pb-1 text-muted-foreground">
+          <dt className="eyebrow mb-2 border-b border-border pb-1 text-muted-foreground">
             Problem
           </dt>
           <dd className="max-w-[68ch] whitespace-pre-wrap leading-relaxed text-foreground">{p.problem}</dd>
@@ -589,7 +589,7 @@ const ProposalDetailSection = ({ proposalId }: { proposalId: string }) => {
       ) : null}
       {p.solution ? (
         <div>
-          <dt className="text-micro font-semibold uppercase tracking-[0.07em] mb-2 border-b border-border pb-1 text-muted-foreground">
+          <dt className="eyebrow mb-2 border-b border-border pb-1 text-muted-foreground">
             Solution
           </dt>
           <dd className="max-w-[68ch] whitespace-pre-wrap leading-relaxed text-foreground">{p.solution}</dd>
@@ -597,7 +597,7 @@ const ProposalDetailSection = ({ proposalId }: { proposalId: string }) => {
       ) : null}
       {p.userStories.length > 0 ? (
         <div>
-          <dt className="text-micro font-semibold uppercase tracking-[0.07em] mb-2 border-b border-border pb-1 text-muted-foreground">
+          <dt className="eyebrow mb-2 border-b border-border pb-1 text-muted-foreground">
             User stories
           </dt>
           <dd>
@@ -611,7 +611,7 @@ const ProposalDetailSection = ({ proposalId }: { proposalId: string }) => {
       ) : null}
       {p.outOfScope ? (
         <div>
-          <dt className="text-micro font-semibold uppercase tracking-[0.07em] mb-2 border-b border-border pb-1 text-muted-foreground">
+          <dt className="eyebrow mb-2 border-b border-border pb-1 text-muted-foreground">
             Out of scope
           </dt>
           <dd className="max-w-[68ch] whitespace-pre-wrap leading-relaxed text-foreground">{p.outOfScope}</dd>
@@ -619,7 +619,7 @@ const ProposalDetailSection = ({ proposalId }: { proposalId: string }) => {
       ) : null}
       {p.notes ? (
         <div>
-          <dt className="text-micro font-semibold uppercase tracking-[0.07em] mb-2 border-b border-border pb-1 text-muted-foreground">
+          <dt className="eyebrow mb-2 border-b border-border pb-1 text-muted-foreground">
             Notes
           </dt>
           <dd className="max-w-[68ch] whitespace-pre-wrap leading-relaxed text-foreground">{p.notes}</dd>
@@ -667,18 +667,18 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
             <span className="text-foreground">Mars</span>
             <span aria-hidden="true">·</span>
             <span>{relativeTime(item.at)}</span>
-            <span className="text-micro font-semibold uppercase tracking-[0.07em] ml-auto text-muted-foreground">Action needed</span>
+            <span className="eyebrow ml-auto text-muted-foreground">Action needed</span>
           </div>
           {/* Headline: original task id, kind badge, priority */}
           <div className="flex items-baseline gap-3">
-            <span className="text-micro font-semibold uppercase tracking-[0.07em] break-all text-muted-foreground">
+            <span className="eyebrow break-all text-muted-foreground">
               {item.entityId}
             </span>
-            <span className="text-micro font-semibold uppercase tracking-[0.07em] shrink-0 text-muted-foreground">
+            <span className="eyebrow shrink-0 text-muted-foreground">
               {kindBadgeLabel(item.kind)}
             </span>
           <span
-            className={`text-micro font-semibold uppercase tracking-[0.07em] ml-auto ${priorityBadgeClass(item.priority)} text-muted-foreground`}
+            className={`eyebrow ml-auto ${priorityBadgeClass(item.priority)} text-muted-foreground`}
           >
             {item.priority}
           </span>
@@ -712,7 +712,7 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
             type="button"
             data-testid="aq-open-task-detail"
             onClick={() => openTask(item.entityId)}
-            className="text-micro font-semibold uppercase tracking-[0.07em] mt-3 border border-border px-3 py-1.5 text-foreground transition-colors hover:bg-primary/20"
+            className="eyebrow mt-3 border border-border px-3 py-1.5 text-foreground transition-colors hover:bg-primary/20"
           >
             Open task detail
           </button>
@@ -737,7 +737,7 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
           {item.kind === 'stale-worktree' && (
             <>
               <div>
-                <dt className="text-micro font-semibold uppercase tracking-[0.07em] mb-2 border-b border-border pb-1 text-muted-foreground">
+                <dt className="eyebrow mb-2 border-b border-border pb-1 text-muted-foreground">
                   Task prompt
                 </dt>
                 <dd className="max-w-[68ch] whitespace-pre-wrap leading-relaxed text-foreground">
@@ -747,7 +747,7 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
                 </dd>
               </div>
               <div>
-                <dt className="text-micro font-semibold uppercase tracking-[0.07em] mb-2 border-b border-border pb-1 text-muted-foreground">
+                <dt className="eyebrow mb-2 border-b border-border pb-1 text-muted-foreground">
                   Status · Age · Branch
                 </dt>
                 <dd className="text-foreground">
@@ -759,7 +759,7 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
                 </dd>
               </div>
               <div>
-                <dt className="text-micro font-semibold uppercase tracking-[0.07em] mb-2 border-b border-border pb-1 text-muted-foreground">
+                <dt className="eyebrow mb-2 border-b border-border pb-1 text-muted-foreground">
                   Investigation
                 </dt>
                 <dd>
@@ -785,7 +785,7 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
               before clicking Validate / Reject in the action bar above. */}
           {item.kind === 'awaiting-validation' && item.devServerUrl ? (
             <div>
-              <dt className="text-micro font-semibold uppercase tracking-[0.07em] mb-2 border-b border-border pb-1 text-muted-foreground">
+              <dt className="eyebrow mb-2 border-b border-border pb-1 text-muted-foreground">
                 Live preview
               </dt>
               <dd>
@@ -808,7 +808,7 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
           {/* Diagnosis before the origin chain so context is established first. */}
           {item.diagnosis ? (
             <div>
-              <dt className="text-micro font-semibold uppercase tracking-[0.07em] mb-2 border-b border-border pb-1 text-muted-foreground">
+              <dt className="eyebrow mb-2 border-b border-border pb-1 text-muted-foreground">
                 Diagnosis
               </dt>
               <dd>
@@ -847,7 +847,7 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
           {/* Details — shown for stale-worktree rows (body text). */}
           {item.kind === 'stale-worktree' ? (
             <div>
-              <dt className="text-micro font-semibold uppercase tracking-[0.07em] mb-2 border-b border-border pb-1 text-muted-foreground">
+              <dt className="eyebrow mb-2 border-b border-border pb-1 text-muted-foreground">
                 Details
               </dt>
               <dd className="max-w-[68ch] whitespace-pre-wrap leading-relaxed text-foreground">
@@ -862,7 +862,7 @@ export const QueueThreadDetail = ({ item, onNavigateToTask }: DetailProps) => {
             <>
               {item.dag.proposalId && (
                 <div>
-                  <dt className="text-micro font-semibold uppercase tracking-[0.07em] mb-2 border-b border-border pb-1 text-muted-foreground">
+                  <dt className="eyebrow mb-2 border-b border-border pb-1 text-muted-foreground">
                     From proposal
                   </dt>
                   <dd className="text-foreground">{item.dag.proposalId}</dd>

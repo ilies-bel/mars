@@ -240,7 +240,7 @@ const LeversSection = () => {
           {/* Caps — read-only */}
           <div className="mars-card rounded bg-surface px-4 py-3">
             <div className="mb-4">
-              <span className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">
+              <span className="eyebrow text-muted-foreground">
                 Concurrency caps
               </span>
             </div>
@@ -672,7 +672,7 @@ const Stat = ({ label, value, colorClass }: StatProps) => (
     >
       {value}
     </span>
-    <span className="text-micro font-semibold uppercase tracking-[0.07em] mt-0.5 text-muted-foreground">
+    <span className="eyebrow mt-0.5 text-muted-foreground">
       {label}
     </span>
   </div>
@@ -893,7 +893,7 @@ const AdvisorySection = () => {
               className="mars-card rounded bg-surface px-3 py-2"
             >
               <div className="flex items-start gap-2">
-                <span className="text-micro font-semibold uppercase tracking-[0.07em] mt-0.5 shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-muted-foreground">
+                <span className="eyebrow mt-0.5 shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-muted-foreground">
                   {ADVISORY_LABELS[item.kind] ?? item.kind.replace(/-/g, ' ')}
                 </span>
                 <span className="text-body text-foreground">{item.title}</span>
@@ -1049,7 +1049,7 @@ const StewardHistorySection = () => {
 
       {data && (
         <div className="mars-card mb-4 rounded bg-surface px-4 py-3">
-          <div className="text-micro font-semibold uppercase tracking-[0.07em] mb-1 text-muted-foreground">
+          <div className="eyebrow mb-1 text-muted-foreground">
             Concurrency cap ratchet
           </div>
           <CapRatchet
@@ -1406,7 +1406,7 @@ const HotPathSection = () => {
 
           {/* ── Top-10 text list ─────────────────────────────────────────── */}
           <div data-testid="hot-path-top10">
-            <div className="text-micro font-semibold uppercase tracking-[0.07em] mb-1 text-muted-foreground">
+            <div className="eyebrow mb-1 text-muted-foreground">
               Top files by commit count
             </div>
             <ol className="flex flex-col gap-0.5">

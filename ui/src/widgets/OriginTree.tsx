@@ -19,7 +19,7 @@ interface OriginTreeProps {
 // render and the `onNavigate` button render so the two stay in lockstep.
 const OriginNodeContent = ({ node }: { node: OriginNode }) => (
   <>
-    <span className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">
+    <span className="eyebrow text-muted-foreground">
       {originKindLabel(node.kind)}
     </span>
     <span className="break-all font-mono text-micro text-muted-foreground">
@@ -28,7 +28,7 @@ const OriginNodeContent = ({ node }: { node: OriginNode }) => (
     <span className="break-words">
       {node.title.length > 70 ? `${node.title.slice(0, 69)}…` : node.title}
     </span>
-    <span className="text-micro font-semibold uppercase tracking-[0.07em] ml-auto text-muted-foreground">
+    <span className="eyebrow ml-auto text-muted-foreground">
       {node.status}
     </span>
   </>
@@ -101,7 +101,7 @@ export const OriginTree = ({ taskId, onNavigate, currentId }: OriginTreeProps) =
   if (query.isPending) {
     return (
       <div>
-        <dt className="text-micro font-semibold uppercase tracking-[0.07em] mb-2 border-b border-border pb-1 text-muted-foreground">
+        <dt className="eyebrow mb-2 border-b border-border pb-1 text-muted-foreground">
           Origins
         </dt>
         <dd>
@@ -113,7 +113,7 @@ export const OriginTree = ({ taskId, onNavigate, currentId }: OriginTreeProps) =
   if (query.isError || !query.data) {
     return (
       <div>
-        <dt className="text-micro font-semibold uppercase tracking-[0.07em] mb-2 border-b border-border pb-1 text-muted-foreground">
+        <dt className="eyebrow mb-2 border-b border-border pb-1 text-muted-foreground">
           Origins
         </dt>
         <FallbackSurface error={query.error} of="origin tasks" variant="inline" />
@@ -126,7 +126,7 @@ export const OriginTree = ({ taskId, onNavigate, currentId }: OriginTreeProps) =
   if (root.children.length === 0 && root.id === taskId) {
     return (
       <div>
-        <dt className="text-micro font-semibold uppercase tracking-[0.07em] mb-2 border-b border-border pb-1 text-muted-foreground">
+        <dt className="eyebrow mb-2 border-b border-border pb-1 text-muted-foreground">
           Origins
         </dt>
         <dd className="text-muted-foreground">No origin recorded for this task.</dd>
@@ -136,7 +136,7 @@ export const OriginTree = ({ taskId, onNavigate, currentId }: OriginTreeProps) =
 
   return (
     <div>
-      <dt className="text-micro font-semibold uppercase tracking-[0.07em] mb-2 border-b border-border pb-1 text-muted-foreground">
+      <dt className="eyebrow mb-2 border-b border-border pb-1 text-muted-foreground">
         Origins
       </dt>
       <dd data-testid="origin-tree">

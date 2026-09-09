@@ -437,13 +437,13 @@ export const ProposalDetailDrawer = ({
             <span
               data-testid="proposal-detail-status"
               aria-label={`status ${proposal.status}`}
-              className={`text-micro font-semibold uppercase tracking-[0.07em] inline-flex items-center gap-1 rounded px-1.5 py-0.5 ${badgeClass( proposal.status, )} text-muted-foreground`}
+              className={`eyebrow inline-flex items-center gap-1 rounded px-1.5 py-0.5 ${badgeClass( proposal.status, )} text-muted-foreground`}
             >
               {proposal.status}
             </span>
             <span
               data-testid="proposal-detail-source"
-              className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground"
+              className="eyebrow text-muted-foreground"
             >
               {proposal.source}
             </span>
@@ -466,7 +466,7 @@ export const ProposalDetailDrawer = ({
             {proposal.userStories.length > 0 && (
               <span
                 data-testid="proposal-detail-story-count"
-                className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground"
+                className="eyebrow text-muted-foreground"
               >
                 {proposal.userStories.length}{' '}
                 {proposal.userStories.length === 1 ? 'story' : 'stories'}
@@ -666,7 +666,7 @@ export const ProposalDetailDrawer = ({
             data-testid="sliced-tasks"
             className="flex flex-col gap-2 border-b border-border px-4 py-3"
           >
-            <h3 className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">
+            <h3 className="eyebrow text-muted-foreground">
               Sliced tasks
             </h3>
             <ul className="flex flex-col gap-1.5">
@@ -678,7 +678,7 @@ export const ProposalDetailDrawer = ({
                   >
                     <span className="shrink-0 text-muted-foreground">{task.id}</span>
                     <span
-                      className={`text-micro font-semibold uppercase tracking-[0.07em] inline-flex shrink-0 items-center rounded px-1 py-0.5 ${badgeClass(task.status)} text-muted-foreground`}
+                      className={`eyebrow inline-flex shrink-0 items-center rounded px-1 py-0.5 ${badgeClass(task.status)} text-muted-foreground`}
                     >
                       {task.status}
                     </span>

@@ -235,20 +235,20 @@ export const ProposalNodeDrawer = ({
                 <span
                   data-testid="proposal-node-status"
                   aria-label={`status ${proposal.status}`}
-                  className={`text-micro font-semibold uppercase tracking-[0.07em] inline-flex items-center gap-1 rounded px-1.5 py-0.5 ${badgeClass(proposal.status)} text-muted-foreground`}
+                  className={`eyebrow inline-flex items-center gap-1 rounded px-1.5 py-0.5 ${badgeClass(proposal.status)} text-muted-foreground`}
                 >
                   {proposal.status}
                 </span>
                 <span
                   data-testid="proposal-node-source"
-                  className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground"
+                  className="eyebrow text-muted-foreground"
                 >
                   {proposal.source}
                 </span>
               </div>
             </div>
           ) : (
-            <h2 className="text-title uppercase tracking-wide text-muted-foreground">
+            <h2 className="text-title font-semibold text-foreground">
               Proposal {proposalId}
             </h2>
           )}
@@ -275,7 +275,7 @@ export const ProposalNodeDrawer = ({
               data-testid="proposal-node-problem"
               className="border-b border-border px-4 py-3"
             >
-              <p className="text-micro font-semibold uppercase tracking-[0.07em] mb-2 text-muted-foreground">
+              <p className="eyebrow mb-2 text-muted-foreground">
                 Problem
               </p>
               <p className="whitespace-pre-wrap font-mono text-body text-foreground">{proposal.problem}</p>
@@ -287,7 +287,7 @@ export const ProposalNodeDrawer = ({
               data-testid="proposal-node-solution"
               className="border-b border-border px-4 py-3"
             >
-              <p className="text-micro font-semibold uppercase tracking-[0.07em] mb-2 text-muted-foreground">
+              <p className="eyebrow mb-2 text-muted-foreground">
                 Solution
               </p>
               <p className="whitespace-pre-wrap font-mono text-body text-foreground">{proposal.solution}</p>
@@ -299,7 +299,7 @@ export const ProposalNodeDrawer = ({
               data-testid="proposal-node-stories"
               className="border-b border-border px-4 py-3"
             >
-              <p className="text-micro font-semibold uppercase tracking-[0.07em] mb-2 text-muted-foreground">
+              <p className="eyebrow mb-2 text-muted-foreground">
                 User stories
               </p>
               <ol className="flex flex-col gap-1.5">
@@ -318,7 +318,7 @@ export const ProposalNodeDrawer = ({
             data-testid="proposal-node-subgraph"
             className="border-b border-border px-4 py-3"
           >
-            <h3 className="text-micro font-semibold uppercase tracking-[0.07em] mb-2 text-muted-foreground">
+            <h3 className="eyebrow mb-2 text-muted-foreground">
               Sliced tasks
             </h3>
             <div className="overflow-x-auto">
@@ -405,7 +405,7 @@ export const ProposalNodeDrawer = ({
         {/* CLI commands — shown when DraftFeature is available */}
         {proposal ? (
           <section className="border-t border-border px-4 py-3">
-            <p className="text-micro font-semibold uppercase tracking-[0.07em] mb-2 text-muted-foreground">CLI</p>
+            <p className="eyebrow mb-2 text-muted-foreground">CLI</p>
             {(STATUS_CLI_VERBS[proposal.status] ?? ['show']).map((verb) => {
               const cmd = `mars proposal ${verb} ${proposal.id}`
               return (

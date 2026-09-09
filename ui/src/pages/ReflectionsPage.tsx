@@ -133,7 +133,7 @@ const OutcomeTag = ({ outcome }: OutcomeTagProps) => {
         data-testid="outcome-unbound"
         className="mt-2 border border-border bg-card px-2 py-1 text-micro text-muted-foreground inline-flex items-center gap-1"
       >
-        <span className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">No lever binding</span>
+        <span className="eyebrow text-muted-foreground">No lever binding</span>
         <span className="text-micro">(predates binding feature)</span>
       </div>
     )
@@ -146,9 +146,9 @@ const OutcomeTag = ({ outcome }: OutcomeTagProps) => {
         className="mt-2 border border-border bg-primary/5 px-2 py-1 text-micro"
       >
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">Lever</span>
+          <span className="eyebrow text-muted-foreground">Lever</span>
           <span className="text-muted-foreground font-semibold">{id}</span>
-          <span className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">{family}</span>
+          <span className="eyebrow text-muted-foreground">{family}</span>
           {currentValue !== null && (
             <>
               <span className="text-muted-foreground">{currentValue}</span>
@@ -159,7 +159,7 @@ const OutcomeTag = ({ outcome }: OutcomeTagProps) => {
         </div>
         {gesture && (
           <div className="mt-1 text-micro text-foreground">
-            <span className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">Gesture: </span>
+            <span className="eyebrow text-muted-foreground">Gesture: </span>
             <code className="text-muted-foreground">{gesture}</code>
           </div>
         )}
@@ -174,9 +174,9 @@ const OutcomeTag = ({ outcome }: OutcomeTagProps) => {
       className="mt-2 border border-warn/30 bg-warn/5 px-2 py-1 text-micro"
     >
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-micro font-semibold uppercase tracking-[0.07em] text-warn">Lever Gap</span>
+        <span className="eyebrow text-warn">Lever Gap</span>
         <span className="text-foreground font-semibold">{proposedLeverId}</span>
-        <span className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">{family}</span>
+        <span className="eyebrow text-muted-foreground">{family}</span>
       </div>
       <div className="mt-1 text-micro text-muted-foreground">{whatItWouldControl}</div>
     </div>
@@ -234,7 +234,7 @@ export const LeverChangeCard = ({
         >
           {lever.id}
         </span>
-        <span className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">{lever.family}</span>
+        <span className="eyebrow text-muted-foreground">{lever.family}</span>
         <span className="text-muted-foreground text-micro">{lever.scope}</span>
         {proposalTargetId && (
           <a
@@ -256,7 +256,7 @@ export const LeverChangeCard = ({
       {/* Gesture (read-only reference) */}
       {lever.gesture && (
         <div className="mt-1">
-          <span className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">CLI: </span>
+          <span className="eyebrow text-muted-foreground">CLI: </span>
           <code data-testid={`lever-change-gesture-${index}`} className="text-muted-foreground select-all">{lever.gesture}</code>
         </div>
       )}
@@ -426,9 +426,9 @@ export const LeverGapCard = ({ gap, index }: LeverGapCardProps) => (
     aria-label={`Lever gap: no parameter controls ${gap.proposedLeverId}`}
   >
     <div className="flex items-center gap-2">
-      <span className="text-micro font-semibold uppercase tracking-[0.07em] text-warn">Lever Gap</span>
+      <span className="eyebrow text-warn">Lever Gap</span>
       <span className="text-foreground font-semibold">{gap.proposedLeverId}</span>
-      <span className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">{gap.family}</span>
+      <span className="eyebrow text-muted-foreground">{gap.family}</span>
     </div>
     <div className="mt-1 text-micro text-muted-foreground">{gap.whatItWouldControl}</div>
     {/* Explicit "no apply control" statement — cannot be confused with a bound finding */}
@@ -590,7 +590,7 @@ const DissonantCallCard = ({ call, index }: DissonantCallCardProps) => (
     className="border border-border bg-card p-3 text-label"
   >
     <div className="flex items-center gap-2 mb-1">
-      <span className={`text-micro font-semibold uppercase tracking-[0.07em] ${severityClass(call.severity)} text-muted-foreground`}>
+      <span className={`eyebrow ${severityClass(call.severity)} text-muted-foreground`}>
         {severityLabel(call.severity)}
       </span>
       <span className="text-muted-foreground">·</span>
@@ -604,17 +604,17 @@ const DissonantCallCard = ({ call, index }: DissonantCallCardProps) => (
     </div>
     <div className="grid grid-cols-2 gap-2 mt-2">
       <div>
-        <div className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground mb-1">Stated intent</div>
+        <div className="eyebrow text-muted-foreground mb-1">Stated intent</div>
         <div className="text-foreground">{call.statedIntent}</div>
       </div>
       <div>
-        <div className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground mb-1">Actual outcome</div>
+        <div className="eyebrow text-muted-foreground mb-1">Actual outcome</div>
         <div className="text-foreground">{call.actualOutcome}</div>
       </div>
     </div>
     {call.evidence && (
       <div className="mt-2 text-micro text-muted-foreground border-t border-border pt-2">
-        <span className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">Evidence:</span>{' '}
+        <span className="eyebrow text-muted-foreground">Evidence:</span>{' '}
         {call.evidence}
       </div>
     )}
@@ -697,7 +697,7 @@ export const ReflectionDetailView = ({ detail }: ReflectionDetailViewProps) => {
       <div className="border border-border bg-card p-4">
         <div className="flex items-start justify-between gap-4">
           <div className="flex-1 min-w-0">
-            <div className="text-micro font-semibold uppercase tracking-[0.07em] mb-1 text-muted-foreground">Arc</div>
+            <div className="eyebrow mb-1 text-muted-foreground">Arc</div>
             <div className="font-mono text-body text-foreground break-all">{detail.originId}</div>
           </div>
           <div className="text-right shrink-0">
@@ -758,7 +758,7 @@ export const ReflectionDetailView = ({ detail }: ReflectionDetailViewProps) => {
                     className="border border-warn/30 bg-warn/5 p-3 text-label"
                   >
                     <div className="flex items-center gap-2 mb-1">
-                      <span className={`text-micro font-semibold uppercase tracking-[0.07em] ${severityClass(mm.severity)} text-muted-foreground`}>
+                      <span className={`eyebrow ${severityClass(mm.severity)} text-muted-foreground`}>
                         {severityLabel(mm.severity)}
                       </span>
                       <span className="text-muted-foreground">·</span>
@@ -766,11 +766,11 @@ export const ReflectionDetailView = ({ detail }: ReflectionDetailViewProps) => {
                     </div>
                     <div className="grid grid-cols-2 gap-2 mt-1">
                       <div>
-                        <div className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground mb-1">Claimed</div>
+                        <div className="eyebrow text-muted-foreground mb-1">Claimed</div>
                         <div className="text-foreground">{mm.claimed}</div>
                       </div>
                       <div>
-                        <div className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground mb-1">Actual</div>
+                        <div className="eyebrow text-muted-foreground mb-1">Actual</div>
                         <div className="text-foreground">{mm.actual}</div>
                       </div>
                     </div>

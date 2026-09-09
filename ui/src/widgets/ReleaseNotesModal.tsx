@@ -39,7 +39,7 @@ interface ReleaseNotesModalProps {
 
 // ── Section label shared across the detail expand panel ───────────────────
 
-const SECTION_LABEL = 'text-label uppercase tracking-[0.1em] text-muted-foreground'
+const SECTION_LABEL = 'eyebrow text-muted-foreground'
 
 /** Renders a bullet list; omits itself when the array is empty. */
 const StringList = ({ items }: { items: readonly string[] }) =>
@@ -80,7 +80,7 @@ const EntryDetail = ({ entry }: EntryDetailProps) => {
           <p className={SECTION_LABEL}>Spec</p>
           {spec.files.length > 0 ? (
             <div>
-              <p className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">
+              <p className="eyebrow text-muted-foreground">
                 Files
               </p>
               <StringList items={spec.files} />
@@ -88,7 +88,7 @@ const EntryDetail = ({ entry }: EntryDetailProps) => {
           ) : null}
           {spec.verifyCmd !== null ? (
             <div>
-              <p className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">
+              <p className="eyebrow text-muted-foreground">
                 Verify
               </p>
               <p className="mt-0.5 break-all font-mono text-label text-foreground">
@@ -98,7 +98,7 @@ const EntryDetail = ({ entry }: EntryDetailProps) => {
           ) : null}
           {spec.doneCriteria.length > 0 ? (
             <div>
-              <p className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">
+              <p className="eyebrow text-muted-foreground">
                 Done
               </p>
               <StringList items={spec.doneCriteria} />
@@ -262,7 +262,7 @@ export const ReleaseNotesModal = ({ onClose }: ReleaseNotesModalProps) => {
           className="modal-panel flex w-full max-w-[560px] max-h-[85vh] min-h-[240px] flex-col rounded-lg border border-border bg-background shadow-2xl outline-none"
         >
           <header className="flex items-center justify-between border-b border-border px-4 py-3">
-            <h2 className="text-title uppercase tracking-wide text-muted-foreground">
+            <h2 className="text-title font-semibold text-foreground">
               Release Notes
             </h2>
             <button
@@ -319,7 +319,7 @@ export const ReleaseNotesModal = ({ onClose }: ReleaseNotesModalProps) => {
                           className="flex items-center gap-2 px-4 py-1.5"
                         >
                           <span className="h-px flex-1 bg-highlight/40" aria-hidden="true" />
-                          <span className="text-micro font-semibold uppercase tracking-[0.07em] text-highlight">
+                          <span className="eyebrow text-highlight">
                             new since you were away
                           </span>
                           <span className="h-px flex-1 bg-highlight/40" aria-hidden="true" />

@@ -57,7 +57,7 @@ const SortHeader = ({
         type="button"
         onClick={() => onSort(col)}
         className={cn(
-          'inline-flex items-center gap-1 text-micro font-semibold uppercase tracking-[0.07em] transition-colors',
+          'inline-flex items-center gap-1 eyebrow transition-colors',
           active ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
         )}
       >

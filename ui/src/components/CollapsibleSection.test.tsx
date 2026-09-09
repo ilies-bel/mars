@@ -56,7 +56,10 @@ describe('CollapsibleSection', () => {
         <span />
       </CollapsibleSection>,
     )
-    // The ▸ chevron is always present in the summary
-    expect(html).toContain('▸')
+    // A real chevron icon is always present in the summary. This used to be a
+    // "▸" text glyph; it is a Lucide <svg> now, so assert the icon and the
+    // group-open rotation that makes it read as a disclosure control.
+    expect(html).toContain('lucide-chevron-right')
+    expect(html).toContain('group-open:rotate-90')
   })
 })

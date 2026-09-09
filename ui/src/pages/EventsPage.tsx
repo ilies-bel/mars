@@ -180,7 +180,7 @@ const applyLocalPhaseFilter = (
 
 const chipClass = (active: boolean): string =>
   [
-    'rounded border px-2 py-0.5 text-micro uppercase tracking-wide transition-colors',
+    'rounded border px-2 py-0.5 eyebrow transition-colors',
     active
       ? 'border-primary bg-primary/15 font-semibold text-foreground'
       : 'border-dashed border-border/50 bg-transparent text-muted-foreground hover:border-border hover:text-muted-foreground',
@@ -204,7 +204,7 @@ const MultiSelect = <T extends string>({
   displayLabel,
 }: MultiSelectProps<T>) => (
   <div className="flex flex-wrap items-center gap-1" data-testid={testId}>
-    <span className="text-micro font-semibold uppercase tracking-[0.07em] self-center text-muted-foreground">
+    <span className="eyebrow self-center text-muted-foreground">
       {label}:
     </span>
     {options.map((opt) => {
@@ -305,7 +305,7 @@ const EventRow = memo(({ event, now, fieldsExpanded, onToggleFields }: EventRowP
       >
         <span className="truncate text-muted-foreground">{relativeTime(event.timestamp, now)}</span>
         <span
-          className={`text-micro uppercase tracking-[0.07em] ${event.severity !== 'info' ? 'font-semibold ' : 'font-medium '}${severityColor(event.severity)}`}
+          className={`eyebrow ${event.severity !== 'info' ? 'font-semibold ' : 'font-medium '}${severityColor(event.severity)}`}
         >
           {event.severity}
         </span>
@@ -644,7 +644,7 @@ const IncidentGroup = memo(({
           data-testid={`incident-group-row-${first.id}`}
         >
           <span>▾</span>
-          <span className={`text-micro font-semibold uppercase tracking-[0.07em] ${severityColor(worst)} text-muted-foreground`}>{worst}</span>
+          <span className={`eyebrow ${severityColor(worst)} text-muted-foreground`}>{worst}</span>
           <span className="rounded bg-primary/20 px-1 font-semibold">×{events.length}</span>
           {taskId ? <span className="text-muted-foreground">{fullId(taskId)}</span> : null}
           <span className="min-w-0 truncate">{summary}</span>
@@ -672,7 +672,7 @@ const IncidentGroup = memo(({
       data-testid={`incident-group-row-${first.id}`}
     >
       <span className="shrink-0 text-micro text-muted-foreground">{relativeTime(first.timestamp, now)}</span>
-      <span className={`text-micro font-semibold uppercase tracking-[0.07em] shrink-0 ${severityColor(worst)} text-muted-foreground`}>{worst}</span>
+      <span className={`eyebrow shrink-0 ${severityColor(worst)} text-muted-foreground`}>{worst}</span>
       <span className="shrink-0 rounded bg-primary/20 px-1.5 font-mono text-micro font-semibold text-muted-foreground">×{events.length}</span>
       {taskId ? (
         <span className="shrink-0 font-mono text-micro text-muted-foreground">{fullId(taskId)}</span>
@@ -888,7 +888,7 @@ const TimelineTaskGroup = ({ group, now }: TimelineTaskGroupProps) => {
             : group.taskId}
         </a>
         <span
-          className={`text-micro font-semibold uppercase tracking-[0.07em] rounded px-1 py-0.5 ${ group.severity === 'error' ? 'bg-error/10 text-error' : group.severity === 'warn' ? 'bg-warn/10 text-warn' : 'bg-primary/10 text-muted-foreground' }`}
+          className={`eyebrow rounded px-1 py-0.5 ${ group.severity === 'error' ? 'bg-error/10 text-error' : group.severity === 'warn' ? 'bg-warn/10 text-warn' : 'bg-primary/10 text-muted-foreground' }`}
         >
           {group.severity}
         </span>
@@ -909,7 +909,7 @@ const TimelineTaskGroup = ({ group, now }: TimelineTaskGroupProps) => {
               <span className="shrink-0 text-muted-foreground">
                 {relativeTime(e.timestamp, now)}
               </span>
-              <span className={`text-micro font-semibold uppercase tracking-[0.07em] shrink-0 ${severityColor(e.severity)} text-muted-foreground`}>
+              <span className={`eyebrow shrink-0 ${severityColor(e.severity)} text-muted-foreground`}>
                 {humanizeKind(e.kind)}
               </span>
               <span className={marsToolTextClass(e)}>
@@ -960,7 +960,7 @@ const TimelineArcGroup = ({ group, now }: TimelineArcGroupProps) => {
               : group.arcId}
         </span>
         <span
-          className={`text-micro font-semibold uppercase tracking-[0.07em] rounded px-1.5 py-0.5 ${ group.severity === 'error' ? 'bg-error/10 text-error' : group.severity === 'warn' ? 'bg-warn/10 text-warn' : 'bg-success/10 text-success' }`}
+          className={`eyebrow rounded px-1.5 py-0.5 ${ group.severity === 'error' ? 'bg-error/10 text-error' : group.severity === 'warn' ? 'bg-warn/10 text-warn' : 'bg-success/10 text-success' }`}
         >
           {group.severity === 'error'
             ? 'failed'
@@ -1329,7 +1329,7 @@ export const EventsPage = () => {
           <div className="flex flex-wrap items-center gap-3">
             {/* Time range */}
             <div className="flex items-center gap-1">
-              <span className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">
+              <span className="eyebrow text-muted-foreground">
                 Time:
               </span>
               <SelectField
@@ -1379,7 +1379,7 @@ export const EventsPage = () => {
 
             {/* Task ID exact match */}
             <div className="flex items-center gap-1">
-              <span className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">
+              <span className="eyebrow text-muted-foreground">
                 Task&nbsp;ID:
               </span>
               <input
@@ -1397,7 +1397,7 @@ export const EventsPage = () => {
 
             {/* Origin ID exact match */}
             <div className="flex items-center gap-1">
-              <span className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">
+              <span className="eyebrow text-muted-foreground">
                 Origin&nbsp;ID:
               </span>
               <input
@@ -1517,7 +1517,7 @@ export const EventsPage = () => {
               disabled={more.isPending}
               onClick={() => more.mutate(nextCursor)}
               data-testid="events-load-more"
-              className="text-micro font-semibold uppercase tracking-[0.07em] text-foreground underline disabled:opacity-50"
+              className="eyebrow text-foreground underline disabled:opacity-50"
             >
               {more.isPending ? 'Loading…' : 'Load more'}
             </button>

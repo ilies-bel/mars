@@ -916,3 +916,55 @@ html {
     transition: opacity 200ms;
   }
 }
+
+/* ── Eyebrow: the one small-caps label treatment ────────────────────────────
+ * Measured 11 distinct treatments across the app for this single role — three
+ * letter-spacings (0.77 / 0.11 / 0.275px), two weights (600 / 400), and 36
+ * nodes rendered in JetBrains Mono purely because an ancestor set `font-mono`
+ * and the utility string never declared a family of its own. A utility that
+ * omits a property does not reset it, it inherits.
+ *
+ * So this class locks every property the role owns — family, size, weight,
+ * tracking, leading, transform — and leaves only COLOUR free, because colour
+ * is the one axis that legitimately varies here (it encodes severity).
+ *
+ * Unlayered on purpose. Tailwind v4 emits `@layer utilities` after every other
+ * layer, so a layered rule loses to any `text-*` sitting beside it in the same
+ * class attribute regardless of specificity — the same trap that silently
+ * killed the card-hover tint below.
+ * ---------------------------------------------------------------------------*/
+.eyebrow {
+  font-family: var(--font-sans);
+  font-size: var(--text-micro);
+  letter-spacing: 0.07em;
+  line-height: var(--text-micro--line-height);
+  text-transform: uppercase;
+}
+/* Weight is the one locked property a call site may opt out of, by stating a
+ * `font-*` utility of its own. The Events severity badge needs that: INFO is
+ * deliberately lighter than WARN/ERROR, so weight carries severity there in
+ * addition to colour. Everything else takes 600 without having to say so. */
+.eyebrow:not([class*="font-"]) {
+  font-weight: 600;
+}
+/* A <th> carries the user-agent's own `font-weight: bold`, which lands
+ * DIRECTLY on the cell and so outranks anything merely inherited from an
+ * .eyebrow <tr>. Without this, a table header renders at 700 while every other
+ * eyebrow in the app sits at 600 — measured as exactly that, 11 stray nodes. */
+.eyebrow th {
+  font-weight: inherit;
+}
+
+/* ── Card hover tint ────────────────────────────────────────────────────────
+ * `.mars-card:hover` lives in `@layer base` and was setting a warm tint that
+ * never appeared: every card also carries the `bg-card` utility, and
+ * `@layer utilities` outranks `@layer base` outright. Measured result was a
+ * hover that moved only the border alpha (0.55 → 0.9) while the ground stayed
+ * pure white — half a hover.
+ *
+ * Unlayered so it actually lands, but excluded when a card declares its own
+ * `hover:bg-*`, so a deliberate per-card override still wins.
+ * ---------------------------------------------------------------------------*/
+.mars-card:hover:not([class*="hover:bg-"]) {
+  background-color: color-mix(in srgb, var(--color-panel) 45%, var(--color-surface));
+}

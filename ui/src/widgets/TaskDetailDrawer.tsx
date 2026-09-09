@@ -483,7 +483,7 @@ export const runStepToCard = (
 // drawer shell so it renders synchronously in unit tests (the drawer's own
 // fetch effect never fires under renderToStaticMarkup).
 
-const SECTION_LABEL = 'text-label uppercase tracking-[0.1em] text-muted-foreground'
+const SECTION_LABEL = 'eyebrow text-muted-foreground'
 
 /** A section header in the drawer body, matching the existing "Context" style. */
 const SectionLabel = ({ children }: { children: ReactNode }) => (
@@ -505,7 +505,7 @@ const StringList = ({ items }: { items: string[] }) =>
 /** One labelled cell in the compact meta grid. */
 const MetaCell = ({ label, value }: { label: string; value: ReactNode }) => (
   <div className="flex flex-col gap-0.5">
-    <span className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">
+    <span className="eyebrow text-muted-foreground">
       {label}
     </span>
     <span className="break-all font-mono text-label text-foreground">{value}</span>
@@ -1051,7 +1051,7 @@ const ChangesSection = ({ taskId, taskStatus, changesData: injected, projectId, 
                     aria-expanded={hasHunks ? isExpanded : undefined}
                   >
                     <span
-                      className={`text-micro font-semibold uppercase tracking-[0.07em] rounded border px-1 ${statusPillClass[f.status] ?? ''} text-muted-foreground`}
+                      className={`eyebrow rounded border px-1 ${statusPillClass[f.status] ?? ''} text-muted-foreground`}
                     >
                       {f.status}
                     </span>
@@ -1167,7 +1167,7 @@ export const TaskDetailBody = ({
         <div className="mt-1 flex items-baseline gap-2">
           <span
             data-testid="task-detail-status"
-            className="text-body uppercase tracking-wide text-muted-foreground"
+            className="eyebrow text-muted-foreground"
           >
             {task.status}
           </span>
@@ -1196,7 +1196,7 @@ export const TaskDetailBody = ({
           data-testid="task-detail-error"
           className="rounded border border-error/50 bg-error/5 px-3 py-2"
         >
-          <p className="text-micro font-semibold uppercase tracking-[0.07em] text-error">
+          <p className="eyebrow text-error">
             {task.status === 'failed' ? 'Failure' : isBlocked ? 'Blocked' : 'Error'}
           </p>
           {isBlocked ? (
@@ -1252,7 +1252,7 @@ export const TaskDetailBody = ({
                 </pre>
               ) : null}
               {task.failureSignature != null ? (
-                <p className="text-micro font-semibold uppercase tracking-[0.07em] mt-1 text-error/50">
+                <p className="eyebrow mt-1 text-error/50">
                   {task.failureSignature}
                 </p>
               ) : null}
@@ -1278,7 +1278,7 @@ export const TaskDetailBody = ({
         promptIsLong ? (
           <div>
             <details>
-              <summary className="text-micro font-semibold uppercase tracking-[0.07em] cursor-pointer select-none text-muted-foreground">
+              <summary className="eyebrow cursor-pointer select-none text-muted-foreground">
                 Prompt · {promptLineCount} lines
               </summary>
               <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-label text-foreground">
@@ -1334,7 +1334,7 @@ export const TaskDetailBody = ({
         <summary className={`cursor-pointer ${SECTION_LABEL}`}>Diagnostics</summary>
         <dl className="mt-2 flex flex-col gap-1.5">
           <div>
-            <dt className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">
+            <dt className="eyebrow text-muted-foreground">
               Worktree
             </dt>
             <dd className="break-all font-mono text-label text-muted-foreground">
@@ -1343,7 +1343,7 @@ export const TaskDetailBody = ({
           </div>
           {task.blockerTaskId != null ? (
             <div>
-              <dt className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">
+              <dt className="eyebrow text-muted-foreground">
                 Blocker task id
               </dt>
               <dd className="break-all font-mono text-label text-muted-foreground">
@@ -1353,7 +1353,7 @@ export const TaskDetailBody = ({
           ) : null}
           {task.blockedBy.length > 0 ? (
             <div>
-              <dt className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">
+              <dt className="eyebrow text-muted-foreground">
                 Blocked by
               </dt>
               <dd>
@@ -1874,7 +1874,7 @@ const StepCardList = ({
     className="border-b border-border px-4 py-3"
   >
     <div className="mb-3 flex items-baseline justify-between">
-      <h3 className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">
+      <h3 className="eyebrow text-muted-foreground">
         Steps
       </h3>
       {studioHref !== undefined ? (
@@ -2024,7 +2024,7 @@ const ProposalStepTimeline = ({
     <div className="border-b border-border">
       {/* ── Proposal steps group ─────────────────────────────────────────── */}
       <section data-testid="step-group-proposal" className="px-4 py-3">
-        <h3 className="text-micro font-semibold uppercase tracking-[0.07em] mb-2 text-muted-foreground">
+        <h3 className="eyebrow mb-2 text-muted-foreground">
           Proposal steps
         </h3>
         {otherProposalSpans.length > 0 ? (
@@ -2054,7 +2054,7 @@ const ProposalStepTimeline = ({
           data-testid={`step-group-${taskId}`}
           className="border-t border-border px-4 py-3"
         >
-          <h3 className="text-micro font-semibold uppercase tracking-[0.07em] mb-2 text-muted-foreground">
+          <h3 className="eyebrow mb-2 text-muted-foreground">
             {taskId} &middot; {taskSpans.length} steps
           </h3>
           <ol className="flex flex-col">
@@ -2480,7 +2480,7 @@ export const TaskDetailDrawer = ({
           data-testid="task-detail-subgraph"
           className="border-b border-border px-4 py-3"
         >
-          <h3 className="text-micro font-semibold uppercase tracking-[0.07em] mb-2 text-muted-foreground">
+          <h3 className="eyebrow mb-2 text-muted-foreground">
             Context
           </h3>
           {/* Flex-wrap chip layout — each node is an HTML anchor chip so labels

@@ -18,7 +18,7 @@ import { fetchChatConfig } from '@/shared/api'
 import type { ChatConfig, ChatConfigTool } from '@/shared/schemas'
 
 const SectionHeading = ({ children }: { children: string }) => (
-  <h3 className="text-micro font-semibold uppercase tracking-[0.07em] mt-4 text-muted-foreground">{children}</h3>
+  <h3 className="eyebrow mt-4 text-muted-foreground">{children}</h3>
 )
 
 const ToolList = ({ tools, testId }: { tools: ChatConfigTool[]; testId: string }) => (
@@ -132,7 +132,7 @@ export const AgentConfigPanel = ({ projectId }: { projectId?: string }) => {
           className="fixed inset-y-0 right-0 z-50 flex w-[380px] max-w-full flex-col border-l border-border bg-background shadow-2xl"
         >
           <div className="flex items-center justify-between border-b border-border px-3 py-2">
-            <h2 className="text-micro font-semibold uppercase tracking-[0.07em] text-muted-foreground">Agent configuration</h2>
+            <h2 className="eyebrow text-muted-foreground">Agent configuration</h2>
             <button
               type="button"
               aria-label="Close"

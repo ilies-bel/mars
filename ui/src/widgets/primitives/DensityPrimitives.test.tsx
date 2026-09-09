@@ -87,14 +87,19 @@ describe('SectionLabel', () => {
 
   it('applies uppercase label styling', () => {
     const html = renderToStaticMarkup(<SectionLabel>Blocked</SectionLabel>)
-    expect(html).toContain('uppercase')
-    expect(html).toContain('text-micro')
-    expect(html).toContain('font-semibold')
+    // The four utilities that used to spell this out (text-micro /
+    // font-semibold / uppercase / tracking-[0.07em]) are now locked together in
+    // the single `.eyebrow` class, so the role cannot drift one utility at a
+    // time — and cannot inherit a font-family from whatever contains it.
+    expect(html).toContain('eyebrow')
   })
 
   it('applies letter-spacing and muted colour', () => {
     const html = renderToStaticMarkup(<SectionLabel>Failed</SectionLabel>)
-    expect(html).toContain('tracking-')
+    // Tracking now lives in `.eyebrow`; colour stays a utility because colour
+    // is the one axis of this role that legitimately varies (it encodes
+    // severity), so it must remain overridable per call site.
+    expect(html).toContain('eyebrow')
     expect(html).toContain('muted-foreground')
   })
 })

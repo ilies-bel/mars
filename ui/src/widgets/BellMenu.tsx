@@ -120,7 +120,7 @@ export const BellMenu = () => {
       {open && (
         <div className="mars-card absolute right-0 top-full z-50 mt-1 w-72 rounded bg-background p-2 text-label">
           <section>
-            <h2 className="text-micro font-semibold uppercase tracking-[0.07em] px-1 pb-1 text-muted-foreground">
+            <h2 className="eyebrow px-1 pb-1 text-muted-foreground">
               Needs You
             </h2>
             {sorted.length === 0 ? (
@@ -135,7 +135,7 @@ export const BellMenu = () => {
                       className="flex items-start gap-2 rounded px-1 py-1 hover:bg-foreground/5"
                     >
                       {isNotice ? (
-                        <span className="text-micro font-semibold uppercase tracking-[0.07em] mt-0.5 shrink-0 text-muted-dark">
+                        <span className="eyebrow mt-0.5 shrink-0 text-muted-dark">
                           Notice
                         </span>
                       ) : (
