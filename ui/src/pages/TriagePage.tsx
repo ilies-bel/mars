@@ -387,6 +387,26 @@ const isDestructiveAction = (label: string): boolean => {
 const isDestructiveDecision = (d: Decision): boolean =>
   d.style === 'destructive' || isDestructiveAction(d.label)
 
+/**
+ * Index of the row's single primary action, or -1 when every decision is
+ * destructive.
+ *
+ * The ladder allows exactly ONE filled button per row, so "which decision is
+ * the CTA" is a property of the row and has to be decided once for it, not
+ * per button. The daemon may nominate one (`style: 'primary'`); absent a
+ * nomination the first non-destructive decision wins by position. A
+ * destructive decision is never the CTA, however it is styled at source —
+ * the whole point of the ladder is that the safe path is the magnetic one.
+ */
+const leadDecisionIndex = (decisions: Decision[]): number => {
+  const nominated = decisions.findIndex(
+    (d) => !isDestructiveDecision(d) && d.style === 'primary',
+  )
+  return nominated !== -1
+    ? nominated
+    : decisions.findIndex((d) => !isDestructiveDecision(d))
+}
+
 // Restart is destructive (wipes worktree + branch, discarding commits) — it
   // requires an explicit in-app confirm step before dispatching, rather than
   // firing on first click like the reversible Continue verb.
@@ -750,11 +770,10 @@ const isDestructiveDecision = (d: Decision): boolean =>
               const destructive = isDestructiveDecision(d)
               // The ladder allows exactly ONE primary per row (see
               // ActionButton); `slice(0, 3)` was rendering up to three. The
-              // first non-destructive decision is the CTA, the rest are real
-              // alternatives.
+              // CTA is the daemon's nominee if it named one, else the first
+              // non-destructive decision; the rest are real alternatives.
               const isLeadSafe =
-                !destructive &&
-                item.decisions.findIndex((x) => !isDestructiveDecision(x)) === i
+                !destructive && leadDecisionIndex(item.decisions) === i
               return (
                 <ActionButton
                   key={d.label}

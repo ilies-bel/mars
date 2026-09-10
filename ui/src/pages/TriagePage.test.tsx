@@ -389,10 +389,15 @@ describe('TriageRow – decision button style field', () => {
     expect(btn.className).toContain('text-error')
   })
 
-  it('applies primary styling when style is "primary"', () => {
+  // The ladder allows exactly ONE filled button per row, so a lone decision is
+  // the CTA whether or not the daemon marks it. These two cases are therefore
+  // only observable on a row with several decisions — asserting which one wins
+  // the slot, rather than which Tailwind tokens it happens to carry.
+  it('promotes the decision the daemon nominates, not merely the first one', () => {
     mockItems.mockReturnValue([
       makeItem('gate-enrichment', {
         decisions: [
+          { label: 'Skip', endpoint: '/api/gate/skip', payload: {} },
           {
             label: 'Approve',
             endpoint: '/api/gate/approve',
@@ -403,27 +408,65 @@ describe('TriageRow – decision button style field', () => {
       }),
     ])
     const { container } = renderPage()
-    const btn = container.querySelector('[data-testid="triage-decision-Approve"]') as HTMLButtonElement
-    expect(btn).not.toBeNull()
-    expect(btn.className).toContain('text-highlight')
+    const approve = container.querySelector(
+      '[data-testid="triage-decision-Approve"]',
+    ) as HTMLButtonElement
+    const skip = container.querySelector(
+      '[data-testid="triage-decision-Skip"]',
+    ) as HTMLButtonElement
+    expect(approve).not.toBeNull()
+    expect(skip).not.toBeNull()
+    // The nominee carries the filled treatment; the earlier decision does not.
+    expect(approve.className).toContain('bg-highlight')
+    expect(skip.className).not.toContain('bg-highlight')
   })
 
-  it('applies default (primary/10) styling when style is absent', () => {
+  it('falls back to the first non-destructive decision when none is nominated', () => {
     mockItems.mockReturnValue([
       makeItem('gate-enrichment', {
         decisions: [
-          {
-            label: 'Approve',
-            endpoint: '/api/gate/approve',
-            payload: {},
-          },
+          { label: 'Approve', endpoint: '/api/gate/approve', payload: {} },
+          { label: 'Skip', endpoint: '/api/gate/skip', payload: {} },
         ],
       }),
     ])
     const { container } = renderPage()
-    const btn = container.querySelector('[data-testid="triage-decision-Approve"]') as HTMLButtonElement
-    expect(btn).not.toBeNull()
-    expect(btn.className).toContain('text-primary')
+    const approve = container.querySelector(
+      '[data-testid="triage-decision-Approve"]',
+    ) as HTMLButtonElement
+    const skip = container.querySelector(
+      '[data-testid="triage-decision-Skip"]',
+    ) as HTMLButtonElement
+    expect(approve.className).toContain('bg-highlight')
+    expect(skip.className).not.toContain('bg-highlight')
+  })
+
+  it('never lets a destructive decision take the primary slot', () => {
+    mockItems.mockReturnValue([
+      makeItem('gate-enrichment', {
+        decisions: [
+          {
+            label: 'Purge',
+            endpoint: '/api/gate/purge',
+            payload: {},
+            style: 'primary',
+          },
+          { label: 'Skip', endpoint: '/api/gate/skip', payload: {} },
+        ],
+      }),
+    ])
+    const { container } = renderPage()
+    const purge = container.querySelector(
+      '[data-testid="triage-decision-Purge"]',
+    ) as HTMLButtonElement
+    const skip = container.querySelector(
+      '[data-testid="triage-decision-Skip"]',
+    ) as HTMLButtonElement
+    // Nominated by the daemon, but destructive by label — the safe path keeps
+    // the filled slot and Purge stays quiet.
+    expect(purge.className).not.toContain('bg-highlight')
+    expect(purge.className).toContain('text-error')
+    expect(skip.className).toContain('bg-highlight')
   })
 })
 
