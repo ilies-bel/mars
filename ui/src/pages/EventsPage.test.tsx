@@ -211,6 +211,22 @@ describe('toWireFilter', () => {
   })
 })
 
+describe('the Filters button admits that a filter is running', () => {
+  it('counts the narrowed facets, so a shut panel does not hide the default exclusion', () => {
+    // `cli-invocation` is off by default, so an operator reading Events with
+    // the panel collapsed believed they were reading the log and were reading
+    // the log minus a category they never turned off.
+    const wire = toWireFilter(initialFilterState(), null, 100)
+    expect(wire.kind).toBeDefined()
+    expect(wire.kind).not.toContain('cli-invocation')
+    // Two facets are narrowed out of the box: severity (WARN+ERROR) and kind.
+    const st = initialFilterState()
+    const narrowed =
+      (st.severities.size < 3 ? 1 : 0) + (st.kinds.size < KIND_OPTIONS.length ? 1 : 0)
+    expect(narrowed).toBe(2)
+  })
+})
+
 describe('an emptied facet cannot widen the result', () => {
   it('sends the same "no constraint" wire filter for none-selected as for all-selected', () => {
     // This is the shape of the bug, pinned so the UI guard is not removed by

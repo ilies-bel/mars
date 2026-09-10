@@ -1266,6 +1266,17 @@ export const EventsPage = ({
   const fetchedAtIsStale =
     initial.dataUpdatedAt > 0 && now - initial.dataUpdatedAt > 5 * 60_000
 
+  // How many facets are narrowing the list right now — a facet is narrowed
+  // when it is neither empty nor complete. `range` counts too when it is not
+  // "all".
+  const narrowedFacetCount =
+    (state.severities.size < SEVERITY_OPTIONS.length ? 1 : 0) +
+    (state.kinds.size < KIND_OPTIONS.length ? 1 : 0) +
+    (state.phases.size < PHASE_OPTIONS.length ? 1 : 0) +
+    (state.range !== 'all' ? 1 : 0) +
+    (state.taskId !== '' ? 1 : 0) +
+    (state.originId !== '' ? 1 : 0)
+
   // Which facet, if any, has had every one of its options switched off.
   // Ordered so the first one a reader would think to check is named first.
   const emptyFacet: 'severity' | 'kind' | 'phase' | null =
@@ -1322,12 +1333,14 @@ export const EventsPage = ({
         title="Events"
         actions={
           <div className="flex items-center gap-1">
-            {/* Event count — subdued pill badge (replaces the old em-dash count in the title) */}
+            {/* Event count. A bare "100" in a pill is a number with no noun —
+                it could be the total, the page size, or a limit. The noun is
+                cheap and the pill has room. */}
             <span
               data-testid="events-count"
-              className="rounded-full bg-muted-foreground/10 px-2 py-0.5 font-mono text-micro text-muted-foreground"
+              className="rounded-full bg-muted-foreground/10 px-2 py-0.5 text-micro text-muted-foreground"
             >
-              {events.length}
+              <span className="font-mono tabular-nums">{events.length}</span> loaded
             </span>
 
             <div className="h-4 w-px shrink-0 bg-primary/20" aria-hidden="true" />
@@ -1418,14 +1431,32 @@ export const EventsPage = ({
             />
           </div>
 
-          {/* Filters toggle */}
+          {/* Filters toggle.
+              With the panel shut, nothing said a filter was running — and one
+              always is: `cli-invocation` is off by default so statusline polls
+              do not flood the feed. So an operator reading Events believed
+              they were reading the log, and were reading the log minus a
+              category they had never turned off. On a page whose job is
+              forensics, a silent exclusion is the worst possible default. The
+              count says how many facets are narrowed, so the panel can stay
+              shut without hiding that fact. */}
           <ActionButton
             aria-expanded={filtersOpen}
             onClick={() => setFiltersOpen((o) => !o)}
             variant={filtersOpen ? 'secondary' : 'ghost'}
+            data-testid="events-filters-toggle"
           >
             <SlidersHorizontal size={13} strokeWidth={1.75} aria-hidden="true" />
             Filters
+            {narrowedFacetCount > 0 && (
+              <span
+                data-testid="events-filters-count"
+                aria-label={`${narrowedFacetCount} filter${narrowedFacetCount === 1 ? '' : 's'} narrowing this list`}
+                className="ml-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-highlight/20 px-1 text-micro font-semibold tabular-nums text-foreground"
+              >
+                {narrowedFacetCount}
+              </span>
+            )}
           </ActionButton>
         </div>
 
