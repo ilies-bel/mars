@@ -104,6 +104,8 @@ import type {
   WorktreeSpec,
   WorktreeSyncOutcome,
 } from './types'
+// Self-registers after `localGitVcs` is fully constructed — see bottom of file.
+import { registerVcs } from './registry'
 
 // ---------------------------------------------------------------------------
 // Ambient trace store registry
@@ -789,4 +791,11 @@ const parseCommitSummaries = (stdout: string): VcsCommitSummary[] =>
         ? { sha: line, subject: '' }
         : { sha: line.slice(0, spaceIdx), subject: line.slice(spaceIdx + 1) }
     })
+
+// Self-registration: done here (not in registry.ts) to avoid the circular
+// local-git → checkpoint → vcs/registry → local-git. By the time this line
+// runs, `localGitVcs` is fully constructed and `registerVcs` is available
+// because registry.ts (which checkpoint.ts imports) has no dependency on
+// this file. The `registerVcs` import is declared at the top of this file.
+registerVcs(localGitVcs)
 

@@ -33,9 +33,21 @@ export interface PrimitiveDescriptor {
    * and so are never added to workflow-lint's allowlist.
    */
   readonly exportName?: string
-  /** Alternate ids that resolve to the same primitive (e.g. `'verify'` → `review`). */
+  /** Alternate ids that resolve to the same primitive (e.g. `'review'` for `'verify'`). */
   readonly aliases?: readonly string[]
   readonly executor: 'agent' | 'deterministic' | 'human'
+  /**
+   * One-line description surfaced by GET /view/primitives. Primitives with a
+   * description are included in the public listing; those without are treated
+   * as internal and omitted from `viewPrimitives()` output.
+   */
+  readonly description?: string
+  /**
+   * Trace phase this primitive's Step spans carry. Null for awaitHuman — it
+   * parks before any span opens and so never appears in step_started/step_ended.
+   * Absent for custom primitives that have not been assigned a phase yet.
+   */
+  readonly phase?: string | null
 }
 
 type PrimitiveMap = Record<string, PrimitiveDescriptor>
@@ -70,18 +82,62 @@ export const listPrimitives = (): readonly PrimitiveDescriptor[] => {
 
 // ---- built-in seeds (self-registering) -------------------------------------
 // Mirrors the eight primitives the target architecture doc (§4.4) enumerates.
-// `review`/`verify` are the same primitive under two names — `review` is
-// canonical (the exported function name), `verify` is the legacy alias.
-registerPrimitive({ id: 'setupWorktree', exportName: 'setupWorktree', executor: 'deterministic' })
-registerPrimitive({ id: 'runAgent', exportName: 'runAgent', executor: 'agent' })
+// `verify`/`review` are the same primitive: `verify` is the canonical public id
+// (used in the UI and catalog); `review` is its exported function name and a
+// registered alias so both `isPrimitiveId('verify')` and `isPrimitiveId('review')`
+// return true and workflow-lint allows `import { review } from 'mars/workflow'`.
+//
+// Primitives with a `description` appear in GET /view/primitives (the public
+// listing). `finalizeReport` and `finalizeMockup` are internal — no description,
+// not surfaced in the listing.
 registerPrimitive({
-  id: 'review',
-  exportName: 'review',
-  aliases: ['verify'],
+  id: 'setupWorktree',
+  exportName: 'setupWorktree',
   executor: 'deterministic',
+  description:
+    'Provision (or attach to) the task worktree off the integration branch, record the integration HEAD, and install its deps.',
+  phase: 'setup',
 })
-registerPrimitive({ id: 'behaviourVerify', executor: 'agent' })
-registerPrimitive({ id: 'merge', exportName: 'merge', executor: 'deterministic' })
-registerPrimitive({ id: 'awaitHuman', exportName: 'awaitHuman', executor: 'human' })
+registerPrimitive({
+  id: 'runAgent',
+  exportName: 'runAgent',
+  executor: 'agent',
+  description:
+    'Run the coder through the selected headless provider inside the worktree — kind-aware Worker routing: Coder by default, Fixer on kind:fix, plus tag-routed operator-declared Workers.',
+  phase: 'code',
+})
+registerPrimitive({
+  id: 'verify',
+  exportName: 'review',
+  aliases: ['review'],
+  executor: 'deterministic',
+  description:
+    "Full-workspace static gate over the worktree's committed changes — every configured typecheck, test, and lint scope runs to protect cross-package contracts.",
+  phase: 'verify',
+})
+registerPrimitive({
+  id: 'behaviourVerify',
+  executor: 'agent',
+  description:
+    "Behaviour verification gate — boots the task's preview dev server and dispatches the BehaviourVerifier Worker (Playwright MCP, read-only) against the task's Definition of Done.",
+  phase: 'verify',
+})
+registerPrimitive({
+  id: 'merge',
+  exportName: 'merge',
+  executor: 'deterministic',
+  description:
+    'Fast-forward the task branch into the integration branch, serialized under the merge lock; removes the worktree and marks the task done on success.',
+  phase: 'merge',
+})
+registerPrimitive({
+  id: 'awaitHuman',
+  exportName: 'awaitHuman',
+  executor: 'human',
+  description:
+    "Park the task awaiting-human until the operator finishes the step (`mars step done`) — it writes task state and raises an action-queue row; nothing executes.",
+  phase: null,
+})
+// Internal pipeline steps — no description, not included in the public listing.
 registerPrimitive({ id: 'finalizeReport', executor: 'deterministic' })
 registerPrimitive({ id: 'finalizeMockup', executor: 'deterministic' })

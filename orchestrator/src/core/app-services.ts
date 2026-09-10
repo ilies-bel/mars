@@ -119,12 +119,12 @@ import type {
 } from './daemon/http-server'
 import {
   PRIMITIVE_CATALOG,
-  PRIMITIVE_NAMES,
   isPrimitiveName,
   primitiveForSpan,
   buildWorkerProfiles,
   type PrimitiveCatalogEntry,
 } from './lib/primitive-catalog'
+import { listPrimitives } from '../workflows/primitives/registry'
 import { loadWorkerRegistry, type WorkerDeclaration } from './workers/persisted-registry'
 import { loadLeverRegistry } from './lib/lever-registry'
 import { readLeverApplyHistory } from './lib/lever-apply'
@@ -1202,9 +1202,21 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
   })
 
   const viewPrimitives: AppServices['viewPrimitives'] = async () => ({
-    primitives: PRIMITIVE_NAMES.map((name) =>
-      toPrimitiveSummary(PRIMITIVE_CATALOG[name]),
-    ),
+    // Reads the live registry so operator-registered primitives (those with a
+    // description) appear alongside the built-ins. Primitives without a
+    // description are internal pipeline steps and are omitted.
+    primitives: listPrimitives()
+      .filter((d) => d.description !== undefined && d.description.length > 0)
+      .map((descriptor) => ({
+        name: descriptor.id,
+        description: descriptor.description!,
+        phase: descriptor.phase ?? null,
+        // Map the registry's 'deterministic' to the wire's 'shell' for
+        // backward-compat with existing UI consumers.
+        executor: (descriptor.executor === 'deterministic'
+          ? 'shell'
+          : descriptor.executor) as PrimitiveSummary['executor'],
+      })),
   })
 
   /**

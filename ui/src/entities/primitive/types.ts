@@ -9,7 +9,12 @@
  * (never slot).
  */
 
-/** The closed set of primitive names, in pipeline order. */
+/**
+ * The known built-in primitive names, in pipeline order. Used for the
+ * sibling-nav and for route validation. This list does NOT bound what the API
+ * returns — `viewPrimitives()` reads the live registry, so operator-registered
+ * primitives also appear even if absent from this array.
+ */
 export const PRIMITIVE_NAMES = [
   'setupWorktree',
   'runAgent',
@@ -19,7 +24,13 @@ export const PRIMITIVE_NAMES = [
   'awaitHuman',
 ] as const
 
-export type PrimitiveName = (typeof PRIMITIVE_NAMES)[number]
+/**
+ * A primitive name. Widened to `string` so unknown (operator-registered)
+ * primitives received from the API are assignable without casting. The closed
+ * `PRIMITIVE_NAMES` array remains for sibling-nav and route-validation code
+ * that still needs the fixed list.
+ */
+export type PrimitiveName = string
 
 /** Identity of one primitive — name, one-liner, phase, and WHO executes it. */
 export interface PrimitiveSummary {
@@ -99,7 +110,7 @@ export interface PrimitiveDetail {
 export const primitiveForStep = (
   phase: string | null,
   stepName: string,
-): PrimitiveName | null => {
+): string | null => {
   switch (phase) {
     case 'setup':
       return 'setupWorktree'

@@ -1255,10 +1255,9 @@ export const registerRoutes = (
       return
     }
 
-    // GET /view/primitives — the fixed catalog of workflow primitives
-    // (setupWorktree, runAgent, verify, behaviourVerify, merge, awaitHuman):
-    // name, one-line description, trace phase, and executor. Pure read; no
-    // draining gate.
+    // GET /view/primitives — all public-facing registered primitives (those
+    // with a description), including operator-registered ones. Returns name,
+    // one-line description, trace phase, and executor. Pure read; no draining gate.
     if (req.method === 'GET' && req.url === '/view/primitives') {
       deps.appServices
         .viewPrimitives()
