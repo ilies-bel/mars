@@ -29,6 +29,19 @@ import { lookupFailureKind } from '../../lib/failure-kinds.js'
 import { DAEMON_KILLED_SIGNATURE } from '../../lib/retry-budget.js'
 import { ACTION_QUEUE_KINDS } from '../../lib/action-queue-kinds.js'
 
+/**
+ * The body must name exactly the verbs the row actually carries — that is the
+ * invariant, not any particular sentence. It used to be a constant naming
+ * Continue first, printed even on setup failures whose menu is restart/delete
+ * because there is no worktree to continue on.
+ */
+const expectBodyNamesItsOwnActions = (row: { body: string; actions?: { label: string }[] }): void => {
+  const labels = (row.actions ?? []).map((a) => a.label.toLowerCase())
+  expect(labels.length).toBeGreaterThan(0)
+  for (const label of labels) expect(row.body.toLowerCase()).toContain(label)
+  expect(row.body).toMatch(/^Your options?: |^Your one option: /)
+}
+
 // ── Test helpers ──────────────────────────────────────────────────────────────
 
 const makeRow = (
@@ -170,9 +183,7 @@ describe('buildActionQueueView — failure-kind title/body derivation', () => {
     })
 
     // §9 beat 3: body names the decision, not the verbose reason.
-    expect(rows[0]!.body).toBe(
-      'Continue on the existing worktree, restart from scratch, or drop',
-    )
+    expectBodyNamesItsOwnActions(rows[0]!)
   })
 
   it('gives the re-queue time ceiling an operational explanation and recovery actions', async () => {
@@ -192,9 +203,7 @@ describe('buildActionQueueView — failure-kind title/body derivation', () => {
     )
     expect(rows[0]!.title).not.toContain('no recipe')
     // §9 beat 3: body is the decision, not the verbose reason.
-    expect(rows[0]!.body).toBe(
-      'Continue on the existing worktree, restart from scratch, or drop',
-    )
+    expectBodyNamesItsOwnActions(rows[0]!)
     expect(rows[0]!.actions.map((action) => action.op)).toEqual([
       'diagnose-failure',
       'restart',
@@ -219,9 +228,7 @@ describe('buildActionQueueView — failure-kind title/body derivation', () => {
       'Task task-1 failed at verify:test: A verification check did not pass',
     )
     // Body is the decision, not the signature or verbose reason.
-    expect(rows[0]!.body).toBe(
-      'Continue on the existing worktree, restart from scratch, or drop',
-    )
+    expectBodyNamesItsOwnActions(rows[0]!)
   })
 
   it('unregistered signature: merge failures keep their key in detail too', async () => {
@@ -237,9 +244,7 @@ describe('buildActionQueueView — failure-kind title/body derivation', () => {
     expect(rows[0]!.title).toContain('The changes could not be merged')
     expect(rows[0]!.title).not.toContain('merge:unknown/unclassified')
     // §9 beat 3: body is the decision; signature is no longer on the card face.
-    expect(rows[0]!.body).toBe(
-      'Continue on the existing worktree, restart from scratch, or drop',
-    )
+    expectBodyNamesItsOwnActions(rows[0]!)
     // No raw machine id on the card face.
     expect(rows[0]!.title).not.toContain('[task')
   })

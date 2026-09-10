@@ -5,7 +5,8 @@
  * the card face) and §7 (readable with no prior context):
  *
  *   1. headline: "Task [id] failed at [phase]: [one-sentence summary]"
- *   2. body:     "Continue on the existing worktree, restart from scratch, or drop"
+ *   2. body:     the recovery menu this row actually carries, e.g.
+ *                "Your options: investigate, restart or delete task"
  *
  * The failure signature, verbose reason, and captured error are accessible via
  * the task graph (DEC-18: internals stay behind a disclosure) — they no longer
@@ -20,6 +21,19 @@ import {
   type PersistedActionQueueRow,
   type TaskForActionQueue,
 } from '../view/action-queue.js'
+
+/**
+ * The body must name exactly the verbs the row actually carries — that is the
+ * invariant, not any particular sentence. It used to be a constant naming
+ * Continue first, printed even on setup failures whose menu is restart/delete
+ * because there is no worktree to continue on.
+ */
+const expectBodyNamesItsOwnActions = (row: { body: string; actions?: { label: string }[] }): void => {
+  const labels = (row.actions ?? []).map((a) => a.label.toLowerCase())
+  expect(labels.length).toBeGreaterThan(0)
+  for (const label of labels) expect(row.body.toLowerCase()).toContain(label)
+  expect(row.body).toMatch(/^Your options?: |^Your one option: /)
+}
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -114,9 +128,7 @@ describe('§9 beat 3 — failed alert reads cold', () => {
     })
 
     // The body is a plain-language call to action, not a technical explanation.
-    expect(rows[0]!.body).toBe(
-      'Continue on the existing worktree, restart from scratch, or drop',
-    )
+    expectBodyNamesItsOwnActions(rows[0]!)
     // The failure signature must not appear on the card face.
     expect(rows[0]!.body).not.toContain('verify:test/test-assertion-error')
   })
@@ -132,9 +144,7 @@ describe('§9 beat 3 — failed alert reads cold', () => {
       ...BASE,
     })
 
-    expect(rows[0]!.body).toBe(
-      'Continue on the existing worktree, restart from scratch, or drop',
-    )
+    expectBodyNamesItsOwnActions(rows[0]!)
     expect(rows[0]!.body).not.toContain('Failure signature:')
     expect(rows[0]!.body).not.toContain('brand-new-failure')
   })
@@ -157,9 +167,7 @@ describe('§9 beat 3 — failed alert reads cold', () => {
     expect(title).toContain(TASK_ID)
     expect(title).toContain('failed')
     // Decision body still applies even when phase is unknown.
-    expect(rows[0]!.body).toBe(
-      'Continue on the existing worktree, restart from scratch, or drop',
-    )
+    expectBodyNamesItsOwnActions(rows[0]!)
   })
 
   it('two failed rows with different tasks produce two distinguishable headlines', async () => {
