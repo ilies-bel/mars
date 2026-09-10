@@ -13,7 +13,7 @@
 
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Settings2Icon, XIcon } from 'lucide-react'
+import { ChevronRight as ChevronRightIcon, Settings2Icon, XIcon } from 'lucide-react'
 import { fetchChatConfig } from '@/shared/api'
 import type { ChatConfig, ChatConfigTool } from '@/shared/schemas'
 
@@ -32,7 +32,9 @@ const ToolList = ({ tools, testId }: { tools: ChatConfigTool[]; testId: string }
   </ul>
 )
 
-export const AgentConfigContent = ({ config }: { config: ChatConfig }) => (
+export const AgentConfigContent = ({ config }: { config: ChatConfig }) => {
+  const [promptOpen, setPromptOpen] = useState(false)
+  return (
   <div className="px-3 pb-4">
     <SectionHeading>Model</SectionHeading>
     <p data-testid="agent-config-model" className="mt-1 text-label text-foreground">{config.model}</p>
@@ -48,12 +50,21 @@ export const AgentConfigContent = ({ config }: { config: ChatConfig }) => (
     </dl>
 
     <SectionHeading>System prompt</SectionHeading>
-    <details className="mt-1">
-      <summary className="cursor-pointer text-label text-foreground hover:text-muted-foreground">
+    {/* The one disclosure in the app with no chevron at all: its summary was a
+        bare line of text that happened to be clickable. */}
+    <details className="mt-1" onToggle={(e) => setPromptOpen(e.currentTarget.open)}>
+      <summary className="flex cursor-pointer list-none items-center gap-1.5 text-label text-foreground hover:text-muted-foreground [&::-webkit-details-marker]:hidden">
+        <ChevronRightIcon
+          size={11}
+          strokeWidth={2.5}
+          aria-hidden="true"
+          className="shrink-0 transition-transform"
+          style={promptOpen ? { transform: 'rotate(90deg)' } : undefined}
+        />
         {config.systemPromptSource === 'override'
-          ? 'Override — .mars/chat-system-prompt.md'
-          : 'Built-in'}
-        <span className="ml-2 text-micro text-muted-foreground">({config.systemPrompt.length} chars)</span>
+          ? 'Overridden by .mars/chat-system-prompt.md'
+          : 'Built in'}
+        <span className="text-micro text-muted-foreground">({config.systemPrompt.length} chars)</span>
       </summary>
       <pre
         data-testid="agent-config-system-prompt"
@@ -68,7 +79,9 @@ export const AgentConfigContent = ({ config }: { config: ChatConfig }) => (
 
     <SectionHeading>MCP servers</SectionHeading>
     {config.mcpServers.length === 0 && (
-      <p className="mt-1 text-micro text-muted-foreground">None configured (.mcp.json)</p>
+      <p className="mt-1 text-micro text-muted-foreground">
+        No MCP servers are configured for this repo.
+      </p>
     )}
     {config.mcpServers.map((server) => (
       <div key={server.name} data-testid={`agent-config-mcp-${server.name}`} className="mt-1.5">
@@ -102,7 +115,8 @@ export const AgentConfigContent = ({ config }: { config: ChatConfig }) => (
       </div>
     </details>
   </div>
-)
+  )
+}
 
 export const AgentConfigPanel = ({ projectId }: { projectId?: string }) => {
   const [open, setOpen] = useState(false)

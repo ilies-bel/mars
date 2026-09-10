@@ -89,6 +89,6 @@ describe('AgentConfigContent', () => {
     const emptyHtml = renderToStaticMarkup(
       <AgentConfigContent config={{ ...CONFIG, mcpServers: [] }} />,
     )
-    expect(emptyHtml).toContain('None configured')
+    expect(emptyHtml).toContain('No MCP servers are configured')
   })
 })
