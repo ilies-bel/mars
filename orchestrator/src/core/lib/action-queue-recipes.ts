@@ -1430,7 +1430,7 @@ const RECIPE_DEFINITIONS = {
         caughtTaskCount > 0
           ? ` — caught ${caughtTaskCount} task failure${caughtTaskCount === 1 ? '' : 's'} that would otherwise look unrelated`
           : ''
-      return `A check is failing on the main branch (${gateName})${caughtSuffix} — nothing is fixing this automatically, you need to look at it.`
+      return `A check is failing on the main branch (${gateName})${caughtSuffix} — nothing is fixing this automatically, you need to look at it. Dispatch resumes on its own within about a minute of a commit landing that makes the check pass.`
     },
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
@@ -1443,13 +1443,19 @@ const RECIPE_DEFINITIONS = {
       // triage card.  Full output is behind `mars action-queue show` (body).
       gateOutput: ctx.payload['gateOutput'],
     }),
-    verbs: [
-      {
-        op: 'resume-dispatch',
-        label: 'Resume dispatch',
-        style: 'primary',
-      },
-    ],
+    // No resume verb, and certainly not a PRIMARY one.
+    //
+    // `set dispatch on` clears the latch but does not fix the branch, so the
+    // baseline health checker re-asserts the pause on its next run — and in
+    // the window between, queued work is dispatched into a red integration
+    // branch. This row made that the filled, recommended button, while the
+    // Progress banner for the same condition said "Fix the gate to resume".
+    // The queue was recommending the one action the docs single out as
+    // harmful.
+    //
+    // There is nothing to click here: repair the gate and the daemon detects
+    // the SHA advance and resumes by itself.
+    verbs: [],
   },
 
   'dirty-integration': {
