@@ -19,18 +19,40 @@ const UNTEACHABLE_FAILURE_KINDS = new Set(['unknown', 'manual-park'])
 const withTeach = (d: Decision, failureKind: string): Decision =>
   UNTEACHABLE_FAILURE_KINDS.has(failureKind) ? d : { ...d, secondary: TEACH_SECONDARY }
 
+/**
+ * One name per op, matching the labels the daemon's own recipes and failure
+ * kinds emit ("Restart", "Delete task") — a reader meets these buttons on the
+ * same card as those, and three names for `restart` read as three operations.
+ *
+ * More seriously, the `coder-killed-by-restart` button READ "Continue" and
+ * SENT `op: 'restart'`. Those are opposite operations: `mars continue` resumes
+ * on the existing worktree and keeps every commit the worker made, while
+ * `mars restart` wipes the worktree and branch and throws that work away. A
+ * coder killed by a daemon restart is the textbook `continue` case — the
+ * worktree is intact and the commits are good — so the one button most likely
+ * to be pressed was the one that destroyed the most.
+ *
+ * `continue` is a first-class daemon op (`protocol.ts`), so this is a straight
+ * correction, not a new capability.
+ */
 const DECISIONS: Record<string, Decision[]> = {
   'coder-killed-by-restart': [
-    { label: 'Continue', endpoint: '/api/actions', payload: { op: 'restart' } },
-    { label: 'Drop', endpoint: '/api/actions', payload: { op: 'drop' } },
+    { label: 'Continue', endpoint: '/api/actions', payload: { op: 'continue' } },
+    { label: 'Restart', endpoint: '/api/actions', payload: { op: 'restart' } },
+    { label: 'Delete task', endpoint: '/api/actions', payload: { op: 'drop' } },
   ],
   'verify-failed': [
-    { label: 'Retry', endpoint: '/api/actions', payload: { op: 'restart' } },
-    { label: 'Drop', endpoint: '/api/actions', payload: { op: 'drop' } },
+    // A verify failure rewinds to the coder on the SAME worktree with the
+    // recorded verify output, so the worker can repair its own diff. Restart
+    // discards the diff that was one fix away from passing.
+    { label: 'Continue', endpoint: '/api/actions', payload: { op: 'continue' } },
+    { label: 'Restart', endpoint: '/api/actions', payload: { op: 'restart' } },
+    { label: 'Delete task', endpoint: '/api/actions', payload: { op: 'drop' } },
   ],
   'merge-blocked': [
-    { label: 'Retry Merge', endpoint: '/api/actions', payload: { op: 'restart' } },
-    { label: 'Drop', endpoint: '/api/actions', payload: { op: 'drop' } },
+    { label: 'Continue', endpoint: '/api/actions', payload: { op: 'continue' } },
+    { label: 'Restart', endpoint: '/api/actions', payload: { op: 'restart' } },
+    { label: 'Delete task', endpoint: '/api/actions', payload: { op: 'drop' } },
   ],
 }
 

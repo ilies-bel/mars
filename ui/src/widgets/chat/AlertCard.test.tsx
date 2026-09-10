@@ -504,16 +504,18 @@ describe('ActionQueueRow – recipe rendering', () => {
     expect(html).toContain('Legacy title')
   })
 
-  it('uses verbs from recipe when available', () => {
+  it('uses verbs from recipe when available, under one name per op', () => {
     const item = {
       ...BASE_ITEM,
       humanSummary: 'Something failed',
       verbs: [
+        // Recipes have called this op "Purge", "Discard task" and "Drop
+        // permanently"; the row renders the one name the rest of the app uses.
         { op: 'purge', label: 'Purge', style: 'destructive' as const },
       ],
     } as ActionQueueItem
     const html = renderToStaticMarkup(<ActionQueueRow item={item} />)
-    expect(html).toContain('Purge')
+    expect(html).toContain('Delete task')
   })
 
   it('falls back to legacy actions when verbs is empty', () => {
@@ -580,19 +582,22 @@ describe('ActionQueueRow – recipe rendering', () => {
 // ---------------------------------------------------------------------------
 // ActionQueueRow – verb visual hierarchy
 // Verifies that the legacy-action fallback assigns the correct visual weight
-// to each op kind: purge → danger (error), restart → primary (highlight),
-// investigate → ghost (default).
+// to each op kind: purge and restart → danger (error) because both destroy
+// work, continue → primary (highlight), investigate → ghost (default).
 // ---------------------------------------------------------------------------
 
 describe('ActionQueueRow – verb visual hierarchy', () => {
-  it('renders restart action with primary (highlight) styling in legacy fallback', () => {
+  it('renders restart as DESTRUCTIVE in legacy fallback, never as the recommended action', () => {
     const item = {
       ...BASE_ITEM,
       verbs: [] as AlertVerb[],
       actions: [{ id: 'r', label: 'RESTART', op: 'restart' }],
     } as unknown as ActionQueueItem
     const html = renderToStaticMarkup(<ActionQueueRow item={item} />)
-    expect(html).toContain('text-highlight')
+    // Restart deletes the worktree, the branch and the worker's commits. It
+    // wore the highlight — the same treatment as the safe recovery verb.
+    expect(html).toContain('text-error')
+    expect(html).not.toContain('text-highlight')
   })
 
   it('renders purge action with error (danger) styling in legacy fallback', () => {
@@ -635,14 +640,15 @@ describe('ActionQueueRow – recipe verb visual hierarchy', () => {
     expect(html).toContain('text-error')
   })
 
-  it('renders restart recipe verb with primary (highlight) styling even when backend sends default', () => {
+  it('renders the restart recipe verb as destructive whatever style the backend sends', () => {
     const item = {
       ...BASE_ITEM,
       humanSummary: 'Task failed',
       verbs: [{ op: 'restart', label: 'RESTART', style: 'default' as const }],
     } as ActionQueueItem
     const html = renderToStaticMarkup(<ActionQueueRow item={item} />)
-    expect(html).toContain('text-highlight')
+    expect(html).toContain('text-error')
+    expect(html).toContain('Restart')
   })
 
   it('renders investigate recipe verb with ghost (default) styling', () => {

@@ -5,8 +5,6 @@
  * Falls back gracefully to the legacy `title` / `actions` fields when the
  * backend has not yet migrated a given row to the recipe shape.
  *
- * For task-failure rows the `restart` verb label is overridden to "Continue"
- * client-side so the operator sees the familiar Mars recovery vocabulary.
  * The last lines of verify output are surfaced inside AlertCard from the
  * `detail.errorExcerpt` field when `operatorGoal` is present.
  */
@@ -31,21 +29,58 @@ export const ActionQueueRow = ({ item }: ActionQueueRowProps) => {
       ? recipeVerbs
       : item.actions.map((a) => ({ op: a.op, label: a.label, hint: a.hint }))
 
-  // Always derive visual style from op so hierarchy is consistent
-  // regardless of what the backend sends in the style field.
-  // For task-failure rows, relabel 'restart' → 'Continue' (Mars recovery vocabulary).
-  const verbs: AlertVerb[] = verbSources.map((v) => ({
-    op: v.op,
-    label: isTaskFailure && v.op === 'restart' ? 'Continue' : v.label,
-    hint: v.hint,
-    style: (['purge', 'dismiss', 'reject'] as string[]).includes(v.op)
+  // Style is derived from the op, never from the style field the backend sends,
+  // so one row cannot disagree with the next about what a verb costs.
+  //
+  // `restart` is DESTRUCTIVE, and is named "Restart".
+  //
+  // This row used to do the opposite of both. On a task-failure row it
+  // relabelled `restart` to "Continue" and styled it `primary` — so the
+  // button read as the reversible recovery verb, looked like the recommended
+  // action, and wiped the worktree, the branch and every commit the worker had
+  // made. `continue` and `restart` are opposite operations in Mars: continue
+  // resumes on the existing worktree and keeps the work; restart throws it
+  // away. Naming one after the other is not a vocabulary preference.
+  //
+  // The reversible verb is now offered as itself, first, on rows that can
+  // take it — `continue` is a first-class daemon op.
+  const style = (op: string): AlertVerb['style'] =>
+    (['purge', 'drop', 'restart', 'dismiss', 'reject'] as string[]).includes(op)
       ? 'destructive'
-      : (['restart', 'retry'] as string[]).includes(v.op)
-      ? 'primary'
-      : v.op === 'snooze'
-      ? 'snooze'
-      : 'default',
+      : op === 'continue'
+        ? 'primary'
+        : op === 'snooze'
+          ? 'snooze'
+          : 'default'
+
+  const canonicalLabel = (op: string, label: string): string => {
+    if (op === 'restart') return 'Restart'
+    if (op === 'purge' || op === 'drop') return 'Delete task'
+    if (op === 'continue') return 'Continue'
+    return label
+  }
+
+  const derived: AlertVerb[] = verbSources.map((v) => ({
+    op: v.op,
+    label: canonicalLabel(v.op, v.label),
+    hint: v.hint,
+    style: style(v.op),
   }))
+
+  // A failed task with a worktree can always be continued, and that is the
+  // verb Mars itself recommends first (`mars continue` before `mars restart`).
+  // The daemon's recipes ship restart/purge but no continue, so the row would
+  // otherwise offer only ways to lose work.
+  // `hasResolvableTask` is the discriminator because `continue` needs a TASK to
+  // resume, and only task-backed rows carry a dag: `failed` and
+  // `recovery-abandoned` have one, while `slice-failed` (whose entity is a
+  // proposal), `daemon-code-drift` and `signature-wave` do not.
+  const offersContinue = derived.some((v) => v.op === 'continue')
+  const continuable =
+    isTaskFailure && hasResolvableTask(item) && !offersContinue && item.recoveryExhausted !== true
+  const verbs: AlertVerb[] = continuable
+    ? [{ op: 'continue', label: 'Continue', style: 'primary' as const }, ...derived]
+    : derived
 
   // Prefer humanSummary (recipe-generated, human-readable).
   // If absent, derive a plain phrase from the failure signature before falling

@@ -143,37 +143,62 @@ describe('ActionQueueRow – copy-op verb', () => {
 })
 
 // ---------------------------------------------------------------------------
-// restart → "Continue" relabeling on task-failure rows
+// A task-failure row must never name a wipe after the verb that preserves work
 // ---------------------------------------------------------------------------
 
-describe('ActionQueueRow – task-failure rows relabel the restart verb', () => {
-  // 'failed' is a member of taskFailureKinds (isTaskFailureActionQueueKind),
-  // so its server-provided 'restart' verb is relabeled to the Mars recovery
-  // vocabulary term "Continue" client-side (see ActionQueueRow.tsx).
+describe('ActionQueueRow – recovery verbs say what they do', () => {
+  // This row used to relabel the server's `restart` verb to "Continue" and
+  // style it `primary`. In Mars those are opposite operations: `continue`
+  // resumes on the existing worktree and keeps the worker's commits, while
+  // `restart` deletes the worktree and branch and discards them. The button
+  // read as the safe one, looked like the recommended one, and was the
+  // destructive one.
   const FAILED_ITEM: ActionQueueItem = {
     ...PROPOSAL_ITEM,
     id: 'failed:task-1',
     kind: 'failed',
     entityId: 'task-1',
     actions: [],
+    // A task-backed row: only these carry a dag, and only these can be continued.
+    dag: { blockers: [], blocking: [], descendants: [], proposalId: null, edges: [] },
     verbs: [{ op: 'restart', label: 'Restart', style: 'primary' }],
   } as unknown as ActionQueueItem
 
-  it('renders the restart verb button labelled "Continue", not "Restart"', () => {
+  it('calls the wipe "Restart", never "Continue", and keeps it behind the overflow', () => {
     const { container } = renderRow(FAILED_ITEM)
-    const btn = container.querySelector('[data-testid="alert-card-verb-restart"]')
+    // Destructive verbs live behind the overflow, so a wipe takes two clicks —
+    // and the main row is left to the verb that preserves work.
+    const btn = container.querySelector('[data-testid="alert-overflow-restart"]')
     expect(btn).not.toBeNull()
-    expect(btn!.textContent).toContain('Continue')
-    expect(btn!.textContent).not.toContain('Restart')
+    expect(btn!.textContent).toContain('Restart')
+    expect(btn!.textContent).not.toContain('Continue')
+    expect(container.querySelector('[data-testid="alert-card-verb-restart"]')).toBeNull()
   })
 
-  it('clicking it still dispatches invokeAction("restart", entityId)', async () => {
+  it('offers the real Continue as its own verb, dispatching the continue op', async () => {
     const { container } = renderRow(FAILED_ITEM)
-    const btn = container.querySelector('[data-testid="alert-card-verb-restart"]')!
+    const btn = container.querySelector('[data-testid="alert-card-verb-continue"]')
+    expect(btn).not.toBeNull()
+    expect(btn!.textContent).toContain('Continue')
+    await act(async () => {
+      btn!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    expect(mockInvokeAction).toHaveBeenCalledWith('continue', 'task-1')
+  })
+
+  it('still dispatches restart when the restart button is the one pressed', async () => {
+    const { container } = renderRow(FAILED_ITEM)
+    const btn = container.querySelector('[data-testid="alert-overflow-restart"]')!
     await act(async () => {
       btn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
     expect(mockInvokeAction).toHaveBeenCalledWith('restart', 'task-1')
+  })
+
+  it('withholds Continue once the task has spent its one recovery attempt', () => {
+    const exhausted = { ...FAILED_ITEM, recoveryExhausted: true } as unknown as ActionQueueItem
+    const { container } = renderRow(exhausted)
+    expect(container.querySelector('[data-testid="alert-card-verb-continue"]')).toBeNull()
   })
 })
 
@@ -315,7 +340,7 @@ describe('ActionQueueRow – failed card headline and output', () => {
     const menu = container.querySelector('[data-testid="alert-overflow-menu"]')
     expect(menu).not.toBeNull()
     // Destructive secondary verb (Discard task) appears in the menu.
-    expect(menu!.textContent).toContain('Discard task')
+    expect(menu!.textContent).toContain('Delete task')
   })
 
   it('overflow menu also has Open task when row is task-backed', async () => {
