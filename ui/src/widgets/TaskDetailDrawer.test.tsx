@@ -426,11 +426,16 @@ describe('TaskDetailDrawer – responsive shell (sheet < xl, drawer ≥ xl)', ()
  */
 describe('TaskDetailDrawer – subgraph (light-surface flex chips)', () => {
   it('renders context chips with bg-secondary class for light surface', () => {
+    // A second node, because the focused task's own chip is the graph's anchor
+    // and carries the current-page treatment rather than the link treatment.
     const html = renderDrawer(
       <TaskDetailDrawer
         taskId="t1"
         onClose={() => {}}
-        tasks={[task({ id: 't1', cluster: 'Queued' })]}
+        tasks={[
+          task({ id: 'blocker', cluster: 'Queued' }),
+          task({ id: 't1', cluster: 'Blocked', blockedBy: ['blocker'] }),
+        ]}
         proposals={[]}
       />,
     )
@@ -613,8 +618,13 @@ describe('TaskDetailDrawer – subgraph node click affordance', () => {
         proposals={[]}
       />,
     )
-    // Both nodes are reachable via their anchor href.
-    expect(html).toContain('href="#/task/focus"')
+    // Every node EXCEPT the one this drawer is already showing is reachable via
+    // its anchor href. The focused task is the anchor of its own graph, so a
+    // link on it would navigate nowhere — it is marked as the current page
+    // instead of offered as a destination.
+    expect(html).not.toContain('href="#/task/focus"')
+    expect(html).toContain('aria-current="page"')
+    expect(html).toContain('· this task')
     expect(html).toContain('href="#/task/blocker"')
   })
 
@@ -636,7 +646,10 @@ describe('TaskDetailDrawer – subgraph node click affordance', () => {
       <TaskDetailDrawer
         taskId="t1"
         onClose={() => {}}
-        tasks={[task({ id: 't1', cluster: 'Queued' })]}
+        tasks={[
+          task({ id: 'blocker', cluster: 'Queued' }),
+          task({ id: 't1', cluster: 'Blocked', blockedBy: ['blocker'] }),
+        ]}
         proposals={[]}
       />,
     )

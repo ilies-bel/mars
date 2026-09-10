@@ -22,7 +22,7 @@ describe('ChatGreeting', () => {
     act(() => {
       root.render(<ChatGreeting running={3} recovering={0} needYou={2} doneToday={5} />)
     })
-    expect(container.textContent).toContain('3 running · 2 need you · 5 done today')
+    expect(container.textContent).toContain('3 running · 2 need you · 5 done in the last 24h')
     expect(container.textContent).not.toContain('recovering')
     act(() => root.unmount())
   })
@@ -33,7 +33,7 @@ describe('ChatGreeting', () => {
     act(() => {
       root.render(<ChatGreeting running={2} recovering={1} needYou={3} doneToday={4} />)
     })
-    expect(container.textContent).toContain('2 running · 1 recovering · 3 need you · 4 done today')
+    expect(container.textContent).toContain('2 running · 1 recovering · 3 need you · 4 done in the last 24h')
     act(() => root.unmount())
   })
 
@@ -57,7 +57,7 @@ describe('ChatGreeting', () => {
       root.render(<ChatGreeting running={2} recovering={1} needYou={0} doneToday={3} />)
     })
     expect(container.querySelector('[data-testid="chat-greeting-board-link"]')).toBeNull()
-    expect(container.textContent).toContain('2 running · 1 recovering · 3 done today')
+    expect(container.textContent).toContain('2 running · 1 recovering · 3 done in the last 24h')
     act(() => root.unmount())
   })
 

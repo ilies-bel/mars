@@ -21,7 +21,7 @@ interface ChatGreetingProps extends GreetingCounts {
 /**
  * Main-thread opening message: at most two lines, no ranked alert list.
  *
- * Line 1 — aggregate status: "N running · N recovering · N need you · N done today"
+ * Line 1 — aggregate status: "N running · N recovering · N need you · N done in the last 24h"
  *   Zero-segments are omitted. When all counts are zero: "All quiet."
  * Line 2 — only when at least one item needs the operator:
  *   • If nextMove is provided: a button (chat-greeting-next-move) that opens
@@ -41,7 +41,7 @@ export const ChatGreeting = ({
   if (running > 0) segments.push(`${running} running`)
   if (recovering > 0) segments.push(`${recovering} recovering`)
   if (needYou > 0) segments.push(`${needYou} need you`)
-  if (doneToday > 0) segments.push(`${doneToday} done today`)
+  if (doneToday > 0) segments.push(`${doneToday} done in the last 24h`)
 
   // "All quiet." is a claim about the system. Only make it when the counts are
   // a real answer — with the daemon unreachable every count is zero, and

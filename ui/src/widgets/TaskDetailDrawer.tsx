@@ -1753,11 +1753,23 @@ const StepCard = ({
   toolEvents,
   agentToolCalls,
   isActive,
+  attempt,
+  attemptsTotal,
 }: {
   entry: StepCardEntry
   toolEvents: TraceEvent[]
   agentToolCalls: AgentToolCall[]
   isActive: boolean
+  /**
+   * Which run of this step this card is, when the step ran more than once.
+   *
+   * The drawer flattens every run's steps into one list, so a task that died
+   * at `setup-worktree` four times rendered four identical cards — same name,
+   * same error, four durations within nine milliseconds of each other — with
+   * nothing saying they were retries rather than four different steps.
+   */
+  attempt?: number
+  attemptsTotal?: number
 }) => {
   const summary =
     deriveStepSummary(toolEvents, entry.failureReason, entry.outcome) || entry.summary || ''
@@ -1807,6 +1819,14 @@ const StepCard = ({
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-semibold text-title text-foreground">{entry.stepName}</span>
+            {attempt !== undefined && attemptsTotal !== undefined && (
+              <span
+                className="shrink-0 rounded bg-foreground/6 px-1.5 py-0.5 text-micro text-muted-foreground"
+                data-testid="step-attempt"
+              >
+                attempt {attempt} of {attemptsTotal}
+              </span>
+            )}
             {entry.workerName != null ? (
               <span className="font-mono text-micro text-muted-foreground">{entry.workerName}</span>
             ) : null}
@@ -2040,6 +2060,11 @@ const StepCardList = ({
     ) : (
       <div className="flex flex-col">
         {cards.map((card, i) => {
+          // How many times this step ran, and which run this card is. Lists
+          // here are a handful of entries, so counting per card is cheaper
+          // than threading a map through the implicit-return component above.
+          const runsOfThisStep = cards.filter((c) => c.stepName === card.stepName).length
+          const attemptIndex = cards.slice(0, i + 1).filter((c) => c.stepName === card.stepName).length
           const cardStartedAt = new Date(card.startedAt).getTime()
           const cardEndedAt = card.endedAt == null ? null : new Date(card.endedAt).getTime()
           const cardTools = toolEvents.filter(
@@ -2058,6 +2083,8 @@ const StepCardList = ({
                 toolEvents={cardTools}
                 agentToolCalls={cardAgentCalls}
                 isActive={activeStepName != null && card.stepName === activeStepName}
+                attempt={runsOfThisStep > 1 ? attemptIndex : undefined}
+                attemptsTotal={runsOfThisStep > 1 ? runsOfThisStep : undefined}
               />
               {i < cards.length - 1 ? (
                 <div
@@ -2641,19 +2668,31 @@ export const TaskDetailDrawer = ({
           <div className="flex flex-wrap items-center gap-2">
             {subgraph.positioned.map((node) => {
               const s = miniNodeStyle(node.kind, node.cluster)
+              // The task this drawer is already showing appears in its own
+              // context graph, rendering as a chip that looks like a link to
+              // somewhere else and navigates nowhere. It is the anchor of the
+              // graph, so mark it as such rather than offering a no-op.
+              const isSelf = node.id === currentId
               return (
                 <a
                   key={node.id}
-                  href={taskHash(node.id)}
-                  style={{ cursor: 'pointer' }}
+                  href={isSelf ? undefined : taskHash(node.id)}
+                  aria-current={isSelf ? 'page' : undefined}
+                  title={node.label}
+                  style={{ cursor: isSelf ? 'default' : 'pointer' }}
                   onClick={(e) => {
                     e.preventDefault()
-                    navigate(node.id)
+                    if (!isSelf) navigate(node.id)
                   }}
                   data-node-id={node.id}
                   data-node-kind={node.kind}
                   {...(node.kind === 'task' ? { 'data-cluster': node.cluster } : {})}
-                  className="flex min-w-0 items-center gap-1.5 rounded border border-border bg-secondary px-2 py-1 font-mono text-micro text-foreground hover:bg-secondary/80"
+                  className={[
+                    'flex min-w-0 items-center gap-1.5 rounded border px-2 py-1 font-mono text-micro',
+                    isSelf
+                      ? 'border-highlight/40 bg-highlight/10 text-foreground'
+                      : 'border-border bg-secondary text-foreground hover:bg-secondary/80',
+                  ].join(' ')}
                 >
                   {/* Status dot — uses the dag cluster fill token so cluster
                       identity is preserved on the light surface without painting
@@ -2663,7 +2702,8 @@ export const TaskDetailDrawer = ({
                     style={{ backgroundColor: s.fill }}
                     aria-hidden="true"
                   />
-                  <span className="max-w-[140px] truncate">{node.label}</span>
+                  <span className="max-w-[38ch] truncate">{node.label}</span>
+                  {isSelf && <span className="shrink-0 text-muted-foreground">· this task</span>}
                 </a>
               )
             })}

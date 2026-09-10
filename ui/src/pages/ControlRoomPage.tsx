@@ -754,7 +754,7 @@ const NowSection = () => {
             }
           />
           <Stat
-            label="Done today"
+            label="Done · 24h"
             value={doneToday}
             colorClass={doneToday > 0 ? 'text-status-done' : undefined}
           />

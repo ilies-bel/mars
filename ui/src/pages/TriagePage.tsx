@@ -29,7 +29,7 @@ import { PAGE_MEASURE, PageHeader } from '@/widgets/primitives/DensityPrimitives
  * shown on three rows is one subject, not three. See `buildRenderedRows` in
  * clusterRows.ts for how the two are told apart.
  *
- * Empty state: "All quiet — N running, N done today". Shown ONLY when the
+ * Empty state: "All quiet — N running, N done in the last 24h". Shown ONLY when the
  * daemon actually answered and had nothing to report; when it is unreachable
  * the page says so instead (see UnreachableState).
  */
@@ -1893,7 +1893,7 @@ const LoadingState = () => (
 const AllQuietState = ({ running, doneToday }: AllQuietStateProps) => (
   <EmptyState title="All quiet">
     {running > 0 ? `${running} running` : 'nothing running'}
-    {doneToday > 0 ? ` \u00b7 ${doneToday} done today` : ''}
+    {doneToday > 0 ? ` \u00b7 ${doneToday} done in the last 24h` : ''}
   </EmptyState>
 )
 
