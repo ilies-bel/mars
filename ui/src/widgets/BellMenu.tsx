@@ -118,15 +118,24 @@ export const BellMenu = () => {
       </button>
 
       {open && (
-        <div className="mars-card absolute right-0 top-full z-50 mt-1 w-72 rounded bg-background p-2 text-label">
+        <div className="mars-card absolute right-0 top-full z-50 mt-1 flex max-h-[70vh] w-96 flex-col rounded bg-background p-2 text-label">
           <section>
             <h2 className="eyebrow px-1 pb-1 text-muted-foreground">
               Needs You
+              {sorted.length > 0 && count > sorted.length && (
+                /* The badge counts every open item; this list leaves out draft
+                   proposals. Saying "11" beside a badge reading "38" looked
+                   like a bug, so the popover states which of the two it is
+                   showing rather than leaving the reader to reconcile them. */
+                <span className="ml-1 normal-case text-muted-dark">
+                  · {sorted.length} of {count}
+                </span>
+              )}
             </h2>
             {sorted.length === 0 ? (
               <p className="px-1 py-1 text-muted-foreground">Nothing needs you</p>
             ) : (
-              <ul>
+              <ul className="min-h-0 flex-1 overflow-y-auto">
                 {sorted.map((item) => {
                   const isNotice = NOTICE_KINDS.has(item.kind)
                   return (
@@ -145,7 +154,9 @@ export const BellMenu = () => {
                         />
                       )}
                       <div className="min-w-0 flex-1">
-                        <p className="truncate text-foreground">{item.title}</p>
+                        <p className="line-clamp-2 text-foreground" title={item.title}>
+                          {item.title}
+                        </p>
                         {isNotice ? (
                           <button
                             type="button"
@@ -172,6 +183,16 @@ export const BellMenu = () => {
               </ul>
             )}
           </section>
+          {sorted.length > 0 && (
+            <a
+              href="#/triage"
+              onClick={() => setOpen(false)}
+              className="mt-1 shrink-0 rounded px-1 py-1.5 text-center text-label font-medium text-highlight transition-colors duration-[var(--dur-fast)] hover:bg-highlight/10"
+              data-testid="bell-see-all"
+            >
+              See all {count} in Needs You →
+            </a>
+          )}
         </div>
       )}
     </div>
