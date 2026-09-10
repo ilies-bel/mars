@@ -923,6 +923,24 @@ export const startServer = async (
           return jsonResponse(r.status, r.body)
         }
 
+        // POST /api/operator/:lever — generic control-lever write.
+        // Proxied to the daemon's POST /operator/:lever. Handles all named boolean
+        // control levers (recovery, scoring, memory-capture, auto-run-reflect,
+        // operator-auto-commit). The daemon rejects unknown names with 400.
+        // dispatch and recovery have dedicated routes above that are matched first.
+        {
+          const operatorLeverMatch =
+            req.method === 'POST'
+              ? path.match(/^\/api\/operator\/([^/]+)$/)
+              : null
+          if (operatorLeverMatch && operatorLeverMatch[1]) {
+            const lever = decodeURIComponent(operatorLeverMatch[1])
+            const body = await req.json().catch(() => null)
+            const r = await proxyPost(ctx.stateDir, `/operator/${encodeURIComponent(lever)}`, body ?? {})
+            return jsonResponse(r.status, r.body)
+          }
+        }
+
         // GET /api/verify-gates — full list of verify gates. Proxied from the
         // daemon's GET /view/verify-gates. Returns { gates: VerifyGate[] }.
         if (path === '/api/verify-gates' && req.method === 'GET') {

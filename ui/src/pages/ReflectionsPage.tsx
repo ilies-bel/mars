@@ -25,8 +25,8 @@
  */
 
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { fetchDeepReflections, fetchDeepReflection, applyLever } from '@/shared/api'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { fetchDeepReflections, fetchDeepReflection, applyLever, postOperatorLever } from '@/shared/api'
 import type {
   DeepReflectionSummary,
   DeepReflectionDetail,
@@ -455,6 +455,20 @@ interface RunStateBannerProps {
 }
 
 const RunStateBanner = ({ autoRunReflect, autoEnqueue, lastReflectedAt, originId = null }: RunStateBannerProps) => {
+  const queryClient = useQueryClient()
+  const [toggling, setToggling] = useState(false)
+
+  const handleToggleAutoReflect = async () => {
+    const newValue = autoRunReflect === 'on' ? 'off' : 'on'
+    setToggling(true)
+    try {
+      await postOperatorLever('auto-run-reflect', newValue)
+      void queryClient.invalidateQueries({ queryKey: ['deep-reflections'] })
+    } finally {
+      setToggling(false)
+    }
+  }
+
   const lastRan = lastReflectedAt ? `Last reflection: ${formatAbsoluteDateTime(lastReflectedAt)} (${fmtRelative(lastReflectedAt)})` : 'No reflection has run yet.'
   const needsManualTrigger = autoRunReflect === 'off' || !autoEnqueue
   const triggerLabel =
@@ -489,9 +503,14 @@ const RunStateBanner = ({ autoRunReflect, autoEnqueue, lastReflectedAt, originId
               />
             </span>
           ) : (
-            <>
-              Enable it with <code>mars operator set auto-reflect on</code>.
-            </>
+            <button
+              onClick={handleToggleAutoReflect}
+              disabled={toggling}
+              className="rounded border border-primary/30 px-1.5 py-0.5 font-mono text-micro text-primary/70 hover:bg-primary/10 hover:text-primary disabled:opacity-50 disabled:cursor-not-allowed"
+              aria-label="Enable auto-reflect"
+            >
+              {toggling ? 'Enabling…' : 'Enable auto-reflect'}
+            </button>
           )}
         </>
       )}

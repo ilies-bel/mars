@@ -952,6 +952,71 @@ export const registerRoutes = (
       return
     }
 
+    // POST /operator/:lever — generic control-lever write. Handles all named
+    // boolean control levers: recovery, scoring, memory-capture, auto-run-reflect,
+    // operator-auto-commit. Each maps to a ControlLevers key in daemon.json via
+    // writeControlLever(). Rejects unknown lever names with 400 (naming the valid
+    // set) and invalid values with 400. `dispatch` is intentionally excluded —
+    // it requires live in-memory state manipulation handled by the dedicated
+    // POST /operator/dispatch route above (which is matched first for that path).
+    {
+      const operatorLeverMatch =
+        req.method === 'POST' && req.url
+          ? req.url.match(/^\/operator\/([^/?]+)(?:\?.*)?$/)
+          : null
+      if (operatorLeverMatch && operatorLeverMatch[1]) {
+        const leverName = decodeURIComponent(operatorLeverMatch[1])
+
+        /**
+         * Mapping from CLI-style kebab-case lever names to ControlLevers keys.
+         * Derived from the same mapping the CLI's `operator set` command uses
+         * (src/cli/commands/operator.ts), so the two surfaces cannot drift.
+         */
+        const LEVER_KEY_MAP: Record<string, keyof ControlLevers> = {
+          recovery: 'recovery',
+          scoring: 'scoring',
+          'memory-capture': 'memoryCapture',
+          'auto-run-reflect': 'autoRunReflect',
+          'operator-auto-commit': 'operatorAutoCommit',
+        }
+
+        if (!(leverName in LEVER_KEY_MAP)) {
+          sendJson(res, 400, {
+            ok: false,
+            error: `unknown lever '${leverName}'; valid levers: ${Object.keys(LEVER_KEY_MAP).join(', ')}`,
+          })
+          return
+        }
+
+        let rawBody = ''
+        req.on('data', (chunk: Buffer) => { rawBody += chunk.toString() })
+        req.on('end', () => {
+          let parsed: unknown
+          try {
+            parsed = JSON.parse(rawBody)
+          } catch {
+            sendJson(res, 400, { ok: false, error: 'invalid JSON body' })
+            return
+          }
+          const schema = z.object({ value: z.enum(['on', 'off']) })
+          const result = schema.safeParse(parsed)
+          if (!result.success) {
+            sendJson(res, 400, { ok: false, error: "value is required and must be 'on' or 'off'" })
+            return
+          }
+          try {
+            const configKey = LEVER_KEY_MAP[leverName]!
+            writeControlLever(configKey, result.data.value)
+            sendJson(res, 200, { ok: true, data: { [leverName]: result.data.value } })
+          } catch (err: unknown) {
+            sendError(res, err)
+          }
+        })
+        req.on('error', (err: unknown) => sendError(res, err))
+        return
+      }
+    }
+
     // GET /view/glossary — the repo's domain glossary (CONTEXT.md), parsed and
     // returned as a structured term list. Each term includes its definition and
     // any avoid-aliases. Returns { terms: [{ term, definition, avoid }] }. Empty

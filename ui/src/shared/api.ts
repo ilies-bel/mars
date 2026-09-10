@@ -1514,6 +1514,21 @@ export const postOperatorRecovery = async (value: 'on' | 'off'): Promise<void> =
   if (!r.ok) await throwMutationError('/api/operator/recovery', r)
 }
 
+/**
+ * Set a named boolean control lever to on or off. Persists the choice to
+ * daemon.json. Mirrors `mars operator set <lever> <value>`. Valid lever names:
+ * recovery, scoring, memory-capture, auto-run-reflect, operator-auto-commit.
+ * Throws `ApiError` on failure (including 400 for unknown levers).
+ */
+export const postOperatorLever = async (lever: string, value: 'on' | 'off'): Promise<void> => {
+  const r = await fetch(`${BASE}/api/operator/${encodeURIComponent(lever)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ value }),
+  })
+  if (!r.ok) await throwMutationError(`/api/operator/${lever}`, r)
+}
+
 // ---------------------------------------------------------------------------
 // Context rail data — glossary terms and skills
 // ---------------------------------------------------------------------------
