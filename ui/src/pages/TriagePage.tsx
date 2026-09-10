@@ -406,9 +406,19 @@ const destructiveConsequence = (
    */
   continueAvailable: boolean,
 ): string => {
-  const where = branch !== null ? `${entityId} (branch ${branch})` : entityId
+  // An empty branch means the task never got one — it died before setup
+  // finished — so there is nothing on disk for a restart to destroy. Saying
+  // "losing any commits the worker made" there contradicts the task drawer,
+  // which reports the branch as gone for the same task, and it is the drawer
+  // that is right. The two surfaces decide between Continue, Restart and
+  // Delete, so they must not take opposite sides on whether work exists.
+  const hasBranch = branch !== null && branch !== ''
+  const where = hasBranch ? `${entityId} (branch ${branch})` : entityId
   switch (op) {
     case 'restart':
+      if (!hasBranch) {
+        return `Restart ${entityId} — re-runs it from setup. No branch was ever created for this task, so nothing on disk is lost.`
+      }
       return continueAvailable
         ? `Restart ${where} — wipes the worktree and branch, losing any commits the worker made. Continue reuses them instead. This can't be undone.`
         : `Restart ${where} — wipes the worktree and branch, losing any commits the worker made. This can't be undone.`
@@ -762,10 +772,22 @@ const leadDecisionIndex = (decisions: Decision[]): number => {
         // one per row.
         [{ ...groupVerb, style: 'default' as const }, ...verbs]
       : verbs
+  // On a task-recovery row the disclosure holds everything that is not the
+  // recommended move: the copy verbs AND the destructive ones.
+  //
+  // `Delete task` used to render here, in the main row, BEFORE the Continue
+  // block — so on every failed card the destructive verb held first reading
+  // position and was the only thing in red, while Continue, the documented
+  // default, sat beside it as a quiet chip. Restart was already behind the
+  // "⋯"; there is no reason deletion should be one click closer than a wipe.
+  const isDestructiveVerb = (v: AlertVerb): boolean =>
+    v.style === 'destructive' || isDestructiveAction(v.op) || isDestructiveAction(v.label)
   const mainVerbs = isTaskRecovery
-    ? withGroupVerb.filter((v) => v.op !== 'copy')
+    ? withGroupVerb.filter((v) => v.op !== 'copy' && !isDestructiveVerb(v))
     : withGroupVerb
-  const disclosureVerbs = isTaskRecovery ? verbs.filter((v) => v.op === 'copy') : []
+  const disclosureVerbs = isTaskRecovery
+    ? verbs.filter((v) => v.op === 'copy' || isDestructiveVerb(v))
+    : []
 
   const handleDecision = useCallback(
     async (d: Decision) => {
@@ -1154,22 +1176,6 @@ const leadDecisionIndex = (decisions: Decision[]): number => {
               )
             })}
 
-            {/* Confirm panel — full-width, wraps below the action row.
-                `w-full` forces it onto its own flex line inside the gap-2
-                container. One panel for every destructive verb; the sentence
-                is chosen by op so it names what is actually lost. */}
-            {armedVerb !== null && (
-              <ConfirmDestructive
-                verb={armedVerb}
-                entityId={item.entityId}
-                branch={item.humanDetail?.branch ?? null}
-                continueAvailable={continueAvailable}
-                pending={pending}
-                onConfirm={() => void handleVerb(armedVerb.op, armedVerb.hint)}
-                onCancel={() => setArmedVerb(null)}
-              />
-            )}
-
             {/* Recovery-exhausted carry-forward panel — only for task-recovery
                 kinds whose single recovery attempt has already been spent. */}
             {isTaskRecovery && isRecoveryExhausted && (
@@ -1330,20 +1336,35 @@ const leadDecisionIndex = (decisions: Decision[]): number => {
                 >
                   Restart
                 </button>
-                {/* Copy verbs (if any) */}
-                {disclosureVerbs.map((verb) => (
-                  <button
-                    key={`copy-${verb.label}`}
-                    type="button"
-                    role="menuitem"
-                    disabled={pending !== null}
-                    onClick={() => void handleVerb(verb.op, verb.hint)}
-                    className="flex w-full items-center px-3 py-1.5 text-left font-mono text-micro text-muted-foreground transition-colors hover:bg-border/40 hover:text-foreground disabled:opacity-50"
-                    data-testid={`triage-verb-${verb.op}`}
-                  >
-                    {pending === verb.op ? '…' : verb.label}
-                  </button>
-                ))}
+                {/* Copy verbs, and the destructive ones. A destructive verb
+                    arms the confirmation rather than firing, exactly as
+                    Restart above it does — the disclosure is not a shortcut
+                    past the gate. */}
+                {disclosureVerbs.map((verb) => {
+                  const destructive = isDestructiveVerb(verb)
+                  return (
+                    <button
+                      key={`${verb.op}-${verb.label}`}
+                      type="button"
+                      role="menuitem"
+                      disabled={pending !== null}
+                      onClick={() => {
+                        setMoreOpen(false)
+                        if (destructive) setArmedVerb(verb)
+                        else void handleVerb(verb.op, verb.hint)
+                      }}
+                      className={[
+                        'flex w-full items-center px-3 py-1.5 text-left font-mono text-micro transition-colors disabled:opacity-50',
+                        destructive
+                          ? 'text-error hover:bg-error/5'
+                          : 'text-muted-foreground hover:bg-border/40 hover:text-foreground',
+                      ].join(' ')}
+                      data-testid={`triage-verb-${verb.op}`}
+                    >
+                      {pending === verb.op ? '…' : verb.label}
+                    </button>
+                  )
+                })}
               </div>
             </div>
 
@@ -1366,6 +1387,28 @@ const leadDecisionIndex = (decisions: Decision[]): number => {
           </ActionLink>
         )}
       </div>
+
+      {/* Confirm panel — BELOW the actions row, not inside it.
+          It lived in the middle of the flex container and was `w-full`, so
+          arming Restart forced its own line mid-row: `Delete task` was
+          orphaned on the line above and `Continue` — the very button the
+          confirmation text recommends — was pushed below the red bar. The row
+          you were acting on stopped being a row at the moment you needed to
+          read it. One panel for every destructive verb; the sentence is chosen
+          by op so it names what is actually lost. */}
+      {armedVerb !== null && (
+        <div className="mt-2 flex">
+          <ConfirmDestructive
+            verb={armedVerb}
+            entityId={item.entityId}
+            branch={item.humanDetail?.branch ?? null}
+            continueAvailable={continueAvailable}
+            pending={pending}
+            onConfirm={() => void handleVerb(armedVerb.op, armedVerb.hint)}
+            onCancel={() => setArmedVerb(null)}
+          />
+        </div>
+      )}
 
       {/* Error feedback — shown inline below the actions row */}
       {error && (

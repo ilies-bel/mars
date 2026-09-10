@@ -501,7 +501,11 @@ describe('TriageRow – Continue/Restart buttons fire invokeAction', () => {
     expect(container.querySelector('[data-testid="triage-restart-confirm"]')).not.toBeNull()
   })
 
-  it('confirm text names the discarded work (entity id)', async () => {
+  it('confirm text names the task, and says nothing is lost when there is no branch', async () => {
+    // The default fixture carries no branch, which means the task never got
+    // one — it died before setup finished. Claiming a restart would lose
+    // commits there contradicts the task drawer, which reports no branch on
+    // record for the same task.
     const { container } = renderPage()
     const btn = container.querySelector('[data-testid="triage-restart"]') as HTMLButtonElement
     await act(async () => {
@@ -509,7 +513,8 @@ describe('TriageRow – Continue/Restart buttons fire invokeAction', () => {
     })
     const confirmEl = container.querySelector('[data-testid="triage-restart-confirm"]')
     expect(confirmEl?.textContent).toContain('task-failed')
-    expect(confirmEl?.textContent).toMatch(/discard|lose|losing/i)
+    expect(confirmEl?.textContent).toMatch(/nothing on disk is lost/i)
+    expect(confirmEl?.textContent).not.toMatch(/losing any commits/i)
   })
 
   it('confirm text includes the branch when humanDetail.branch is present', async () => {

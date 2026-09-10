@@ -1,4 +1,4 @@
-import { ChevronRight } from 'lucide-react'
+import { ChevronRight, MoreHorizontal } from 'lucide-react'
 /**
  * Task detail drawer — right-side panel opened from any task node on the
  * Progress tab (DAG or column view).
@@ -558,6 +558,26 @@ export const RecoveryCommands = ({
   const [confirming, setConfirming] = useState<'restart' | 'drop' | null>(null)
   const [loading, setLoading] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
+  const [moreOpen, setMoreOpen] = useState(false)
+  const moreRef = useRef<HTMLDivElement>(null)
+
+  // Close the destructive-verb menu on an outside click or Escape, so it never
+  // sits open over the drawer's content waiting to be hit by accident.
+  useEffect(() => {
+    if (!moreOpen) return
+    const onPointerDown = (e: MouseEvent) => {
+      if (moreRef.current && !moreRef.current.contains(e.target as Node)) setMoreOpen(false)
+    }
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMoreOpen(false)
+    }
+    document.addEventListener('mousedown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [moreOpen])
 
   const invoke = async (op: string) => {
     setLoading(op)
@@ -685,23 +705,54 @@ export const RecoveryCommands = ({
           </>
         ) : null}
 
-        <button
-          data-testid="restart-btn"
-          onClick={() => setConfirming('restart')}
-          disabled={loading !== null || confirming !== null}
-          className="rounded border border-error/40 bg-error/10 px-3 py-1 font-mono text-label text-error hover:bg-error/20 disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          Restart
-        </button>
-
-        <button
-          data-testid="drop-btn"
-          onClick={() => setConfirming('drop')}
-          disabled={loading !== null || confirming !== null}
-          className="rounded border border-error/20 px-3 py-1 font-mono text-label text-error/70 hover:bg-error/10 disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          Delete task
-        </button>
+        {/* Restart and Delete are DESTRUCTIVE and sit behind a disclosure,
+            the same shape the Needs You row uses. They used to render inline
+            as peers of Continue, in near-identical tinted boxes, so the two
+            surfaces that decide the same question disagreed about which verb
+            was one click away and which was the recommended one. */}
+        <div ref={moreRef} className="relative">
+          <button
+            type="button"
+            onClick={() => setMoreOpen((o) => !o)}
+            disabled={loading !== null || confirming !== null}
+            aria-expanded={moreOpen}
+            aria-label="More actions"
+            data-testid="task-more-toggle"
+            className="inline-flex h-7 w-7 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <MoreHorizontal size={14} strokeWidth={2} aria-hidden="true" />
+          </button>
+          {/* Always in the DOM (invisible + pointer-events-none when closed)
+              so the buttons stay queryable; jsdom ignores pointer-events. */}
+          <div
+            role="menu"
+            className={[
+              'absolute right-0 z-10 mt-1 min-w-36 rounded-lg border border-border bg-card py-1 shadow-lg',
+              moreOpen ? '' : 'invisible pointer-events-none',
+            ].join(' ')}
+          >
+            <button
+              type="button"
+              role="menuitem"
+              data-testid="restart-btn"
+              onClick={() => { setMoreOpen(false); setConfirming('restart') }}
+              disabled={loading !== null || confirming !== null}
+              className="flex w-full items-center px-3 py-1.5 text-left font-mono text-micro text-error transition-colors hover:bg-error/5 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Restart
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              data-testid="drop-btn"
+              onClick={() => { setMoreOpen(false); setConfirming('drop') }}
+              disabled={loading !== null || confirming !== null}
+              className="flex w-full items-center px-3 py-1.5 text-left font-mono text-micro text-error transition-colors hover:bg-error/5 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Delete task
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* CLI equivalent — keeps text strings for terminal users and tests. */}
@@ -990,7 +1041,13 @@ const ChangesSection = ({ taskId, taskStatus, changesData: injected, projectId, 
             {taskStatus === 'dropped'
               ? 'This task was dropped — its changes were not merged.'
               : taskStatus === 'failed'
-              ? 'This task failed — its changes are no longer available.'
+              // Not "no longer available", which asserts work existed and was
+              // lost. `branch-gone` cannot tell a task that died before setup
+              // produced a branch from one whose worktree was cleaned up
+              // later, and the Restart confirmation on Needs You reads the
+              // same ambiguity the other way. Name the state, not a history
+              // this surface cannot see.
+              ? 'No branch on record for this task, so there is no diff to show.'
               : taskStatus === 'done'
               ? 'The branch was cleaned up after merging — the full diff is no longer available.'
               : 'The work for this task is no longer on disk.'}
