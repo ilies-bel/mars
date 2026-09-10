@@ -193,7 +193,7 @@ describe('TaskDetailBody – Changes section', () => {
       <TaskDetailBody task={makeTask({ status: 'failed' })} changesData={BRANCH_GONE} />,
     )
     expect(html).toContain('data-testid="changes-branch-gone"')
-    expect(html).toContain('No branch on record for this task')
+    expect(html).toContain('No diff could be read for this task')
     // Must NOT claim the task was merged
     expect(html).not.toContain('cleaned up after merging')
     expect(html).not.toContain('This task changed no files.')

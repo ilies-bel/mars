@@ -1041,13 +1041,16 @@ const ChangesSection = ({ taskId, taskStatus, changesData: injected, projectId, 
             {taskStatus === 'dropped'
               ? 'This task was dropped — its changes were not merged.'
               : taskStatus === 'failed'
-              // Not "no longer available", which asserts work existed and was
-              // lost. `branch-gone` cannot tell a task that died before setup
-              // produced a branch from one whose worktree was cleaned up
-              // later, and the Restart confirmation on Needs You reads the
-              // same ambiguity the other way. Name the state, not a history
-              // this surface cannot see.
-              ? 'No branch on record for this task, so there is no diff to show.'
+              // Say what actually happened: the diff could not be read.
+              //
+              // "This task failed — its changes are no longer available"
+              // asserts work existed and was lost, which is a claim about the
+              // branch that this surface cannot support and that the Restart
+              // confirmation on Needs You contradicts for the same task id.
+              // `branch-gone` means one thing only — no diff came back — and
+              // it cannot distinguish a task that died before producing a
+              // branch from one whose worktree was later cleaned up.
+              ? 'No diff could be read for this task, so there is nothing to show here. That does not mean its branch is empty — check it before restarting.'
               : taskStatus === 'done'
               ? 'The branch was cleaned up after merging — the full diff is no longer available.'
               : 'The work for this task is no longer on disk.'}

@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { fetchStewardLedger } from '@/shared/api'
 import type { StewardLedgerEntry } from '@/shared/schemas'
-import { smartTimestamp, formatFailureSig } from '@/shared/displayStrings'
+import { smartTimestamp } from '@/shared/displayStrings'
 import { Response } from '@/components/chat-primitives/response'
 
 export interface StewardLedgerPanelProps {
@@ -90,14 +90,24 @@ export const StewardLedgerPanel = ({ targetKind, targetId }: StewardLedgerPanelP
                     </time>
                   </div>
                   <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-2 gap-y-1 font-mono text-label leading-relaxed">
-                    <dt className="text-muted-foreground">Recipe</dt>
+                    {/* These two labels described neither of their values.
+                        "Recipe" held a failure SIGNATURE, and rendering it as
+                        prose ("the coding step failed") made it read as a
+                        statement about how this task died — a third answer,
+                        inside the task drawer, competing with the step strip
+                        and the failure summary above it. It is the recipe's
+                        trigger, not this task's phase. "Version" held the same
+                        signature and is not a version of anything. */}
+                    <dt className="text-muted-foreground">Applies to</dt>
                     <dd className="break-all text-foreground" title={entry.recipeId}>
-                      {/[:/]/.test(entry.recipeId)
-                        ? formatFailureSig(entry.recipeId)
-                        : entry.recipeId.replace(/-/g, ' ')}
+                      {entry.recipeId}
                     </dd>
-                    <dt className="text-muted-foreground">Version</dt>
-                    <dd className="break-all text-foreground">{entry.targetVersion}</dd>
+                    {entry.targetVersion !== '' && entry.targetVersion !== entry.recipeId && (
+                      <>
+                        <dt className="text-muted-foreground">Target</dt>
+                        <dd className="break-all text-foreground">{entry.targetVersion}</dd>
+                      </>
+                    )}
                     <dt className="text-muted-foreground">Rationale</dt>
                     <dd className="text-foreground">
                       {/* Rendered as markdown — Rationale is agent-authored prose that may
