@@ -45,7 +45,6 @@ import {
   Controls,
   Handle,
   MarkerType,
-  MiniMap,
   Position,
   ReactFlow,
   ReactFlowProvider,
@@ -65,7 +64,6 @@ import {
 import type { ProgressProposalNode, ProgressTask } from '@/shared/schemas'
 import { taskHash } from '@/shared/routing'
 import {
-  buildClusterStyleFromVars,
   buildTopology,
   BUNDLE_H,
   BUNDLE_W,
@@ -107,13 +105,37 @@ export interface TopologyViewProps {
 // Legend
 // ---------------------------------------------------------------------------
 
-const LEGEND_ITEMS: ReadonlyArray<{ label: string; color: string }> = [
-  { label: 'proposal', color: PROPOSAL_STROKE },
-  { label: 'in progress', color: CLUSTER_CSS['In progress'].dot },
-  { label: 'blocked', color: CLUSTER_CSS.Blocked.dot },
-  { label: 'queued', color: CLUSTER_CSS.Queued.dot },
-  { label: 'failed', color: CLUSTER_CSS.Failed.dot },
+interface LegendItem {
+  label: string
+  color: string
+  /** The node cluster this swatch stands for; null for the proposal frame. */
+  cluster: Cluster | null
+}
+
+const LEGEND_ITEMS: ReadonlyArray<LegendItem> = [
+  { label: 'proposal', color: PROPOSAL_STROKE, cluster: null },
+  { label: 'in progress', color: CLUSTER_CSS['In progress'].dot, cluster: 'In progress' },
+  { label: 'blocked', color: CLUSTER_CSS.Blocked.dot, cluster: 'Blocked' },
+  { label: 'queued', color: CLUSTER_CSS.Queued.dot, cluster: 'Queued' },
+  { label: 'failed', color: CLUSTER_CSS.Failed.dot, cluster: 'Failed' },
 ]
+
+/**
+ * The legend is a key to THIS graph, not a catalogue of states the app knows.
+ *
+ * All five swatches rendered unconditionally, so a snapshot containing three
+ * colours advertised five — and the reader's first job became hunting the
+ * canvas for a "queued" card that was not there. A key that names something
+ * absent is worse than no key: it turns a complete graph into an apparently
+ * incomplete one.
+ */
+export const visibleLegendItems = (
+  clusters: ReadonlySet<Cluster>,
+  hasProposal: boolean,
+): ReadonlyArray<LegendItem> =>
+  LEGEND_ITEMS.filter((item) =>
+    item.cluster === null ? hasProposal : clusters.has(item.cluster),
+  )
 
 // ---------------------------------------------------------------------------
 // Custom nodes
@@ -354,6 +376,22 @@ const TopologyViewInner = ({
     return { nodes, edges }
   }, [baseNodes, baseEdges, searchMatchIds, lit])
 
+  // Only the swatches this graph actually uses — see visibleLegendItems.
+  const legendItems = useMemo(() => {
+    const clusters = new Set<Cluster>()
+    let hasProposal = false
+    for (const n of emphasized.nodes) {
+      const d = n.data
+      if (d.kind === 'task') clusters.add(d.cluster)
+      else if (d.kind === 'fanoutBundle') clusters.add('Queued')
+      else {
+        hasProposal = true
+        clusters.add(d.dom)
+      }
+    }
+    return visibleLegendItems(clusters, hasProposal)
+  }, [emphasized.nodes])
+
   // Fit the viewport on structural changes, drill-in toggles, and bundle toggles.
   const fitKey = `${structSig}|${openArcKey ?? ''}|${[...expandedBundles].sort().join(',')}`
   const lastFitKeyRef = useRef<string | null>(null)
@@ -514,21 +552,6 @@ const TopologyViewInner = ({
     setOpenArcKey((open) => (open === target ? open : target))
   }, [selectedProposalId])
 
-  // MiniMap renders SVG through JS callbacks — resolve CSS vars to concrete
-  // colours at call time (SVG fill cannot consume `var()` from here).
-  const minimapNodeColor = useCallback((node: Node): string => {
-    const styles = buildClusterStyleFromVars((name) =>
-      getComputedStyle(document.documentElement).getPropertyValue(name),
-    )
-    const data = node.data as TopoNode['data']
-    const cluster: Cluster =
-      data.kind === 'task'
-        ? data.cluster
-        : data.kind === 'fanoutBundle'
-          ? 'Queued'
-          : data.dom
-    return styles[cluster]?.stroke || 'var(--color-dag-queued-stroke)'
-  }, [])
 
   const openArcLabel = useMemo(() => {
     if (!openArcKey) return null
@@ -605,15 +628,19 @@ const TopologyViewInner = ({
         >
           <Background variant={BackgroundVariant.Dots} gap={24} size={1} color="var(--color-border-dark)" />
           <Controls showInteractive={false} position="bottom-left" className="topo-controls" />
-          <MiniMap
-            pannable
-            zoomable
-            nodeColor={minimapNodeColor}
-            nodeStrokeWidth={3}
-            position="bottom-right"
-            className="topo-minimap"
-            style={{ width: 180, height: 120 }}
-          />
+          {/* No minimap.
+            *
+            * It was an unlabelled 180x120 panel pinned bottom-right, and it
+            * covered a task card outright — the same defect that moved the
+            * status bar off this canvas ("covered a whole task card outright
+            * — measured at 100% of that node's area"). The status bar at
+            * least explained itself; the minimap was a grid of unreadable
+            * dashes.
+            *
+            * It also had nothing to navigate. The view opens fitted, so the
+            * whole graph is on screen and the minimap duplicates it at 1/8
+            * scale; once a reader zooms in, drag-to-pan and the zoom controls
+            * in the opposite corner already do the job. */}
         </ReactFlow>
       </div>
       {/* Zero-state search pill — shown when the active search matches nothing. */}
@@ -648,7 +675,7 @@ const TopologyViewInner = ({
        * they are small, and they sit where a graph UI is expected to put them. */}
       <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 border-t border-border bg-surface px-3 py-1.5">
         <div className="flex items-center gap-2.5 text-micro text-muted-foreground">
-          {LEGEND_ITEMS.map((item) => (
+          {legendItems.map((item) => (
             <span key={item.label} className="inline-flex items-center gap-1.5">
               <i className="inline-block h-[9px] w-[9px] rounded-[2px]" style={{ background: item.color }} />
               {item.label}

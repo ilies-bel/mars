@@ -858,21 +858,29 @@ export const ReflectionDetailView = ({ detail }: ReflectionDetailViewProps) => {
             </section>
           )}
 
-          {/* Tool call statistics — compact breakdown, not a raw object dump */}
-          <section>
-            <SectionHeading>Tool Calls ({detail.report.toolCallStats.total.toLocaleString()} total)</SectionHeading>
-            <div className="flex flex-wrap gap-2">
-              {byNameEntries.map(([tool, count]) => (
-                <div
-                  key={tool}
-                  className="border border-border bg-card px-2 py-1 text-label"
-                >
-                  <span className="text-muted-foreground">{tool}</span>
-                  <span className="text-muted-foreground"> {count}</span>
-                </div>
-              ))}
-            </div>
-          </section>
+          {/* Tool call statistics — compact breakdown, not a raw object dump.
+              Guarded like every sibling section on this page. It alone rendered
+              unconditionally, so a run that called no tools produced the
+              heading "Tool Calls (0 total)" with nothing whatsoever beneath
+              it — a section announcing its own emptiness. */}
+          {byNameEntries.length > 0 && (
+            <section>
+              <SectionHeading>Tool Calls ({detail.report.toolCallStats.total.toLocaleString()} total)</SectionHeading>
+              <div className="flex flex-wrap gap-2">
+                {byNameEntries.map(([tool, count]) => (
+                  <div
+                    key={tool}
+                    className="flex items-baseline gap-1.5 border border-border bg-card px-2 py-1 text-label"
+                  >
+                    {/* The name and its count were the same colour and weight,
+                        so the pair read as one grey string. */}
+                    <span className="text-muted-foreground">{tool}</span>
+                    <span className="tabular-nums font-medium text-foreground">{count}</span>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
 
           {/* Filed proposals — link arc → proposals, with lever binding */}
           {savedSuggestions.length > 0 && (

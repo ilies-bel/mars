@@ -462,10 +462,13 @@ describe('StewardPage', () => {
   // Agent spec footer
   // ---------------------------------------------------------------------------
 
-  it('renders the agent spec footer with 0 dispatch sites', () => {
+  it('says in a sentence that nothing calls the agent, rather than "(0 dispatch sites)"', () => {
     const html = renderToStaticMarkup(<StewardPage />)
-    expect(html).toContain('0 dispatch site')
+    expect(html).toContain('Nothing calls this agent')
     expect(html).toContain('claude-sonnet-5')
+    // The old heading required knowing what a dispatch site is to notice that
+    // the page's namesake agent never runs.
+    expect(html).not.toContain('0 dispatch site')
   })
 })
 

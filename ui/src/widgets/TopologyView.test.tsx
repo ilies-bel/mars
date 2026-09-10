@@ -14,7 +14,7 @@ import { createRoot } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { ProgressProposalNode, ProgressTask } from '@/shared/schemas'
 import { structuralSignature } from './topologyFlowModel'
-import { TopologyView } from './TopologyView'
+import { TopologyView, visibleLegendItems } from './TopologyView'
 
 const noTasks: ProgressTask[] = []
 const noProposals: ProgressProposalNode[] = []
@@ -286,24 +286,19 @@ describe('TopologyView – proposal filter', () => {
 // Minimap navigation aid — presence and CSS class
 // ---------------------------------------------------------------------------
 
-describe('TopologyView – minimap navigation aid', () => {
-  it('renders the minimap with the topo-minimap class when tasks are present', () => {
-    // The topo-minimap class is what connects the MiniMap component to the CSS
-    // rules that give it a drop shadow and keep it clear of the footer bar and
-    // zoom controls. Without this class the positioning overrides (bottom: 60px,
-    // right: 16px, box-shadow) would not apply and the minimap could overlap
-    // with task cards in a busy graph.
-    const html = renderToStaticMarkup(
-      <TopologyView tasks={[stubTask('t-1')]} proposals={noProposals} />,
-    )
-    expect(html).toContain('topo-minimap')
-  })
-
-  it('does not render the minimap in the empty state', () => {
-    // The empty-state path returns early with a plain <main> — no canvas, no
-    // minimap. The minimap class should therefore be absent.
-    const html = renderToStaticMarkup(<TopologyView tasks={[]} proposals={noProposals} />)
-    expect(html).not.toContain('topo-minimap')
+describe('TopologyView – no minimap', () => {
+  it('draws no minimap, in any state', () => {
+    // It was an unlabelled 180x120 panel pinned bottom-right, and measured on
+    // a live graph it covered a task card outright — the very thing the CSS
+    // it carried was written to prevent. It also had nothing to navigate: the
+    // view opens fitted, so the whole graph is already on screen.
+    for (const tasks of [[], [stubTask('t-1')]]) {
+      const html = renderToStaticMarkup(
+        <TopologyView tasks={tasks} proposals={noProposals} />,
+      )
+      expect(html).not.toContain('topo-minimap')
+      expect(html).not.toContain('react-flow__minimap')
+    }
   })
 })
 
@@ -834,5 +829,26 @@ describe('TopologyView – task node click produces task hash with from=progress
       await act(async () => { root.unmount() })
       document.body.removeChild(container)
     }
+  })
+})
+
+describe('visibleLegendItems', () => {
+  it('names only the states present in this graph', () => {
+    const items = visibleLegendItems(new Set(['Failed', 'Blocked'] as const), false)
+    expect(items.map((i) => i.label)).toEqual(['blocked', 'failed'])
+  })
+
+  it('includes the proposal swatch only when a proposal frame is drawn', () => {
+    expect(visibleLegendItems(new Set(['Failed'] as const), true).map((i) => i.label)).toEqual([
+      'proposal',
+      'failed',
+    ])
+    expect(visibleLegendItems(new Set(['Failed'] as const), false).map((i) => i.label)).toEqual([
+      'failed',
+    ])
+  })
+
+  it('shows nothing at all for an empty graph rather than a catalogue of states', () => {
+    expect(visibleLegendItems(new Set(), false)).toEqual([])
   })
 })

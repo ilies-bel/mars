@@ -783,28 +783,6 @@ html {
 .dag-canvas .react-flow__controls.topo-controls button:hover {
   background: var(--color-bg);
 }
-.dag-canvas .react-flow__minimap.topo-minimap {
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  overflow: hidden;
-  /* Float above the graph content so it doesn't visually merge with cards */
-  box-shadow: var(--shadow-e3);
-  /* Clear the bottom legend bar (~36px) and any footer chrome; right breathing room */
-  bottom: 60px !important;
-  right: 16px !important;
-}
-.dag-canvas .react-flow__minimap.topo-minimap .react-flow__minimap-mask {
-  fill: rgba(26, 15, 10, 0.12);
-}
-/* Narrower viewports: shrink the minimap so it takes less canvas space */
-@media (max-width: 1279px) {
-  .dag-canvas .react-flow__minimap.topo-minimap {
-    width: 140px !important;
-    height: 90px !important;
-  }
-}
-
 /* ── Drawer entrance / exit animations ──────────────────────────────────────
  * Enter: slides in from the right over 260 ms (iOS drawer curve).
  * Exit:  slides back to the right over 180 ms (snappier than enter).

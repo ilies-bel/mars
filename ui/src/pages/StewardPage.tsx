@@ -28,18 +28,23 @@ export { useStewardView }
 // Visual primitives
 // ---------------------------------------------------------------------------
 
-/** Connector SVG — solid for executing lanes, dashed for inert/unbuilt ones. */
-const LaneConnector = ({ active }: { active: boolean }) => (
-  <div
-    aria-hidden="true"
-    className={[
-      'mx-auto my-2 h-6 w-0.5',
-      active
-        ? 'bg-success'
-        : 'bg-muted-foreground/30 [background:repeating-linear-gradient(to_bottom,transparent_0,transparent_3px,rgb(var(--color-muted-foreground)/0.3)_3px,rgb(var(--color-muted-foreground)/0.3)_6px)]',
-    ].join(' ')}
-  />
-)
+/*
+ * There is no LaneConnector any more.
+ *
+ * A 2px green stroke ran down the gutter between each pair of lane cards,
+ * asserting a pipeline: runtime tuning → signature storm → workflow patches →
+ * gate health. Those are four independent things the Steward does, not four
+ * stages of one thing, so the line drew a relationship that does not exist.
+ *
+ * It did not even encode itself consistently. The first connector was
+ * hardcoded `active={true}`; the second and third both read
+ * `workflowPatches.hasCallers`, so one field coloured two different gaps and
+ * the runtime-tuning gap ignored every field. Whatever a reader inferred from
+ * its colour was wrong.
+ *
+ * Each card already states its own executing / inert status through
+ * laneCardClass and its own dot. That is per-lane and true.
+ */
 
 const laneCardClass = (active: boolean): string =>
   [
@@ -902,17 +907,11 @@ export const StewardPage = () => {
         {/* Lane 1: Runtime tuning — the only lane that actually executes */}
         <RuntimeTuningLane data={data.runtimeTuning} />
 
-        <LaneConnector active={true} />
-
         {/* Lane 2: Signature storm — live, currently tripped */}
         <SignatureStormLane data={data.signatureStorm} />
 
-        <LaneConnector active={data.workflowPatches.hasCallers} />
-
         {/* Lane 3: Workflow patches */}
         <WorkflowPatchesLane data={data.workflowPatches} />
-
-        <LaneConnector active={data.workflowPatches.hasCallers} />
 
         {/* Lane 4: Verify gate registry health */}
         <GateHealthLane data={data.gateHealth} />
@@ -921,8 +920,24 @@ export const StewardPage = () => {
       {/* Agent spec footer */}
       <footer className="mt-2 rounded border border-border/30 bg-muted/10 px-4 py-3">
         <div className="eyebrow mb-1 text-muted-foreground">
-          Agent spec — {data.agentSpec.name} ({data.agentSpec.dispatchSites} dispatch site{data.agentSpec.dispatchSites !== 1 ? 's' : ''})
+          Agent spec — {data.agentSpec.name}
         </div>
+        {/* "(0 DISPATCH SITES)" used to sit inside the heading above, in caps,
+            as the only hint that the LLM agent this page is named after is
+            never actually called. A reader had to know what a dispatch site
+            was to notice the page was describing something dormant while the
+            lanes above it said "executing" — the lanes execute as ordinary
+            orchestrator code; this spec is a different thing that does not
+            run. Say that in a sentence.
+
+            Note this count is a declared constant in app-services.ts, not a
+            search of the codebase, so it states an intent rather than a
+            measurement. Filed separately. */}
+        <p className="mb-1.5 max-w-[70ch] text-label leading-relaxed text-muted-foreground">
+          {data.agentSpec.dispatchSites === 0
+            ? 'Nothing calls this agent. Everything above runs as ordinary orchestrator code — the configuration below is what would run if it were ever dispatched.'
+            : `Dispatched from ${data.agentSpec.dispatchSites} place${data.agentSpec.dispatchSites === 1 ? '' : 's'} in the orchestrator.`}
+        </p>
         <div className="flex flex-wrap gap-x-4 gap-y-1 font-mono text-micro text-muted-foreground">
           <span>model: <span className="text-foreground">{data.agentSpec.model}</span></span>
           <span>tools: <span className="text-foreground">{data.agentSpec.allowedTools.join(', ')}</span></span>
