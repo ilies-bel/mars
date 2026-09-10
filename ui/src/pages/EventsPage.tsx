@@ -1,4 +1,5 @@
 import { SelectField } from '@/components/SelectField'
+import { EmptyState } from '@/components/EmptyState'
 import { ChevronDown, ChevronRight, RefreshCw, Search, SlidersHorizontal } from 'lucide-react'
 import { ActionButton } from '@/components/ActionButton'
 import { Segmented } from '@/components/Segmented'
@@ -1009,9 +1010,9 @@ const TimelineView = ({ events, now }: TimelineViewProps) => {
 
   if (arcGroups.length === 0) {
     return (
-      <div data-testid="events-empty" className="font-mono text-label text-muted-foreground">
-        No events match these filters.
-      </div>
+      <EmptyState data-testid="events-empty" variant="inline" title="No events match these filters">
+        Widen the time window or clear a filter to see activity again.
+      </EmptyState>
     )
   }
 
@@ -1465,12 +1466,9 @@ export const EventsPage = ({
         ) : viewMode === 'timeline' ? (
           <TimelineView events={events} now={now} />
         ) : events.length === 0 ? (
-          <div
-            data-testid="events-empty"
-            className="font-mono text-label text-muted-foreground"
-          >
-            No events match these filters.
-          </div>
+          <EmptyState data-testid="events-empty" title="No events match these filters">
+            Widen the time window or clear a filter to see activity again.
+          </EmptyState>
         ) : (
           <div
             style={{

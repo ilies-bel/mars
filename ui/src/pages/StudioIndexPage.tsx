@@ -1,4 +1,5 @@
 import { SelectField } from '@/components/SelectField'
+import { EmptyState } from '@/components/EmptyState'
 /**
  * StudioIndexPage — the Studio landing at `#/studio` (bare, no task id).
  *
@@ -179,32 +180,27 @@ export const StudioIndexPage = () => {
             Couldn't load scored runs.
           </p>
         ) : scoredEntries.length === 0 ? (
-          // Empty state — name what Studio is for so operators understand the page.
-          <div
+          // Name what this page is for, then hand over the one move that
+          // fills it. The old copy buried that move as an inline link in the
+          // middle of a second paragraph.
+          <EmptyState
             data-testid="studio-index-empty"
-            className="flex flex-col gap-3 rounded border border-border p-6"
-          >
-            <p className="text-title font-semibold text-foreground">
-              No scored runs yet
-            </p>
-            <p className="text-body text-muted-foreground">
-              This page lists runs a scorer has graded, worst first. Opening one
-              shows the run's full step-execution tree — every tool call,
-              intermediate output, and step result, in the order they happened —
-              so a low score can be traced to the step that earned it.
-            </p>
-            <p className="text-body text-muted-foreground">
-              Accept a scorer on the{' '}
+            title="No scored runs yet"
+            action={
               <a
                 href="#/kpi"
-                className="text-highlight underline-offset-2 hover:underline"
+                className="inline-flex items-center gap-1 rounded border border-border px-3 py-1.5 text-label text-foreground hover:bg-foreground/5"
               >
-                KPI page
-              </a>{' '}
-              to start grading merged tasks. Once runs are graded they will
-              appear here, with links into their execution trees.
-            </p>
-          </div>
+                Accept a scorer on the KPI page →
+              </a>
+            }
+          >
+            This page lists runs a scorer has graded, worst first. Opening one
+            shows the run's full step-execution tree — every tool call,
+            intermediate output, and step result, in the order they happened —
+            so a low score can be traced to the step that earned it. Nothing
+            has been graded yet.
+          </EmptyState>
         ) : (
           <table className="w-full text-body">
             <thead>

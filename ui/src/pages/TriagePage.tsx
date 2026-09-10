@@ -1,4 +1,5 @@
 import { useCounts } from '@/entities/counts/useCounts'
+import { EmptyState } from '@/components/EmptyState'
 import { SelectField } from '@/components/SelectField'
 import { Chip, type ChipTone } from '@/components/Chip'
 import { AlertTriangle, Archive, ArrowRight, ChevronDown, ChevronRight, Circle, CircleDashed, Clock, FileText, Gauge, GitBranch, HelpCircle, MessageSquare, MoreHorizontal, PowerOff, RefreshCw, Search, SearchX, ShieldAlert, ShieldX, Sparkles, Undo2, UserCheck, XCircle, Zap } from 'lucide-react'
@@ -1367,9 +1368,9 @@ const FeedErrorCard = ({ label, error }: FeedErrorCardProps) => {
   )
 }
 
-// ── EmptyState ────────────────────────────────────────────────────────────────
+// ── AllQuietState ────────────────────────────────────────────────────────────────
 
-interface EmptyStateProps {
+interface AllQuietStateProps {
   running: number
   doneToday: number
 }
@@ -1406,7 +1407,7 @@ const UnreachableState = () => (
 
 /**
  * Shown for the brief window between mount and the first successful (or
- * failed) response. Without this, the page rendered `EmptyState` — "All
+ * failed) response. Without this, the page rendered `AllQuietState` — "All
  * quiet" — while the request was still in flight, which is the same
  * false-empty failure mode as swallowing a fetch error: the operator reads
  * a transient loading frame as "nothing to do".
@@ -1424,21 +1425,11 @@ const LoadingState = () => (
   </div>
 )
 
-const EmptyState = ({ running, doneToday }: EmptyStateProps) => (
-  <div className="flex flex-col items-center justify-center py-24 text-center">
-    <span
-      className="mb-3 text-4xl opacity-20"
-      style={{ color: 'var(--color-amber)' }}
-      aria-hidden="true"
-    >
-      ◆
-    </span>
-    <p className="mb-1 text-title font-medium text-foreground">All quiet</p>
-    <p className="text-label text-muted-foreground">
-      {running > 0 ? `${running} running` : 'nothing running'}
-      {doneToday > 0 ? ` · ${doneToday} done today` : ''}
-    </p>
-  </div>
+const AllQuietState = ({ running, doneToday }: AllQuietStateProps) => (
+  <EmptyState title="All quiet">
+    {running > 0 ? `${running} running` : 'nothing running'}
+    {doneToday > 0 ? ` \u00b7 ${doneToday} done today` : ''}
+  </EmptyState>
 )
 
 
@@ -1468,35 +1459,34 @@ const NoMatchesState = ({
     ? ((KIND_LABEL as Record<string, string | undefined>)[kind] ?? kind.replace(/-/g, ' '))
     : null
   return (
-    <div
-      className="flex flex-col items-center justify-center py-24 text-center"
+    <EmptyState
       data-testid="triage-no-matches"
+      title="No matches"
+      action={
+        <button
+          type="button"
+          onClick={onClear}
+          className="rounded-md border border-border px-2.5 py-1 text-label text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground"
+          data-testid="triage-clear-filters"
+        >
+          Clear filters
+        </button>
+      }
     >
-      <p className="mb-1 text-title font-medium text-foreground">No matches</p>
-      <p className="max-w-[420px] text-label text-muted-foreground">
-        {query.trim() !== '' && (
-          <>
-            Nothing in the queue mentions <span className="text-foreground">{query.trim()}</span>
-            {kindLabel ? ' ' : '. '}
-          </>
-        )}
-        {kindLabel && (
-          <>
-            {query.trim() !== '' ? 'among ' : 'No '}
-            <span className="text-foreground">{kindLabel}</span> rows.{' '}
-          </>
-        )}
-        {total > 0 && `All ${total} items are still there.`}
-      </p>
-      <button
-        type="button"
-        onClick={onClear}
-        className="mt-3 rounded-md border border-border px-2.5 py-1 text-label text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground"
-        data-testid="triage-clear-filters"
-      >
-        Clear filters
-      </button>
-    </div>
+      {query.trim() !== '' && (
+        <>
+          Nothing in the queue mentions <span className="text-foreground">{query.trim()}</span>
+          {kindLabel ? ' ' : '. '}
+        </>
+      )}
+      {kindLabel && (
+        <>
+          {query.trim() !== '' ? 'among ' : 'No '}
+          <span className="text-foreground">{kindLabel}</span> rows.{' '}
+        </>
+      )}
+      {total > 0 && `All ${total} items are still there.`}
+    </EmptyState>
   )
 }
 
@@ -1592,7 +1582,7 @@ export const TriagePage = () => {
   const filteredToNothing = filtered.active && renderedRows.length === 0 && !hasAnyError
   const hasContent = renderedRows.length > 0 || hasAnyError || filteredToNothing
   // The action-queue query's first fetch hasn't settled yet (no cached data,
-  // no error). Without this check the page fell through to EmptyState during
+  // no error). Without this check the page fell through to AllQuietState during
   // that window and showed "All quiet" — indistinguishable from a genuinely
   // clear queue, the same false-empty failure this page exists to avoid.
   const isLoading = queuePending === true && !hasContent && !isDown
@@ -1693,7 +1683,7 @@ export const TriagePage = () => {
             }}
           />
         ) : !hasContent ? (
-          <EmptyState running={running} doneToday={doneToday} />
+          <AllQuietState running={running} doneToday={doneToday} />
         ) : (
           <div
             /* A reading column, sharing its left edge with the header above.

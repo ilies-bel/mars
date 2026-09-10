@@ -304,10 +304,14 @@ describe('KIND_OPTIONS vocabulary', () => {
 // ---------------------------------------------------------------------------
 
 describe('EventsPage render', () => {
-  it('renders the empty-state line when the response has no events', () => {
+  it('renders the shared empty state when the response has no events', () => {
     const qc = makeClient(EMPTY_RESPONSE)
     const html = renderPage(qc)
-    expect(html).toContain('No events match these filters.')
+    // Events used to emit one bare line of muted monospace here. It now uses
+    // the shared EmptyState, so the region states the fact as a headline and
+    // says what would refill it — the same shape every other empty region has.
+    expect(html).toContain('No events match these filters')
+    expect(html).toContain('Widen the time window or clear a filter')
   })
 
   it('renders one row per event with the severity badge and a #/task/<id>?from=events link', () => {

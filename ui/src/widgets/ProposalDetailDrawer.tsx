@@ -197,7 +197,7 @@ export const BodySection = ({
                 type="button"
                 onClick={() => { void handleSave() }}
                 disabled={editState === 'saving'}
-                className="rounded border border-border px-2 py-0.5 font-mono text-body text-muted-foreground hover:bg-foreground/5 disabled:opacity-50"
+                className="rounded border border-border px-2 py-0.5 text-body text-muted-foreground hover:bg-foreground/5 disabled:opacity-50"
               >
                 {editState === 'saving' ? 'Saving…' : 'Save'}
               </button>
@@ -205,12 +205,12 @@ export const BodySection = ({
                 type="button"
                 onClick={handleCancel}
                 disabled={editState === 'saving'}
-                className="rounded border border-border px-2 py-0.5 font-mono text-body text-muted-foreground hover:bg-foreground/5 disabled:opacity-50"
+                className="rounded border border-border px-2 py-0.5 text-body text-muted-foreground hover:bg-foreground/5 disabled:opacity-50"
               >
                 Cancel
               </button>
               {editState === 'error' && (
-                <span className="font-mono text-micro text-destructive">{errorMessage}</span>
+                <span className="text-micro text-destructive">{errorMessage}</span>
               )}
             </div>
           </div>
@@ -221,13 +221,13 @@ export const BodySection = ({
                 type="button"
                 onClick={handleEdit}
                 aria-label={`Edit ${label}`}
-                className="absolute right-0 top-0 rounded px-1 py-0.5 font-mono text-body text-muted-foreground opacity-0 transition-opacity hover:bg-foreground/5 group-hover:opacity-100"
+                className="absolute right-0 top-0 rounded px-1 py-0.5 text-body text-muted-foreground opacity-0 transition-opacity hover:bg-foreground/5 group-hover:opacity-100"
               >
                 ✎
               </button>
             )}
             <p
-              className="whitespace-pre-wrap font-mono text-body text-foreground"
+              className="whitespace-pre-wrap text-body leading-relaxed text-foreground"
               style={
                 isLong && !expanded
                   ? {
@@ -402,6 +402,14 @@ export const ProposalDetailDrawer = ({
   const [storyOpState, setStoryOpState] = useState<'idle' | 'pending' | 'error'>('idle')
   const [storyOpError, setStoryOpError] = useState<string | null>(null)
 
+  // A machine-generated proposal is authored by the agent that is also its
+  // source, so rendering both spelled the same word twice in two casings
+  // ("FAILURE-REFLECTOR failure-reflector"). Show the author only when it
+  // says something the source chip does not — i.e. for a human author.
+  const authorAddsInfo =
+    proposal.author != null &&
+    proposal.author.name.trim().toLowerCase() !== proposal.source.trim().toLowerCase()
+
   // Format createdAt timestamp as an unambiguous absolute date.
   const createdLabel = proposal.createdAt ? formatAbsoluteDate(proposal.createdAt) : null
 
@@ -447,18 +455,18 @@ export const ProposalDetailDrawer = ({
             >
               {proposal.source}
             </span>
-            {proposal.author && (
+            {authorAddsInfo && (
               <span
                 data-testid="proposal-detail-author"
-                className="font-mono text-micro text-muted-foreground"
+                className="text-micro text-muted-foreground"
               >
-                {proposal.author.name}
+                {proposal.author!.name}
               </span>
             )}
             {createdLabel && (
               <span
                 data-testid="proposal-detail-created"
-                className="font-mono text-micro text-muted-foreground"
+                className="text-micro text-muted-foreground"
               >
                 {createdLabel}
               </span>
@@ -482,7 +490,7 @@ export const ProposalDetailDrawer = ({
               target="_blank"
               rel="noopener noreferrer"
               data-testid="link-view-mockup"
-              className="inline-flex w-fit items-center gap-1 rounded border border-border px-2 py-0.5 font-mono text-body text-muted-foreground hover:bg-foreground/5"
+              className="inline-flex w-fit items-center gap-1 rounded border border-border px-2 py-0.5 text-body text-muted-foreground hover:bg-foreground/5"
             >
               View mockup ↗
             </a>
@@ -493,7 +501,7 @@ export const ProposalDetailDrawer = ({
           onClick={handleClose}
           aria-label="Close proposal detail"
           data-testid="proposal-detail-close"
-          className="shrink-0 rounded border border-border px-2 py-0.5 font-mono text-body text-muted-foreground hover:bg-foreground/5"
+          className="shrink-0 rounded border border-border px-2 py-0.5 text-body text-muted-foreground hover:bg-foreground/5"
         >
           Close
         </button>
@@ -542,7 +550,7 @@ export const ProposalDetailDrawer = ({
               {stories.length > 0 ? (
                 <ol className="flex flex-col gap-1.5">
                   {stories.map((story, idx) => (
-                    <li key={idx} className="group flex gap-2 font-mono text-body text-foreground">
+                    <li key={idx} className="group flex gap-2 text-body text-foreground">
                       <span className="shrink-0 text-muted-foreground">{idx + 1}.</span>
                       <span className="flex-1">{story}</span>
                       {isDraft ? (
@@ -674,9 +682,9 @@ export const ProposalDetailDrawer = ({
                 <li key={task.id}>
                   <a
                     href={taskHash(task.id)}
-                    className="flex items-center gap-2 rounded border border-border px-2 py-1.5 font-mono text-body transition-colors hover:bg-foreground/5"
+                    className="flex items-center gap-2 rounded border border-border px-2 py-1.5 text-body transition-colors hover:bg-foreground/5"
                   >
-                    <span className="shrink-0 text-muted-foreground">{task.id}</span>
+                    <span className="shrink-0 font-mono text-micro text-muted-foreground">{task.id}</span>
                     <span
                       className={`eyebrow inline-flex shrink-0 items-center rounded px-1 py-0.5 ${badgeClass(task.status)} text-muted-foreground`}
                     >
@@ -697,7 +705,7 @@ export const ProposalDetailDrawer = ({
           Collapsed behind a <details> so the drawer footer stays compact. */}
       <section className="border-t border-border px-4 py-3">
         <details>
-          <summary className="cursor-pointer select-none font-mono text-body text-muted-foreground hover:text-foreground">
+          <summary className="cursor-pointer select-none text-body text-muted-foreground hover:text-foreground">
             Copy command <ChevronDown size={11} strokeWidth={2} aria-hidden="true" />
           </summary>
           <div className="mt-2 flex flex-col gap-1.5">

@@ -160,14 +160,14 @@ export const ProposalActionRow = ({
     >
       {/* Promote */}
       {promoteState.kind === 'done' ? (
-        <span className="font-mono text-micro text-muted-foreground">
+        <span className="text-micro text-muted-foreground">
           {promoteState.taskId
             ? (
               <>
                 Promoted →{' '}
                 <a
                   href={taskHash(promoteState.taskId)}
-                  className="underline"
+                  className="font-mono underline"
                 >
                   {promoteState.taskId}
                 </a>
@@ -182,13 +182,13 @@ export const ProposalActionRow = ({
           onClick={() => { void handlePromote() }}
           disabled={promoteState.kind === 'pending' || !!bodyEmpty}
           title={bodyEmpty ? 'Fill in the problem or solution first' : undefined}
-          className="rounded border border-border px-2 py-0.5 font-mono text-body text-muted-foreground hover:bg-foreground/5 disabled:opacity-50"
+          className="rounded border border-border px-2 py-0.5 text-body text-muted-foreground hover:bg-foreground/5 disabled:opacity-50"
         >
           {promoteState.kind === 'pending' ? 'Promoting…' : 'Promote'}
         </button>
       )}
       {promoteState.kind === 'error' && (
-        <span className="font-mono text-micro text-destructive">{promoteState.message}</span>
+        <span className="text-micro text-destructive">{promoteState.message}</span>
       )}
 
       {/* Grill */}
@@ -197,21 +197,21 @@ export const ProposalActionRow = ({
         data-testid="btn-grill"
         onClick={() => { void handleGrill() }}
         disabled={grillState.kind === 'pending'}
-        className="rounded border border-border px-2 py-0.5 font-mono text-body text-muted-foreground hover:bg-foreground/5 disabled:opacity-50"
+        className="rounded border border-border px-2 py-0.5 text-body text-muted-foreground hover:bg-foreground/5 disabled:opacity-50"
       >
         {grillState.kind === 'pending' ? 'Opening…' : 'Grill'}
       </button>
       {grillState.kind === 'error' && (
-        <span data-testid="grill-error" className="font-mono text-micro text-destructive">
+        <span data-testid="grill-error" className="text-micro text-destructive">
           {grillState.message}
         </span>
       )}
 
       {/* Mockup */}
       {mockupState.kind === 'done' ? (
-        <span className="font-mono text-micro text-muted-foreground">
+        <span className="text-micro text-muted-foreground">
           Mockup queued →{' '}
-          <a href={taskHash(mockupState.taskId)} className="underline">
+          <a href={taskHash(mockupState.taskId)} className="font-mono underline">
             {mockupState.taskId}
           </a>
         </span>
@@ -221,22 +221,22 @@ export const ProposalActionRow = ({
           data-testid="btn-mockup"
           onClick={() => { void handleMockup() }}
           disabled={mockupState.kind === 'pending'}
-          className="rounded border border-border px-2 py-0.5 font-mono text-body text-muted-foreground hover:bg-foreground/5 disabled:opacity-50"
+          className="rounded border border-border px-2 py-0.5 text-body text-muted-foreground hover:bg-foreground/5 disabled:opacity-50"
         >
           {mockupState.kind === 'pending' ? 'Queuing…' : 'Mockup'}
         </button>
       )}
       {mockupState.kind === 'error' && (
-        <span className="font-mono text-micro text-destructive">{mockupState.message}</span>
+        <span className="text-micro text-destructive">{mockupState.message}</span>
       )}
 
       {/* Implement live */}
       {implementLiveState.kind === 'done' ? (
-        <span className="font-mono text-micro text-muted-foreground">
+        <span className="text-micro text-muted-foreground">
           Live task →{' '}
           <a
             href={taskHash(implementLiveState.taskId)}
-            className="underline"
+            className="font-mono underline"
           >
             {implementLiveState.taskId}
           </a>
@@ -248,13 +248,13 @@ export const ProposalActionRow = ({
           onClick={() => { void handleImplementLive() }}
           disabled={implementLiveState.kind === 'pending' || !!bodyEmpty}
           title={bodyEmpty ? 'Fill in the problem or solution first' : undefined}
-          className="rounded border border-border px-2 py-0.5 font-mono text-body text-muted-foreground hover:bg-foreground/5 disabled:opacity-50"
+          className="rounded border border-border px-2 py-0.5 text-body text-muted-foreground hover:bg-foreground/5 disabled:opacity-50"
         >
           {implementLiveState.kind === 'pending' ? 'Queuing…' : 'Implement live'}
         </button>
       )}
       {implementLiveState.kind === 'error' && (
-        <span className="font-mono text-micro text-destructive">{implementLiveState.message}</span>
+        <span className="text-micro text-destructive">{implementLiveState.message}</span>
       )}
 
       {/* Dismiss */}
@@ -266,13 +266,13 @@ export const ProposalActionRow = ({
           data-testid="btn-dismiss"
           onClick={() => { void handleDismiss() }}
           disabled={dismissState.kind === 'pending'}
-          className="rounded border border-border px-2 py-0.5 font-mono text-body text-muted-foreground hover:bg-foreground/5 disabled:opacity-50"
+          className="rounded border border-border px-2 py-0.5 text-body text-muted-foreground hover:bg-foreground/5 disabled:opacity-50"
         >
           {dismissState.kind === 'pending' ? 'Dismissing…' : 'Dismiss'}
         </button>
       )}
       {dismissState.kind === 'error' && (
-        <span className="font-mono text-micro text-destructive">{dismissState.message}</span>
+        <span className="text-micro text-destructive">{dismissState.message}</span>
       )}
     </div>
   )
