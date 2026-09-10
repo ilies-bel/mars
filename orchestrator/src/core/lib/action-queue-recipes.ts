@@ -307,7 +307,7 @@ const RECIPE_DEFINITIONS = {
     }),
     verbs: [
       { op: 'restart', label: 'Restart', style: 'destructive' },
-      { op: 'purge', label: 'Discard task', style: 'destructive' },
+      { op: 'purge', label: 'Delete task', style: 'destructive' },
     ],
   },
 
@@ -333,7 +333,7 @@ const RECIPE_DEFINITIONS = {
       dependentTaskId: str(ctx.payload['dependentTaskId']),
       cancelledBlockerTaskId: str(ctx.payload['cancelledBlockerTaskId']),
     }),
-    verbs: [{ op: 'restart', label: 'Restart chain', style: 'primary' }],
+    verbs: [{ op: 'restart', label: 'Restart chain', style: 'destructive' }],
   },
 
   'diagnose-inconclusive': {
@@ -484,7 +484,7 @@ const RECIPE_DEFINITIONS = {
       dependentTaskId: str(ctx.payload['dependentTaskId']),
       failedBlockerTaskId: str(ctx.payload['failedBlockerTaskId']),
     }),
-    verbs: [{ op: 'restart', label: 'Retry', style: 'primary' }],
+    verbs: [{ op: 'restart', label: 'Restart', style: 'destructive' }],
   },
 
   'done-with-unmerged-commits': {
@@ -497,7 +497,7 @@ const RECIPE_DEFINITIONS = {
       integration: str(ctx.payload['integration']),
     }),
     verbs: [
-      { op: 'restart', label: 'Re-attempt merge', style: 'primary' },
+      { op: 'restart', label: 'Restart', style: 'destructive' },
     ],
   },
 
@@ -808,7 +808,7 @@ const RECIPE_DEFINITIONS = {
       missingOriginId: str(ctx.payload['missingOriginId']),
     }),
     verbs: [
-      { op: 'purge', label: 'Discard task', style: 'destructive' },
+      { op: 'purge', label: 'Delete task', style: 'destructive' },
     ],
   },
 
@@ -821,7 +821,7 @@ const RECIPE_DEFINITIONS = {
       recordedPid: ctx.payload['recordedPid'],
       detectedAt: str(ctx.payload['detectedAt']),
     }),
-    verbs: [{ op: 'restart', label: 'Restart', style: 'primary' }],
+    verbs: [{ op: 'restart', label: 'Restart', style: 'destructive' }],
   },
 
   'outbox-lag': {
@@ -1251,7 +1251,7 @@ const RECIPE_DEFINITIONS = {
       envRestartCount: ctx.payload['envRestartCount'],
     }),
     verbs: [
-      { op: 'restart', label: 'Restart task', style: 'primary' },
+      { op: 'restart', label: 'Restart', style: 'destructive' },
     ],
   },
 
@@ -1292,7 +1292,7 @@ const RECIPE_DEFINITIONS = {
       dispatchDecisionSummary: ctx.payload['dispatchDecisionSummary'],
     }),
     verbs: [
-      { op: 'restart', label: 'Restart task', style: 'primary' },
+      { op: 'restart', label: 'Restart', style: 'destructive' },
     ],
   },
 
@@ -1466,7 +1466,7 @@ const RECIPE_DEFINITIONS = {
       dirtyPaths: ctx.payload['dirtyPaths'],
     }),
     verbs: [
-      { op: 'restart', label: 'Restart task', style: 'primary' },
+      { op: 'restart', label: 'Restart', style: 'destructive' },
     ],
   },
 
@@ -1521,8 +1521,8 @@ const RECIPE_DEFINITIONS = {
       originTaskId: str(ctx.payload['originTaskId']),
     }),
     verbs: [
-      { op: 'restart', label: 'Restart (wipe & re-run)', style: 'primary' },
-      { op: 'purge', label: 'Discard task', style: 'destructive' },
+      { op: 'restart', label: 'Restart', style: 'destructive' },
+      { op: 'purge', label: 'Delete task', style: 'destructive' },
     ],
   },
 
