@@ -1009,6 +1009,18 @@ const leadDecisionIndex = (decisions: Decision[]): number => {
            - Otherwise: humanSummary || title is the sole headline. */}
       {goal ? (
         <>
+          {/* Whose goal this is.
+              A recovery task's own name is "[rescue-operator] Arc … has
+              dead-ended"; its `operatorGoal` is the goal of the ARC it was
+              spawned to rescue. The queue printed the goal as the row's
+              headline, so the same id was headlined one way here and another
+              in the drawer — and an operator arming Restart believed they were
+              restarting the work the goal describes. Label it. */}
+          {item.fixForTaskId != null && (
+            <p className="mb-0.5 text-micro text-muted-foreground" data-testid="triage-goal-owner">
+              Recovering an arc whose goal is:
+            </p>
+          )}
           {/* A member sits one level below its group, so it is set one step
               down the scale (15px vs 17px). At 17px the members were louder
               than the group header that contains them, which inverts the
