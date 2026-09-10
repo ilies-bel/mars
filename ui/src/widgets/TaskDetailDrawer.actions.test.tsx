@@ -50,9 +50,11 @@ describe('RecoveryCommands — normal failed task', () => {
     expect(html).toContain('>Restart<')
   })
 
-  it('renders the Drop button', () => {
+  it('renders the delete button under the same name the Needs You card uses', () => {
     expect(html).toContain('data-testid="drop-btn"')
-    expect(html).toContain('>Drop<')
+    expect(html).toContain('>Delete task<')
+    // "Drop" here and "Delete task" on the card read as two operations.
+    expect(html).not.toContain('>Drop<')
   })
 
   it('does NOT render Remerge or Supersede buttons for a non-exhausted arc', () => {

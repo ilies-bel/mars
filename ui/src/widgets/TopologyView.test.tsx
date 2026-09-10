@@ -158,7 +158,7 @@ describe('TopologyView – accessible canvas container', () => {
 // ---------------------------------------------------------------------------
 
 describe('TopologyView – zero-state search overlay', () => {
-  it('shows a "0 tasks match" pill when the search set is empty', () => {
+  it('shows a "no match" pill when the search set is empty', () => {
     const html = renderToStaticMarkup(
       <TopologyView
         tasks={[stubTask('t-1')]}
@@ -167,7 +167,7 @@ describe('TopologyView – zero-state search overlay', () => {
         searchQuery="zzzznonexistent"
       />,
     )
-    expect(html).toContain('0 tasks match')
+    expect(html).toContain('No task or proposal matches')
     expect(html).toContain('zzzznonexistent')
   })
 
@@ -192,7 +192,7 @@ describe('TopologyView – zero-state search overlay', () => {
         searchQuery="task"
       />,
     )
-    expect(html).not.toContain('0 tasks match')
+    expect(html).not.toContain('No task or proposal matches')
   })
 
   it('does not show the zero-state pill when there is no active search (searchMatchIds is null)', () => {
@@ -203,7 +203,7 @@ describe('TopologyView – zero-state search overlay', () => {
         searchMatchIds={null}
       />,
     )
-    expect(html).not.toContain('0 tasks match')
+    expect(html).not.toContain('No task or proposal matches')
   })
 })
 

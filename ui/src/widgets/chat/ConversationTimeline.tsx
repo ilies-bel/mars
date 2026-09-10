@@ -1,6 +1,7 @@
 import { Fragment, useRef, useState } from 'react'
 import { ChevronUp } from 'lucide-react'
 import type { ChatConversationEntry, PreloadedResponse, SubjectBoundary } from '@/shared/schemas'
+import { formatAbsoluteDate, formatAbsoluteDateTime, formatClockTime, localDayKey } from '@/shared/time'
 import { MemoryBoundaryLine } from './MemoryBoundaryLine'
 import { PreloadedResponses } from './PreloadedResponses'
 import { SubjectBoundaryLine } from './SubjectBoundaryLine'
@@ -48,6 +49,40 @@ const ENTRY_KIND_LABELS: Record<string, string> = {
   'verify/unclassified': 'Verify',
 }
 const friendlyKind = (kind: string): string => ENTRY_KIND_LABELS[kind] ?? kind
+
+/**
+ * When each turn was said.
+ *
+ * The transcript carried no clock at all — every message, across every day,
+ * sat under one undifferentiated column — so four Situation reports written
+ * hours apart, each in the present tense and each claiming a different set of
+ * numbers, stacked with nothing to order them by. `ml-auto` pins the time to
+ * the far end of the meta row so it reads as a margin note rather than as part
+ * of the sentence.
+ */
+const MessageTime = ({ at }: { at: string }) => (
+  <time
+    dateTime={at}
+    title={formatAbsoluteDateTime(at)}
+    data-testid="conversation-message-time"
+    className="ml-auto shrink-0 tabular-nums text-muted-foreground/70"
+  >
+    {formatClockTime(at)}
+  </time>
+)
+
+/**
+ * The seam between two calendar days. A bare "15:50" is only unambiguous
+ * inside one day, and this transcript spans as many as the operator has been
+ * running Mars.
+ */
+const DaySeparator = ({ at }: { at: string }) => (
+  <div className="flex items-center gap-3 py-1" data-testid="conversation-day-separator">
+    <span className="h-px flex-1 bg-border" />
+    <span className="shrink-0 text-micro text-muted-foreground">{formatAbsoluteDate(at)}</span>
+    <span className="h-px flex-1 bg-border" />
+  </div>
+)
 
 const isTextSegment = (segment: unknown): segment is { type: 'text'; text: string } =>
   typeof segment === 'object' && segment !== null &&
@@ -140,6 +175,30 @@ export const ConversationTimeline = ({
     }
     subjectGroups.get(entry.subjectId)!.push(entry)
   }
+
+  // The first entry of each calendar day, so a separator can be dropped in
+  // front of it. Computed over the flat ordered list rather than tracked with
+  // a mutable cursor inside the nested render, so it does not depend on the
+  // order React happens to evaluate the maps in.
+  const dayStartIds = new Set<string>()
+  let lastDay: string | null = null
+  for (const entry of visibleEntries) {
+    const day = localDayKey(entry.createdAt)
+    if (day !== lastDay) {
+      dayStartIds.add(entry.id)
+      lastDay = day
+    }
+  }
+
+  // A Situation report is a snapshot of the queue at one moment, written in the
+  // present tense. Four of them stacked in one transcript, each stating a
+  // different set of counts as though it were true now, is four contradictions
+  // and no way to tell which one still holds. Only the newest is current; the
+  // rest are history and render as a one-line seam.
+  const situationIds = visibleEntries.filter((e) => e.kind === 'situation').map((e) => e.id)
+  const currentSituationId = situationIds.length > 0 ? situationIds[situationIds.length - 1]! : null
+  const isSuperseded = (entry: ChatConversationEntry): boolean =>
+    entry.kind === 'situation' && entry.id !== currentSituationId
 
   // Paginate: show only the most recent N subjects on first paint.
   // Older subjects are hidden behind "Show N earlier" so the first paint stays
@@ -254,6 +313,7 @@ export const ConversationTimeline = ({
                     {entry.resolution === 'resolved' && (
                       <span data-testid="conversation-message-resolved">Resolved</span>
                     )}
+                    <MessageTime at={entry.createdAt} />
                   </header>
                   <p className="max-w-[68ch] whitespace-pre-wrap text-body leading-relaxed text-foreground">{body}</p>
                 </article>
@@ -286,6 +346,7 @@ export const ConversationTimeline = ({
             const breadcrumb = entry.segments.find(isBreadcrumbSegment)
             return (
               <Fragment key={entry.id}>
+                {dayStartIds.has(entry.id) && <DaySeparator at={entry.createdAt} />}
                 <div
                   data-testid="context-line-breadcrumb"
                   className="rounded border border-muted px-3 py-2 font-mono text-label text-muted-foreground"
@@ -315,8 +376,28 @@ export const ConversationTimeline = ({
           const isNotice = entry.kind === 'notice'
           const isOperator = entry.role === 'user'
 
+          // A superseded Situation collapses to its own seam: kept in place so
+          // the history is not rewritten, but no longer asserting numbers that
+          // a later report has already replaced.
+          if (isSuperseded(entry)) {
+            return (
+              <Fragment key={entry.id}>
+                {dayStartIds.has(entry.id) && <DaySeparator at={entry.createdAt} />}
+                <div
+                  data-testid="conversation-situation-superseded"
+                  className="flex items-center gap-2 px-1 py-0.5 text-micro text-muted-foreground/70"
+                >
+                  <span className="h-px w-4 bg-border" />
+                  <span>Situation at {formatClockTime(entry.createdAt)} — superseded</span>
+                </div>
+                {memoryStartsAfterSeq > 0 && entry.seq === memoryStartsAfterSeq && <MemoryBoundaryLine />}
+              </Fragment>
+            )
+          }
+
           return (
             <Fragment key={entry.id}>
+              {dayStartIds.has(entry.id) && <DaySeparator at={entry.createdAt} />}
               {boundary && isFirstSubjectMessage && <SubjectBoundaryLine boundary={boundary} position="start" />}
               <article
                 data-thread-id={entry.threadId}
@@ -357,6 +438,7 @@ export const ConversationTimeline = ({
                   {entry.resolution === 'resolved' && (
                     <span data-testid="conversation-message-resolved">Resolved</span>
                   )}
+                  <MessageTime at={entry.createdAt} />
                 </header>
                 {isNotice ? (
                   <TypedBody

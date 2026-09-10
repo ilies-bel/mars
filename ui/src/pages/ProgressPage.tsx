@@ -232,13 +232,19 @@ export const ProgressPage = () => {
         )
         .map((t) => t.id),
     )
-    // Include proposals that have at least one matching child task.
+    // A proposal matches on its own words as well as through its tasks. Only
+    // the second rule existed, so typing a phrase printed on a proposal card
+    // filtered that card away — the card was visible, the words were on it,
+    // and the search disagreed.
     const matchingProposalIds = new Set<string>(
       proposals
-        .filter((p) =>
-          (tasks ?? []).some(
-            (t) => t.parentProposalId === p.id && matchingTaskIds.has(t.id),
-          ),
+        .filter(
+          (p) =>
+            p.id.toLowerCase().includes(q) ||
+            p.title.toLowerCase().includes(q) ||
+            (tasks ?? []).some(
+              (t) => t.parentProposalId === p.id && matchingTaskIds.has(t.id),
+            ),
         )
         .map((p) => p.id),
     )
@@ -330,7 +336,7 @@ export const ProgressPage = () => {
             <input
               type="text"
               data-testid="search-tasks"
-              placeholder="Search id, prompt, branch…"
+              placeholder="Search tasks and proposals…"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="h-7 w-full rounded-md border border-border bg-card pl-7 pr-2 text-label text-foreground placeholder:text-muted-foreground focus:border-highlight/40"
@@ -365,6 +371,8 @@ export const ProgressPage = () => {
             selectedProposalId={selectedProposalId}
             searchMatchIds={searchMatchIds}
             searchQuery={searchQuery}
+            onClearProposalFilter={() => setSelectedProposalId(null)}
+            onClearSearch={() => setSearchQuery('')}
           />
         )}
         <Footer />

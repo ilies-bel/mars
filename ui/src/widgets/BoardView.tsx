@@ -195,6 +195,8 @@ export interface BoardViewProps {
   purgeArchive?: Map<string, PurgeArchiveEntry>
   /** Called when the user clicks the "Clear filter" button in the proposal-filter empty state. */
   onClearProposalFilter?: () => void
+  /** Called when the user clicks "Clear search" in the search zero state. */
+  onClearSearch?: () => void
 }
 
 // ---------------------------------------------------------------------------
@@ -209,6 +211,7 @@ export const BoardView = ({
   searchMatchIds,
   searchQuery,
   onClearProposalFilter,
+  onClearSearch,
 }: BoardViewProps) => {
   // ── Task filtering ─────────────────────────────────────────────────────────
   const filterTask = (t: ProgressTask): boolean => {
@@ -226,13 +229,7 @@ export const BoardView = ({
 
   const totalFilteredTasks = inProgressTasks.length + blockedTasks.length + failedTasks.length
 
-  // ── Zero states ────────────────────────────────────────────────────────────
-  const isSearchActive = searchMatchIds != null
-  const showSearchZeroState = isSearchActive && totalFilteredTasks === 0
-  const showProposalZeroState =
-    !isSearchActive && selectedProposalId !== null && totalFilteredTasks === 0
-
-  // ── Proposal column (unfiltered — always shows all active proposals) ───────
+  // ── Proposal column ────────────────────────────────────────────────────────
   //
   // This column counts a DIFFERENT population than the Proposals page: every
   // proposal referenced by at least one in-scope task, regardless of status
@@ -242,7 +239,31 @@ export const BoardView = ({
   // so one concept showed two numbers and neither surface said which it meant.
   // The labels now name their populations: "Proposals (all)" here, "Draft
   // proposals" there.
-  const visibleProposals = proposals
+  //
+  // It obeys the search for the same reason: it used to sit at its full count
+  // with every card rendered while the middle of the board said "0 tasks match"
+  // — a search that visibly skipped a quarter of the board without saying so.
+  const visibleProposals = proposals.filter((p) => {
+    if (selectedProposalId !== null && p.id !== selectedProposalId) return false
+    return searchMatchIds == null || searchMatchIds.has(p.id)
+  })
+
+  // ── Zero states ────────────────────────────────────────────────────────────
+  const isSearchActive = searchMatchIds != null
+  const nothingMatches = totalFilteredTasks === 0 && visibleProposals.length === 0
+  const showSearchZeroState = isSearchActive && nothingMatches
+  const showProposalZeroState = !isSearchActive && selectedProposalId !== null && nothingMatches
+
+  // A column with nothing in it says one of two very different things: "this
+  // does not happen in your repo" or "your filter excluded it". Rendering the
+  // first while a filter is running is a lie the reader has no way to catch —
+  // the board printed "Nothing has failed" over 23 hidden failures.
+  const quoted = `'${(searchQuery ?? '').trim()}'`
+  const emptyFor = (trueEmpty: string, plural: string): string => {
+    if (isSearchActive) return `No ${plural} match ${quoted}`
+    if (selectedProposalId !== null) return `No ${plural} under this proposal`
+    return trueEmpty
+  }
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -271,37 +292,67 @@ export const BoardView = ({
           data-testid="search-zero-state"
           className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center"
         >
-          <span className="rounded border border-border bg-card px-3 py-1.5 font-mono text-label text-muted-foreground">
-            {`0 tasks match '${(searchQuery ?? '').trim()}'`}
-          </span>
+          <div className="pointer-events-auto flex flex-col items-center gap-3">
+            <span className="rounded border border-border bg-card px-3 py-1.5 text-label text-muted-foreground">
+              {`No task or proposal matches ${quoted}`}
+            </span>
+            {onClearSearch !== undefined && (
+              <button
+                data-testid="clear-search"
+                onClick={onClearSearch}
+                className="rounded border border-border px-3 py-1.5 text-label text-muted-foreground transition-colors hover:border-foreground/40 hover:text-foreground"
+              >
+                Clear search
+              </button>
+            )}
+          </div>
         </div>
       )}
 
       {/* ── Dense 4-column grid ─────────────────────────────────────────────── */}
       <main className="grid grid-cols-4 gap-3.5 p-6 items-start overflow-y-auto flex-1">
         {/* Proposals — renders as "PROPOSALS (ALL)"; see the population note above */}
-        <DenseColumn label="Proposals" qualifier="all" count={visibleProposals.length} emptyLabel="No proposals reference an active task">
+        <DenseColumn
+          label="Proposals"
+          qualifier="all"
+          count={visibleProposals.length}
+          emptyLabel={emptyFor('No proposals reference an active task', 'proposals')}
+        >
           {visibleProposals.map((p) => (
             <ProposalCard key={p.id} proposal={p} />
           ))}
         </DenseColumn>
 
         {/* In progress (queued + running/verifying/merging) */}
-        <DenseColumn label="In progress" count={inProgressTasks.length} tooltip="Queued or actively executing" emptyLabel="Nothing is running">
+        <DenseColumn
+          label="In progress"
+          count={inProgressTasks.length}
+          tooltip="Queued or actively executing"
+          emptyLabel={emptyFor('Nothing is running', 'running tasks')}
+        >
           {inProgressTasks.map((t) => (
             <BoardCard key={t.id} task={t} />
           ))}
         </DenseColumn>
 
         {/* Blocked */}
-        <DenseColumn label="Blocked" count={blockedTasks.length} tooltip="Waiting for another task to finish" emptyLabel="Nothing is waiting on another task">
+        <DenseColumn
+          label="Blocked"
+          count={blockedTasks.length}
+          tooltip="Waiting for another task to finish"
+          emptyLabel={emptyFor('Nothing is waiting on another task', 'blocked tasks')}
+        >
           {blockedTasks.map((t) => (
             <BoardCard key={t.id} task={t} />
           ))}
         </DenseColumn>
 
         {/* Failed */}
-        <DenseColumn label="Failed" count={failedTasks.length} emptyLabel="Nothing has failed">
+        <DenseColumn
+          label="Failed"
+          count={failedTasks.length}
+          emptyLabel={emptyFor('Nothing has failed', 'failed tasks')}
+        >
           {failedTasks.map((t) => (
             <BoardCard key={t.id} task={t} />
           ))}

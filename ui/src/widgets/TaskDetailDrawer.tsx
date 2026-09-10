@@ -541,7 +541,7 @@ const RECOVERY_EXHAUSTED_PREFIX = 'recovery_exhausted:'
  * Recovery action buttons for a failed task.
  *
  * Renders a row of actionable buttons (Continue, Remerge, Supersede, Restart,
- * Drop) that post directly to the daemon via `invokeAction`. A collapsible
+ * Delete task) that post directly to the daemon via `invokeAction`. A collapsible
  * "Show CLI equivalent" section preserves the original CLI strings for
  * terminal users and for tests that assert on their presence.
  *
@@ -615,9 +615,10 @@ export const RecoveryCommands = ({
           className="mb-2 rounded border border-error/40 bg-error/5 px-3 py-2"
         >
           <p className="font-mono text-label text-error">
-            Drop <code>task/{taskId}</code>? If the branch has commits ahead of
-            main the server will refuse — use the CLI with{' '}
-            <code>--force</code> to override.
+            Delete <code>task/{taskId}</code> — removes the task, its worktree,
+            its branch and its blocker edges. If the branch has commits ahead of
+            main the server refuses; override from the CLI with{' '}
+            <code>--force</code>. This can&apos;t be undone.
           </p>
           <div className="mt-2 flex gap-2">
             <button
@@ -626,7 +627,7 @@ export const RecoveryCommands = ({
               disabled={loading === 'drop'}
               className="rounded border border-error/40 bg-error/10 px-3 py-1 font-mono text-label text-error hover:bg-error/20 disabled:cursor-not-allowed disabled:opacity-40"
             >
-              {loading === 'drop' ? 'Dropping…' : 'Yes, drop'}
+              {loading === 'drop' ? 'Deleting…' : 'Yes, delete'}
             </button>
             <button
               data-testid="drop-confirm-cancel"
@@ -654,6 +655,17 @@ export const RecoveryCommands = ({
 
         {recoveryExhausted ? (
           <>
+            {/* Continue is not withheld out of caution — it would be refused.
+                Mars allows exactly one recovery attempt per failure and this
+                task's is spent, so `mars continue` exits non-zero. Saying so
+                is the difference between a missing button and a rule. */}
+            <span
+              data-testid="continue-spent"
+              className="self-center text-micro text-muted-foreground"
+            >
+              Continue is spent — this task already used its one retry. Carry
+              the work forward instead:
+            </span>
             <button
               data-testid="remerge-btn"
               onClick={() => void invoke('remerge')}
@@ -688,7 +700,7 @@ export const RecoveryCommands = ({
           disabled={loading !== null || confirming !== null}
           className="rounded border border-error/20 px-3 py-1 font-mono text-label text-error/70 hover:bg-error/10 disabled:cursor-not-allowed disabled:opacity-40"
         >
-          Drop
+          Delete task
         </button>
       </div>
 

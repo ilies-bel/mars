@@ -53,7 +53,26 @@ export interface FilteredQueue {
    * side of the word "of".
    */
   matchedTasks: number
+  /** Rows the filters kept — loose items plus surviving group HEADERS. */
+  matchedRows: number
+  /**
+   * Every task the unfiltered queue holds, by the same rule as
+   * {@link matchedTasks}.
+   *
+   * The header used to pair `matchedTasks` with the daemon's `needsYou`, which
+   * counts the FLAT pre-grouping queue by a different rule (see
+   * `countNeedsYou`). The two populations were 54 and 38 at the same instant,
+   * so "Showing 12 of 38" put two different things either side of "of" and
+   * neither number could be counted on the page. Both ends now come from this
+   * one computation, so the reader can add up the rows and check.
+   */
+  totalTasks: number
 }
+
+const countTasks = (
+  items: readonly ActionQueueItem[],
+  groups: readonly ActionQueueGroupRow[] | undefined,
+): number => items.length + (groups ?? []).reduce((n, g) => n + g.count, 0)
 
 export function filterQueue(
   sorted: readonly ActionQueueItem[],
@@ -64,14 +83,16 @@ export function filterQueue(
   const q = opts.query.trim().toLowerCase()
   const active = kind !== '' || q !== ''
 
+  const totalTasks = countTasks(sorted, serverGroups)
+
   if (!active) {
     return {
       items: [...sorted],
       groups: serverGroups,
       active: false,
-      matchedTasks:
-        sorted.length +
-        (serverGroups ?? []).reduce((n, g) => n + g.count, 0),
+      matchedTasks: totalTasks,
+      matchedRows: sorted.length + (serverGroups ?? []).length,
+      totalTasks,
     }
   }
 
@@ -97,6 +118,8 @@ export function filterQueue(
     items,
     groups,
     active: true,
-    matchedTasks: items.length + groups.reduce((n, g) => n + g.count, 0),
+    matchedTasks: countTasks(items, groups),
+    matchedRows: items.length + groups.length,
+    totalTasks,
   }
 }

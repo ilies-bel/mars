@@ -662,6 +662,10 @@ const NowSection = () => {
 
   const queued = tasks?.filter((t) => t.cluster === 'Queued').length ?? 0
   const blocked = tasks?.filter((t) => t.cluster === 'Blocked').length ?? 0
+  // Recovery tasks that failed. They are excluded from `failed` above and
+  // included on the board; naming them here is what makes both numbers add up.
+  const failedRetries =
+    tasks?.filter((t) => t.cluster === 'Failed' && t.fixForTaskId != null).length ?? 0
 
   return (
     <section>
@@ -677,21 +681,15 @@ const NowSection = () => {
           pauseDetail={dispatch.detail}
         />
 
-        {/* These are TASKS. The board on #/progress counts ARCS — a chain of
-            an origin task and whatever recovery it spawned — so its Failed
-            column read 24 while this strip read 23 at the same instant, both
-            under a label saying "Live". Neither was wrong and nothing said
-            they were different things, which is the worse failure: once you
-            catch two live surfaces disagreeing, you stop trusting the ones
-            that agree. The unit is stated here because this is the number
-            with no visible referent — you can count the board's 24 cards. */}
-        <p className="mb-3 text-label text-muted-foreground">
-          Tasks right now.{' '}
-          <a href="#/progress" className="underline decoration-dotted underline-offset-2 hover:text-foreground">
-            The board
-          </a>{' '}
-          groups these into arcs, so its columns count differently.
-        </p>
+        {/* Failed counts the work YOU asked for: `status = 'failed' AND
+            fix_for_task_id IS NULL` (view/status-counts.ts). The board on
+            #/progress has no such filter, so a failed recovery attempt is a
+            card there and not a unit here — that is the whole of the 23-vs-24
+            the two surfaces showed at the same instant, under a label saying
+            "Live". Rather than explain the gap in prose, the Failed stat now
+            carries the retries as a second number, so both totals are
+            reachable from this strip and the board stops being a surprise. */}
+        <p className="mb-3 text-label text-muted-foreground">Tasks right now.</p>
 
         <div className="grid grid-cols-3 gap-x-4 gap-y-3 sm:grid-cols-5">
           <Stat
@@ -713,6 +711,16 @@ const NowSection = () => {
             label="Failed"
             value={failed}
             colorClass={failed > 0 ? 'text-status-failed' : undefined}
+            note={
+              failedRetries > 0
+                ? `+${failedRetries} ${failedRetries === 1 ? 'retry' : 'retries'} also failed`
+                : undefined
+            }
+            noteTitle={
+              failedRetries > 0
+                ? `Mars spawns one recovery attempt per failure. ${failedRetries} of those failed too, and the board on #/progress counts ${failed + failedRetries} cards because it shows them.`
+                : undefined
+            }
           />
           <Stat
             label="Done today"
@@ -729,9 +737,12 @@ interface StatProps {
   label: string
   value: number
   colorClass?: string
+  /** A second, smaller number this one deliberately excludes. */
+  note?: string
+  noteTitle?: string
 }
 
-const Stat = ({ label, value, colorClass }: StatProps) => (
+const Stat = ({ label, value, colorClass, note, noteTitle }: StatProps) => (
   <div className="flex flex-col">
     <span
       className={[
@@ -744,6 +755,11 @@ const Stat = ({ label, value, colorClass }: StatProps) => (
     <span className="eyebrow mt-0.5 text-muted-foreground">
       {label}
     </span>
+    {note != null && (
+      <span className="mt-0.5 text-micro text-muted-foreground" title={noteTitle}>
+        {note}
+      </span>
+    )}
   </div>
 )
 

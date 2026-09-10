@@ -650,7 +650,7 @@ const TopologyViewInner = ({
           className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center"
         >
           <span className="rounded bg-foreground/90 px-3 py-1.5 font-mono text-label text-muted-dark ring-1 ring-border-dark/60">
-            {`0 tasks match '${(searchQuery ?? '').trim()}'`}
+            {`No task or proposal matches '${(searchQuery ?? '').trim()}'`}
           </span>
         </div>
       )}

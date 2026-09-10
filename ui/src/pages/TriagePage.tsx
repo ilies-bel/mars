@@ -215,6 +215,12 @@ const KIND_TONE: Record<string, ChipTone> = {
  */
 const TASK_RECOVERY_KINDS = new Set([
   'failed',
+  // The recovery task was dropped before it ran, so the origin is a plain
+  // failed task with its worktree intact — `mars continue` resumes it. This
+  // kind used to sit outside the set, so the row rendered its bare recipe
+  // verbs: a Restart with no confirm gate, no Continue, and a body sentence
+  // recommending the Continue it did not offer.
+  'recovery-abandoned',
   'daemon-killed',
   'coder-question',
   'diagnose-inconclusive',
@@ -374,6 +380,24 @@ interface TriageRowProps {
   }
 }
 
+const plural = (n: number, one: string, many: string): string =>
+  `${n} ${n === 1 ? one : many}`
+
+/**
+ * The header's one-line account of what the filter is showing and what it is
+ * withholding. Named units on both sides, and nothing the reader cannot count
+ * on the page in front of them.
+ */
+const filterSubtitle = (filtered: {
+  matchedTasks: number
+  matchedRows: number
+  totalTasks: number
+}): string => {
+  const hidden = filtered.totalTasks - filtered.matchedTasks
+  const shown = `Showing ${plural(filtered.matchedTasks, 'task', 'tasks')} in ${plural(filtered.matchedRows, 'row', 'rows')}`
+  return hidden > 0 ? `${shown} · ${hidden} hidden by this filter` : shown
+}
+
 /**
  * What a destructive verb actually destroys, in the operator's terms.
  *
@@ -386,11 +410,21 @@ const destructiveConsequence = (
   op: string,
   entityId: string,
   branch: string | null,
+  /**
+   * Whether this row is actually offering Continue. The restart sentence used
+   * to recommend Continue unconditionally — including on rows that withhold
+   * it because the task's one recovery attempt is spent, and on setup
+   * failures with no worktree to continue on. Pointing at a button that is
+   * not on screen is worse than not naming an alternative at all.
+   */
+  continueAvailable: boolean,
 ): string => {
   const where = branch !== null ? `${entityId} (branch ${branch})` : entityId
   switch (op) {
     case 'restart':
-      return `Restart ${where} — wipes the worktree and branch, losing any commits the worker made. Continue reuses them instead. This can't be undone.`
+      return continueAvailable
+        ? `Restart ${where} — wipes the worktree and branch, losing any commits the worker made. Continue reuses them instead. This can't be undone.`
+        : `Restart ${where} — wipes the worktree and branch, losing any commits the worker made. This can't be undone.`
     case 'purge':
     case 'drop':
       return `Delete ${where} — removes the task, its worktree, its branch and its blocker edges. This can't be undone.`
@@ -427,6 +461,7 @@ const ConfirmDestructive = ({
   verb,
   entityId,
   branch,
+  continueAvailable,
   pending,
   onConfirm,
   onCancel,
@@ -434,6 +469,7 @@ const ConfirmDestructive = ({
   verb: AlertVerb
   entityId: string
   branch: string | null
+  continueAvailable: boolean
   pending: string | null
   onConfirm: () => void
   onCancel: () => void
@@ -444,7 +480,7 @@ const ConfirmDestructive = ({
     data-op={verb.op}
   >
     <span className="flex-1 text-micro leading-relaxed text-error">
-      {destructiveConsequence(verb.op, entityId, branch)}
+      {destructiveConsequence(verb.op, entityId, branch, continueAvailable)}
     </span>
     <ActionButton
       variant="danger"
@@ -704,6 +740,10 @@ const leadDecisionIndex = (decisions: Decision[]): number => {
   const isChatOnly = CHAT_ONLY_KINDS.has(item.kind)
   const isTaskRecovery = TASK_RECOVERY_KINDS.has(item.kind)
   const isRecoveryExhausted = isTaskRecovery && item.recoveryExhausted
+  // The single source of truth for "does this row offer Continue" — the button
+  // below, the restart confirmation's alternative clause, and the sentence
+  // that explains the absence all read it, so they cannot disagree.
+  const continueAvailable = !isChatOnly && isTaskRecovery && !isRecoveryExhausted
   // Phantom-merge: done task with no merge SHA on record. Neither Continue
   // (refused for non-failed tasks) nor Restart (destructive) is the right CTA.
   // A dedicated carry-forward panel offers Remerge (branch still has commits)
@@ -1119,6 +1159,7 @@ const leadDecisionIndex = (decisions: Decision[]): number => {
                 verb={armedVerb}
                 entityId={item.entityId}
                 branch={item.humanDetail?.branch ?? null}
+                continueAvailable={continueAvailable}
                 pending={pending}
                 onConfirm={() => void handleVerb(armedVerb.op, armedVerb.hint)}
                 onCancel={() => setArmedVerb(null)}
@@ -1132,8 +1173,12 @@ const leadDecisionIndex = (decisions: Decision[]): number => {
                 className="mt-1 flex w-full flex-col gap-2 rounded border border-warn/30 bg-warn/5 px-3 py-2"
                 data-testid="triage-recovery-exhausted"
               >
+                {/* "Recovery spent" named a state without naming what it
+                    costs the reader — which is Continue, the verb every other
+                    failed row leads with. State the rule, then the way out. */}
                 <p className="text-micro text-warn">
-                  Recovery spent — carry the work forward:
+                  Continue is spent — Mars allows one retry per failure and this
+                  task used it. Carry the work forward instead:
                 </p>
                 <div className="flex flex-wrap items-center gap-2">
                   <code className="font-mono text-micro text-warn/70 select-all">
@@ -1889,16 +1934,16 @@ export const TriagePage = () => {
             ? '1 item needs attention'
             : `${needsYouCount} items need attention`
         }
-        /* The chip keeps reporting the queue; the subtitle reports the view.
-           Both are true and they answer different questions — "how much is
-           wrong" and "how much of it am I looking at". With a filter running
-           and only the chip on screen, the header claimed 38 while three rows
-           were visible. */
-        subtitle={
-          filtered.active
-            ? `Showing ${filtered.matchedTasks} of ${needsYouCount}`
-            : undefined
-        }
+        /* The chip reports the queue; the subtitle reports the view. It used
+           to phrase that as "Showing 12 of 38", pairing a task count with the
+           daemon's needsYou — which counts the flat pre-grouping queue by a
+           different rule. The two were 54 and 38 at the same instant and
+           neither could be checked against the page.
+
+           Every number here is now countable on this screen: the tasks are the
+           loose rows plus each group header's own chip, the rows are the rows,
+           and the hidden count is what clearing the filter brings back. */
+        subtitle={filtered.active ? filterSubtitle(filtered) : undefined}
         actions={
           <a
             href="#/chat"

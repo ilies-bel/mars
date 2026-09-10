@@ -32,6 +32,20 @@ export const formatAbsoluteDateTime = (input: string | number): string =>
 export const formatAbsoluteDate = (input: string | number): string =>
   withValidDate(input, (d) => `${d.getDate()} ${MONTH_ABBR[d.getMonth()]} ${d.getFullYear()}`)
 
+/** Clock time only, 24h, for a transcript where the day is stated elsewhere: "15:50". */
+export const formatClockTime = (input: string | number): string =>
+  withValidDate(input, (d) => `${pad2(d.getHours())}:${pad2(d.getMinutes())}`)
+
+/**
+ * Calendar-day key in LOCAL time, for grouping a transcript into days.
+ *
+ * Deliberately not `toISOString().slice(0, 10)`: that is UTC, so a message sent
+ * at 01:30 local in UTC+2 would land under the previous day's separator while
+ * its own clock time read 01:30.
+ */
+export const localDayKey = (input: string | number): string =>
+  withValidDate(input, (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`)
+
 /** Compact date, no year, for space-constrained UI (e.g. chart axis labels): "17 Aug". */
 export const formatShortDate = (input: string | number): string =>
   withValidDate(input, (d) => `${d.getDate()} ${MONTH_ABBR[d.getMonth()]}`)
