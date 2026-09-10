@@ -1221,37 +1221,54 @@ export const TriageCauseGroupRow = ({
           times its height — visual weight ran exactly opposite to blast
           radius, so the most consequential row was the easiest to skip. */}
       <div className="flex items-center gap-2.5">
+        {/* The whole left-hand run of the header is the toggle, not just the
+            chevron. A 24x24 chevron was 1.1% of a 1080px row, so the row that
+            stands for the most tasks was also the hardest thing on the page to
+            hit; the summary a person actually reads is now the thing they
+            click. Bulk actions stay outside it — nesting them would make one
+            button contain another. */}
         <button
           type="button"
           aria-expanded={expanded}
-          aria-label={expanded ? `Collapse ${kindLabel} group` : `Expand ${kindLabel} group`}
           onClick={() => setExpanded((e) => !e)}
-          className="-ml-1 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground"
+          className="-ml-1 flex min-w-0 flex-1 items-center gap-2.5 rounded px-1 py-1 text-left transition-colors duration-[var(--dur-fast)] hover:bg-foreground/5"
           data-testid="cause-group-toggle"
         >
-          {expanded ? (
-            <ChevronDown size={12} strokeWidth={2} aria-hidden="true" />
-          ) : (
-            <ChevronRight size={12} strokeWidth={2} aria-hidden="true" />
-          )}
+          <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center text-muted-foreground">
+            {expanded ? (
+              <ChevronDown size={12} strokeWidth={2} aria-hidden="true" />
+            ) : (
+              <ChevronRight size={12} strokeWidth={2} aria-hidden="true" />
+            )}
+          </span>
+          <span
+            className="flex shrink-0 items-baseline gap-1"
+            data-testid="cause-group-count"
+          >
+            <span className="text-base font-semibold tabular-nums leading-none text-foreground">
+              {group.count}
+            </span>
+            <span className="text-micro text-muted-foreground">
+              {group.count === 1 ? 'task' : 'tasks'}
+            </span>
+          </span>
+          <Chip tone={kindTone} icon={kindIcon}>
+            {kindLabel}
+          </Chip>
+          {/* Type scales with blast radius. A cause holding five or more tasks
+              is the biggest single thing an operator can resolve in one go, so
+              it is set at the same size as a page's own section heading rather
+              than in the 12px label type every other row shares. */}
+          <span
+            className={[
+              'min-w-0 flex-1 truncate font-semibold leading-snug text-foreground',
+              group.count >= 5 ? 'text-section' : 'text-title',
+            ].join(' ')}
+            title={label}
+          >
+            {label}
+          </span>
         </button>
-        <span
-          className="flex shrink-0 items-baseline gap-1"
-          data-testid="cause-group-count"
-        >
-          <span className="text-base font-semibold tabular-nums leading-none text-foreground">
-            {group.count}
-          </span>
-          <span className="text-micro text-muted-foreground">
-            {group.count === 1 ? 'task' : 'tasks'}
-          </span>
-        </span>
-        <Chip tone={kindTone} icon={kindIcon}>
-          {kindLabel}
-        </Chip>
-        <span className="flex-1 text-label font-medium leading-snug text-foreground">
-          {label}
-        </span>
         {bulkVerb && (
           <button
             disabled={pending !== null}

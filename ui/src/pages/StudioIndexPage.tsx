@@ -149,7 +149,7 @@ export const StudioIndexPage = () => {
 
   return (
     <div data-testid="studio-index-page" className="flex h-full flex-col overflow-hidden bg-background">
-      <PageHeader title="Studio" subtitle="Recent scored runs" />
+      <PageHeader title="Scores" subtitle="How recent runs were graded" />
 
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
         {/* Workflow selector — mirrors LoopLedgerPanel; hidden when no workflows known yet */}
@@ -188,9 +188,10 @@ export const StudioIndexPage = () => {
               No scored runs yet
             </p>
             <p className="text-body text-muted-foreground">
-              Studio shows the live step-execution tree for a task's workflow run —
-              every tool call, intermediate output, and step result, in the order
-              they happened. Runs appear here once a scorer has graded them.
+              This page lists runs a scorer has graded, worst first. Opening one
+              shows the run's full step-execution tree — every tool call,
+              intermediate output, and step result, in the order they happened —
+              so a low score can be traced to the step that earned it.
             </p>
             <p className="text-body text-muted-foreground">
               Accept a scorer on the{' '}

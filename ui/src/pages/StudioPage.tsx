@@ -62,7 +62,7 @@ export const StudioPage = ({ taskId, fetchImpl }: StudioPageProps) => {
   return (
     <div data-testid="studio-page" className="flex h-full flex-col overflow-hidden bg-background">
       <PageHeader
-        title={task ? taskTitle(task) : 'Studio'}
+        title={task ? taskTitle(task) : 'Scores'}
         subtitle={taskId}
         actions={
           <a

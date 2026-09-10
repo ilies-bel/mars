@@ -3,7 +3,7 @@
  *
  * Asserts:
  *   1. Steward (#/steward) has a sidebar entry in the Insight group.
- *   2. Studio (#/studio/<id>) has a sidebar entry in the Insight group.
+ *   2. Scores (#/studio/<id>) has a sidebar entry in the Insight group.
  *   3. Every full-page RouteName is represented in SHELL_NAV_GROUPS.
  *   4. The reflections RunStateBanner does not concatenate two sentences
  *      without a space (the ".Run manually" defect pattern).
@@ -89,9 +89,9 @@ describe('Navigation coverage — sidebar entries', () => {
     expect(entry?.href).toBe('#/steward')
   })
 
-  it('Studio is in the sidebar', () => {
+  it('Scores is in the sidebar', () => {
     expect(allRoutes).toContain('studio')
-    expect(allLabels).toContain('Studio')
+    expect(allLabels).toContain('Scores')
   })
 
   it('all full-page routes that have a dedicated URL are represented in the sidebar', () => {

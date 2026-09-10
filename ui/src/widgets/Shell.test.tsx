@@ -115,9 +115,9 @@ describe('SHELL_NAV_GROUPS', () => {
     expect(labels).toEqual(['Progress', 'Events'])
   })
 
-  it('Insight group contains KPI, Studio and Reflections', () => {
+  it('Insight group contains KPI, Scores and Reflections', () => {
     const labels = groupNamed('Insight')?.entries.map((e) => e.label)
-    expect(labels).toEqual(['KPI', 'Studio', 'Reflections'])
+    expect(labels).toEqual(['KPI', 'Scores', 'Reflections'])
   })
 
   it('Control is the pinned footer group and holds both levers surfaces', () => {
@@ -146,8 +146,8 @@ describe('SHELL_NAV_GROUPS', () => {
     expect(steward?.route).toBe('steward')
   })
 
-  it('Studio has a sidebar entry in the Insight group pointing at #/studio', () => {
-    const studio = groupNamed('Insight')?.entries.find((e) => e.label === 'Studio')
+  it('Scores has a sidebar entry in the Insight group pointing at #/studio', () => {
+    const studio = groupNamed('Insight')?.entries.find((e) => e.label === 'Scores')
     expect(studio).toBeDefined()
     expect(studio?.route).toBe('studio')
     expect(studio?.href).toBe('#/studio')

@@ -53,7 +53,7 @@ interface NavGroup {
  *
  *   Inbox     — what is waiting on me?          Needs You, Proposals, Chat
  *   Activity  — what is the system doing?       Progress, Events
- *   Insight   — how well is it doing it?        KPI, Studio, Reflections
+ *   Insight   — how well is it doing it?        KPI, Scores, Reflections
  *   Control   — what can I change?              Control Room, Steward
  *
  * Steward sat in Insight until the round-9 review, and it does not belong
@@ -94,7 +94,7 @@ export const SHELL_NAV_GROUPS: NavGroup[] = [
     label: 'Insight',
     entries: [
       { route: 'kpi', label: 'KPI', href: '#/kpi', icon: TrendingUp },
-      { route: 'studio', label: 'Studio', href: '#/studio', icon: FlaskConical },
+      { route: 'studio', label: 'Scores', href: '#/studio', icon: FlaskConical },
       { route: 'reflections', label: 'Reflections', href: '#/reflections', icon: Sparkles },
     ],
   },
