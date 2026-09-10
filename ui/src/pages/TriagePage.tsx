@@ -873,7 +873,14 @@ const leadDecisionIndex = (decisions: Decision[]): number => {
         // above every member with nothing beside it.
         const showName = inGroup && !goal && memberName !== null
         const showAge = !inGroup || !groupContext.sharedAge
-        if (inGroup && !showName && !showAge) return null
+        // The task id is the join key between this page, the board, the drawer
+        // and the operator's terminal — `mars continue <id>` needs it typed.
+        // Expanded members carried none at all, so seventeen rows under one
+        // cause were mutually indistinguishable and none of them could be
+        // followed anywhere else. Quiet, selectable, and only where there is a
+        // task to name.
+        const showId = taskLink !== null && item.entityId !== ''
+        if (inGroup && !showName && !showAge && !showId) return null
         return (
           <div className="mb-1.5 flex items-center gap-2">
             {!inGroup && (
@@ -894,9 +901,19 @@ const leadDecisionIndex = (decisions: Decision[]): number => {
                 {memberName}
               </span>
             )}
-            {showAge && (
-              <span className="ml-auto text-micro tabular-nums text-muted-foreground">
-                {age}
+            {(showId || showAge) && (
+              <span className="ml-auto flex shrink-0 items-baseline gap-2">
+                {showId && (
+                  <span
+                    className="select-all font-mono text-micro text-muted-foreground/70"
+                    data-testid="triage-entity-id"
+                  >
+                    {item.entityId}
+                  </span>
+                )}
+                {showAge && (
+                  <span className="text-micro tabular-nums text-muted-foreground">{age}</span>
+                )}
               </span>
             )}
           </div>
