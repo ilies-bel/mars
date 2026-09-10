@@ -1468,7 +1468,29 @@ export const TriageCauseGroupRow = ({
 
   // Primary bulk verb: use the kind's recipe-declared bulkResolveVerb (HR-3).
   // A kind that declares none shows only Snooze — no invented action.
-  const bulkVerb = group.bulkResolveVerb ?? null
+  //
+  // Except for a group of failed TASKS, which is the commonest and highest
+  // priority group on the page and had no bulk verb at all: a row standing for
+  // seventeen failures offered "Snooze all" and nothing else, while each of
+  // its seventeen children offered Continue. `failed` declares no
+  // bulkResolveVerb because whether the group can be continued depends on the
+  // members, not the kind — so it is decided here, from them.
+  //
+  // Continue is only offered when EVERY member can take it. A partial "Continue
+  // all" would report failures for the members whose one recovery attempt is
+  // already spent, which is a worse row than no button.
+  const continuableMembers = group.members.filter(
+    (m) => m.recoveryExhausted !== true && m.dag !== null && m.entityId !== '',
+  )
+  const derivedBulkVerb: AlertVerb | null =
+    group.bulkResolveVerb == null &&
+    TASK_RECOVERY_KINDS.has(group.kind) &&
+    continuableMembers.length === group.members.length &&
+    group.members.length > 0
+      ? { op: 'continue', label: `Continue all ${group.members.length}`, style: 'primary' }
+      : null
+
+  const bulkVerb = group.bulkResolveVerb ?? derivedBulkVerb
 
   // Does every member's output panel say what the header already says?
   // The group is keyed by failure signature, so this is true whenever the
