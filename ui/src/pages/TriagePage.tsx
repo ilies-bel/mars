@@ -50,7 +50,7 @@ import { signatureFamilyPhrase, causeGroupPhrase } from '@/shared/causePhrase'
 import { CollapsibleSection } from '@/components/CollapsibleSection'
 import { useFocusedProjectId } from '@/shared/useFocusedProject'
 import { defaultAqUrlState, encodeAqState } from '@/shared/actionQueueUrlState'
-import { taskHash } from '@/shared/routing'
+import { taskHash, parseTriageKind } from '@/shared/routing'
 import { hasResolvableTask, isConditionActionQueueKind } from '@/shared/schemas'
 import type { ActionQueueItem, ActionQueueKind } from '@/shared/schemas'
 import type { Decision } from '@/shared/schemas'
@@ -1506,7 +1506,31 @@ export const TriagePage = () => {
 
   // ── Search + kind filter ──────────────────────────────────────────────────
   const [searchQuery, setSearchQuery] = useState('')
-  const [kindFilter, setKindFilter] = useState('')
+  // The URL owns the kind filter, so the header's parked-task chip
+  // (`#/triage?kind=awaiting-human`) lands on a page that is already narrowed,
+  // and a filtered view can be linked to and shared.
+  const [kindFilter, setKindFilter] = useState(
+    () => parseTriageKind(window.location.hash) ?? '',
+  )
+
+  // The chip is reachable while Triage is already open, in which case this
+  // component never remounts and the initialiser above never runs again.
+  // Follow the hash so the filter tracks the URL from either direction.
+  useEffect(() => {
+    const sync = () => setKindFilter(parseTriageKind(window.location.hash) ?? '')
+    window.addEventListener('hashchange', sync)
+    return () => window.removeEventListener('hashchange', sync)
+  }, [])
+
+  // Choosing a kind by hand writes it back to the URL, so the address bar
+  // always describes what is on screen. `replaceState` rather than assigning
+  // `location.hash`: flipping through a dropdown should not fill the back
+  // button with a dozen entries the operator has to walk out of.
+  const selectKind = useCallback((next: string) => {
+    setKindFilter(next)
+    const url = next === '' ? '#/triage' : `#/triage?kind=${encodeURIComponent(next)}`
+    window.history.replaceState(null, '', url)
+  }, [])
 
   /**
    * Distinct kinds present in the current queue, alphabetically sorted.
@@ -1627,7 +1651,7 @@ export const TriagePage = () => {
                  to and is worse than silence. */
               aria-label="Filter by kind"
               value={kindFilter}
-              onChange={(e) => setKindFilter(e.target.value)}
+              onChange={(e) => selectKind(e.target.value)}
               data-testid="triage-kind-filter"
             >
               <option value="">All kinds</option>
@@ -1657,7 +1681,7 @@ export const TriagePage = () => {
             total={needsYouCount}
             onClear={() => {
               setSearchQuery('')
-              setKindFilter('')
+              selectKind('')
             }}
           />
         ) : !hasContent ? (

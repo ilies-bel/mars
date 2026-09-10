@@ -349,6 +349,36 @@ export const parseProposalOrigin = (hash: string): RouteName | null => {
 }
 
 /**
+ * Reads the kind filter encoded in a `#/triage?kind=<kind>` hash.
+ *
+ * The parked-task chip in the app header links here to open Needs You already
+ * narrowed to the tasks waiting on a person. That link existed and the Triage
+ * page ignored the param outright, so the one persistent affordance in the
+ * chrome navigated and then visibly did nothing — which reads as a broken app
+ * rather than a missing feature.
+ *
+ * Returns the raw kind (the same value the filter's `<option>`s carry, e.g.
+ * `awaiting-human` — NOT the short display label), or `null` when the hash is
+ * not a Triage hash, carries no `kind`, or carries an undecodable one.
+ *
+ * Parsing is the plain string-splitting the rest of this file uses.
+ */
+export const parseTriageKind = (hash: string): string | null => {
+  const queryIndex = hash.indexOf('?')
+  if (queryIndex === -1) return null
+  const path = hash.slice(0, queryIndex)
+  if (path !== '#/triage' && path !== '#/triage/') return null
+  for (const pair of hash.slice(queryIndex + 1).split('&')) {
+    const eq = pair.indexOf('=')
+    if (eq === -1) continue
+    if (pair.slice(0, eq) !== 'kind') continue
+    const value = safeDecode(pair.slice(eq + 1))
+    return value !== null && value !== '' ? value : null
+  }
+  return null
+}
+
+/**
  * Parses an optional `#/proposal/<id>` overlay route. Proposal rows route here
  * instead of `#/task/<id>` so the App can render the proposal drawer while task
  * rows keep opening the task drawer unchanged.
