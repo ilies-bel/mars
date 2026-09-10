@@ -89,7 +89,14 @@ export const CostPerMergedTaskTile = () => {
               delta,
               formatted: usdFormatter.format(Math.abs(delta)),
               lowerIsBetter: true,
-              comparison: `since ${WINDOW_DAYS}d ago`,
+              // NOT "vs previous 7d" — this tile compares the first and last
+              // priced day INSIDE its own window, where the other four compare
+              // this window against the one before it. The two phrasings used
+              // to differ by three words ("since 7d ago" vs "vs previous 7d"),
+              // which read as an inconsistency rather than as the different
+              // measurement it is. "across" says the movement happened within
+              // the window.
+              comparison: `across the last ${WINDOW_DAYS}d`,
             }
       }
       ariaLabel="View Cost / merged task details"

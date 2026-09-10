@@ -1,4 +1,5 @@
 import { releaseNotesHash } from '@/shared/routing'
+import { ConnectionStatus } from '@/components/ConnectionStatus'
 import { pauseReasonLabel } from '@/entities/operator/useDispatchState'
 import type { DispatchPauseState } from '@/shared/api'
 
@@ -44,45 +45,28 @@ interface Props {
 }
 
 /**
- * Health indicator: daemon reachability, then dispatch state, then socket state.
- *
- * Ordered by what invalidates more of the screen. A dead daemon makes every
- * counter fictional; a pause makes them meaningless; a dropped socket only
- * makes them stale.
+ * Health indicator — a link to the Control Room, which now states the same
+ * fact in the same words. See components/ConnectionStatus.
  */
 const HealthDot = ({
   connected,
   dispatch,
   daemonDown,
-}: Pick<Props, 'connected' | 'dispatch' | 'daemonDown'>) => {
-  const { tone, label, title } = daemonDown
-    ? {
-        tone: 'bg-error',
-        label: 'daemon down',
-        title: 'The Mars daemon is not running — these counts are not current.',
-      }
-    : dispatch.paused
-      ? {
-          tone: 'bg-warning',
-          label: `paused · ${pauseReasonLabel(dispatch)}`,
-          title: dispatch.detail ?? 'Dispatch is paused — no new work is being dispatched.',
-        }
-      : connected
-        ? { tone: 'bg-success animate-mars-pulse', label: 'live', title: 'Dispatch is running.' }
-        : { tone: 'bg-muted-foreground', label: 'offline', title: 'Lost the event stream.' }
-
-  return (
-    <a
-      href="#/control"
-      title={title}
-      data-testid="health-indicator"
-      className="flex items-center gap-1.5 transition-opacity hover:opacity-80"
-    >
-      <span className={`h-2 w-2 rounded-full ${tone}`} />
-      <span className="font-mono text-body text-muted-foreground">{label}</span>
-    </a>
-  )
-}
+}: Pick<Props, 'connected' | 'dispatch' | 'daemonDown'>) => (
+  <a
+    href="#/control"
+    data-testid="health-indicator"
+    className="transition-opacity hover:opacity-80"
+  >
+    <ConnectionStatus
+      connected={connected}
+      paused={dispatch.paused}
+      pauseLabel={dispatch.paused ? pauseReasonLabel(dispatch) : null}
+      pauseDetail={dispatch.detail}
+      daemonDown={daemonDown}
+    />
+  </a>
+)
 
 export const TopStripe = ({
   doneToday,

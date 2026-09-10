@@ -32,7 +32,8 @@ describe('KpiTile', () => {
   it('renders the human-readable label for cost_per_arc', () => {
     const html = renderToStaticMarkup(<KpiTile kpi={kpi({ key: 'cost_per_arc', currentValue: 2.5 })} />)
     expect(html).toContain('Cost per Arc')
-    expect(html).toContain('3 tok')
+    expect(html).toContain('>3<')
+    expect(html).toContain('>tok<')
   })
 
   it('renders the human-readable label for failure_rate', () => {
@@ -100,8 +101,9 @@ describe('KpiVector', () => {
   it('renders the formatted value of each KPI', async () => {
     const { KpiVector } = await import('./KpiVector')
     const html = renderToStaticMarkup(<KpiVector />)
-    // cost_per_arc: 1.0 → '1 tok'
-    expect(html).toContain('1 tok')
+    // cost_per_arc: 1.0 → '1' with a separate 'tok' unit span
+    expect(html).toContain('>1<')
+    expect(html).toContain('>tok<')
     // failure_rate: 0.05 → '5.0%'
     expect(html).toContain('5.0%')
     // autonomous_completion_rate: 0.9 → '90.0%'

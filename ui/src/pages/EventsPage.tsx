@@ -1225,7 +1225,7 @@ export const EventsPage = ({
   // first successful fetch has completed (dataUpdatedAt is 0 beforehand).
   const fetchedAt =
     initial.dataUpdatedAt > 0
-      ? `fetched ${formatRelativeAge(now - initial.dataUpdatedAt)}`
+      ? `Fetched ${formatRelativeAge(now - initial.dataUpdatedAt)}`
       : null
 
   // After 5 minutes without a refresh the chip turns text-warn so the operator

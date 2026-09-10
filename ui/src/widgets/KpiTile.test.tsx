@@ -102,7 +102,9 @@ describe('KpiTile — label and formatted value', () => {
     const html = renderToStaticMarkup(
       <KpiTile kpi={kpi({ key: 'cost_per_arc', currentValue: 2.5 })} />,
     )
-    expect(html).toContain('3 tok')
+    // The unit is a separate span in prose type — see formatKpiValueParts.
+    expect(html).toContain('>3<')
+    expect(html).toContain('>tok<')
   })
 
   it('renders the label for failure_rate', () => {
@@ -199,7 +201,7 @@ describe('KpiTile — band indicator', () => {
     const html = renderToStaticMarkup(
       <KpiTile kpi={kpi({ key: 'cost_per_arc', currentValue: 2.5 })} />,
     )
-    expect(html).toContain('Good')
+    expect(html).toContain('On target')
   })
 
   it('renders the check shape cue for a good-band KPI', () => {
@@ -214,7 +216,7 @@ describe('KpiTile — band indicator', () => {
     const html = renderToStaticMarkup(
       <KpiTile kpi={kpi({ key: 'failure_rate', currentValue: 0.05 })} />,
     )
-    expect(html).toContain('Warn')
+    expect(html).toContain('Near limit')
   })
 
   it('renders the triangle-alert shape cue for a warn-band KPI', () => {
@@ -229,7 +231,7 @@ describe('KpiTile — band indicator', () => {
     const html = renderToStaticMarkup(
       <KpiTile kpi={kpi({ key: 'failure_rate', currentValue: 0.10 })} />,
     )
-    expect(html).toContain('Bad')
+    expect(html).toContain('Off target')
   })
 
   it('renders the x shape cue for a bad-band KPI', () => {
@@ -274,7 +276,7 @@ describe('KpiTile — band indicator', () => {
     const html = renderToStaticMarkup(
       <KpiTile kpi={kpi({ key: 'cost_per_arc', currentValue: 2.5, lowConfidence: true })} />,
     )
-    expect(html).not.toContain('Good')
+    expect(html).not.toContain('On target')
     expect(html).not.toContain('✓')
   })
 
@@ -283,7 +285,7 @@ describe('KpiTile — band indicator', () => {
     const html = renderToStaticMarkup(
       <KpiTile kpi={kpi({ key: 'cost_per_arc', currentValue: 2.5 })} />,
     )
-    expect(html).toContain('Good')
+    expect(html).toContain('On target')
   })
 })
 
@@ -314,7 +316,8 @@ describe('KpiTile low-confidence', () => {
       <KpiTile kpi={kpi({ key: 'cost_per_arc', currentValue: 2.5, lowConfidence: false })} />,
     )
     expect(html).toContain('<svg')
-    expect(html).toContain('3 tok')
+    expect(html).toContain('>3<')
+    expect(html).toContain('>tok<')
     expect(html).not.toContain('insufficient samples')
     expect(html).not.toContain('kpi-tile--low-confidence')
   })
@@ -336,7 +339,7 @@ describe('KpiTile — verdict and movement, in one order', () => {
     const html = renderToStaticMarkup(
       <KpiTile kpi={kpi({ key: 'failure_rate', currentValue: 0.036, delta: 0.036 })} />,
     )
-    expect(html).toContain('Warn · last 7d')
+    expect(html).toContain('Near limit · last 7d')
   })
 
   it('states the movement the vector already carried and the tile used to discard', () => {
@@ -394,6 +397,6 @@ describe('KpiTile — verdict and movement, in one order', () => {
     )
     expect(html).not.toContain('lucide-arrow-up')
     expect(html).not.toContain('lucide-arrow-down')
-    expect(html).toContain('Warn · last 7d')
+    expect(html).toContain('Near limit · last 7d')
   })
 })

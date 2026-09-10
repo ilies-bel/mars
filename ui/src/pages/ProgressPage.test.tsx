@@ -141,19 +141,19 @@ describe('ProgressPage – search input', () => {
 // ---------------------------------------------------------------------------
 
 describe('ProgressPage – SSE connection indicator', () => {
-  it('shows the "live" indicator when the daemon bus is connected', () => {
+  it('shows the "Live" indicator when the daemon bus is connected', () => {
     // Default mock returns connected: true — should display "live"
     const html = renderToStaticMarkup(<ProgressPage />)
-    expect(html).toContain('>live<')
-    expect(html).not.toContain('>offline<')
+    expect(html).toContain('>Live<')
+    expect(html).not.toContain('>Offline<')
   })
 
-  it('shows the "offline" indicator when the daemon bus is disconnected', () => {
+  it('shows the "Offline" indicator when the daemon bus is disconnected', () => {
     mockUseProgress.mockImplementation(() => ({ ...baseState([]), connected: false }))
     try {
       const html = renderToStaticMarkup(<ProgressPage />)
-      expect(html).toContain('>offline<')
-      expect(html).not.toContain('>live<')
+      expect(html).toContain('>Offline<')
+      expect(html).not.toContain('>Live<')
     } finally {
       mockUseProgress.mockImplementation(() =>
         baseState([

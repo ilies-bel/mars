@@ -1,4 +1,5 @@
 import { ArrowRight, Check, ChevronDown, Circle, TriangleAlert, X } from 'lucide-react'
+import { ConnectionStatus } from '@/components/ConnectionStatus'
 import { ActionButton, ActionLink } from '@/components/ActionButton'
 import { Chip } from '@/components/Chip'
 /**
@@ -667,22 +668,14 @@ const NowSection = () => {
       <SectionHeading>Now</SectionHeading>
 
       <div className="mars-card rounded bg-surface px-4 py-3">
-        <div className="mb-4 flex items-center gap-1.5">
-          <span
-            className={[
-              'h-1.5 w-1.5 rounded-full',
-              dispatch.paused ? 'bg-warn' : connected ? 'bg-success' : 'bg-muted-foreground/45',
-            ].join(' ')}
-            aria-hidden="true"
-          />
-          <span className="text-micro text-muted-foreground">
-            {dispatch.paused
-              ? `⏸ Paused · ${pauseReasonLabel(dispatch)}`
-              : connected
-                ? 'Live'
-                : 'Connecting…'}
-          </span>
-        </div>
+        {/* The top stripe's indicator links here; both now say the same thing. */}
+        <ConnectionStatus
+          className="mb-4"
+          connected={connected}
+          paused={dispatch.paused}
+          pauseLabel={dispatch.paused ? pauseReasonLabel(dispatch) : null}
+          pauseDetail={dispatch.detail}
+        />
 
         <div className="grid grid-cols-3 gap-x-4 gap-y-3 sm:grid-cols-5">
           <Stat

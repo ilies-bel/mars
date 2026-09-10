@@ -42,8 +42,17 @@ export interface FilteredQueue {
   groups: readonly ActionQueueGroupRow[] | undefined
   /** True when either control is narrowing the list. */
   active: boolean
-  /** Subjects the filters kept: loose items plus surviving groups. */
-  matched: number
+  /**
+   * TASKS the filters kept — loose items plus every surviving group's own
+   * count, NOT the number of rows drawn.
+   *
+   * The unit matters because the header states both numbers in one sentence.
+   * A group is one row standing for seventeen tasks, so counting rows here
+   * and tasks in the total produced "showing 5 of 34" for a filter that had
+   * in fact kept twenty-one of the thirty-four — two different units either
+   * side of the word "of".
+   */
+  matchedTasks: number
 }
 
 export function filterQueue(
@@ -60,7 +69,9 @@ export function filterQueue(
       items: [...sorted],
       groups: serverGroups,
       active: false,
-      matched: sorted.length + (serverGroups?.length ?? 0),
+      matchedTasks:
+        sorted.length +
+        (serverGroups ?? []).reduce((n, g) => n + g.count, 0),
     }
   }
 
@@ -82,5 +93,10 @@ export function filterQueue(
     return [{ ...g, members, count: members.length }]
   })
 
-  return { items, groups, active: true, matched: items.length + groups.length }
+  return {
+    items,
+    groups,
+    active: true,
+    matchedTasks: items.length + groups.reduce((n, g) => n + g.count, 0),
+  }
 }

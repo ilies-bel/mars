@@ -1750,7 +1750,7 @@ export const TriagePage = () => {
            were visible. */
         subtitle={
           filtered.active
-            ? `showing ${renderedRows.length} of ${needsYouCount}`
+            ? `Showing ${filtered.matchedTasks} of ${needsYouCount}`
             : undefined
         }
         actions={

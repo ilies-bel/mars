@@ -88,7 +88,7 @@ describe('KpiDetailPage — band indicator', () => {
   it('renders the "Good" label for a good-band KPI (cost_per_arc < 50k)', () => {
     // cost_per_arc=2.5 → kpiBand → 'good'
     const html = renderPage('cost_per_arc', 2.5)
-    expect(html).toContain('Good')
+    expect(html).toContain('On target')
   })
 
   it('renders the check shape cue for a good-band KPI', () => {
@@ -99,7 +99,7 @@ describe('KpiDetailPage — band indicator', () => {
   it('renders the "Warn" label for a warn-band KPI (failure_rate at 0.05)', () => {
     // failure_rate=0.05 → kpiBand → 'warn'
     const html = renderPage('failure_rate', 0.05)
-    expect(html).toContain('Warn')
+    expect(html).toContain('Near limit')
   })
 
   it('renders the triangle-alert shape cue for a warn-band KPI', () => {
@@ -110,7 +110,7 @@ describe('KpiDetailPage — band indicator', () => {
   it('renders the "Bad" label for a bad-band KPI (failure_rate > 0.05)', () => {
     // failure_rate=0.10 → kpiBand → 'bad'
     const html = renderPage('failure_rate', 0.10)
-    expect(html).toContain('Bad')
+    expect(html).toContain('Off target')
   })
 
   it('renders the x shape cue for a bad-band KPI', () => {

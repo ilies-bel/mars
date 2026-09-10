@@ -498,13 +498,13 @@ describe('EventsPage render', () => {
     expect(html).toContain('fetched')
   })
 
-  it('fetched-at chip reads "fetched just now" for data loaded within the last minute', () => {
+  it('fetched-at chip reads "Fetched just now" for data loaded within the last minute', () => {
     // setQueryData timestamps dataUpdatedAt ≈ Date.now(); the component's `now`
     // state is also initialised to Date.now() at render time. Age < 60s →
     // formatRelativeAge returns "just now".
     const qc = makeClient(EMPTY_RESPONSE)
     const html = renderPage(qc)
-    expect(html).toContain('fetched just now')
+    expect(html).toContain('Fetched just now')
   })
 
   it('event row shows elapsed relative time computed at render (not a stale constant)', () => {

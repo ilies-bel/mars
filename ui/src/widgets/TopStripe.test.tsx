@@ -82,20 +82,20 @@ describe('TopStripe – digit jitter prevention', () => {
 })
 
 describe('TopStripe – connection indicator', () => {
-  it('shows "live" when connected', () => {
+  it('shows "Live" when connected', () => {
     const html = renderToStaticMarkup(
       <TopStripe doneToday={0} connected={true} dispatch={RUNNING} daemonDown={false} />,
     )
-    expect(html).toContain('>live<')
-    expect(html).not.toContain('>offline<')
+    expect(html).toContain('>Live<')
+    expect(html).not.toContain('>Offline<')
   })
 
-  it('shows "offline" when disconnected', () => {
+  it('shows "Offline" when disconnected', () => {
     const html = renderToStaticMarkup(
       <TopStripe doneToday={0} connected={false} dispatch={RUNNING} daemonDown={false} />,
     )
-    expect(html).toContain('>offline<')
-    expect(html).not.toContain('>live<')
+    expect(html).toContain('>Offline<')
+    expect(html).not.toContain('>Live<')
   })
 
   it('live indicator dot pulses when connected', () => {
@@ -134,21 +134,21 @@ describe('TopStripe – visual hierarchy (numbers pop from labels)', () => {
 // ---------------------------------------------------------------------------
 
 describe('TopStripe – health indicator', () => {
-  it('reads live when dispatch is running and the stream is connected', () => {
+  it('reads Live when dispatch is running and the stream is connected', () => {
     const html = renderToStaticMarkup(
       <TopStripe doneToday={0} connected={true} dispatch={RUNNING} daemonDown={false} />,
     )
-    expect(from(html, 'health-indicator')).toContain('live')
+    expect(from(html, 'health-indicator')).toContain('Live')
   })
 
-  it('never reads live while dispatch is paused, even with a healthy stream', () => {
+  it('never reads Live while dispatch is paused, even with a healthy stream', () => {
     const html = renderToStaticMarkup(
       <TopStripe doneToday={0} connected={true} dispatch={PAUSED} daemonDown={false} />,
     )
     const section = from(html, 'health-indicator')
-    expect(section).toContain('paused')
+    expect(section).toContain('Paused')
     expect(section).toContain('signature storm')
-    expect(section).not.toContain('>live<')
+    expect(section).not.toContain('>Live<')
   })
 
   it('does not paint the offline dot green', () => {
@@ -156,13 +156,13 @@ describe('TopStripe – health indicator', () => {
       <TopStripe doneToday={0} connected={false} dispatch={RUNNING} daemonDown={false} />,
     )
     const section = from(html, 'health-indicator')
-    expect(section).toContain('offline')
+    expect(section).toContain('Offline')
     expect(section).not.toContain('bg-success')
   })
 })
 
 describe('TopStripe – daemon reachability outranks everything else', () => {
-  it('says "daemon down" rather than "live" when the daemon is not running', () => {
+  it('says "Daemon down" rather than "Live" when the daemon is not running', () => {
     // The SSE socket is served by the mars-ui server, so `connected` stays true
     // while the daemon is dead. Showing a pulsing green "live" there put a
     // healthy indicator directly under the unreachable banner.
@@ -177,8 +177,8 @@ describe('TopStripe – daemon reachability outranks everything else', () => {
       />,
     )
     const dot = from(html, 'health-indicator')
-    expect(dot).toContain('daemon down')
-    expect(dot).not.toContain('>live<')
+    expect(dot).toContain('Daemon down')
+    expect(dot).not.toContain('>Live<')
   })
 
   it('outranks a pause — a stopped daemon is not merely paused', () => {
@@ -193,8 +193,8 @@ describe('TopStripe – daemon reachability outranks everything else', () => {
       />,
     )
     const dot = from(html, 'health-indicator')
-    expect(dot).toContain('daemon down')
-    expect(dot).not.toContain('paused')
+    expect(dot).toContain('Daemon down')
+    expect(dot).not.toContain('Paused')
   })
 
   it('still reports the pause when the daemon is up', () => {
@@ -208,6 +208,6 @@ describe('TopStripe – daemon reachability outranks everything else', () => {
         daemonDown={false}
       />,
     )
-    expect(from(html, 'health-indicator')).toContain('paused')
+    expect(from(html, 'health-indicator')).toContain('Paused')
   })
 })

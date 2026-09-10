@@ -55,8 +55,10 @@ export interface KpiTileTrend {
 interface KpiTileShellProps {
   href: string
   label: string
-  /** The current value, already formatted. */
+  /** The current value, already formatted. Numerals and symbols only. */
   value: string
+  /** A unit WORD (e.g. "tok"), set beside the value in prose type. */
+  unit?: string | null
   band: KpiBand
   windowDays: number
   points: Array<number | null>
@@ -73,6 +75,7 @@ export const KpiTileShell = ({
   href,
   label,
   value,
+  unit,
   band,
   windowDays,
   points,
@@ -96,8 +99,13 @@ export const KpiTileShell = ({
       <span className="eyebrow text-muted-foreground">{label}</span>
 
       <div className="flex items-end justify-between gap-2">
-        <span className="font-mono text-heading font-semibold tabular-nums text-foreground">
-          {value}
+        <span className="flex items-baseline gap-1">
+          <span className="font-mono text-heading font-semibold tabular-nums text-foreground">
+            {value}
+          </span>
+          {unit != null && unit !== '' && (
+            <span className="text-label text-muted-foreground">{unit}</span>
+          )}
         </span>
         <span className="shrink-0 text-muted-foreground">
           <Sparkline points={points} width={64} height={22} />

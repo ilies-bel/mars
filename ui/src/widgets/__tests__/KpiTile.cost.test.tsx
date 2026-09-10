@@ -157,7 +157,7 @@ describe('CostPerMergedTaskTile — delta arrow', () => {
       error: null,
     })
     const html = renderToStaticMarkup(<CostPerMergedTaskTile />)
-    expect(html).toContain('since 7d ago')
+    expect(html).toContain('across the last 7d')
     expect(html).not.toContain('vs previous')
   })
 
@@ -172,7 +172,7 @@ describe('CostPerMergedTaskTile — delta arrow', () => {
     })
     const html = renderToStaticMarkup(<CostPerMergedTaskTile />)
     // $2.00 sits in the warn band (good < $1, bad > $5).
-    expect(html).toContain('Warn · last 7d')
+    expect(html).toContain('Near limit · last 7d')
   })
 
   it('omits the delta arrow when cost is unchanged', () => {

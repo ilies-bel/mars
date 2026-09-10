@@ -36,16 +36,39 @@ export const KPI_DESCRIPTIONS: Record<KpiKey, string> = {
  */
 const usdFormatter = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' })
 
-export function formatKpiValue(key: KpiKey, value: number): string {
+export interface KpiValueParts {
+  /** The number and any symbol welded to it (%, $) — always tabular. */
+  value: string
+  /** A unit WORD, when the metric has one. Set in prose type beside the value. */
+  unit: string | null
+}
+
+/**
+ * The value split from its unit word.
+ *
+ * "%" and "$" belong inside the numeric run: they are symbols, they are
+ * unambiguous at any size, and every reader parses "5.4%" as one token.
+ * "tok" is a word. Welded on, it put four sans-shaped letters inside a 20px
+ * mono semibold number, so one tile in a row of five read as a different kind
+ * of thing than its neighbours. The tile sets the unit beside the value in
+ * prose type instead; callers that want the flat string still get it from
+ * formatKpiValue.
+ */
+export function formatKpiValueParts(key: KpiKey, value: number): KpiValueParts {
   if (key === 'cost-per-merged-task') {
-    return usdFormatter.format(value)
+    return { value: usdFormatter.format(value), unit: null }
   }
   if (key === 'cost_per_arc') {
-    if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M tok`
-    if (value >= 1000) return `${(value / 1000).toFixed(1)}k tok`
-    return `${Math.round(value)} tok`
+    if (value >= 1_000_000) return { value: `${(value / 1_000_000).toFixed(1)}M`, unit: 'tok' }
+    if (value >= 1000) return { value: `${(value / 1000).toFixed(1)}k`, unit: 'tok' }
+    return { value: `${Math.round(value)}`, unit: 'tok' }
   }
-  return `${(value * 100).toFixed(1)}%`
+  return { value: `${(value * 100).toFixed(1)}%`, unit: null }
+}
+
+export function formatKpiValue(key: KpiKey, value: number): string {
+  const { value: v, unit } = formatKpiValueParts(key, value)
+  return unit === null ? v : `${v} ${unit}`
 }
 
 
@@ -93,7 +116,8 @@ export const KpiTile = ({ kpi }: KpiTileProps) => {
     <KpiTileShell
       href={kpiHash(kpi.key)}
       label={label}
-      value={formatKpiValue(kpi.key, kpi.currentValue)}
+      value={formatKpiValueParts(kpi.key, kpi.currentValue).value}
+      unit={formatKpiValueParts(kpi.key, kpi.currentValue).unit}
       band={band}
       windowDays={windowDays}
       points={(kpi.series ?? []).map((p) => p.value)}

@@ -48,11 +48,38 @@ describe('filterQueue — the controls reach the grouped rows too', () => {
     expect(r.groups).toHaveLength(1)
   })
 
+  it('counts matchedTasks in tasks, not in rows', () => {
+    // The header renders "Showing {matchedTasks} of {needsYouCount}" and
+    // needsYouCount is a task count, so both sides must be tasks. Counting
+    // rows here made a two-member group contribute 1 instead of 2, and the
+    // sentence compared rows to tasks across the word "of".
+    const r = filterQueue(
+      [item({ id: 'a' }), item({ id: 'b' })],
+      [group()], // 2 members, drawn as ONE row
+      { kind: '', query: '' },
+    )
+    expect(r.groups).toHaveLength(1)
+    expect(r.matchedTasks).toBe(4)
+  })
+
+  it('counts a narrowed group by its surviving members', () => {
+    const g = group({
+      count: 2,
+      members: [
+        item({ id: 'm1', kind: 'slice-failed', title: 'keeper zebra' }),
+        item({ id: 'm2', kind: 'slice-failed', title: 'other' }),
+      ],
+    })
+    const r = filterQueue([], [g], { kind: '', query: 'zebra' })
+    expect(r.groups).toHaveLength(1)
+    expect(r.matchedTasks).toBe(1)
+  })
+
   it('drops a group whose cause and members match nothing', () => {
     const r = filterQueue([item({ id: 'a' })], [group()], { kind: '', query: 'zzzzqqq' })
     expect(r.items).toEqual([])
     expect(r.groups).toEqual([])
-    expect(r.matched).toBe(0)
+    expect(r.matchedTasks).toBe(0)
   })
 
   it('keeps a group whose cause sentence matches', () => {

@@ -52,10 +52,18 @@ export interface KpiBandCue {
   colorClass: string
 }
 
+/**
+ * The labels were the enum names with a capital letter: "Good", "Warn",
+ * "Bad". Two of those are adjectives and the middle one is a verb, so the row
+ * read "Good · last 7d", "Warn · last 7d", "Bad · last 7d" — and "Warn"
+ * described what the DASHBOARD was doing, not what the metric was doing.
+ * These three say where the value sits relative to its threshold, which is
+ * what the band actually encodes, and they are parallel to each other.
+ */
 const BAND_CUES: Record<KpiBand, KpiBandCue> = {
-  good: { Icon: Check,         label: 'Good', colorClass: 'text-success' },
-  warn: { Icon: TriangleAlert, label: 'Warn', colorClass: 'text-warn' },
-  bad:  { Icon: X,             label: 'Bad',  colorClass: 'text-error' },
+  good: { Icon: Check,         label: 'On target', colorClass: 'text-success' },
+  warn: { Icon: TriangleAlert, label: 'Near limit', colorClass: 'text-warn' },
+  bad:  { Icon: X,             label: 'Off target', colorClass: 'text-error' },
 }
 
 /**
