@@ -51,6 +51,7 @@ import { CollapsibleSection } from '@/components/CollapsibleSection'
 import { useFocusedProjectId } from '@/shared/useFocusedProject'
 import { defaultAqUrlState, encodeAqState } from '@/shared/actionQueueUrlState'
 import { taskHash, parseTriageKind } from '@/shared/routing'
+import { prdTitleFromBody } from '@/shared/memberName'
 import { hasResolvableTask, isConditionActionQueueKind } from '@/shared/schemas'
 import type { ActionQueueItem, ActionQueueKind } from '@/shared/schemas'
 import type { Decision } from '@/shared/schemas'
@@ -1142,12 +1143,19 @@ export const TriageCauseGroupRow = ({
    * pastes into a command to act on it. Seventeen identical sentences would be
    * strictly less honest.
    *
-   * (The better fix is upstream — slice-failed rows arrive with operatorGoal
-   * null while the PRD's real title sits inside the body prose. Filed
-   * separately; regexing prose for a name is how these start lying.)
+   * Slice-failed rows arrive with operatorGoal null, but the PRD's real title
+   * is present in the body, inside a sentence the daemon writes from a fixed
+   * template. `prdTitleFromBody` reads it from there anchored on the row's own
+   * id, so it recovers a real name without scraping prose for anything that
+   * merely looks like one. The upstream fix — sending the title as a field —
+   * is still the right end state and is filed separately.
    */
   const nameOf = ((): ((m: (typeof group.members)[number]) => string | null) => {
     const candidates: Array<(m: (typeof group.members)[number]) => string | null> = [
+      // The PRD's real title, read out of the daemon's own sentence about
+      // this row. Tried first because it is the only candidate written for a
+      // person to read; see prdTitleFromBody for why it cannot match loosely.
+      (m) => prdTitleFromBody(m.body ?? null, m.entityId ?? null),
       (m) => m.operatorGoal ?? null,
       (m) => m.arcGoal ?? null,
       (m) => m.title ?? null,
