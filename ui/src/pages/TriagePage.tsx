@@ -374,6 +374,19 @@ const isDestructiveAction = (label: string): boolean => {
   return /\b(restart|purge|drop|delete|retire|discard|wipe|remove|abort|reset)\b/i.test(label)
 }
 
+/**
+ * Destructiveness of a server-sent decision.
+ *
+ * The daemon classifies verbs at source (`style: 'destructive'`). This ORs that
+ * classification with the label heuristic rather than deferring to it, so the
+ * two can only disagree in the safe direction: a decision either side flags as
+ * destructive is painted as destructive. That preserves the bias documented
+ * above — a false positive only makes a safe button quieter, while a false
+ * negative dresses a work-destroying verb as the safe default.
+ */
+const isDestructiveDecision = (d: Decision): boolean =>
+  d.style === 'destructive' || isDestructiveAction(d.label)
+
 // Restart is destructive (wipes worktree + branch, discarding commits) — it
   // requires an explicit in-app confirm step before dispatching, rather than
   // firing on first click like the reversible Continue verb.
@@ -734,14 +747,14 @@ const isDestructiveAction = (label: string): boolean => {
               // restart WIPES the worktree and branch and discards the worker's
               // commits. A verb that destroys work must never look like the
               // safe default.
-              const destructive = isDestructiveAction(d.label)
+              const destructive = isDestructiveDecision(d)
               // The ladder allows exactly ONE primary per row (see
               // ActionButton); `slice(0, 3)` was rendering up to three. The
               // first non-destructive decision is the CTA, the rest are real
               // alternatives.
               const isLeadSafe =
                 !destructive &&
-                item.decisions.findIndex((x) => !isDestructiveAction(x.label)) === i
+                item.decisions.findIndex((x) => !isDestructiveDecision(x)) === i
               return (
                 <ActionButton
                   key={d.label}
