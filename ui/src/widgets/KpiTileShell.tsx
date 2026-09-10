@@ -120,8 +120,12 @@ export const KpiTileShell = ({
           <cue.Icon size={11} strokeWidth={2.5} aria-hidden="true" />
           <span>
             {cue.label}
-            {/* "Off target" without the target is half a sentence. */}
-            {target != null && target !== '' ? ` (${target})` : ''} · last {windowDays}d
+            {/* "Off target" without the target is half a sentence — but a bare
+                parenthetical reads as a description of the number above it:
+                "80.8% · Near limit (over 85%)" and "$6.37 · Off target (under
+                $1.00)" both state something false about the value they sit
+                under. The word "target" is what makes it a threshold. */}
+            {target != null && target !== '' ? ` · target ${target}` : ''} · last {windowDays}d
           </span>
         </span>
         {moved && (

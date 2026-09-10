@@ -260,8 +260,16 @@ export const BoardView = ({
   // the board printed "Nothing has failed" over 23 hidden failures.
   const quoted = `'${(searchQuery ?? '').trim()}'`
   const emptyFor = (trueEmpty: string, plural: string): string => {
-    if (isSearchActive) return `No ${plural} match ${quoted}`
-    if (selectedProposalId !== null) return `No ${plural} under this proposal`
+    // When NOTHING matched anywhere, the centred pill says so once and the
+    // columns go quiet. Repeating "No X match 'zzz'" in all four columns
+    // beneath it said the same sentence five times on one screen, in five
+    // places, for one fact. The per-column wording earns its keep only when
+    // the filter is partial — when this column is empty and its neighbour
+    // is not.
+    if (isSearchActive) return nothingMatches ? '—' : `No ${plural} match ${quoted}`
+    if (selectedProposalId !== null) {
+      return nothingMatches ? '—' : `No ${plural} under this proposal`
+    }
     return trueEmpty
   }
 

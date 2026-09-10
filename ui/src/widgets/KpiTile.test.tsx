@@ -339,7 +339,7 @@ describe('KpiTile — verdict and movement, in one order', () => {
     const html = renderToStaticMarkup(
       <KpiTile kpi={kpi({ key: 'failure_rate', currentValue: 0.036, delta: 0.036 })} />,
     )
-    expect(html).toContain('Near limit (under 2%) · last 7d')
+    expect(html).toContain('Near limit · target under 2% · last 7d')
   })
 
   it('states the movement the vector already carried and the tile used to discard', () => {
@@ -397,6 +397,6 @@ describe('KpiTile — verdict and movement, in one order', () => {
     )
     expect(html).not.toContain('lucide-arrow-up')
     expect(html).not.toContain('lucide-arrow-down')
-    expect(html).toContain('Near limit (under 2%) · last 7d')
+    expect(html).toContain('Near limit · target under 2% · last 7d')
   })
 })

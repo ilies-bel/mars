@@ -172,7 +172,7 @@ describe('CostPerMergedTaskTile — delta arrow', () => {
     })
     const html = renderToStaticMarkup(<CostPerMergedTaskTile />)
     // $2.00 sits in the warn band (good < $1, bad > $5).
-    expect(html).toContain('Near limit (under $1.00) · last 7d')
+    expect(html).toContain('Near limit · target under $1.00 · last 7d')
   })
 
   it('omits the delta arrow when cost is unchanged', () => {
