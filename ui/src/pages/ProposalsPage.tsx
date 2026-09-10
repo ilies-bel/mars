@@ -1,4 +1,5 @@
 import { ArrowRight, Check, ChevronDown, ChevronUp, Search } from 'lucide-react'
+import { splitDeferredProblem, provenanceLabel } from '@/shared/proposalPreview'
 import { ActionButton, ActionLink } from '@/components/ActionButton'
 import { PageHeader, PAGE_MEASURE } from '@/widgets/primitives/DensityPrimitives'
 /**
@@ -112,7 +113,12 @@ const ProposalRow = ({ draft, onDismiss }: ProposalRowProps) => {
   // clamped view. Legacy (pre-split) rows may still carry a multi-paragraph
   // `problem`; collapsing newlines keeps the preview readable. When expanded,
   // still show markdown-stripped text with whitespace preserved.
-  const strippedProblem = tidyFloats(stripMarkdown(draft.problem))
+  // Deferred proposals all open with the same three lines naming the PRD they
+  // came from, so previewing the head of `problem` previewed the provenance and
+  // stacked siblings rendered as identical paragraphs. Lead with the part that
+  // is this proposal's own; the provenance survives as a quiet line below.
+  const { provenance, lead } = splitDeferredProblem(draft.problem)
+  const strippedProblem = tidyFloats(stripMarkdown(lead))
   const preview = strippedProblem.replace(/\s*\n\s*/g, ' ').trim()
 
   const [grillState, setGrillState] = useState<
@@ -212,6 +218,18 @@ const ProposalRow = ({ draft, onDismiss }: ProposalRowProps) => {
           >
             {expanded ? strippedProblem.trim() : preview}
           </p>
+          {provenance !== null && (
+            /* Provenance is real information and worth keeping — it is just
+               not what tells two siblings apart, so it reads as a caption
+               rather than as the paragraph. */
+            <p
+              className="mt-1 text-micro text-muted-foreground"
+              title={provenance.prdTitle ?? undefined}
+              data-testid="proposal-provenance"
+            >
+              {provenanceLabel(provenance)}
+            </p>
+          )}
           {draft.problem.trim().length > 0 && (
             <button
               type="button"
