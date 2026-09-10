@@ -86,11 +86,16 @@ describe('KpiIndexPage', () => {
     expect(html).toContain('role="alert"')
   })
 
-  it('names each subsection for what it holds', () => {
+  it('names each subsection for what it holds, and hands the runs to Scores', () => {
     const html = renderToStaticMarkup(<KpiIndexPage />)
     expect(html).toContain('Score trends')
     expect(html).toContain('Promoted helpers')
-    expect(html).toContain('Score follow-through')
+    // "Score follow-through" was LoopLedgerPanel rendering the same scored
+    // runs the Scores page lists, one page over. KPI keeps the trend — the
+    // thing a KPI page is for — and links to the runs rather than repeating
+    // them under a second set of column headings.
+    expect(html).not.toContain('Score follow-through')
+    expect(html).toContain('data-testid="scores-handoff"')
   })
 
   it('renders all KPI tiles when data is populated', () => {

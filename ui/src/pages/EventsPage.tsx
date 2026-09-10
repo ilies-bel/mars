@@ -1035,31 +1035,44 @@ export const EventsPage = ({
   initialView = 'flat',
 }: {
   /**
-   * Which view the page opens on. Defaults to Flat: it dedupes repeats into
-   * a `×N` badge, phrases events as "verify step failed" rather than
-   * `run.failed: ...`, and collapses payload walls, where Timeline prints
-   * every raw event and shows the run/step pair for one failure as two
-   * adjacent rows carrying identical text. Exposed so a test can pin the flat view explicitly instead of
-   * depending on which one happens to be the default — fourteen flat-view
-   * tests broke the day that default changed, none of them because the
-   * behaviour they cover had changed.
+   * Which view the page opens on.
+   *
+   * This has now moved twice, so the reasoning is worth stating precisely.
+   * Timeline was the default; it moved to Flat because the ONE argument for
+   * Timeline had expired — Flat used to print "run-agent step failed"
+   * twenty-two times in a row with no arc attribution, and the dedupe work
+   * fixed that. But "Flat is no longer broken" is an argument for Flat being
+   * acceptable, not for it being the better landing view, and the change
+   * quietly treated the two as the same claim.
+   *
+   * A reviewer using both then reported Timeline as dramatically the more
+   * useful of the two, for a reason that has nothing to do with the old
+   * defect: it groups by arc with an OK/FAILED outcome at the head and
+   * per-step tool-call counts, which is the shape the question "what
+   * happened" actually has. That is a fair description of Timeline's
+   * STRUCTURE, and it is the better structure.
+   *
+   * Measured before acting on it, though, because structure is not the whole
+   * of it. On the same live repo, same moment:
+   *
+   *            chars   lines   raw event names   content-free LOG chips
+   *   Timeline  9753     324                65                       65
+   *   Flat      1884     158                 2                        0
+   *
+   * Both views call summarizeTraceEvent; the gap is that Flat collapses runs
+   * of `log_line` events and Timeline renders all sixty-five of them. So the
+   * landing view stays Flat — not because Flat is the better shape, but
+   * because switching today would ship sixty-five raw log lines as the first
+   * thing anyone sees. Give Timeline Flat's log handling (mars-abedd418) and
+   * it becomes the better default on both counts, at which point flip it.
+   *
+   * Exposed so a test can pin a view explicitly rather than depending on
+   * whichever is currently the default; fourteen flat-view tests broke the
+   * day it last changed, none because their behaviour had.
    */
   initialView?: EventsViewMode
 } = {}) => {
   const [state, setState] = useState<FilterState>(initialFilterState)
-  /**
-   * Timeline is the landing view.
-   *
-   * Flat is a single interleaved stream, and on a live repo it prints
-   * "run-agent step failed" twenty-two times in a row — measured — with no
-   * indication of which arc each belonged to, in two incompatible row layouts
-   * (aligned columns for some kinds, run-on mono for others). Timeline groups
-   * the same events by arc with an OK/FAILED outcome at the head, which is the
-   * shape the question "what happened" actually has.
-   *
-   * Flat is still a click away and is the right view when you are scanning for
-   * one kind across every arc at once.
-   */
   const [viewMode, setViewMode] = useState<EventsViewMode>(initialView)
   const [extraPages, setExtraPages] = useState<TraceEvent[][]>([])
   /** Whether the secondary filter panel (kind/phase/id/time) is visible. */

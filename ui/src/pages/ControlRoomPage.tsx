@@ -52,9 +52,7 @@ import {
   DialogFooter,
   DialogClose,
 } from '@/components/ui/dialog'
-import { StewardLedgerPanel } from '@/widgets/StewardLedgerPanel'
 import { useStewardView } from './useStewardView'
-import { CapRatchet } from './StewardPage'
 
 // ---------------------------------------------------------------------------
 // Advisory kinds shown in the digest (not in the main alert queue)
@@ -1072,58 +1070,65 @@ const RulesSection = () => {
 }
 
 // ---------------------------------------------------------------------------
-// Section 7 — Steward history
+// Section 7 — Steward, in one line
 // ---------------------------------------------------------------------------
 
 /**
- * Embeds the Steward's intervention ledger and the concurrency-cap ratchet
- * sparkline from StewardPage. The #/steward route remains navigable for the
- * full view; this section surfaces the essential history directly inside
- * Control Room so operators don't have to leave the lever panel.
+ * What the Steward has been doing, as a sentence. Not the Steward page.
+ *
+ * This section used to re-render StewardPage's two main components in place —
+ * it imported `CapRatchet` from StewardPage and mounted `StewardLedgerPanel`
+ * whole — under the heading "Steward history", beside a "Full view →" link
+ * back to the page they came from. Roughly 600px of chart plus an unbounded
+ * Recipe/Version/Rationale/Outcome log, on a page whose own subtitle promises
+ * "levers, gates and engine health".
+ *
+ * The two copies had also drifted into different vocabularies for one object:
+ * Control Room said `ui: typecheck — failed 5d ago` where Steward said
+ * `Scope: ui → typecheck → Active → Last failed on 4 Sep 2026, 20:20`. Two
+ * name shapes, two status words, relative against absolute time. Nothing was
+ * wrong in either, but a reader could not tell which surface was
+ * authoritative — which is what made the app read as assembled rather than
+ * designed.
+ *
+ * So Control Room states the outcome and hands over. The chart, the ledger
+ * and the acknowledgment log live on #/steward, once.
  */
-const StewardHistorySection = () => {
+const StewardSummarySection = () => {
   const { data } = useStewardView()
 
-  const ratchetEntries = data
-    ? data.runtimeTuning.acks
-        .filter((a) => a.pair !== null)
-        .map((a) => ({
-          from: a.pair!.from,
-          to: a.pair!.to,
-          timestamp: a.timestamp,
-          text: a.text,
-        }))
-        .slice()
-        .reverse() // oldest-first for the ratchet
-    : []
+  // The heading and the link render unconditionally. Returning null while the
+  // fetch is in flight made the whole section appear late and shift every
+  // section above it, and it took the only route to #/steward with it.
+  const paired = (data?.runtimeTuning.acks ?? []).filter((a) => a.pair !== null)
+  const bumps = paired.filter((a) => a.pair!.to > a.pair!.from).length
+  const sheds = paired.filter((a) => a.pair!.to < a.pair!.from).length
+  const levels = paired.flatMap((a) => [a.pair!.from, a.pair!.to])
+  const lo = levels.length > 0 ? Math.min(...levels) : null
+  const hi = levels.length > 0 ? Math.max(...levels) : null
 
   return (
-    <section data-testid="steward-history-section">
-      <div className="mb-3">
-        <div className="flex items-center justify-between">
-          <SectionLabel>Steward history</SectionLabel>
-          <ActionLink href="#/steward" variant="ghost" size="sm">
-            <ArrowRight size={12} strokeWidth={2} aria-hidden="true" />
-            Full view
-          </ActionLink>
-        </div>
+    <section data-testid="steward-summary-section">
+      <div className="mb-3 flex items-center justify-between">
+        <SectionLabel>Steward</SectionLabel>
+        <ActionLink href="#/steward" variant="ghost" size="sm">
+          <ArrowRight size={12} strokeWidth={2} aria-hidden="true" />
+          Open Steward
+        </ActionLink>
       </div>
-
-      {data && (
-        <div className="mars-card mb-4 rounded bg-surface px-4 py-3">
-          <div className="eyebrow mb-1 text-muted-foreground">
-            Concurrency cap ratchet
-          </div>
-          <CapRatchet
-            entries={ratchetEntries}
-            baseline={data.runtimeTuning.baselineCap}
-            ceiling={data.runtimeTuning.ceiling}
-            liveCap={data.runtimeTuning.liveCap}
-          />
-        </div>
-      )}
-
-      <StewardLedgerPanel />
+      <p className="text-label text-muted-foreground" data-testid="steward-summary-line">
+        {data === undefined
+          ? 'Reading the Steward…'
+          : paired.length === 0
+            ? 'The Steward has not adjusted concurrency yet.'
+            : `${bumps} bump${bumps === 1 ? '' : 's'}, ${sheds} shed${sheds === 1 ? '' : 's'}` +
+              (lo !== null && hi !== null && lo !== hi
+                ? `, holding between ${lo} and ${hi} workers.`
+                : '.')}
+        {data !== undefined && (
+          <span className="text-foreground"> Cap is {data.runtimeTuning.liveCap} now.</span>
+        )}
+      </p>
     </section>
   )
 }
@@ -1147,7 +1152,7 @@ export const ControlRoomPage = () => (
     <EngineSection />
     <AdvisorySection />
     <RulesSection />
-    <StewardHistorySection />
+    <StewardSummarySection />
     </div>
   </main>
 )

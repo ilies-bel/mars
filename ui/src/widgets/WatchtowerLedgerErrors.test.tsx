@@ -7,7 +7,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { LoopLedgerPanel } from './LoopLedgerPanel'
 import { PromotionLedgerTable } from './PromotionLedgerTable'
 
 const renderAfterRejectedQuery = async (
@@ -50,13 +49,4 @@ describe('Watchtower ledger query failures', () => {
     expect(html).not.toContain('No promotions yet')
   })
 
-  it('renders an error rather than an empty loop ledger', async () => {
-    const html = await renderAfterRejectedQuery(
-      <LoopLedgerPanel />,
-      '/api/loop-ledger?workflow=implement&limit=50',
-    )
-
-    expect(html).toContain("Couldn't load loop ledger")
-    expect(html).not.toContain('No loop runs yet')
-  })
 })

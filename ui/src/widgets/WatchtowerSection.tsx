@@ -5,7 +5,6 @@ import { useScorerSuggestions } from '@/entities/watchtower/useScorerSuggestions
 import { useAcceptScorer } from '@/entities/watchtower/useAcceptScorer'
 import type { SuggestedScorer } from '@/entities/watchtower/useScorerSuggestions'
 import { SkeletonList } from '@/components/Skeleton'
-import { LoopLedgerPanel } from './LoopLedgerPanel'
 import { PromotionLedgerTable } from './PromotionLedgerTable'
 import { WatchtowerTrendChart } from './WatchtowerTrendChart'
 
@@ -193,10 +192,20 @@ export const WatchtowerSection = () => (
         <h4 className="panel-title">Promoted helpers</h4>
         <PromotionLedgerTable />
       </div>
-      <div className="flex flex-col gap-2 rounded border border-border p-4">
-        <h4 className="panel-title">Score follow-through</h4>
-        <LoopLedgerPanel />
-      </div>
+      {/* The scored runs themselves live on #/scores, once.
+          This panel used to render them a second time here — LoopLedgerPanel's
+          Run / Scored at / Score / Recorded over the same rows the Scores page
+          lists as Task / Scored / Score. Two tables of one dataset on two
+          pages, and a reader could not tell which was authoritative. KPI keeps
+          the trend, which is the thing a KPI page is for, and hands over. */}
+      <a
+        href="#/studio"
+        data-testid="scores-handoff"
+        className="flex items-center justify-between rounded border border-border p-4 text-label text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground"
+      >
+        <span>Every scored run, worst first</span>
+        <span aria-hidden="true">→</span>
+      </a>
     </div>
   </div>
 )

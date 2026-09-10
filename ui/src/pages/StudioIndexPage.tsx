@@ -9,7 +9,7 @@ import { EmptyState } from '@/components/EmptyState'
  * can drill into the full step-execution tree.
  *
  * Data source: GET /api/loop-ledger — the same endpoint used by the Loop
- * Ledger panel on `#/kpi`. A workflow selector mirrors the LoopLedgerPanel
+ * Ledger panel on `#/kpi` (removed — the scored runs live here now).
  * pattern; the first known workflow is selected by default.
  *
  * `#/studio/` (trailing slash, no id) remains an unknown route and is
@@ -153,8 +153,12 @@ export const StudioIndexPage = () => {
       <PageHeader title="Scores" subtitle="How recent runs were graded" />
 
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
-        {/* Workflow selector — mirrors LoopLedgerPanel; hidden when no workflows known yet */}
-        {(workflows ?? []).length > 0 && (
+        {/* Workflow selector — rendered only when there is a choice to make.
+            The guard used to be `> 0`, so with a single scored workflow the
+            page showed a dropdown containing exactly one option: a control
+            that looks actionable, opens, and can only reselect what is
+            already selected. */}
+        {(workflows ?? []).length > 1 && (
           <div className="mb-4">
             <SelectField
               value={workflow ?? ''}

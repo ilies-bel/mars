@@ -159,14 +159,16 @@ describe('ControlRoomPage — Steward history section', () => {
     mockUseHotPaths.mockReturnValue({ data: undefined, isLoading: true, error: null })
   })
 
-  it('renders the Steward history section', () => {
+  it('summarises the Steward in one line instead of re-rendering its page', () => {
+    // Control Room used to mount StewardPage's CapRatchet and the whole
+    // StewardLedgerPanel under a "Steward history" heading, beside a
+    // "Full view →" link back to the page they came from — and the two copies
+    // had drifted into different vocabularies for one object. The chart and
+    // the ledger live on #/steward now; this page states the outcome.
     const html = renderControlRoom()
-    expect(html).toContain('data-testid="steward-history-section"')
-  })
-
-  it('renders the Steward ledger panel', () => {
-    const html = renderControlRoom()
-    expect(html).toContain('data-testid="steward-ledger-panel-stub"')
+    expect(html).toContain('data-testid="steward-summary-section"')
+    expect(html).not.toContain('data-testid="steward-ledger-panel-stub"')
+    expect(html).not.toContain('data-testid="steward-history-section"')
   })
 
   it('includes a link to the full Steward view', () => {
@@ -174,9 +176,11 @@ describe('ControlRoomPage — Steward history section', () => {
     expect(html).toContain('href="#/steward"')
   })
 
-  it('renders the "Steward history" section label', () => {
+  it('labels the section "Steward" and links out to the full view', () => {
     const html = renderControlRoom()
-    expect(html).toContain('Steward history')
+    expect(html).toContain('Steward')
+    expect(html).toContain('Open Steward')
+    expect(html).toContain('href="#/steward"')
   })
 })
 
