@@ -37,7 +37,12 @@ import { PAGE_MEASURE, PageHeader } from '@/widgets/primitives/DensityPrimitives
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
-import { sortItems, buildRenderedRows, type RenderedRow } from '@/entities/actionQueue/clusterRows'
+import {
+  sortItems,
+  buildRenderedRows,
+  countNeedsYou,
+  type RenderedRow,
+} from '@/entities/actionQueue/clusterRows'
 import { filterQueue } from '@/entities/actionQueue/filterQueue'
 import { useProgress } from '@/hooks/useProgress'
 import { useProposals } from '@/entities/proposals/useProposals'
@@ -378,24 +383,6 @@ interface TriageRowProps {
      */
     sharedAge: boolean
   }
-}
-
-const plural = (n: number, one: string, many: string): string =>
-  `${n} ${n === 1 ? one : many}`
-
-/**
- * The header's one-line account of what the filter is showing and what it is
- * withholding. Named units on both sides, and nothing the reader cannot count
- * on the page in front of them.
- */
-const filterSubtitle = (filtered: {
-  matchedTasks: number
-  matchedRows: number
-  totalTasks: number
-}): string => {
-  const hidden = filtered.totalTasks - filtered.matchedTasks
-  const shown = `Showing ${plural(filtered.matchedTasks, 'task', 'tasks')} in ${plural(filtered.matchedRows, 'row', 'rows')}`
-  return hidden > 0 ? `${shown} · ${hidden} hidden by this filter` : shown
 }
 
 /**
@@ -1504,7 +1491,9 @@ export const TriageCauseGroupRow = ({
     TASK_RECOVERY_KINDS.has(group.kind) &&
     continuableMembers.length === group.members.length &&
     group.members.length > 0
-      ? { op: 'continue', label: `Continue all ${group.members.length}`, style: 'primary' }
+      // Bare verb: the button itself appends "all <count>", so a label
+      // carrying the count rendered "Continue all 3 all 3".
+      ? { op: 'continue', label: 'Continue', style: 'primary' }
       : null
 
   const bulkVerb = group.bulkResolveVerb ?? derivedBulkVerb
@@ -1934,6 +1923,13 @@ export const TriagePage = () => {
   )
 
   const renderedRows = buildRenderedRows(filtered.items, filtered.groups)
+  // Both ends of "Showing N of M" come from `countNeedsYou` — the same
+  // definition behind the badge above them, the sidebar, the bell and the
+  // chat greeting. The page used to compute its own totals, which is how one
+  // screen could say "53 hidden by this filter" beside "All 36 items are
+  // still there" beside a badge reading 36.
+  const shownItems = countNeedsYou(filtered.items, filtered.groups)
+  const totalItems = countNeedsYou(sorted, serverGroups)
   // The single source of truth for this number — the same value the sidebar
   // badge and the bell render. It used to be recomputed here from the fetched
   // page of action-queue items, which is why one screen could show 29 in the
@@ -1982,7 +1978,7 @@ export const TriagePage = () => {
            Every number here is now countable on this screen: the tasks are the
            loose rows plus each group header's own chip, the rows are the rows,
            and the hidden count is what clearing the filter brings back. */
-        subtitle={filtered.active ? filterSubtitle(filtered) : undefined}
+        subtitle={filtered.active ? `Showing ${shownItems} of ${totalItems}` : undefined}
         actions={
           <a
             href="#/chat"
@@ -2052,7 +2048,10 @@ export const TriagePage = () => {
           <NoMatchesState
             query={searchQuery}
             kind={kindFilter}
-            total={needsYouCount}
+            /* The same total the header's "Showing N of M" uses, so the two
+               sentences on this screen cannot state different sizes for the
+               same queue — they read 53 and 36 twelve pixels apart. */
+            total={totalItems}
             onClear={() => {
               setSearchQuery('')
               selectKind('')

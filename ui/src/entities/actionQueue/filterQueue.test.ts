@@ -12,6 +12,7 @@
 import { describe, expect, it } from 'vitest'
 import { filterQueue, itemMatchesQuery } from './filterQueue'
 import type { ActionQueueItem, ActionQueueGroupRow } from '@/shared/schemas'
+import { buildRenderedRows, countRenderedItems } from './clusterRows'
 
 const item = (over: Partial<ActionQueueItem> & { id: string }): ActionQueueItem =>
   ({
@@ -48,7 +49,7 @@ describe('filterQueue — the controls reach the grouped rows too', () => {
     expect(r.groups).toHaveLength(1)
   })
 
-  it('counts matchedTasks in tasks, not in rows', () => {
+  it('narrows a group to its matching members, and the page can count them', () => {
     // The header renders "Showing {matchedTasks} of {needsYouCount}" and
     // needsYouCount is a task count, so both sides must be tasks. Counting
     // rows here made a two-member group contribute 1 instead of 2, and the
@@ -59,7 +60,7 @@ describe('filterQueue — the controls reach the grouped rows too', () => {
       { kind: '', query: '' },
     )
     expect(r.groups).toHaveLength(1)
-    expect(r.matchedTasks).toBe(4)
+    expect(countRenderedItems(buildRenderedRows(r.items, r.groups))).toBe(4)
   })
 
   it('counts a narrowed group by its surviving members', () => {
@@ -72,14 +73,14 @@ describe('filterQueue — the controls reach the grouped rows too', () => {
     })
     const r = filterQueue([], [g], { kind: '', query: 'zebra' })
     expect(r.groups).toHaveLength(1)
-    expect(r.matchedTasks).toBe(1)
+    expect(countRenderedItems(buildRenderedRows(r.items, r.groups))).toBe(1)
   })
 
   it('drops a group whose cause and members match nothing', () => {
     const r = filterQueue([item({ id: 'a' })], [group()], { kind: '', query: 'zzzzqqq' })
     expect(r.items).toEqual([])
     expect(r.groups).toEqual([])
-    expect(r.matchedTasks).toBe(0)
+    expect(countRenderedItems(buildRenderedRows(r.items, r.groups))).toBe(0)
   })
 
   it('keeps a group whose cause sentence matches', () => {

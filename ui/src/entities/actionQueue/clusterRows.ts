@@ -18,7 +18,9 @@ import type { ActionQueueItem, ActionQueueGroupRow, AlertVerb } from '@/shared/s
 /**
  * The single canonical "needs you" count: distinct open subjects excluding
  * draft-proposal rows (a backlog of shaped ideas, not an operational alert
- * needing immediate action). Every surface that renders this concept — the
+ * needing immediate action). Server groups contribute their MEMBERS, matching
+ * the server's counterpart — grouping is a display collapse, not fewer
+ * decisions. Every surface that renders this concept — the
  * triage page badge, the sidebar badge, the chat greeting, the situation
  * card — derives from this same definition (mirrored server-side by
  * `countNeedsYou` in orchestrator/src/core/lib/situation-report.ts) so the
@@ -35,16 +37,30 @@ export function countNeedsYou(
   items: readonly ActionQueueItem[],
   serverGroups?: readonly ActionQueueGroupRow[],
 ): number {
-  // Server-pre-grouped rows: each group is one subject.
+  // A server group's MEMBERS are the subjects, not the group.
+  //
+  // This counted the group as one, while the server's counterpart counts each
+  // member — so the two definitions the doc comment above calls mirrors
+  // disagreed by (members − 1) per group. With three groups holding 22 tasks
+  // that is a gap of 19, which is how the badge could read 36 while the page
+  // rendered rows standing for 53. A group is a display collapse; it does not
+  // reduce the number of tasks awaiting a decision, and the group header says
+  // "17 tasks" precisely because it is seventeen.
   const serverGroupMemberIds = new Set<string>()
+  const seenEntities = new Set<string>()
   let count = 0
   for (const sg of (serverGroups ?? [])) {
-    if (sg.kind === 'draft-proposal') continue
-    count++
     for (const m of sg.members) serverGroupMemberIds.add(m.id)
+    if (sg.kind === 'draft-proposal') continue
+    for (const m of sg.members) {
+      if (m.entityId && isGroupableConditionKind(m.kind)) {
+        if (seenEntities.has(m.entityId)) continue
+        seenEntities.add(m.entityId)
+      }
+      count++
+    }
   }
 
-  const seenEntities = new Set<string>()
   for (const item of items) {
     if (serverGroupMemberIds.has(item.id)) continue // counted via server group
     if (item.kind === 'draft-proposal') continue
@@ -209,6 +225,33 @@ function highestPriority(items: ActionQueueItem[]): 'high' | 'normal' | 'low' {
  * Each group row is inserted at the position of its first (highest-priority,
  * most-recent) member within the already-sorted list.
  */
+/**
+ * How many queue items one rendered row stands for.
+ *
+ * The header states "showing N of M" and both ends must be countable from the
+ * page, so both are summed over the rows the page actually draws. Deriving
+ * them from the raw feed instead is what produced "53 hidden" beside "All 36
+ * items are still there": the flat list still contained every member of every
+ * server group, and the group counts were added on top, so each grouped task
+ * was counted twice.
+ */
+export const renderedRowWeight = (row: RenderedRow): number => {
+  switch (row.type) {
+    case 'cluster':
+    case 'causeGroup':
+      return row.count
+    // An entityGroup is ONE task wearing several condition badges. It is one
+    // decision and one row, so it counts once — the badges are not work.
+    case 'entityGroup':
+    case 'item':
+      return 1
+  }
+}
+
+/** Total queue items standing behind a list of rendered rows. */
+export const countRenderedItems = (rows: readonly RenderedRow[]): number =>
+  rows.reduce((n, row) => n + renderedRowWeight(row), 0)
+
 export function buildRenderedRows(
   sorted: ActionQueueItem[],
   serverGroups?: readonly ActionQueueGroupRow[],
