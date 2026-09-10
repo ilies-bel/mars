@@ -25,7 +25,7 @@
  */
 
 import { useState } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { fetchDeepReflections, fetchDeepReflection, applyLever, postOperatorLever } from '@/shared/api'
 import type {
   DeepReflectionSummary,
@@ -452,23 +452,16 @@ interface RunStateBannerProps {
    * instead of prose the operator has to retype by hand.
    */
   originId?: string | null
+  /**
+   * Optional callback invoked when the operator clicks the auto-reflect toggle.
+   * When provided and `autoRunReflect` is 'off' (and no originId), a button
+   * is rendered instead of the static command string. Omit in contexts where
+   * mutation is unavailable (e.g. static rendering).
+   */
+  onToggleAutoReflect?: () => void
 }
 
-const RunStateBanner = ({ autoRunReflect, autoEnqueue, lastReflectedAt, originId = null }: RunStateBannerProps) => {
-  const queryClient = useQueryClient()
-  const [toggling, setToggling] = useState(false)
-
-  const handleToggleAutoReflect = async () => {
-    const newValue = autoRunReflect === 'on' ? 'off' : 'on'
-    setToggling(true)
-    try {
-      await postOperatorLever('auto-run-reflect', newValue)
-      void queryClient.invalidateQueries({ queryKey: ['deep-reflections'] })
-    } finally {
-      setToggling(false)
-    }
-  }
-
+const RunStateBanner = ({ autoRunReflect, autoEnqueue, lastReflectedAt, originId = null, onToggleAutoReflect }: RunStateBannerProps) => {
   const lastRan = lastReflectedAt ? `Last reflection: ${formatAbsoluteDateTime(lastReflectedAt)} (${fmtRelative(lastReflectedAt)})` : 'No reflection has run yet.'
   const needsManualTrigger = autoRunReflect === 'off' || !autoEnqueue
   const triggerLabel =
@@ -502,15 +495,18 @@ const RunStateBanner = ({ autoRunReflect, autoEnqueue, lastReflectedAt, originId
                 className="rounded border border-primary/30 px-1.5 py-0.5 font-mono text-micro text-primary/70 hover:bg-primary/10 hover:text-primary"
               />
             </span>
-          ) : (
+          ) : onToggleAutoReflect ? (
             <button
-              onClick={handleToggleAutoReflect}
-              disabled={toggling}
-              className="rounded border border-primary/30 px-1.5 py-0.5 font-mono text-micro text-primary/70 hover:bg-primary/10 hover:text-primary disabled:opacity-50 disabled:cursor-not-allowed"
+              onClick={onToggleAutoReflect}
+              className="rounded border border-primary/30 px-1.5 py-0.5 font-mono text-micro text-primary/70 hover:bg-primary/10 hover:text-primary"
               aria-label="Enable auto-reflect"
             >
-              {toggling ? 'Enabling…' : 'Enable auto-reflect'}
+              Enable auto-reflect
             </button>
+          ) : (
+            <>
+              Enable it with <code>mars operator set auto-reflect on</code>.
+            </>
           )}
         </>
       )}
@@ -892,6 +888,7 @@ const useDeepReflections = (projectId: string | null): {
   data: DeepReflectionsListResponse | undefined
   isLoading: boolean
   error: Error | null
+  refetch: () => void
 } => {
   // Option (a) fallback: fire without project when registry is empty.
   const query = useQuery({
@@ -900,7 +897,7 @@ const useDeepReflections = (projectId: string | null): {
     // Always enabled — renders on cold load, no click or SSE required.
     enabled: true,
   })
-  return { data: query.data, isLoading: query.isLoading, error: query.error as Error | null }
+  return { data: query.data, isLoading: query.isLoading, error: query.error as Error | null, refetch: () => { void query.refetch() } }
 }
 
 const useDeepReflection = (originId: string | null, recordedAt: string | null, projectId: string | null): {
@@ -938,12 +935,22 @@ export const ReflectionsPage = () => {
   const originId = detailRoute?.originId ?? null
   const recordedAt = detailRoute?.recordedAt ?? null
 
-  const { data: listData, isLoading: listLoading, error: listError } = useDeepReflections(resolvedProjectId ?? null)
+  const { data: listData, isLoading: listLoading, error: listError, refetch: refetchList } = useDeepReflections(resolvedProjectId ?? null)
   const { data: detailData, isLoading: detailLoading, error: detailError } = useDeepReflection(
     originId,
     recordedAt,
     resolvedProjectId ?? null,
   )
+
+  const handleToggleAutoReflect = async () => {
+    const newValue = listData?.autoRunReflect === 'on' ? 'off' : 'on'
+    try {
+      await postOperatorLever('auto-run-reflect', newValue)
+      void refetchList()
+    } catch {
+      // Swallow; the banner has no error state — the operator can retry.
+    }
+  }
 
   if (listError) {
     return (
@@ -1004,6 +1011,7 @@ export const ReflectionsPage = () => {
                 autoRunReflect={listData.autoRunReflect}
                 autoEnqueue={listData.autoEnqueue}
                 lastReflectedAt={listData.lastReflectedAt}
+                onToggleAutoReflect={handleToggleAutoReflect}
               />
             )}
 
