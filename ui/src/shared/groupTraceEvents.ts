@@ -79,6 +79,16 @@ function buildTaskGroup(taskId: string, events: TraceEvent[]): TaskGroup {
   }
 }
 
+/**
+ * Map key standing in for "these events carry no taskId".
+ *
+ * It is a grouping key, not a label. It reached the screen as the text
+ * `__no-task__` sitting where a task id goes — and, worse, as a link to a
+ * task by that name. Exported so the renderer can recognise it and say
+ * something a person can read instead.
+ */
+export const NO_TASK = '__no-task__'
+
 export function groupByArc(events: readonly TraceEvent[]): ArcGroup[] {
   const arcMap = new Map<string, TraceEvent[]>()
 
@@ -97,7 +107,7 @@ export function groupByArc(events: readonly TraceEvent[]): ArcGroup[] {
   for (const [arcId, arcEvents] of arcMap) {
     const taskMap = new Map<string, TraceEvent[]>()
     for (const e of arcEvents) {
-      const tid = e.taskId ?? '__no-task__'
+      const tid = e.taskId ?? NO_TASK
       let list = taskMap.get(tid)
       if (!list) {
         list = []

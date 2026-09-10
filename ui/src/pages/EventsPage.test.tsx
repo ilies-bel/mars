@@ -1754,27 +1754,32 @@ describe('EventsPage — timeline view toggle', () => {
 // ---------------------------------------------------------------------------
 // Which view the page opens on
 //
-// Flat is a single interleaved stream. On a live repo it printed "run-agent
-// step failed" twenty-two times in a row — measured — with no indication of
-// which arc each belonged to, in two incompatible row layouts (aligned columns
-// for some kinds, run-on mono for others). Timeline groups the same events by
-// arc with an OK/FAILED outcome at the head, which is the shape the question
-// "what happened" actually has.
+// This landed on Timeline once, for a reason that has since been fixed: Flat
+// printed "run-agent step failed" twenty-two times in a row with no indication
+// of which arc each belonged to. Flat now collapses repeats into a count badge
+// and names the task on every row, so that reason is gone.
+//
+// What is left is Timeline's own noise, measured on a live repo: 69 rows
+// behind a content-free LOG chip, raw event names where Flat says "verify step
+// failed", the run/step pair for a single failure printed as two adjacent rows
+// carrying identical text, and a pnpm install entry dumping a wall of progress
+// characters into the page. Flat is the better landing view now; Timeline's
+// grouping stays one click away.
 // ---------------------------------------------------------------------------
 
 describe('EventsPage — landing view', () => {
-  it('opens on Timeline', () => {
+  it('opens on Flat', () => {
     const qc = makeClient(makeResponse([makeEvent({ id: 'ev-default' })]))
     const html = renderToStaticMarkup(
       <QueryClientProvider client={qc}>
         <EventsPage />
       </QueryClientProvider>,
     )
-    const timelineIdx = html.indexOf('data-testid="events-view-timeline"')
-    expect(timelineIdx).toBeGreaterThan(-1)
+    const flatIdx = html.indexOf('data-testid="events-view-flat"')
+    expect(flatIdx).toBeGreaterThan(-1)
     // The selected control carries the raised surface treatment. React emits
     // `class` AFTER `data-testid`, so the slice runs forward to the tag's end.
-    const tag = html.slice(timelineIdx, html.indexOf('>', timelineIdx))
+    const tag = html.slice(flatIdx, html.indexOf('>', flatIdx))
     expect(tag).toContain('bg-surface')
   })
 
@@ -1785,16 +1790,17 @@ describe('EventsPage — landing view', () => {
         <EventsPage />
       </QueryClientProvider>,
     )
-    expect(html.indexOf('data-testid="events-view-timeline"')).toBeLessThan(
-      html.indexOf('data-testid="events-view-flat"'),
+    expect(html.indexOf('data-testid="events-view-flat"')).toBeLessThan(
+      html.indexOf('data-testid="events-view-timeline"'),
     )
   })
 
-  it('still opens on flat when asked for it', () => {
-    // The escape hatch the row-level tests above rely on.
-    const qc = makeClient(makeResponse([makeEvent({ id: 'ev-flat' })]))
-    const html = renderPage(qc, 'flat')
-    const flatIdx = html.indexOf('data-testid="events-view-flat"')
-    expect(html.slice(flatIdx, html.indexOf('>', flatIdx))).toContain('bg-surface')
+  it('still opens on timeline when asked for it', () => {
+    // The escape hatch, now pointing the other way: the landing view can move
+    // again without the row-level tests below caring which one it is.
+    const qc = makeClient(makeResponse([makeEvent({ id: 'ev-tl' })]))
+    const html = renderPage(qc, 'timeline')
+    const idx = html.indexOf('data-testid="events-view-timeline"')
+    expect(html.slice(idx, html.indexOf('>', idx))).toContain('bg-surface')
   })
 })

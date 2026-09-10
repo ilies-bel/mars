@@ -13,7 +13,7 @@ import { useFocusedProjectId } from '@/shared/useFocusedProject'
 import type { TraceEvent } from '@/shared/schemas'
 import { relativeTime, formatRelativeAge } from '@/shared/time'
 import { taskHash } from '@/shared/routing'
-import { groupByArc, type ArcGroup, type TaskGroup, type StepGroup } from '@/shared/groupTraceEvents'
+import { groupByArc, NO_TASK, type ArcGroup, type TaskGroup, type StepGroup } from '@/shared/groupTraceEvents'
 import { PageHeader } from '@/widgets/primitives/DensityPrimitives'
 
 /**
@@ -878,15 +878,25 @@ const TimelineTaskGroup = ({ group, now }: TimelineTaskGroupProps) => {
             <ChevronRight size={12} strokeWidth={2} aria-hidden="true" />
           )}
         </span>
-        <a
-          href={taskHash(group.taskId, 'events')}
-          onClick={(e) => e.stopPropagation()}
-          className="font-mono text-label text-foreground hover:underline"
-        >
-          {group.taskId.length > 16
-            ? `${group.taskId.slice(0, 8)}…${group.taskId.slice(-4)}`
-            : group.taskId}
-        </a>
+        {group.taskId === NO_TASK ? (
+          /* Not every event belongs to a task. Saying so is the honest render;
+             the sentinel used to print as the task id AND link to a task by
+             that name, so the one row that had nothing to open was the only
+             one offering to open it. */
+          <span className="text-label italic text-muted-foreground">
+            Not attached to a task
+          </span>
+        ) : (
+          <a
+            href={taskHash(group.taskId, 'events')}
+            onClick={(e) => e.stopPropagation()}
+            className="font-mono text-label text-foreground hover:underline"
+          >
+            {group.taskId.length > 16
+              ? `${group.taskId.slice(0, 8)}…${group.taskId.slice(-4)}`
+              : group.taskId}
+          </a>
+        )}
         <span
           className={`eyebrow rounded px-1 py-0.5 ${ group.severity === 'error' ? 'bg-error/10 text-error' : group.severity === 'warn' ? 'bg-warn/10 text-warn' : 'bg-primary/10 text-muted-foreground' }`}
         >
@@ -1021,11 +1031,14 @@ const TimelineView = ({ events, now }: TimelineViewProps) => {
 const PAGE_LIMIT = 100
 
 export const EventsPage = ({
-  initialView = 'timeline',
+  initialView = 'flat',
 }: {
   /**
-   * Which view the page opens on. Defaults to Timeline; see `viewMode` below
-   * for why. Exposed so a test can pin the flat view explicitly instead of
+   * Which view the page opens on. Defaults to Flat: it dedupes repeats into
+   * a `×N` badge, phrases events as "verify step failed" rather than
+   * `run.failed: ...`, and collapses payload walls, where Timeline prints
+   * every raw event and shows the run/step pair for one failure as two
+   * adjacent rows carrying identical text. Exposed so a test can pin the flat view explicitly instead of
    * depending on which one happens to be the default — fourteen flat-view
    * tests broke the day that default changed, none of them because the
    * behaviour they cover had changed.
@@ -1252,7 +1265,7 @@ export const EventsPage = ({
             <div className="h-4 w-px shrink-0 bg-primary/20" aria-hidden="true" />
 
             {/* Default first, so the strip reads in the order it behaves. */}
-            {(['timeline', 'flat'] as const).map((mode) => (
+            {(['flat', 'timeline'] as const).map((mode) => (
               <button
                 key={mode}
                 type="button"
