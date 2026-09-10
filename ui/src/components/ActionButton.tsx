@@ -35,8 +35,15 @@ const VARIANT: Record<ActionVariant, string> = {
     'border border-border bg-surface text-foreground shadow-[var(--shadow-e1)] hover:border-border hover:bg-background active:bg-border/40',
   ghost:
     'border border-transparent text-muted-foreground hover:border-border hover:bg-foreground/5 hover:text-foreground active:bg-foreground/10',
+  // Transparent border, not a red one — the class list said `border-error/25`
+  // while the doc comment above said "quiet at rest (error text only)", and the
+  // markup won. On a failed task's card that put a visible red outline on
+  // "Restart (wipe & re-run)" and "Discard task" while the reversible "Snooze"
+  // beside them had no border at all: the two most-chromed controls on the row
+  // were the two that destroy work irrecoverably. The border still appears on
+  // hover, where it belongs — by then the pointer has already chosen.
   danger:
-    'border border-error/25 bg-transparent text-error hover:border-error/60 hover:bg-error/10 active:bg-error/20',
+    'border border-transparent bg-transparent text-error hover:border-error/60 hover:bg-error/10 active:bg-error/20',
 }
 
 const SIZE: Record<ActionSize, string> = {

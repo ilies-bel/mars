@@ -566,12 +566,15 @@ describe('TriageRow – Continue/Restart buttons fire invokeAction', () => {
 // ---------------------------------------------------------------------------
 
 describe('TriageRow – task id is a link to the task detail drawer', () => {
-  it('renders the entity id as a link into #/task/<id> (real task id, non-null dag)', () => {
+  it('makes the headline the link into #/task/<id> (real task id, non-null dag)', () => {
+    // The route into the task used to be a separate control labelled "→ task"
+    // sitting above the actions; the headline itself was inert. Clicking the
+    // name of a thing is how you open the thing, so the headline carries it.
     mockItems.mockReturnValue([makeItem('failed', { entityId: 'mars-bff7e039' })])
     const html = renderToStaticMarkup(<TriagePage />)
-    expect(html).toContain('data-testid="triage-entity-link"')
     expect(html).toContain('href="#/task/mars-bff7e039?from=triage"')
-    expect(html).toContain('mars-bff7e039')
+    expect(html).not.toContain('data-testid="triage-entity-link"')
+    expect(html).not.toContain('→ task')
   })
 
   it('non-task-backed kinds (reflect-recommended) keep the entity id as plain text', () => {
@@ -579,7 +582,11 @@ describe('TriageRow – task id is a link to the task detail drawer', () => {
       makeItem('reflect-recommended', { entityId: 'refl-1', dag: null }),
     ])
     const html = renderToStaticMarkup(<TriagePage />)
-    expect(html).not.toContain('data-testid="triage-entity-link"')
+    // Asserting the absence of the retired "→ task" testid would pass
+    // vacuously now. What must hold is that the headline is NOT a link: there
+    // is no task behind this row to open.
+    expect(html).not.toContain('href="#/task/refl-1')
+    expect(html).toContain('<p')
   })
 
   // Regression coverage: the link decision must be driven by hasResolvableTask
@@ -599,7 +606,8 @@ describe('TriageRow – task id is a link to the task detail drawer', () => {
       makeItem('signature-storm', { entityId: 'signature-storm:unknown', dag: null }),
     ])
     const html = renderToStaticMarkup(<TriagePage />)
-    expect(html).not.toContain('data-testid="triage-entity-link"')
+    // No task behind the row means no link on the headline.
+    expect(html).not.toContain('href="#/task/signature-storm')
     // The slug must not appear anywhere on the card face (DEC-18)
     expect(html).not.toContain('signature-storm:unknown')
   })
@@ -617,7 +625,6 @@ describe('TriageRow – task id is a link to the task detail drawer', () => {
   it('gate-broken rows with a real task id AND a populated dag still link', () => {
     mockItems.mockReturnValue([makeItem('gate-broken', { entityId: 'mars-84d1efb4' })])
     const html = renderToStaticMarkup(<TriagePage />)
-    expect(html).toContain('data-testid="triage-entity-link"')
     expect(html).toContain('href="#/task/mars-84d1efb4?from=triage"')
   })
 })

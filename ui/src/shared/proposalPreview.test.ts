@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { splitDeferredProblem, provenanceLabel } from './proposalPreview'
+import { splitDeferredProblem, provenanceLabel, stripRepeatedPrefix } from './proposalPreview'
 
 const PRD = 'cd54a867-make-mars-support-a-real-ddd-practice'
 const PREAMBLE =
@@ -68,5 +68,45 @@ describe('splitDeferredProblem', () => {
     )
     expect(provenance?.prdTitle).toBeNull()
     expect(lead).toBe('Just this.')
+  })
+})
+
+describe('stripRepeatedPrefix', () => {
+  const problem = 'A frozen-lockfile install failure indicates a network or cache environment fault when the lockfile matches HEAD.'
+
+  it('drops a verbatim leading copy of the problem', () => {
+    const notes = `${problem}\n\nSeparately: fix-5959d8c7 failed with an API-unreachable message.`
+    expect(stripRepeatedPrefix(notes, problem)).toBe(
+      'Separately: fix-5959d8c7 failed with an API-unreachable message.',
+    )
+  })
+
+  it('leaves notes that merely paraphrase the problem alone', () => {
+    // Paraphrase is authorship. Deciding it is redundant is not the
+    // renderer's call — only an exact prefix is removed.
+    const notes = 'The lockfile problem above is really an environment fault.'
+    expect(stripRepeatedPrefix(notes, problem)).toBe(notes)
+  })
+
+  it('leaves a copy that is not at the front alone', () => {
+    const notes = `Context first.\n\n${problem}`
+    expect(stripRepeatedPrefix(notes, problem)).toBe(notes)
+  })
+
+  it('ignores sections too short to be meaningful duplicates', () => {
+    // A 12-character "problem" prefixing the notes is a coincidence, not a
+    // duplication, and stripping it would eat real text.
+    const notes = 'See ADR-0094 for the reasoning behind the two row kinds.'
+    expect(stripRepeatedPrefix(notes, 'See ADR-0094')).toBe(notes)
+  })
+
+  it('strips the problem and the solution independently', () => {
+    const solution = 'Add a pattern for install-frozen-lockfile that maps to a new infra class.'
+    const notes = `${problem}\n${solution}\nAnd the genuinely new remark.`
+    expect(stripRepeatedPrefix(notes, problem, solution)).toBe('And the genuinely new remark.')
+  })
+
+  it('returns an empty string when the notes are nothing but the copy', () => {
+    expect(stripRepeatedPrefix(problem, problem)).toBe('')
   })
 })

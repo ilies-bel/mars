@@ -487,6 +487,26 @@ const leadDecisionIndex = (decisions: Decision[]): number => {
   const goal = item.operatorGoal ?? null
   const headline = !goal ? (item.humanSummary || item.title) : null
 
+  // The subhead and the summary are two different fields that, for several
+  // kinds, hold the SAME string. `recovery-abandoned` is the clearest case:
+  // the daemon sets `title` and `humanSummary` to one byte-identical sentence,
+  // and with no failureSignature the subhead falls through to `item.title` —
+  // so four cards in the queue printed "Recovery task fix-… was manually
+  // dropped before it could run — the origin task needs manual resolution."
+  // twice, stacked, verbatim.
+  //
+  // A string comparison is the right tool HERE, unlike the group-member case
+  // above: these are not two phrasings that overlap, they are one string
+  // arriving through two fields.
+  // Non-task-backed rows (entityId is a kind slug like "daemon-code-drift")
+  // have nothing to open, so their headline stays inert text.
+  const taskLink = hasResolvableTask(item) ? taskHash(item.entityId, 'triage') : null
+  const subhead = signatureFamilyPhrase(item.humanDetail?.failureSignature) ?? item.title
+  const summaryAddsInfo =
+    item.humanSummary != null &&
+    item.humanSummary.trim() !== '' &&
+    item.humanSummary.trim() !== subhead?.trim()
+
   // ── Inside an expanded cause group ────────────────────────────────────────
   //
   // Members share `(kind, failureReasonCode)` BY CONSTRUCTION — that is what
@@ -673,23 +693,42 @@ const leadDecisionIndex = (decisions: Decision[]): number => {
               down the scale (15px vs 17px). At 17px the members were louder
               than the group header that contains them, which inverts the
               nesting the expansion exists to express. */}
-          <p
-            className={`mb-1 font-semibold leading-snug text-foreground line-clamp-2 ${
-              inGroup ? 'text-title' : 'text-section'
-            }`}
-            data-testid="triage-goal"
-          >
-            {goal.split('\n')[0]?.trim()}
-          </p>
+          {/* The headline IS the way into the task.
+              It used to be inert text, and the only route to the task drawer —
+              the best component in the app — was a separate link labelled
+              "→ task": a lowercase common noun behind a stray arrow glyph.
+              So the queue, which is the primary human work surface, could not
+              reach the thing it is a queue OF. Clicking the name of a thing
+              opens the thing; that is the whole convention. */}
+          {taskLink !== null ? (
+            <a
+              href={taskLink}
+              className={`mb-1 block font-semibold leading-snug text-foreground line-clamp-2 transition-colors hover:text-highlight ${
+                inGroup ? 'text-title' : 'text-section'
+              }`}
+              data-testid="triage-goal"
+            >
+              {goal.split('\n')[0]?.trim()}
+            </a>
+          ) : (
+            <p
+              className={`mb-1 font-semibold leading-snug text-foreground line-clamp-2 ${
+                inGroup ? 'text-title' : 'text-section'
+              }`}
+              data-testid="triage-goal"
+            >
+              {goal.split('\n')[0]?.trim()}
+            </p>
+          )}
           {!inGroup && (
             <p
               className="text-label text-muted-foreground"
               data-testid="triage-title-subhead"
             >
-              {signatureFamilyPhrase(item.humanDetail?.failureSignature) ?? item.title}
+              {subhead}
             </p>
           )}
-          {item.humanSummary && !inGroup && (
+          {summaryAddsInfo && !inGroup && (
             <p className="mt-1 text-label leading-relaxed text-muted-foreground line-clamp-2">
               {item.humanSummary}
             </p>
@@ -718,40 +757,32 @@ const leadDecisionIndex = (decisions: Decision[]): number => {
         // repeated — that repetition IS the wallpaper.
         headline &&
         !inGroup && (
-          <p
-            className={
-              headlineIsAdvisory
-                ? 'mb-1 text-body leading-relaxed text-foreground'
-                : 'mb-1 text-section font-semibold leading-snug text-foreground'
-            }
-          >
-            {headline}
-          </p>
+          // Same rule as the goal branch above: if there is a task behind this
+          // row, its name opens it. An advisory headline is a sentence of
+          // guidance rather than the name of anything, so it stays inert.
+          taskLink !== null && !headlineIsAdvisory ? (
+            <a
+              href={taskLink}
+              data-testid="triage-headline"
+              className="mb-1 block text-section font-semibold leading-snug text-foreground transition-colors hover:text-highlight"
+            >
+              {headline}
+            </a>
+          ) : (
+            <p
+              data-testid="triage-headline"
+              className={
+                headlineIsAdvisory
+                  ? 'mb-1 text-body leading-relaxed text-foreground'
+                  : 'mb-1 text-section font-semibold leading-snug text-foreground'
+              }
+            >
+              {headline}
+            </p>
+          )
         )
       )}
 
-      {/* Entity ID — links to the task detail drawer (prompt, failure signature,
-          failure output, restart command) for task-backed rows so the operator
-          can see the evidence without leaving the UI. Gated on hasResolvableTask
-          (dag !== null), NOT on kind or TASK_RECOVERY_KINDS — some kinds (e.g.
-          gate-broken) carry a task id on some rows and a non-task slug on
-          others, so a kind-only check would either dead-link the non-task rows
-          or (as TASK_RECOVERY_KINDS did) deny the link to valid task rows of
-          kinds it doesn't enumerate. See hasResolvableTask's doc comment in
-          shared/schemas.ts.
-          Non-task-backed rows (entityId is a kind slug like "daemon-code-drift")
-          render nothing — the kind badge above already names the condition in
-          plain language and repeating the slug here is DEC-18 jargon. */}
-      {hasResolvableTask(item) && (
-        <a
-          href={taskHash(item.entityId, 'triage')}
-          className="mb-2 -ml-1.5 inline-flex h-6 w-fit items-center gap-1 rounded-md px-1.5 text-label font-medium text-highlight transition-colors duration-[var(--dur-fast)] hover:bg-highlight/10 hover:text-foreground"
-          data-testid="triage-entity-link"
-          title={item.entityId}
-        >
-          → task
-        </a>
-      )}
 
       {/* Actions row */}
       <div className="flex flex-wrap items-center gap-2">

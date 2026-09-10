@@ -1,4 +1,5 @@
 import { ChevronDown } from 'lucide-react'
+import { stripRepeatedPrefix } from '@/shared/proposalPreview'
 import { useCallback, useEffect, useRef, useState, useMemo } from 'react'
 import type { ReactNode } from 'react'
 import type { ProposalDetail, ProgressTask } from '@/shared/schemas'
@@ -410,6 +411,11 @@ export const ProposalDetailDrawer = ({
     proposal.author != null &&
     proposal.author.name.trim().toLowerCase() !== proposal.source.trim().toLowerCase()
 
+  // Notes that open with a verbatim copy of the Problem (or Solution) make the
+  // drawer read as if it is stuck — you scroll past a paragraph you just
+  // finished to reach what is actually new.
+  const notesText = stripRepeatedPrefix(proposal.notes, proposal.problem, proposal.solution)
+
   // Format createdAt timestamp as an unambiguous absolute date.
   const createdLabel = proposal.createdAt ? formatAbsoluteDate(proposal.createdAt) : null
 
@@ -658,10 +664,10 @@ export const ProposalDetailDrawer = ({
           />
         ) : null}
 
-        {proposal.notes.trim() ? (
+        {notesText ? (
           <BodySection
             label="Notes"
-            text={proposal.notes}
+            text={notesText}
             testId="proposal-detail-notes"
             editable={isDraft}
             field="notes"

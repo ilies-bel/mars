@@ -280,28 +280,28 @@ export const BoardView = ({
       {/* ── Dense 4-column grid ─────────────────────────────────────────────── */}
       <main className="grid grid-cols-4 gap-3.5 p-6 items-start overflow-y-auto flex-1">
         {/* Proposals — renders as "PROPOSALS (ALL)"; see the population note above */}
-        <DenseColumn label="Proposals" qualifier="all" count={visibleProposals.length}>
+        <DenseColumn label="Proposals" qualifier="all" count={visibleProposals.length} emptyLabel="No proposals reference an active task">
           {visibleProposals.map((p) => (
             <ProposalCard key={p.id} proposal={p} />
           ))}
         </DenseColumn>
 
         {/* In progress (queued + running/verifying/merging) */}
-        <DenseColumn label="In progress" count={inProgressTasks.length} tooltip="Queued or actively executing">
+        <DenseColumn label="In progress" count={inProgressTasks.length} tooltip="Queued or actively executing" emptyLabel="Nothing is running">
           {inProgressTasks.map((t) => (
             <BoardCard key={t.id} task={t} />
           ))}
         </DenseColumn>
 
         {/* Blocked */}
-        <DenseColumn label="Blocked" count={blockedTasks.length} tooltip="Waiting for another task to finish">
+        <DenseColumn label="Blocked" count={blockedTasks.length} tooltip="Waiting for another task to finish" emptyLabel="Nothing is waiting on another task">
           {blockedTasks.map((t) => (
             <BoardCard key={t.id} task={t} />
           ))}
         </DenseColumn>
 
         {/* Failed */}
-        <DenseColumn label="Failed" count={failedTasks.length}>
+        <DenseColumn label="Failed" count={failedTasks.length} emptyLabel="Nothing has failed">
           {failedTasks.map((t) => (
             <BoardCard key={t.id} task={t} />
           ))}

@@ -3,9 +3,26 @@ import { pauseReasonLabel } from '@/entities/operator/useDispatchState'
 import type { DispatchPauseState } from '@/shared/api'
 
 interface Props {
-  inProgress: number
-  failed: number
-  /** Tasks completed in the last 24 hours (rolling window). */
+  /**
+   * Tasks completed in the last 24 hours (rolling window).
+   *
+   * The ONLY count this header carries, and deliberately so. It used to show
+   * "In Progress · Done Today · Failed", two thirds of which the board's own
+   * column headers already state — and state differently. The header read
+   * "18 Failed" while the FAILED column 130px below read "19", because
+   * `failedOpen` is `WHERE status='failed' AND fix_for_task_id IS NULL` (origin
+   * failures only) and the column counts every card it renders (recovery tasks
+   * included). Both defensible, neither labelled, same word twice on one
+   * screen. A dashboard that miscounts its own headline number is not trusted
+   * again, so the duplicated counts are gone and the columns are the single
+   * source.
+   *
+   * Done survives because no column can carry it: the board's `done` rows are
+   * done members of still-active arcs (a fully-completed arc is pruned), so
+   * they are NOT the last-24h set — on measuring, the two sets of 8 overlapped
+   * in 2. Rendering them as a "Done Today" column would have been a worse lie
+   * than having no column.
+   */
   doneToday: number
   connected: boolean
   /**
@@ -68,8 +85,6 @@ const HealthDot = ({
 }
 
 export const TopStripe = ({
-  inProgress,
-  failed,
   doneToday,
   connected,
   dispatch,
@@ -90,11 +105,6 @@ export const TopStripe = ({
     </div>
     <div className="flex items-center gap-4">
       <div className="flex items-baseline gap-4">
-        <div data-testid="stat-in-progress" className="flex items-baseline gap-1">
-          <span className="tabular-nums text-title font-semibold text-status-running">{inProgress}</span>
-          <span className="text-micro text-muted-foreground">In Progress</span>
-        </div>
-        <span className="text-muted-foreground">·</span>
         <button
           type="button"
           data-testid="stat-done"
@@ -105,13 +115,10 @@ export const TopStripe = ({
           className="flex cursor-pointer items-baseline gap-1 hover:opacity-80"
         >
           <span className={`tabular-nums text-title font-semibold ${doneToday > 0 ? 'text-status-done' : 'text-muted-foreground'}`}>{doneToday}</span>
-          <span className="text-micro text-muted-foreground">Done Today</span>
+          {/* "Today" was also wrong: the window is a rolling 24 hours, not a
+              calendar day, so at 09:00 it still counts most of yesterday. */}
+          <span className="text-micro text-muted-foreground">done · last 24h</span>
         </button>
-        <span className="text-muted-foreground">·</span>
-        <div data-testid="stat-failed" className="flex items-baseline gap-1">
-          <span className={`tabular-nums text-title font-semibold ${failed > 0 ? 'text-status-failed' : 'text-muted-foreground'}`}>{failed}</span>
-          <span className="text-micro text-muted-foreground">Failed</span>
-        </div>
       </div>
       <HealthDot connected={connected} dispatch={dispatch} daemonDown={daemonDown} />
     </div>

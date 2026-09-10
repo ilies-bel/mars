@@ -263,19 +263,16 @@ export const ProgressPage = () => {
 
   const dispatch = useDispatchState()
   const { isDown: daemonDown } = useDaemonHealth()
-  const inProgressCount = byCluster['In progress'].length
-  // Use server-side aggregate counts so done/failed are accurate even though
-  // terminal task rows are excluded from the progress graph projection.
+  // Only the done count comes from the server aggregate now. In-progress and
+  // failed were also read from here and rendered in the header, where they
+  // contradicted the board columns immediately below — see TopStripe's Props.
   const doneToday = aggregates.doneToday
-  const failedCount = aggregates.failedOpen
 
   return (
     <div className="flex h-full w-full min-h-0 overflow-hidden bg-background" data-testid="progress-page">
       <div className="flex min-w-0 flex-1 flex-col">
         <TopStripe
-          inProgress={inProgressCount}
           doneToday={doneToday}
-          failed={failedCount}
           connected={connected}
           dispatch={dispatch}
           daemonDown={daemonDown}

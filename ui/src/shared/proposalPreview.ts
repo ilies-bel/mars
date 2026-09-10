@@ -91,3 +91,28 @@ export const splitDeferredProblem = (problem: string | null | undefined): SplitP
 /** Short, stable label for a provenance line: `from PRD cd54a867`. */
 export const provenanceLabel = (p: ProposalProvenance): string =>
   `from PRD ${p.prdId.split('-')[0]}`
+
+/**
+ * Drops a section's text from the front of `notes` when the notes literally
+ * open with a verbatim copy of it.
+ *
+ * Observed on a real `failure-reflector` proposal: its Notes field is 2119
+ * characters, the first 760 of which are its Problem field, byte for byte,
+ * followed by a genuinely different note about a different task. Rendered as
+ * two adjacent sections, the drawer read as if it were stuck — you scroll
+ * past a paragraph you just finished reading to reach the new content.
+ *
+ * Only an exact prefix is removed, after whitespace normalisation. Notes that
+ * merely restate the problem in other words are left alone: paraphrase is
+ * authorship, and deciding it is redundant is not the renderer's call.
+ */
+export const stripRepeatedPrefix = (notes: string, ...sections: string[]): string => {
+  let out = notes
+  for (const section of sections) {
+    const s = section.trim()
+    if (s.length < 40) continue
+    const head = out.trimStart()
+    if (head.startsWith(s)) out = head.slice(s.length)
+  }
+  return out.trim()
+}

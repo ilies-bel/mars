@@ -199,118 +199,59 @@ function statSection(html: string, startId: string): string {
   const next = html.indexOf('data-testid=', s + 12)
   return next === -1 ? html.slice(s) : html.slice(s, next)
 }
+// ---------------------------------------------------------------------------
+// Header stats
+//
+// This describe used to hold five tests for an IN PROGRESS / DONE TODAY /
+// FAILED trio in the page header. Two thirds of that trio is gone, and the
+// clearest argument for removing it is in the test that used to sit here:
+//
+//   'FAILED stat counts per-origin — a failed recovery does not inflate the
+//    count'
+//
+// It set up one origin failure and one failed recovery, both in the Failed
+// cluster, and asserted the header stat read 1 — while the FAILED column
+// rendered from the same `byCluster` beside it showed 2. Both numbers were
+// correct and neither was labelled, so on real data the page read "18 Failed"
+// above a column reading 19. The columns are checkable against the cards
+// underneath them; the header is not. So the columns keep the counts.
+// ---------------------------------------------------------------------------
 
 describe('ProgressPage – header stats', () => {
   const makeTask = (id: string, status: ProgressTask['status']): ProgressTask =>
     ({ id, status, prompt: 'p', branch: null, parentProposalId: null }) as unknown as ProgressTask
 
-  it('IN PROGRESS and FAILED counters are nonzero when one running and one failed task exist', () => {
-    // Regression: the stat bar showed all-zero while the topology showed live
-    // running/failed nodes. Root cause: counts came from a separate /api/status-counts
-    // endpoint that could return stale zeros while /api/progress returned actual tasks.
-    // Fix: derive stats from the same useProgress feed (byCluster + aggregates).
-    const runningTask = { ...makeTask('r1', 'running'), cluster: 'In progress' as Cluster }
-    const failedTask = { ...makeTask('f1', 'failed'), cluster: 'Failed' as Cluster }
+  it('shows the done count and no longer competes with the board columns', () => {
     mockUseProgress.mockImplementation(() => ({
       ...baseState([]),
-      tasks: [runningTask, failedTask],
-      byCluster: { ...emptyByCluster(), 'In progress': [runningTask], Failed: [failedTask] },
-      aggregates: { doneToday: 0, doneTotal: 0, failedOpen: 1 },
+      tasks: [],
+      byCluster: emptyByCluster(),
+      aggregates: { doneToday: 5, doneTotal: 40, failedOpen: 1 },
     }))
     try {
       const html = renderToStaticMarkup(<ProgressPage />)
-      const inProgressSection = between(html, 'stat-in-progress', 'stat-done')
-      const failedSection = statSection(html, 'stat-failed')
-      // IN PROGRESS derives from byCluster['In progress'].length — must be 1, not 0
-      expect(inProgressSection).toContain('>1<')
-      expect(inProgressSection).not.toContain('>0<')
-      // FAILED derives from aggregates.failedOpen — must be 1, not 0
-      expect(failedSection).toContain('>1<')
-      expect(failedSection).not.toContain('>0<')
+      expect(statSection(html, 'stat-done')).toContain('>5<')
+      expect(html).not.toContain('data-testid="stat-failed"')
+      expect(html).not.toContain('data-testid="stat-in-progress"')
     } finally {
       mockUseProgress.mockImplementation(() => baseState([]))
     }
   })
 
-  it('DONE stat reflects tasks whose status is "done", not the failed count', () => {
-    const doneTasks = [makeTask('d1', 'done'), makeTask('d2', 'done')]
-    const failedTasks = [makeTask('f1', 'failed')]
-    mockUseProgress.mockImplementation(() => ({
-      ...baseState([]),
-      tasks: [...doneTasks, ...failedTasks],
-      byCluster: { ...emptyByCluster(), Failed: failedTasks },
-      aggregates: { doneToday: 2, doneTotal: 2, failedOpen: 1 },
-    }))
-    try {
-      const html = renderToStaticMarkup(<ProgressPage />)
-      const doneSection = between(html, 'stat-done', 'stat-failed')
-      // Two done tasks → DONE must read 2
-      expect(doneSection).toContain('>2<')
-      // Must not use the failed count (1) for the DONE slot
-      expect(doneSection).not.toContain('>1<')
-    } finally {
-      mockUseProgress.mockImplementation(() => baseState([]))
-    }
-  })
-
-  it('FAILED stat surfaces the failed count — failures are never hidden under DONE', () => {
-    const failedTasks = [makeTask('f1', 'failed'), makeTask('f2', 'failed')]
-    mockUseProgress.mockImplementation(() => ({
-      ...baseState([]),
-      tasks: failedTasks,
-      byCluster: { ...emptyByCluster(), Failed: failedTasks },
-      aggregates: { doneToday: 0, doneTotal: 0, failedOpen: 2 },
-    }))
-    try {
-      const html = renderToStaticMarkup(<ProgressPage />)
-      const doneSection = between(html, 'stat-done', 'stat-failed')
-      const failedSection = statSection(html, 'stat-failed')
-      // Failed count (2) appears in the FAILED section
-      expect(failedSection).toContain('>2<')
-      // DONE must not show 2 (the failed count) — it shows 0
-      expect(doneSection).not.toContain('>2<')
-    } finally {
-      mockUseProgress.mockImplementation(() => baseState([]))
-    }
-  })
-
-  it('FAILED stat counts per-origin — a failed recovery does not inflate the count', () => {
-    // One origin failure (fix_for_task_id IS NULL) + one failed recovery
-    // (fix_for_task_id IS NOT NULL) => the aggregate reader returns failedOpen: 1.
-    // The UI renders whatever failedOpen says; this test pins that the FAILED
-    // stat shows the per-origin count, not the raw total across origin+recovery.
+  it('the FAILED column still carries its own count', () => {
+    // What the header gave up, the column keeps — and a reader can check it
+    // against the cards below it, which is why it is the better home.
     const originTask = makeTask('origin-1', 'failed')
     const recoveryTask = makeTask('fix-1', 'failed')
     mockUseProgress.mockImplementation(() => ({
       ...baseState([]),
       tasks: [originTask, recoveryTask],
       byCluster: { ...emptyByCluster(), Failed: [originTask, recoveryTask] },
-      // The query filters AND fix_for_task_id IS NULL, so only 1 is counted.
       aggregates: { doneToday: 0, doneTotal: 0, failedOpen: 1 },
     }))
     try {
       const html = renderToStaticMarkup(<ProgressPage />)
-      const failedSection = statSection(html, 'stat-failed')
-      // One origin failure — the failed recovery must not inflate the count to 2.
-      expect(failedSection).toContain('>1<')
-      expect(failedSection).not.toContain('>2<')
-    } finally {
-      mockUseProgress.mockImplementation(() => baseState([]))
-    }
-  })
-
-  it('with zero done tasks and zero failed tasks both stats show 0', () => {
-    mockUseProgress.mockImplementation(() => ({
-      ...baseState([]),
-      tasks: [],
-      byCluster: emptyByCluster(),
-    }))
-    try {
-      const html = renderToStaticMarkup(<ProgressPage />)
-      const doneSection = between(html, 'stat-done', 'stat-failed')
-      const failedSection = statSection(html, 'stat-failed')
-      expect(doneSection).toContain('>0<')
-      expect(failedSection).toContain('>0<')
+      expect(html).toContain('data-column-count="Failed"')
     } finally {
       mockUseProgress.mockImplementation(() => baseState([]))
     }

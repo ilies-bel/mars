@@ -118,9 +118,15 @@ export const BellMenu = () => {
       </button>
 
       {open && (
-        <div className="mars-card absolute right-0 top-full z-50 mt-1 flex max-h-[70vh] w-96 flex-col rounded bg-background p-2 text-label">
-          <section>
-            <h2 className="eyebrow px-1 pb-1 text-muted-foreground">
+        <div className="mars-card absolute right-0 top-full z-50 mt-1 flex max-h-[70vh] w-96 flex-col overflow-hidden rounded bg-background p-2 text-label">
+          {/* This <section> must itself be the flex child that shrinks. It was
+              a plain block, so the `flex-1 min-h-0` on the <ul> inside it had
+              no flex parent to act on: the list grew to its full content
+              height, the panel's max-h clipped nothing (overflow was visible),
+              and the "See all" footer was pushed 59px BELOW the panel's bottom
+              edge, drawing on top of the board card behind it. */}
+          <section className="flex min-h-0 flex-1 flex-col">
+            <h2 className="eyebrow shrink-0 px-1 pb-1 text-muted-foreground">
               Needs You
               {sorted.length > 0 && count > sorted.length && (
                 /* The badge counts every open item; this list leaves out draft
