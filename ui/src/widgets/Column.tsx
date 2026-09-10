@@ -37,9 +37,45 @@ export interface BoardArc {
 // Step-rail helpers — dense board cards
 // ---------------------------------------------------------------------------
 
-type StepState = 'done' | 'run' | 'upcoming'
+type StepState = 'done' | 'run' | 'upcoming' | 'failed'
 
-function getStepStates(status: string): [StepState, StepState, StepState, StepState] {
+/** The four rail segments, in pipeline order. */
+const PHASES = ['setup', 'code', 'verify', 'merge'] as const
+
+/**
+ * Which segment a failure signature blames.
+ *
+ * Signatures are phase-prefixed — `setup:unhandled/unclassified`,
+ * `verify:gate-failed` — but a recovery wraps them
+ * (`recovery_exhausted:setup/unclassified`), so scan for the first known
+ * phase word rather than reading segment zero.
+ */
+const failedPhaseIndex = (signature: string | null | undefined): number => {
+  if (signature == null) return -1
+  const words = signature.toLowerCase().split(/[^a-z]+/)
+  for (const w of words) {
+    const i = PHASES.indexOf(w as (typeof PHASES)[number])
+    if (i !== -1) return i
+  }
+  return -1
+}
+
+/**
+ * A failed card used to return ['done','done','done','upcoming'] — three
+ * filled green segments and an empty fourth, which reads as "three quarters
+ * done, still going". Both halves are false: the task is not progressing, and
+ * it did not necessarily complete three steps. Measured on this repo, eleven
+ * failed tasks died at `setup` — the FIRST step — while every one of their
+ * cards showed three steps green.
+ *
+ * The signature says which phase died, so the rail marks that segment failed,
+ * the ones before it done, and the rest genuinely upcoming. With no signature
+ * to read, nothing is claimed.
+ */
+function getStepStates(
+  status: string,
+  failureSignature?: string | null,
+): [StepState, StepState, StepState, StepState] {
   switch (status) {
     case 'queued':
       return ['done', 'upcoming', 'upcoming', 'upcoming']
@@ -53,8 +89,13 @@ function getStepStates(status: string): [StepState, StepState, StepState, StepSt
     case 'done':
       return ['done', 'done', 'done', 'done']
     case 'failed':
-    case 'dropped':
-      return ['done', 'done', 'done', 'upcoming']
+    case 'dropped': {
+      const at = failedPhaseIndex(failureSignature)
+      if (at === -1) return ['upcoming', 'upcoming', 'upcoming', 'upcoming']
+      return PHASES.map((_, i) =>
+        i < at ? 'done' : i === at ? 'failed' : 'upcoming',
+      ) as [StepState, StepState, StepState, StepState]
+    }
     case 'blocked':
     default:
       return ['upcoming', 'upcoming', 'upcoming', 'upcoming']
@@ -67,8 +108,12 @@ function getStepStates(status: string): [StepState, StepState, StepState, StepSt
 
 export const BoardCard = ({ task }: { task: ProgressTask }) => {
   const title = taskTitle(task)
-  const steps = getStepStates(task.status)
+  const steps = getStepStates(task.status, task.failureSignature)
   const failureSig = task.failureSignature ?? null
+  // The chip was the raw signature squeezed into 80px, so it arrived as
+  // "setup:unh…" — a truncated machine string that names nothing. The phase
+  // is the part a reader can act on and it fits; the rest is on hover.
+  const failedAt = failedPhaseIndex(task.failureSignature)
   const isLive = isLiveStatus(task.status)
 
   const dotClass =
@@ -116,14 +161,19 @@ export const BoardCard = ({ task }: { task: ProgressTask }) => {
                   ? 's-done bg-status-done'
                   : state === 'run'
                     ? 's-run bg-status-running motion-safe:animate-mars-pulse'
-                    : 'upcoming border border-border bg-transparent'
+                    : state === 'failed'
+                      ? 's-failed bg-status-failed'
+                      : 'upcoming border border-border bg-transparent'
               }`}
             />
           ))}
         </div>
         {failureSig ? (
-          <span className="chip-fail shrink-0 rounded bg-status-failed/15 px-1 py-0.5 font-mono text-micro font-semibold text-status-failed truncate max-w-[80px]">
-            {failureSig}
+          <span
+            title={failureSig}
+            className="chip-fail shrink-0 rounded bg-status-failed/15 px-1 py-0.5 text-micro font-semibold text-status-failed"
+          >
+            {failedAt === -1 ? 'failed' : `failed in ${PHASES[failedAt]}`}
           </span>
         ) : null}
       </div>

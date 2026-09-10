@@ -248,7 +248,11 @@ const ProposalRow = ({ draft, onDismiss }: ProposalRowProps) => {
         </div>
       )}
 
-      {/* Footer: Review · Grill · Promote — Dismiss sits apart on the right */}
+      {/* Footer: Review · Grill · Promote — Dismiss sits apart on the right.
+          The drawer follows THIS order, not the other way round: escalating
+          commitment (look, then shape, then accept) is a better reason than
+          the drawer's had, which was none. Review has no counterpart in the
+          drawer for the obvious reason — it is the way in. */}
       <div className="flex flex-wrap items-center gap-1.5">
         <ActionLink href={proposalHash(draft.id, 'proposals')} variant="primary">
           Review

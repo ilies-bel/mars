@@ -11,6 +11,7 @@ import { describe, expect, it } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { ProgressProposalNode, ProgressTask } from '@/shared/schemas'
 import { BoardView } from './BoardView'
+import { BoardCard } from './Column'
 
 // ---------------------------------------------------------------------------
 // Test-data helpers
@@ -366,5 +367,43 @@ describe('BoardView dense — column layout', () => {
     )
 
     expect(html).not.toContain('border border-border bg-secondary')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Step rail — a failed card must not read as progress
+// ---------------------------------------------------------------------------
+
+describe('BoardCard step rail on a failed task', () => {
+  it('marks the phase that actually failed, not three steps done', () => {
+    // It returned ['done','done','done','upcoming'] for every failed task —
+    // three filled segments reading "three quarters done, still going" on a
+    // task that had died at setup, the first step.
+    const html = renderToStaticMarkup(
+      <BoardCard task={task({ id: 't-f1', cluster: 'Failed', status: 'failed', failureSignature: 'setup:unhandled/unclassified' })} />,
+    )
+    // Anchored on the class prefix: a bare 's-done' also matches inside
+    // 'bg-status-done', which is how the first draft of this test passed
+    // against markup it disagreed with.
+    expect(html).toContain('rounded-sm s-failed')
+    expect(html).not.toContain('rounded-sm s-done')
+    expect(html).toContain('failed in setup')
+  })
+
+  it('reads the phase out of a recovery-wrapped signature', () => {
+    const html = renderToStaticMarkup(
+      <BoardCard task={task({ id: 't-f2', cluster: 'Failed', status: 'failed', failureSignature: 'recovery_exhausted:verify/unclassified' })} />,
+    )
+    expect(html).toContain('failed in verify')
+    // setup and code ran before verify, so those two segments are honest.
+    expect(html.match(/rounded-sm s-done/g) ?? []).toHaveLength(2)
+  })
+
+  it('claims nothing when there is no signature to read', () => {
+    const html = renderToStaticMarkup(
+      <BoardCard task={task({ id: 't-f3', cluster: 'Failed', status: 'failed', failureSignature: null })} />,
+    )
+    expect(html).not.toContain('rounded-sm s-done')
+    expect(html).not.toContain('rounded-sm s-failed')
   })
 })

@@ -158,6 +158,28 @@ export const ProposalActionRow = ({
       data-testid="proposal-action-row"
       className="flex items-center gap-2 border-b border-border px-4 py-2"
     >
+      {/* Grill before Promote — the same order the proposal CARD uses.
+          The card runs Review · Grill · Promote, escalating commitment: look
+          at it, shape it, then accept it. This row ran Promote first, so
+          opening a proposal reordered the two verbs the operator had just
+          been scanning and moved the leading position onto the irreversible
+          one. */}
+      {/* Grill */}
+      <button
+        type="button"
+        data-testid="btn-grill"
+        onClick={() => { void handleGrill() }}
+        disabled={grillState.kind === 'pending'}
+        className="rounded border border-border px-2 py-0.5 text-body text-muted-foreground hover:bg-foreground/5 disabled:opacity-50"
+      >
+        {grillState.kind === 'pending' ? 'Opening…' : 'Grill'}
+      </button>
+      {grillState.kind === 'error' && (
+        <span data-testid="grill-error" className="text-micro text-destructive">
+          {grillState.message}
+        </span>
+      )}
+
       {/* Promote */}
       {promoteState.kind === 'done' ? (
         <span className="text-micro text-muted-foreground">
@@ -189,22 +211,6 @@ export const ProposalActionRow = ({
       )}
       {promoteState.kind === 'error' && (
         <span className="text-micro text-destructive">{promoteState.message}</span>
-      )}
-
-      {/* Grill */}
-      <button
-        type="button"
-        data-testid="btn-grill"
-        onClick={() => { void handleGrill() }}
-        disabled={grillState.kind === 'pending'}
-        className="rounded border border-border px-2 py-0.5 text-body text-muted-foreground hover:bg-foreground/5 disabled:opacity-50"
-      >
-        {grillState.kind === 'pending' ? 'Opening…' : 'Grill'}
-      </button>
-      {grillState.kind === 'error' && (
-        <span data-testid="grill-error" className="text-micro text-destructive">
-          {grillState.message}
-        </span>
       )}
 
       {/* Mockup */}

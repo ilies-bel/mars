@@ -87,10 +87,28 @@ export const StudioPage = ({ taskId, fetchImpl }: StudioPageProps) => {
               {score !== null && score.score !== null ? (
                 <>
                   <ScoreBar score={score.score} size="lg" data-testid="studio-score-bar" />
-                  <p className="text-label text-muted-foreground">
-                    {score.recorded ? 'Scored' : 'Scored, not recorded'}
-                    {score.scoredAt !== null ? ` ${relativeTime(score.scoredAt)}` : ''}
-                  </p>
+                  <div className="flex min-w-0 flex-col">
+                    <p className="text-label text-muted-foreground">
+                      {score.recorded ? 'Scored' : 'Scored, not recorded'}
+                      {score.scoredAt !== null ? ` ${relativeTime(score.scoredAt)}` : ''}
+                    </p>
+                    {/* The page's own subtitle promises "how recent runs were
+                        graded" and then shows five green checkmarks over a
+                        near-zero score, which reads as a broken page rather
+                        than as a judgement. Two facts close that gap: the
+                        score grades the WORK, not whether the steps ran; and
+                        the scorer recorded no reasoning, which is a fact about
+                        this run worth stating rather than an empty space to
+                        interpret. */}
+                    <p
+                      data-testid="studio-score-rationale"
+                      className="max-w-[80ch] text-micro leading-relaxed text-muted-foreground"
+                    >
+                      {score.review?.decision ??
+                        score.suggestion?.decisionKind ??
+                        'The scorer graded the work, not whether the steps ran — a run can pass every step and still score low. It recorded no reasoning for this one.'}
+                    </p>
+                  </div>
                 </>
               ) : (
                 <p className="text-label text-muted-foreground">
