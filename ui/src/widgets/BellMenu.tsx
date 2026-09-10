@@ -110,6 +110,8 @@ export const BellMenu = () => {
         {count > 0 && (
           <span
             aria-label={`${badgeLabel} items need attention`}
+            /* Keyed by the count — see the sidebar badge in Shell.tsx. */
+            key={count}
             className="absolute -right-1 -top-1 flex h-4 min-w-[18px] items-center justify-center rounded-full animate-badge-pulse px-1.5 text-micro font-medium text-white"
           >
             {badgeLabel}

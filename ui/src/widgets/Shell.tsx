@@ -275,6 +275,10 @@ const NavItem = ({
       {badge !== undefined && badge > 0 && (
         <span
           aria-label={badgeAriaLabel ?? `${badge > 99 ? '99+' : badge} decisions pending`}
+          /* Keyed by the count so a CHANGE remounts it and replays the pulse.
+             Without this the finite animation runs once at mount and a badge
+             going 36 → 41 would announce nothing. */
+          key={badge}
           className="ml-auto min-w-[20px] animate-badge-pulse rounded-full px-1.5 py-0.5 text-center text-micro font-semibold leading-none tabular-nums text-white"
         >
           {badge > 99 ? '99+' : badge}

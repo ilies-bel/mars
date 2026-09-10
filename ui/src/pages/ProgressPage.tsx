@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { EmptyState } from '@/components/EmptyState'
-import { Search } from 'lucide-react'
+import { Search, X } from 'lucide-react'
 import { FallbackSurface } from '@/components/FallbackSurface'
 import { useProgress } from '@/hooks/useProgress'
 import { useHotPaths } from '@/hooks/useHotPaths'
@@ -218,6 +218,24 @@ export const ProgressPage = () => {
   )
   const [searchQuery, setSearchQuery] = useState<string>(initialUrlState.query)
 
+  // Honour a `?q=`/`?proposal=` that arrives AFTER first paint.
+  //
+  // The URL params were read once, into initial state, so a link pasted into
+  // the address bar mid-session did nothing: no remount, no re-read, and then
+  // the debounced writer below put the OLD term back — a shareable-looking
+  // link that silently restored the wrong filter. The page's own writes use
+  // history.replaceState and fire no hashchange, so this listener only ever
+  // sees navigation that came from outside.
+  useEffect(() => {
+    const onHashChange = () => {
+      const next = readProgressStateFromUrl()
+      setSearchQuery((prev) => (prev === next.query ? prev : next.query))
+      setSelectedProposalId((prev) => (prev === next.proposal ? prev : next.proposal))
+    }
+    window.addEventListener('hashchange', onHashChange)
+    return () => window.removeEventListener('hashchange', onHashChange)
+  }, [])
+
   // Compute the set of IDs that match the search query (null = no active filter).
   const searchMatchIds = useMemo((): Set<string> | null => {
     const q = searchQuery.trim().toLowerCase()
@@ -345,9 +363,34 @@ export const ProgressPage = () => {
               placeholder="Search tasks and proposals…"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="h-7 w-full rounded-md border border-border bg-card pl-7 pr-2 text-label text-foreground placeholder:text-muted-foreground focus:border-highlight/40"
+              className="h-7 w-full rounded-md border border-border bg-card pl-7 pr-7 text-label text-foreground placeholder:text-muted-foreground focus:border-highlight/40"
             />
+            {/* The only way out of a filter used to be the "Clear search"
+                button in the zero state — which appears exactly when every
+                column is empty, i.e. the one case where you least need it. A
+                search that matched one card had no escape at all. */}
+            {searchQuery !== '' && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                aria-label="Clear search"
+                data-testid="search-tasks-clear"
+                className="absolute inset-y-0 right-1.5 my-auto flex h-5 w-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground"
+              >
+                <X size={12} strokeWidth={2} aria-hidden="true" />
+              </button>
+            )}
           </div>
+          {/* Same sentence as Drafts and Needs You. Three search boxes on this
+              app used three grammars, and this one reported no count at all. */}
+          {searchQuery.trim() !== '' && (
+            <span
+              className="ml-3 shrink-0 text-label tabular-nums text-muted-foreground"
+              data-testid="search-tasks-count"
+            >
+              {`Showing ${searchMatchIds?.size ?? 0} of ${(tasks?.length ?? 0) + proposals.length}`}
+            </span>
+          )}
         </div>
         )}
         {error && tasks === null ? (

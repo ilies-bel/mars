@@ -644,14 +644,20 @@ html {
 /* ── Badge background pulse ───────────────────────────────────────────────────
  * Pulses only the background-color of a badge, leaving its text at full
  * opacity throughout (contrast preserved). Applied to sidebar and bell badges
- * when count > 0 to draw glance attention without being distracting.
+ * when count > 0.
+ *
+ * FINITE, and replayed by remounting the badge on a count change (the callers
+ * key it by its own number). It used to run `infinite` on every route for as
+ * long as the queue was non-empty — which is always — so it never settled and
+ * therefore never meant "new"; it just meant the app was anxious. It also left
+ * the page permanently non-quiescent for anything waiting on stability.
  * ---------------------------------------------------------------------------*/
 @keyframes badge-bg-pulse {
   0%, 100% { background: color-mix(in srgb, var(--color-flame) 80%, transparent); }
   50%       { background: color-mix(in srgb, var(--color-flame) 50%, transparent); }
 }
 .animate-badge-pulse {
-  animation: badge-bg-pulse 1.6s ease-in-out infinite;
+  animation: badge-bg-pulse 1.6s ease-in-out 2;
   background: color-mix(in srgb, var(--color-flame) 80%, transparent);
 }
 @media (prefers-reduced-motion: reduce) {
