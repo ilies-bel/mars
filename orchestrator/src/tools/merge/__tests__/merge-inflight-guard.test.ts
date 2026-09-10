@@ -36,6 +36,7 @@ const {
   mockHandleTaskFailureWithFixTask,
   mockIsBranchTipInIntegration,
   mockFindLiveWorktreeDependents,
+  mockIsAncestor,
 } = vi.hoisted(() => ({
   mockUpdateTask: vi.fn().mockResolvedValue(undefined),
   mockGetTask: vi.fn().mockResolvedValue(null),
@@ -45,6 +46,7 @@ const {
   mockHandleTaskFailureWithFixTask: vi.fn().mockResolvedValue({ outcome: 'fix-task-spawned' }),
   mockIsBranchTipInIntegration: vi.fn().mockResolvedValue(true),
   mockFindLiveWorktreeDependents: vi.fn().mockResolvedValue([]),
+  mockIsAncestor: vi.fn().mockResolvedValue(true),
 }))
 
 // ---------------------------------------------------------------------------
@@ -114,6 +116,20 @@ vi.mock('../../../core/lib/reflect-signals', () => ({
   recordSignals: vi.fn().mockResolvedValue(undefined),
 }))
 
+// Prevent resolveVcs().isAncestor() from calling real git against a non-existent
+// /tmp/test-repo directory. The post-merge ancestry check (merge.ts line 1219)
+// is what triggers the "working directory no longer exists" spawn error in the
+// task-kind success-path tests. All other VCS port methods are passed through
+// to the real localGitVcs singleton, which already works because its
+// removeWorktree delegates to core/lib/git/worktree (mocked above), and the
+// diagnose-kind path never reaches isAncestor.
+vi.mock('../../../core/ports/vcs/registry', async (importOriginal) => {
+  const orig = await importOriginal<typeof import('../../../core/ports/vcs/registry')>()
+  const realVcs = orig.resolveVcs()
+  const patchedVcs = { ...realVcs, isAncestor: mockIsAncestor }
+  return { ...orig, resolveVcs: () => patchedVcs }
+})
+
 // ---------------------------------------------------------------------------
 // Import SUT after all vi.mock() hoisting
 // ---------------------------------------------------------------------------
@@ -142,6 +158,7 @@ beforeEach(() => {
   mockCheckMergeTargetStatus.mockResolvedValue({ kind: 'clean' })
   mockIsBranchTipInIntegration.mockResolvedValue(true)
   mockFindLiveWorktreeDependents.mockResolvedValue([])
+  mockIsAncestor.mockResolvedValue(true)
 })
 
 /** Stub MergeResult for the success path. */
