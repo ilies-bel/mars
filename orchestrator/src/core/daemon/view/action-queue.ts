@@ -914,19 +914,28 @@ const failedRowCopy = (
   // reason, captured error) are available via the task graph; they no longer
   // occupy the primary card face.
   const taskPart = task?.id ? `Task ${shortId(task.id)} ` : 'Task '
-  const DECISION_BODY =
-    'Continue on the existing worktree, restart from scratch, or drop'
+
+  // The body used to be a constant — "Continue on the existing worktree,
+  // restart from scratch, or drop" — printed on every failed row regardless of
+  // which verbs the row actually carried. A setup failure has no worktree, so
+  // its action menu is restart/drop, and the card was naming Continue as the
+  // first option while offering no way to run it. Read the menu instead of
+  // asserting one.
+  const decisionBody = (actions: readonly { label: string }[]): string => {
+    const labels = actions.map((a) => a.label.toLowerCase())
+    if (labels.length === 0) return 'No automatic recovery is available — inspect the transcript'
+    if (labels.length === 1) return `Your one option: ${labels[0]}`
+    const head = labels.slice(0, -1).join(', ')
+    return `Your options: ${head} or ${labels[labels.length - 1]}`
+  }
 
   if (signature !== null) {
     const kind = lookupFailureKind(signature)
     const phase = failingStepFromSignature(signature)
-    const warmTitle =
-      kind !== null
-        ? kind.warmTitle
-        : unknownFailureKind(phase, capturedError).warmTitle
+    const resolved = kind ?? unknownFailureKind(phase, capturedError)
     return {
-      title: `${taskPart}failed at ${phase}: ${warmTitle}`,
-      body: DECISION_BODY,
+      title: `${taskPart}failed at ${phase}: ${resolved.warmTitle}`,
+      body: decisionBody(resolved.actions),
     }
   }
 
@@ -950,7 +959,7 @@ const failedRowCopy = (
   const summary = failedTaskTitle({ signature: null, capturedError })
   return {
     title: `${taskPart}failed: ${summary}`,
-    body: DECISION_BODY,
+    body: decisionBody(unknownFailureKind('', capturedError).actions),
   }
 }
 
