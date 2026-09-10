@@ -190,6 +190,24 @@ export type Recipe<K extends ActionQueueKind = ActionQueueKind> = {
    * `taskById` never holds a proposal, so the default chain yields `null`.
    */
   operatorGoal?: (ctx: RecipeContext<K>) => string | null
+  /**
+   * Optional recipe-level accessor for the entity's human-readable title.
+   *
+   * Return a non-null string to supply the entity title the UI uses to name
+   * members in a cause-group drill-down (e.g. the PRD's full title rather than
+   * its truncated slug id). Return `null` when the kind has no independent
+   * entity title (task-backed rows surface their goal via `arcGoal` instead).
+   *
+   * Most recipes do not need this — it is reserved for kinds whose entity is a
+   * named artifact (a PRD, a workflow, etc.). The canonical example is
+   * `slice-failed`, where the entity is a proposal and the title comes from
+   * `payload.proposalTitle`.
+   *
+   * The value is available at raise time and is carried in the payload, so
+   * this accessor never performs a lookup: it reads a field that the raiser
+   * already stamped.
+   */
+  entityTitle?: (ctx: RecipeContext<K>) => string | null
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -532,6 +550,9 @@ const RECIPE_DEFINITIONS = {
     // operatorGoal here so the PRD title (carried in the payload since the
     // raiser always stores it) reaches the operator without a task lookup.
     operatorGoal: (ctx) => str(ctx.payload['proposalTitle']) || null,
+    // entityTitle carries the PRD's human-readable name so the UI can label
+    // group members without parsing it back out of the body prose.
+    entityTitle: (ctx) => str(ctx.payload['proposalTitle']) || null,
     verbs: [],
     bulkResolveVerb: { op: 'proposal.slice', label: 'Retry', style: 'primary' as const },
   },

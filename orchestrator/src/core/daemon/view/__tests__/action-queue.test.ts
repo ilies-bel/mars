@@ -81,6 +81,7 @@ function makeSliceFailedRow(prdId: string): ActionQueueRow {
     verbs: [],
     arcGoal: null,
     operatorGoal: null,
+    entityTitle: null,
     class: 'alert',
     noticeKey: null,
   } as ActionQueueRow

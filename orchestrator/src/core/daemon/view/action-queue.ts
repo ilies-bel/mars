@@ -226,6 +226,17 @@ export interface ActionQueueRow {
    */
   operatorGoal: string | null
   /**
+   * Human-readable title of the entity this row represents. For `slice-failed`
+   * rows this is the PRD's real title (not the truncated slug id); for other
+   * entity-backed rows it may be set by the kind's recipe `entityTitle`
+   * accessor. Null for rows whose entity has no independent title (task-backed
+   * rows surface their goal via `arcGoal`/`operatorGoal` instead).
+   *
+   * The UI uses this as the first candidate when naming a row in a cause-group
+   * member list, ahead of parsing it back out of the body prose.
+   */
+  entityTitle: string | null
+  /**
    * Live preview URL for an `awaiting-human` manual-QA row. Present when the
    * `review(ctx, { reviewType: 'manual' })` primitive successfully spawned a
    * preview process and that process reported a URL. Null on every other row
@@ -1542,6 +1553,25 @@ export const buildActionQueueView = async ({
       }
     }
 
+    // Derive the entity's human-readable title via the kind's recipe, when
+    // declared. Used by the UI to name cause-group members without parsing
+    // the body prose. Null for kinds that do not declare an entityTitle accessor.
+    let entityTitle: string | null = null
+    if (isActionQueueKind(row.kind)) {
+      const _recipe = lookupRecipe(row.kind)
+      if (_recipe.entityTitle) {
+        entityTitle = _recipe.entityTitle({
+          kind: row.kind,
+          entityId,
+          payload: row.payload,
+          context: row.context,
+          title,
+          body,
+          raisedAt: new Date(row.raisedAt).toISOString(),
+        })
+      }
+    }
+
     // Surface the live preview URL for awaiting-validation rows. The merge
     // primitive stamps it into the row payload at raise time (and persists the
     // same value on the task row), so the payload is the authoritative,
@@ -1755,6 +1785,7 @@ export const buildActionQueueView = async ({
       fixForTaskId,
       arcGoal,
       operatorGoal,
+      entityTitle,
       toolPromotionDetail,
       previewUrl,
       logPath,
@@ -1842,9 +1873,10 @@ export const buildActionQueueView = async ({
       diagnosis: null,
       failureReasonCode: null,
       recoveryExhausted: false,
-      // Synthetic aggregate row — no single arc goal applies.
+      // Synthetic aggregate row — no single arc goal or entity title applies.
       arcGoal: null,
       operatorGoal: null,
+      entityTitle: null,
       class: 'alert',
       noticeKey: null,
       humanSummary: daemonKilledRecipe.humanSummary(batchRecipeCtx),
@@ -2138,6 +2170,23 @@ export const buildActionQueueHistoryView = async ({
       }
     }
 
+    // Derive entity title via the kind's recipe (same rule as the live view builder).
+    let entityTitle: string | null = null
+    if (isActionQueueKind(row.kind)) {
+      const _recipe = lookupRecipe(row.kind)
+      if (_recipe.entityTitle) {
+        entityTitle = _recipe.entityTitle({
+          kind: row.kind,
+          entityId,
+          payload: row.payload,
+          context: row.context,
+          title,
+          body,
+          raisedAt: new Date(row.raisedAt).toISOString(),
+        })
+      }
+    }
+
     // Build resolution metadata from the resolved row fields.
     const resolution: ActionQueueResolutionMeta | null =
       row.resolvedAt
@@ -2200,6 +2249,7 @@ export const buildActionQueueHistoryView = async ({
       fixForTaskId,
       arcGoal,
       operatorGoal,
+      entityTitle,
       resolution,
       class: historyItemClass,
       noticeKey: historyNoticeKey,

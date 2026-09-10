@@ -1200,6 +1200,9 @@ export const TriagePage = () => {
           (i.title && i.title.toLowerCase().includes(q)) ||
           (i.humanSummary && i.humanSummary.toLowerCase().includes(q)) ||
           (i.operatorGoal && i.operatorGoal.toLowerCase().includes(q)) ||
+          // entityTitle is the entity's real human name (e.g. the PRD title on
+          // slice-failed rows) — preferred over the truncated entityId slug.
+          (i.entityTitle && i.entityTitle.toLowerCase().includes(q)) ||
           (i.entityId && i.entityId.toLowerCase().includes(q)),
       )
     }

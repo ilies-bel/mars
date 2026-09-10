@@ -412,6 +412,14 @@ const actionQueueBaseSchema = z.object({
    */
   operatorGoal: z.string().nullable().optional(),
   /**
+   * Human-readable title of the entity this row represents. For `slice-failed`
+   * rows this is the PRD's real title (not the truncated slug id). Used by the
+   * UI to name cause-group members without parsing the body prose. Absent on
+   * rows from daemon versions that predate this field and on kinds that do not
+   * declare an entityTitle recipe accessor.
+   */
+  entityTitle: z.string().nullable().optional(),
+  /**
    * Resolution metadata — non-null on history rows, absent/null on live open rows.
    * The UI uses this to render the Resolution block and suppress action buttons.
    */

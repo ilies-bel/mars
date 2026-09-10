@@ -364,3 +364,46 @@ describe('slice-failed operatorGoal', () => {
     expect(recipe.operatorGoal!(ctx as Parameters<NonNullable<typeof recipe.operatorGoal>>[0])).toBeNull()
   })
 })
+
+// ---------------------------------------------------------------------------
+// slice-failed recipe — entityTitle carries the PRD's real title
+// ---------------------------------------------------------------------------
+
+describe('slice-failed entityTitle', () => {
+  const recipe = lookupRecipe('slice-failed')
+
+  const makeCtx = (payload: Record<string, unknown>) => ({
+    kind: 'slice-failed' as const,
+    entityId: '04b4e4e0-queue-position-ordering-for-the-cas-merg',
+    payload,
+    context: {},
+    title: 'Mars could not turn this PRD into tasks — inspect the PRD, then slice it again when ready.',
+    body: 'PRD 04b4e4e0 (Queue-position ordering for the CAS merge loop) could not be sliced: slicer process exited with code 1.',
+    raisedAt: '2026-09-10T00:00:00.000Z',
+  })
+
+  it('carries the PRD real title (not the slug, not the shared failure sentence)', () => {
+    const ctx = makeCtx({
+      proposalId: '04b4e4e0-queue-position-ordering-for-the-cas-merg',
+      proposalTitle: 'Queue-position ordering for the CAS merge loop',
+      error: 'slicer process exited with code 1: model refused to slice',
+    })
+    expect(recipe.entityTitle).toBeDefined()
+    const title = recipe.entityTitle!(ctx as Parameters<NonNullable<typeof recipe.entityTitle>>[0])
+    // Must be the real PRD title — not the truncated slug entityId and not the
+    // shared failure sentence every row shares ("Mars could not turn this PRD…").
+    expect(title).toBe('Queue-position ordering for the CAS merge loop')
+    expect(title).not.toContain('04b4e4e0')
+    expect(title).not.toContain('Mars could not')
+  })
+
+  it('returns null when proposalTitle is absent (legacy row without the field)', () => {
+    const ctx = makeCtx({
+      proposalId: '04b4e4e0-queue-position-ordering-for-the-cas-merg',
+      error: 'slicer process exited with code 1: model refused to slice',
+    })
+    // A row raised before proposalTitle was stored must not crash and must fall
+    // back to null so the UI can degrade gracefully.
+    expect(recipe.entityTitle!(ctx as Parameters<NonNullable<typeof recipe.entityTitle>>[0])).toBeNull()
+  })
+})
