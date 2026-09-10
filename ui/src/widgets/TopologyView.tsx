@@ -110,14 +110,25 @@ interface LegendItem {
   color: string
   /** The node cluster this swatch stands for; null for the proposal frame. */
   cluster: Cluster | null
+  /**
+   * Which visual channel the swatch stands for.
+   *
+   * The legend mixed two axes under one shape: four filled squares for STATE
+   * and one filled square for ORIGIN. On the canvas the proposal marker is an
+   * outline, not a fill, so a proposal-rooted arc that is currently blocked
+   * drew a blue-OUTLINED card whose own subtitle read "blocked" — and the
+   * legend said blue means proposal. Both were right; the key was the lie.
+   * An outline in the legend is an outline on the canvas.
+   */
+  variant: 'fill' | 'outline'
 }
 
 const LEGEND_ITEMS: ReadonlyArray<LegendItem> = [
-  { label: 'proposal', color: PROPOSAL_STROKE, cluster: null },
-  { label: 'in progress', color: CLUSTER_CSS['In progress'].dot, cluster: 'In progress' },
-  { label: 'blocked', color: CLUSTER_CSS.Blocked.dot, cluster: 'Blocked' },
-  { label: 'queued', color: CLUSTER_CSS.Queued.dot, cluster: 'Queued' },
-  { label: 'failed', color: CLUSTER_CSS.Failed.dot, cluster: 'Failed' },
+  { label: 'proposal root', color: PROPOSAL_STROKE, cluster: null, variant: 'outline' },
+  { label: 'in progress', color: CLUSTER_CSS['In progress'].dot, cluster: 'In progress', variant: 'fill' },
+  { label: 'blocked', color: CLUSTER_CSS.Blocked.dot, cluster: 'Blocked', variant: 'fill' },
+  { label: 'queued', color: CLUSTER_CSS.Queued.dot, cluster: 'Queued', variant: 'fill' },
+  { label: 'failed', color: CLUSTER_CSS.Failed.dot, cluster: 'Failed', variant: 'fill' },
 ]
 
 /**
@@ -677,7 +688,14 @@ const TopologyViewInner = ({
         <div className="flex items-center gap-2.5 text-micro text-muted-foreground">
           {legendItems.map((item) => (
             <span key={item.label} className="inline-flex items-center gap-1.5">
-              <i className="inline-block h-[9px] w-[9px] rounded-[2px]" style={{ background: item.color }} />
+              <i
+                className="inline-block h-[9px] w-[9px] rounded-[2px]"
+                style={
+                  item.variant === 'outline'
+                    ? { border: `1.5px solid ${item.color}` }
+                    : { background: item.color }
+                }
+              />
               {item.label}
             </span>
           ))}
@@ -691,7 +709,7 @@ const TopologyViewInner = ({
           {hintText ? (
             <span className="font-medium text-foreground">{hintText}</span>
           ) : (
-            'click card = open · click task = details · esc = collapse'
+            'click an arc = expand it · click a task inside it = details · esc = collapse'
           )}
         </span>
         {emphasized.edges.length === 0 && (

@@ -218,8 +218,8 @@ describe('TopologyView – navigation hint overlay', () => {
     const html = renderToStaticMarkup(
       <TopologyView tasks={[stubTask('t-1')]} proposals={noProposals} />,
     )
-    expect(html).toContain('click card')
-    expect(html).toContain('click task')
+    expect(html).toContain('click an arc')
+    expect(html).toContain('click a task inside it')
     expect(html.toLowerCase()).toContain('esc')
   })
 
@@ -840,7 +840,7 @@ describe('visibleLegendItems', () => {
 
   it('includes the proposal swatch only when a proposal frame is drawn', () => {
     expect(visibleLegendItems(new Set(['Failed'] as const), true).map((i) => i.label)).toEqual([
-      'proposal',
+      'proposal root',
       'failed',
     ])
     expect(visibleLegendItems(new Set(['Failed'] as const), false).map((i) => i.label)).toEqual([
