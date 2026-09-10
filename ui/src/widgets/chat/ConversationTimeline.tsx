@@ -176,17 +176,26 @@ export const ConversationTimeline = ({
     subjectGroups.get(entry.subjectId)!.push(entry)
   }
 
-  // The first entry of each calendar day, so a separator can be dropped in
-  // front of it. Computed over the flat ordered list rather than tracked with
-  // a mutable cursor inside the nested render, so it does not depend on the
-  // order React happens to evaluate the maps in.
-  const dayStartIds = new Set<string>()
-  let lastDay: string | null = null
-  for (const entry of visibleEntries) {
-    const day = localDayKey(entry.createdAt)
-    if (day !== lastDay) {
-      dayStartIds.add(entry.id)
-      lastDay = day
+  // Day seams sit between SUBJECT GROUPS, not between entries.
+  //
+  // The transcript is ordered by subject, and a subject's own messages can
+  // straddle midnight, so a per-entry day cursor would drop a separator
+  // mid-conversation and then another one back again. The group is the unit
+  // the reader actually scans, so the seam goes where a group's first message
+  // lands on a different day than the previous group's last one.
+  //
+  // Computed here over the render order rather than tracked with a mutable
+  // cursor inside the nested map, so it does not depend on the order React
+  // happens to evaluate those maps in — and so it reaches the closed-subject
+  // breadcrumbs, which render no entries of their own and would otherwise
+  // leave a bare "22:55" with no day anywhere near it.
+  const dayStartSubjectIds = new Set<string>()
+  {
+    let lastDay: string | null = null
+    for (const subjectId of subjectOrder) {
+      const group = subjectGroups.get(subjectId)!
+      if (localDayKey(group[0]!.createdAt) !== lastDay) dayStartSubjectIds.add(subjectId)
+      lastDay = localDayKey(group[group.length - 1]!.createdAt)
     }
   }
 
@@ -249,6 +258,10 @@ export const ConversationTimeline = ({
         const isClosed = subjectEntries[0]!.subjectClosed
         const boundary = boundariesBySubject.get(subjectId)
 
+        const daySeam = dayStartSubjectIds.has(subjectId) ? (
+          <DaySeparator at={subjectEntries[0]!.createdAt} />
+        ) : null
+
         if (isClosed) {
           // Closed subjects collapse to one breadcrumb. The memory cut may
           // fall within the subject's entries — if so, place the boundary
@@ -270,6 +283,7 @@ export const ConversationTimeline = ({
             const isNotice = entry.kind === 'notice'
             return (
               <Fragment key={subjectId}>
+                {daySeam}
                 <ClosedSubjectBreadcrumb
                   title={entry.subjectTitle}
                   messageCount={1}
@@ -324,6 +338,7 @@ export const ConversationTimeline = ({
 
           return (
             <Fragment key={subjectId}>
+              {daySeam}
               <ClosedSubjectBreadcrumb
                 title={subjectEntries[0]!.subjectTitle}
                 messageCount={subjectEntries.length}
@@ -335,7 +350,7 @@ export const ConversationTimeline = ({
         }
 
         // Open subject: render each entry with boundary seams and memory marker.
-        return subjectEntries.map((entry, index) => {
+        const openEntries = subjectEntries.map((entry, index) => {
           const isFirstSubjectMessage = index === 0
           const isFinalSubjectMessage = index === subjectEntries.length - 1
 
@@ -346,7 +361,6 @@ export const ConversationTimeline = ({
             const breadcrumb = entry.segments.find(isBreadcrumbSegment)
             return (
               <Fragment key={entry.id}>
-                {dayStartIds.has(entry.id) && <DaySeparator at={entry.createdAt} />}
                 <div
                   data-testid="context-line-breadcrumb"
                   className="rounded border border-muted px-3 py-2 font-mono text-label text-muted-foreground"
@@ -382,7 +396,6 @@ export const ConversationTimeline = ({
           if (isSuperseded(entry)) {
             return (
               <Fragment key={entry.id}>
-                {dayStartIds.has(entry.id) && <DaySeparator at={entry.createdAt} />}
                 <div
                   data-testid="conversation-situation-superseded"
                   className="flex items-center gap-2 px-1 py-0.5 text-micro text-muted-foreground/70"
@@ -397,7 +410,6 @@ export const ConversationTimeline = ({
 
           return (
             <Fragment key={entry.id}>
-              {dayStartIds.has(entry.id) && <DaySeparator at={entry.createdAt} />}
               {boundary && isFirstSubjectMessage && <SubjectBoundaryLine boundary={boundary} position="start" />}
               <article
                 data-thread-id={entry.threadId}
@@ -466,6 +478,13 @@ export const ConversationTimeline = ({
             </Fragment>
           )
         })
+
+        return (
+          <Fragment key={subjectId}>
+            {daySeam}
+            {openEntries}
+          </Fragment>
+        )
       })}
       {/* Spacer so the final entry is never hidden behind the composer.
           Height is measured by the parent via ResizeObserver and kept in sync
