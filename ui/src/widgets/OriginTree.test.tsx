@@ -238,10 +238,14 @@ describe('OriginTree – loading and error states', () => {
 // ---------------------------------------------------------------------------
 
 describe('OriginTree – single-node tree', () => {
-  it('shows the empty-state line for a lone task with no ancestry', () => {
+  it('renders nothing at all for a lone task with no ancestry', () => {
     const html = render(loaded(SINGLE_NODE('t-1')), { taskId: 't-1' })
-    expect(html).toContain('No origin recorded for this task.')
-    // No tree container is rendered in the empty state.
+    // Having no origin is the ordinary case, so it earns no slot in the
+    // drawer. This used to emit an "Origins" header over the sentence "No
+    // origin recorded for this task." — one of three consecutive sections
+    // whose entire content was a denial.
+    expect(html).not.toContain('Origins')
+    expect(html).not.toContain('No origin recorded')
     expect(html).not.toContain('data-testid="origin-tree"')
   })
 })

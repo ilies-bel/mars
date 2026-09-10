@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { EmptyState } from '@/components/EmptyState'
 import { Search } from 'lucide-react'
 import { FallbackSurface } from '@/components/FallbackSurface'
 import { useProgress } from '@/hooks/useProgress'
@@ -88,14 +89,16 @@ const HotPathsSection = ({
       ) : isLoading || !data ? (
         <div className="font-mono text-label text-muted-foreground">Loading…</div>
       ) : data.paths.length === 0 ? (
-        <div
+        <EmptyState
           data-testid="hot-paths-empty"
-          className="font-mono text-label text-muted-foreground"
+          title={`No files changed in the last ${window}`}
+          variant="inline"
         >
-          No changes found in the last {window}.
-        </div>
+          Widen the window above to cover a longer stretch of history.
+        </EmptyState>
       ) : (
         <div data-testid="hot-paths-list" className="flex flex-col gap-0.5">
+          <HotPathHeader />
           {data.paths.map((entry: HotPathEntry) => (
             <HotPathRow key={entry.path} entry={entry} />
           ))}
@@ -114,6 +117,33 @@ interface HotPathRowProps {
   entry: HotPathEntry
 }
 
+/**
+ * One grid template shared by the header and every row, so the four columns
+ * actually line up.
+ *
+ * They did not before: the row was a flex line whose numeric cells were all
+ * `shrink-0` and pushed right by a growing path cell, and the tasks cell was
+ * omitted entirely when a path had no tasks. Measured across eight rows, the
+ * "changes" number landed at four different x positions (1311, 1319, 1326,
+ * 1389). `tabular-nums` aligns digits inside a cell; it cannot align cells.
+ * A column of numbers you cannot read down is not a column.
+ */
+const HOT_PATH_GRID =
+  'grid grid-cols-[minmax(0,1fr)_6rem_8rem] items-center gap-3 px-2'
+
+const HotPathHeader = () => (
+  <div
+    data-testid="hot-paths-header"
+    className={`${HOT_PATH_GRID} border-b border-border pb-1`}
+  >
+    <span className="eyebrow text-muted-foreground">File</span>
+    <span className="eyebrow text-right text-muted-foreground">Changes</span>
+    {/* The M/H suffixes used to be explained only by a hover title, which is
+        no explanation at all for a number you are trying to read. */}
+    <span className="eyebrow text-right text-muted-foreground">Mars / human</span>
+  </div>
+)
+
 const HotPathRow = ({ entry }: HotPathRowProps) => {
   // Clicking a row with associated tasks opens the first task's drawer.
   // For rows with multiple tasks, the task list is shown inline.
@@ -122,10 +152,10 @@ const HotPathRow = ({ entry }: HotPathRowProps) => {
   return (
     <div
       data-testid="hot-paths-row"
-      className="flex items-center gap-3 rounded px-2 py-1 hover:bg-card"
+      className={`${HOT_PATH_GRID} rounded py-1 hover:bg-card`}
     >
       {/* Path */}
-      <span className="min-w-0 flex-1 truncate font-mono text-label text-foreground">
+      <span className="min-w-0 truncate font-mono text-label text-foreground">
         {firstTaskId ? (
           <a
             href={taskHash(firstTaskId)}
@@ -137,27 +167,25 @@ const HotPathRow = ({ entry }: HotPathRowProps) => {
           entry.path
         )}
       </span>
-      {/* Change count bar */}
+      {/* Change count */}
       <span
         data-testid="hot-paths-count"
-        className="shrink-0 font-mono text-label text-muted-foreground tabular-nums"
+        className="text-right font-mono text-label tabular-nums text-foreground"
       >
         {entry.changes}
       </span>
-      {/* Mars vs humans split */}
-      <span className="shrink-0 font-mono text-label text-muted-foreground tabular-nums">
-        <span className="text-highlight" title="Mars commits">
-          {entry.touchedByMars}M
-        </span>
+      {/* Mars vs humans split.
+          There used to be a fourth "N tasks" column here. Aligning the
+          columns made it obvious that it was the Mars number restated: in
+          all 60 rows the two were equal, and hot-paths.ts explains why —
+          `stats.tasks.add(taskId)` and `stats.touchedByMars++` sit in the
+          same branch, and Mars lands one commit per task. The task ids are
+          still used, as the link target on the path itself. */}
+      <span className="text-right font-mono text-label tabular-nums text-muted-foreground">
+        <span className="text-highlight">{entry.touchedByMars}</span>
         {' / '}
-        <span title="Human commits">{entry.touchedByHumans}H</span>
+        <span>{entry.touchedByHumans}</span>
       </span>
-      {/* Task count */}
-      {entry.tasks.length > 0 && (
-        <span className="shrink-0 font-mono text-label text-muted-foreground tabular-nums">
-          {entry.tasks.length} task{entry.tasks.length === 1 ? '' : 's'}
-        </span>
-      )}
     </div>
   )
 }

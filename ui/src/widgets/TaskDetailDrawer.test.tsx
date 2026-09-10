@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { ReactElement } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { taskTitle } from '@/shared/promptTitle'
 import type {
   OriginsResponse,
   ProgressProposalNode,
@@ -746,10 +747,11 @@ describe('TaskDetailBody – failed task with error', () => {
     expect(html).not.toContain('data-testid="task-detail-spec"')
   })
 
-  it('mounts the origin tree and the meta + diagnostics sections', () => {
+  it('mounts the meta + diagnostics sections, and no empty Origins header', () => {
     const html = renderBody(failed)
-    // OriginTree single-node empty-state still renders its Origins header.
-    expect(html).toContain('Origins')
+    // A single-node origin tree now renders null rather than a header over a
+    // denial, so a task with no ancestry shows no Origins section at all.
+    expect(html).not.toContain('Origins')
     expect(html).toContain('data-testid="task-detail-meta"')
     expect(html).toContain('data-testid="task-detail-diagnostics"')
   })
@@ -2336,6 +2338,40 @@ describe('TaskDetailDrawer – SSE live-update via React Query', () => {
  * See: ProposalDetailDrawer fix in commit 10a52ade for the same pattern.
  */
 describe('TaskDetailDrawer – done-task and not-found', () => {
+  it('prints the task title exactly once', () => {
+    // The drawer used to render the title twice: truncated and muted in the
+    // sticky <header>, then again in full below the step list. Both were
+    // on screen at the same time, and it was the first thing a reader saw.
+    // The header keeps it (it survives scrolling); the body does not.
+    // The intent supplies the title, and it deliberately shares no words with
+    // the prompt — otherwise the prompt block legitimately contains the title
+    // string too (taskTitle derives from the prompt when there is no intent)
+    // and the count cannot distinguish content from a duplicated heading.
+    const t = fullTask({
+      id: 'once-t1',
+      status: 'done',
+      intent: 'Zqxjv heading marker',
+      prompt: 'unrelated body text\nsecond line',
+    })
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    })
+    qc.setQueryData(['task', 'once-t1'], { kind: 'found', task: t })
+    qc.setQueryData(['origins', null, 'once-t1'], SINGLE_NODE_ORIGINS('once-t1'))
+
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <TaskDetailDrawer taskId="once-t1" onClose={() => {}} />
+      </QueryClientProvider>,
+    )
+    const title = taskTitle(t)
+    const occurrences = html.split(title).length - 1
+    // The <h2> renders it as text and repeats it in a title="" tooltip for the
+    // long-title case, so the header alone accounts for two. A third would be
+    // the body copy that used to sit below the step list.
+    expect(occurrences).toBe(2)
+  })
+
   it('renders title and step timeline for a done task fetched by id', () => {
     // Pre-seed the ['task', id] query (simulates /api/tasks/:id returning the task).
     const doneTask = fullTask({ id: 'done-t1', status: 'done' })

@@ -800,9 +800,7 @@ const BlockersSection = ({ taskId, blockedBy }: { taskId: string; blockedBy: str
             </li>
           ))}
         </ul>
-      ) : (
-        <p className="text-micro text-muted-foreground">No blockers.</p>
-      )}
+      ) : null}
       <div className="mt-1 flex gap-2">
         <input
           data-testid="add-blocker-input"
@@ -1161,10 +1159,11 @@ export const TaskDetailBody = ({
 
   return (
     <div className="flex flex-col gap-4">
-      {/* a. Header tier — always present. */}
+      {/* a. Status tier — always present. The title is NOT repeated here; the
+             drawer's own <header> carries it, and printing it twice was the
+             first thing a reader noticed on opening the drawer. */}
       <div>
-        <p className="break-words text-title font-medium text-foreground">{title}</p>
-        <div className="mt-1 flex items-baseline gap-2">
+        <div className="flex items-baseline gap-2">
           <span
             data-testid="task-detail-status"
             className="eyebrow text-muted-foreground"
@@ -1196,13 +1195,18 @@ export const TaskDetailBody = ({
           data-testid="task-detail-error"
           className="rounded border border-error/50 bg-error/5 px-3 py-2"
         >
-          <p className="eyebrow text-error">
-            {task.status === 'failed' ? 'Failure' : isBlocked ? 'Blocked' : 'Error'}
-          </p>
+          {/* The status chip directly above already says "failed" / "blocked",
+              so repeating it as "Failure" / "Blocked" here just made the word
+              appear twice in 40px. It survives only for the case it is the
+              sole signal: a task carrying an error while not itself failed. */}
+          {task.status !== 'failed' && !isBlocked ? (
+            <p className="eyebrow text-error">Error</p>
+          ) : null}
           {isBlocked ? (
             <p className="mt-1 text-label text-muted-foreground">
-              Waiting on {task.blockedBy.length} blocker
-              {task.blockedBy.length === 1 ? '' : 's'}.
+              {task.blockedBy.length > 0
+                ? `Waiting on ${task.blockedBy.length} blocker${task.blockedBy.length === 1 ? '' : 's'}.`
+                : 'Blocked, but no blocker is recorded — nothing will release it on its own.'}
             </p>
           ) : null}
           {/* Lead with humanized cause — same source as the Action Queue banner. */}
@@ -1862,7 +1866,7 @@ const StepCardList = ({
   agentToolCallsBySession?: Map<string, AgentToolCall[]>
   activeStepName?: string
   /**
-   * When set, an "Open in Studio →" link renders beside the section header,
+   * When set, an "Open in Scores →" link renders beside the section header,
    * navigating to the full-page execution tree (`#/studio/<taskId>`) for the
    * task these steps belong to. Omitted for proposal subjects, which have no
    * single-instance Studio view.
@@ -1883,7 +1887,7 @@ const StepCardList = ({
           data-testid="open-in-studio"
           className="font-mono text-label text-muted-foreground hover:text-foreground hover:underline"
         >
-          Open in Studio →
+          Open in Scores →
         </a>
       ) : null}
     </div>
@@ -2429,7 +2433,10 @@ export const TaskDetailDrawer = ({
         className="drawer-panel fixed inset-0 z-50 flex w-full flex-col border-border bg-background outline-none xl:inset-y-0 xl:left-auto xl:right-0 xl:w-[min(560px,100vw)] xl:border-l xl:shadow-2xl"
       >
       <header className="flex items-center justify-between border-b border-border px-4 py-3">
-        <h2 className="min-w-0 flex-1 truncate text-title text-muted-foreground">
+        <h2
+          className="min-w-0 flex-1 break-words text-title font-medium text-foreground"
+          title={readyTask ? taskTitle(readyTask) : undefined}
+        >
           {readyTask ? taskTitle(readyTask) : 'Task'}
         </h2>
         <button

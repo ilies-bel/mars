@@ -122,16 +122,12 @@ export const OriginTree = ({ taskId, onNavigate, currentId }: OriginTreeProps) =
   }
 
   const root = query.data.node
-  // Single-node tree, no real ancestry — collapse to the empty-state line.
+  // Single-node tree, no real ancestry. Render nothing at all: a task with no
+  // origin is the ordinary case, and a section header followed by "No origin
+  // recorded for this task." was one of three consecutive slots in the drawer
+  // whose entire content was a denial.
   if (root.children.length === 0 && root.id === taskId) {
-    return (
-      <div>
-        <dt className="eyebrow mb-2 border-b border-border pb-1 text-muted-foreground">
-          Origins
-        </dt>
-        <dd className="text-muted-foreground">No origin recorded for this task.</dd>
-      </div>
-    )
+    return null
   }
 
   return (
