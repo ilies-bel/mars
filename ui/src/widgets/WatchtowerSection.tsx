@@ -182,7 +182,7 @@ const ScoreTrends = () => {
 
 export const WatchtowerSection = () => (
   <div className="flex flex-col gap-3">
-    <SectionHeading>Watchtower</SectionHeading>
+    <SectionHeading>Improvement loop</SectionHeading>
     <div className="flex flex-col gap-3">
       {/* Score trends — live data via useScorerWorkflows + WatchtowerTrendChart */}
       <div className="flex flex-col gap-2 rounded border border-border p-4">
@@ -190,11 +190,11 @@ export const WatchtowerSection = () => (
         <ScoreTrends />
       </div>
       <div className="flex flex-col gap-2 rounded border border-border p-4">
-        <h4 className="panel-title">Promotion ledger</h4>
+        <h4 className="panel-title">Promoted helpers</h4>
         <PromotionLedgerTable />
       </div>
       <div className="flex flex-col gap-2 rounded border border-border p-4">
-        <h4 className="panel-title">Loop ledger</h4>
+        <h4 className="panel-title">Score follow-through</h4>
         <LoopLedgerPanel />
       </div>
     </div>

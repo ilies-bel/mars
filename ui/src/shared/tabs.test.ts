@@ -44,8 +44,8 @@ describe('tabLabel', () => {
     expect(tabLabel('board')).toBe('Board')
   })
 
-  it('topology tab carries the label "Topology"', () => {
-    expect(tabLabel('topology')).toBe('Topology')
+  it('topology tab carries the label "Task graph"', () => {
+    expect(tabLabel('topology')).toBe('Task graph')
   })
 
 })

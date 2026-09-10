@@ -10,7 +10,7 @@ import { Chip } from '@/components/Chip'
  *   2. Gates — verify-gate registry: name, tier, command, last failure, and a
  *      Restore button for quarantined gates. Empty state links to detect command.
  *   3. Now — SSE liveness dot + task counts by lifecycle cluster.
- *   4. Advisory Digest — collapsed advisory action-queue items.
+ *   4. Advisories — collapsed advisory action-queue items.
  *   5. Rules & Language — glossary chips and ADR list, collapsed by default
  *      behind a search/filter input so the heavy list doesn't scroll-block
  *      the controls above.
@@ -18,7 +18,7 @@ import { Chip } from '@/components/Chip'
  * Reachable at #/control.
  */
 
-import { useState, useMemo } from 'react'
+import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   fetchGlossary,
@@ -55,8 +55,6 @@ import {
 import { StewardLedgerPanel } from '@/widgets/StewardLedgerPanel'
 import { useStewardView } from './useStewardView'
 import { CapRatchet } from './StewardPage'
-import { useHotPaths } from '@/hooks/useHotPaths'
-import type { HotPathEntry } from '@/shared/schemas'
 
 // ---------------------------------------------------------------------------
 // Advisory kinds shown in the digest (not in the main alert queue)
@@ -919,7 +917,7 @@ const EngineSection = () => {
 }
 
 // ---------------------------------------------------------------------------
-// Section 5 — Advisory Digest (section numbering offset by new EngineSection)
+// Section 5 — Advisories (section numbering offset by new EngineSection)
 // ---------------------------------------------------------------------------
 
 const ADVISORY_LABELS: Record<string, string> = {
@@ -934,7 +932,7 @@ const AdvisorySection = () => {
 
   return (
     <section>
-      <SectionHeading>Advisory Digest</SectionHeading>
+      <SectionHeading>Advisories</SectionHeading>
 
       <div className="mb-4 flex gap-4">
         <ActionLink href="#/steward" variant="ghost" size="sm">
@@ -1130,376 +1128,6 @@ const StewardHistorySection = () => {
   )
 }
 
-// ---------------------------------------------------------------------------
-// Section 8 — HOT PATH (circle-packing churn visualisation)
-// ---------------------------------------------------------------------------
-
-const HOT_PATH_WINDOWS = ['30d', '90d', 'all'] as const
-type HotPathWindow = (typeof HOT_PATH_WINDOWS)[number]
-
-/** SVG viewport dimensions for the circle-packing diagram. */
-const HP_W = 560
-const HP_H = 300
-/** Minimum circle radius — prevents single-commit files from being invisible. */
-const HP_MIN_R = 5
-/**
- * Maximum number of leaf circles rendered in the SVG. The top-60 cap keeps
- * first-paint bounded (the data cap from the API is also 60).
- */
-const HP_MAX_LEAVES = 60
-
-/**
- * Map a recency value 0→1 (oldest→newest) to an HSL fill colour.
- *
- * Uses a single-hue orange ramp. Saturation encodes recency so the meaning
- * survives light/dark themes; lightness is fixed at 52% so the circles read
- * against both a white and a near-black background.
- *
- * A tooltip always carries the numeric count so colour is never the sole
- * channel for data.
- */
-function hotPathColor(recency: number): string {
-  const s = Math.round(15 + recency * 68) // 15 % → 83 %
-  return `hsl(28,${s}%,52%)`
-}
-
-interface HotPackedCircle {
-  x: number
-  y: number
-  r: number
-  path: string
-  changes: number
-  recency: number
-}
-
-/**
- * Greedy outward circle-packing. Circles are sorted largest-first and placed
- * at positions tangent to existing circles, choosing the one closest to the
- * centre of mass.
- *
- * Complexity: O(n² × ANGLE_STEPS) — comfortably fast for n ≤ 60.
- */
-function packHotCircles(entries: HotPathEntry[], maxEntries: number): HotPackedCircle[] {
-  const capped = entries.slice(0, maxEntries)
-  if (capped.length === 0) return []
-
-  // Compute recency: normalise lastChangedAt timestamps to [0, 1]
-  const dates = capped.map((e) =>
-    e.lastChangedAt ? new Date(e.lastChangedAt).getTime() : 0,
-  )
-  const validDates = dates.filter((d) => d > 0)
-  const minDate = validDates.length > 0 ? Math.min(...validDates) : 0
-  const maxDate = validDates.length > 0 ? Math.max(...validDates) : 1
-  const dateRange = maxDate - minDate || 1
-
-  // Scale: r ∝ sqrt(changes) so area ∝ changes.
-  // Target ~55 % of the SVG rectangle.
-  const totalChanges = capped.reduce((s, e) => s + e.changes, 0)
-  const usableArea = HP_W * HP_H * 0.55
-  const areaScale = usableArea / totalChanges
-
-  const circles: HotPackedCircle[] = []
-
-  const STEP = Math.PI / 24 // 48 candidate angles per existing circle
-
-  for (const entry of capped) {
-    const r = Math.max(HP_MIN_R, Math.sqrt(entry.changes * areaScale))
-    const ts = entry.lastChangedAt ? new Date(entry.lastChangedAt).getTime() : minDate
-    const recency = maxDate === minDate ? 1 : (ts - minDate) / dateRange
-
-    const circle: HotPackedCircle = {
-      x: 0,
-      y: 0,
-      r,
-      path: entry.path,
-      changes: entry.changes,
-      recency,
-    }
-
-    if (circles.length === 0) {
-      circles.push(circle)
-      continue
-    }
-
-    // Default fallback: place to the right of the first circle.
-    let bestX = circles[0].x + circles[0].r + r
-    let bestY = 0
-    let bestDist = bestX * bestX + bestY * bestY
-
-    for (const c of circles) {
-      const d = c.r + r
-      for (let angle = 0; angle < 2 * Math.PI; angle += STEP) {
-        const x = c.x + d * Math.cos(angle)
-        const y = c.y + d * Math.sin(angle)
-
-        const overlaps = circles.some((o) => {
-          const dx = x - o.x
-          const dy = y - o.y
-          return dx * dx + dy * dy < (o.r + r - 0.5) ** 2
-        })
-
-        if (!overlaps) {
-          const dist = x * x + y * y
-          if (dist < bestDist) {
-            bestDist = dist
-            bestX = x
-            bestY = y
-          }
-        }
-      }
-    }
-
-    circle.x = bestX
-    circle.y = bestY
-    circles.push(circle)
-  }
-
-  // Translate so the pack is centred in the SVG viewport.
-  const xs = circles.flatMap((c) => [c.x - c.r, c.x + c.r])
-  const ys = circles.flatMap((c) => [c.y - c.r, c.y + c.r])
-  const minX = Math.min(...xs)
-  const maxX = Math.max(...xs)
-  const minY = Math.min(...ys)
-  const maxY = Math.max(...ys)
-  const offsetX = (HP_W - (maxX - minX)) / 2 - minX
-  const offsetY = (HP_H - (maxY - minY)) / 2 - minY
-
-  return circles.map((c) => ({ ...c, x: c.x + offsetX, y: c.y + offsetY }))
-}
-
-/** Shorten a file path to just the filename for circle labels. */
-function leafLabel(path: string): string {
-  const slash = path.lastIndexOf('/')
-  return slash === -1 ? path : path.slice(slash + 1)
-}
-
-const HotPathSection = () => {
-  const [win, setWin] = useState<HotPathWindow>('90d')
-  const { data, isLoading, error } = useHotPaths({ window: win, group: 'file' })
-  const [tooltip, setTooltip] = useState<{
-    path: string
-    changes: number
-    x: number
-    y: number
-  } | null>(null)
-  const [copiedPath, setCopiedPath] = useState<string | null>(null)
-
-  const circles = useMemo(
-    () => packHotCircles(data?.paths ?? [], HP_MAX_LEAVES),
-    [data],
-  )
-
-  const top10 = data?.paths.slice(0, 10) ?? []
-
-  const toggleBtn = (active: boolean): string =>
-    [
-      'px-2 py-0.5 text-label rounded border transition-colors',
-      active
-        ? 'border-highlight bg-highlight/10 text-foreground'
-        : 'border-border text-muted-foreground hover:text-foreground hover:border-highlight/40',
-    ].join(' ')
-
-  const handleCircleClick = (path: string): void => {
-    navigator.clipboard.writeText(path).catch(() => {})
-    setCopiedPath(path)
-    setTimeout(() => setCopiedPath((p) => (p === path ? null : p)), 1500)
-  }
-
-  const windowLabel = win === 'all' ? 'all time' : win
-
-  return (
-    <section data-testid="hot-path-section">
-      {/* Header row */}
-      <div className="mb-3 flex items-center justify-between">
-        <SectionLabel>Hot path</SectionLabel>
-        <div className="flex items-center gap-2">
-          {HOT_PATH_WINDOWS.map((w) => (
-            <button
-              key={w}
-              type="button"
-              data-testid={`hot-path-window-${w}`}
-              className={toggleBtn(w === win)}
-              onClick={() => setWin(w)}
-            >
-              {w}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Body */}
-      {error ? (
-        <div className="text-label text-destructive">
-          Failed to load hot paths.
-        </div>
-      ) : isLoading || !data ? (
-        <div className="text-label text-muted-foreground">Loading…</div>
-      ) : data.paths.length === 0 ? (
-        <div
-          data-testid="hot-path-empty"
-          className="font-mono text-label text-muted-foreground"
-        >
-          No changes found in {windowLabel}.
-        </div>
-      ) : (
-        <div className="flex flex-col gap-4">
-          {/* ── Circle-packing diagram ───────────────────────────────────── */}
-          <div className="relative overflow-hidden rounded bg-surface">
-            <svg
-              width={HP_W}
-              height={HP_H}
-              viewBox={`0 0 ${HP_W} ${HP_H}`}
-              aria-label="Hot path churn diagram"
-              role="img"
-              style={{ display: 'block', width: '100%', height: 'auto' }}
-            >
-              <title>
-                Hot path churn — circle area proportional to commit count, colour encodes
-                recency (darker orange = more recently changed)
-              </title>
-              <desc>
-                Packed circles where each circle represents a file. Circle area is proportional
-                to the number of commits that touched the file. Colour encodes recency: darker
-                orange means the file was changed more recently; lighter beige-orange means
-                it was last touched longer ago. Hover for the full path and count. Click to
-                copy the path to the clipboard.
-              </desc>
-
-              {circles.map((c) => (
-                <g
-                  key={c.path}
-                  style={{ cursor: 'pointer' }}
-                  role="button"
-                  tabIndex={0}
-                  aria-label={`${c.path}: ${c.changes} commits — click to copy path`}
-                  onClick={() => handleCircleClick(c.path)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') handleCircleClick(c.path)
-                  }}
-                  onMouseEnter={() =>
-                    setTooltip({ path: c.path, changes: c.changes, x: c.x, y: c.y })
-                  }
-                  onMouseLeave={() =>
-                    setTooltip((t) => (t?.path === c.path ? null : t))
-                  }
-                >
-                  <circle
-                    cx={c.x.toFixed(1)}
-                    cy={c.y.toFixed(1)}
-                    r={c.r.toFixed(1)}
-                    fill={hotPathColor(c.recency)}
-                    fillOpacity={0.88}
-                    stroke="var(--color-background, white)"
-                    strokeWidth={1}
-                  />
-                  {/* Label only when the circle is large enough to fit text */}
-                  {c.r > 20 && (
-                    <text
-                      x={c.x.toFixed(1)}
-                      y={(c.y + 4).toFixed(1)}
-                      textAnchor="middle"
-                      fontSize={Math.min(11, c.r * 0.38)}
-                      fill="white"
-                      style={{ pointerEvents: 'none', fontFamily: 'var(--font-mono)', fontWeight: 500 }}
-                    >
-                      {leafLabel(c.path)}
-                    </text>
-                  )}
-                  {/* Transient "copied" badge */}
-                  {copiedPath === c.path && (
-                    <text
-                      x={c.x.toFixed(1)}
-                      y={(c.y - c.r - 5).toFixed(1)}
-                      textAnchor="middle"
-                      fontSize={9}
-                      fill="currentColor"
-                      fillOpacity={0.7}
-                      style={{ pointerEvents: 'none', fontFamily: 'var(--)' }}
-                    >
-                      copied
-                    </text>
-                  )}
-                </g>
-              ))}
-
-              {/* SVG tooltip on hover */}
-              {tooltip && (() => {
-                const tx = Math.min(tooltip.x + 10, HP_W - 200)
-                const ty = Math.max(tooltip.y - 36, 4)
-                const shortTooltipPath =
-                  tooltip.path.length > 40
-                    ? `…${tooltip.path.slice(-39)}`
-                    : tooltip.path
-                return (
-                  <g style={{ pointerEvents: 'none' }}>
-                    <rect
-                      x={tx}
-                      y={ty}
-                      width={190}
-                      height={40}
-                      rx={4}
-                      fill="var(--color-surface, #111)"
-                      fillOpacity={0.95}
-                      stroke="var(--color-border, #444)"
-                      strokeWidth={1}
-                    />
-                    <text
-                      x={tx + 8}
-                      y={ty + 16}
-                      fontSize={10}
-                      fill="currentColor"
-                      style={{ fontFamily: 'var(--)' }}
-                    >
-                      {shortTooltipPath}
-                    </text>
-                    <text
-                      x={tx + 8}
-                      y={ty + 30}
-                      fontSize={10}
-                      fill="currentColor"
-                      fillOpacity={0.55}
-                      style={{ fontFamily: 'var(--)' }}
-                    >
-                      {tooltip.changes} commits
-                    </text>
-                  </g>
-                )
-              })()}
-            </svg>
-          </div>
-
-          {/* ── Top-10 text list ─────────────────────────────────────────── */}
-          <div data-testid="hot-path-top10">
-            <div className="eyebrow mb-1 text-muted-foreground">
-              Top files by commit count
-            </div>
-            <ol className="flex flex-col gap-0.5">
-              {top10.map((entry, i) => (
-                <li
-                  key={entry.path}
-                  className="flex items-center gap-2 text-label"
-                >
-                  <span className="w-5 shrink-0 text-right text-muted-foreground tabular-nums">
-                    {i + 1}.
-                  </span>
-                  <span
-                    className="min-w-0 flex-1 truncate text-foreground"
-                    title={entry.path}
-                  >
-                    {entry.path}
-                  </span>
-                  <span className="shrink-0 tabular-nums text-muted-foreground">
-                    {entry.changes}
-                  </span>
-                </li>
-              ))}
-            </ol>
-          </div>
-        </div>
-      )}
-    </section>
-  )
-}
 
 // ---------------------------------------------------------------------------
 // Page root
@@ -1520,7 +1148,6 @@ export const ControlRoomPage = () => (
     <AdvisorySection />
     <RulesSection />
     <StewardHistorySection />
-    <HotPathSection />
     </div>
   </main>
 )

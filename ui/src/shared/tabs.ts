@@ -25,8 +25,8 @@ export const tabLabel = (tab: Tab): string => {
     case 'board':
       return 'Board'
     case 'topology':
-      return 'Topology'
+      return 'Task graph'
     case 'hot-paths':
-      return 'Hot paths'
+      return 'Most-changed files'
   }
 }

@@ -86,11 +86,11 @@ describe('KpiIndexPage', () => {
     expect(html).toContain('role="alert"')
   })
 
-  it('renders the three Watchtower subsection titles', () => {
+  it('names each subsection for what it holds', () => {
     const html = renderToStaticMarkup(<KpiIndexPage />)
     expect(html).toContain('Score trends')
-    expect(html).toContain('Promotion ledger')
-    expect(html).toContain('Loop ledger')
+    expect(html).toContain('Promoted helpers')
+    expect(html).toContain('Score follow-through')
   })
 
   it('renders all KPI tiles when data is populated', () => {

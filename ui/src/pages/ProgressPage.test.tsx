@@ -466,10 +466,10 @@ describe('ProgressPage – dispatch pause banner', () => {
 // ---------------------------------------------------------------------------
 
 describe('ProgressPage – hot paths tab', () => {
-  it('renders a "Hot paths" tab button in the tab strip', () => {
+  it('names the tab for what it lists', () => {
     const html = renderToStaticMarkup(<ProgressPage />)
     expect(html).toContain('data-testid="tab-hot-paths"')
-    expect(html).toContain('Hot paths')
+    expect(html).toContain('Most-changed files')
   })
 
   it('hot-paths tab is not selected by default (Board is)', () => {
