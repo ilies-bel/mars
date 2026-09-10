@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import {
+  parseTriageKind,
   detectRoute,
   isKnownRoute,
   actionQueueCount,
@@ -337,6 +338,41 @@ describe('proposalHash', () => {
 // ---------------------------------------------------------------------------
 // parseProposalOrigin — reads the `from` query param off a proposal hash
 // ---------------------------------------------------------------------------
+
+describe('parseTriageKind', () => {
+  // Regression: the header's parked-task chip linked to this hash while the
+  // Triage page read its filter from useState(''), so the chip navigated and
+  // the page did not change. The link and the reader must stay in step.
+  it('reads the kind the parked-task chip links to', () => {
+    expect(parseTriageKind('#/triage?kind=awaiting-human')).toBe('awaiting-human')
+  })
+
+  it('returns the raw kind, not the short display label', () => {
+    // The filter's <option> values are raw kinds; 'awaiting' is only what the
+    // label map renders. Returning the label here would select nothing.
+    expect(parseTriageKind('#/triage?kind=awaiting-human')).not.toBe('awaiting')
+  })
+
+  it('returns null for a Triage hash with no kind', () => {
+    expect(parseTriageKind('#/triage')).toBeNull()
+    expect(parseTriageKind('#/triage?other=1')).toBeNull()
+    expect(parseTriageKind('#/triage?kind=')).toBeNull()
+  })
+
+  it('ignores a kind on some other route', () => {
+    expect(parseTriageKind('#/events?kind=failed')).toBeNull()
+    expect(parseTriageKind('#/task/x?kind=failed')).toBeNull()
+  })
+
+  it('decodes a percent-encoded kind and survives a bad one', () => {
+    expect(parseTriageKind('#/triage?kind=draft%2Dproposal')).toBe('draft-proposal')
+    expect(parseTriageKind('#/triage?kind=%E0%A4%A')).toBeNull()
+  })
+
+  it('finds kind among other params', () => {
+    expect(parseTriageKind('#/triage?from=chat&kind=failed')).toBe('failed')
+  })
+})
 
 describe('parseProposalOrigin', () => {
   it('returns the route from ?from=<route>', () => {
