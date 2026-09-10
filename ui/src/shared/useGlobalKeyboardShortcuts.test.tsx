@@ -64,9 +64,9 @@ const pressKey = (key: string, target: EventTarget = document, extra?: KeyboardE
 // ---------------------------------------------------------------------------
 
 describe('useGlobalKeyboardShortcuts — t key', () => {
-  it('navigates to #/chat when pressed in a plain context', () => {
+  it('navigates to #/triage when pressed in a plain context', () => {
     pressKey('t')
-    expect(window.location.hash).toBe('#/chat')
+    expect(window.location.hash).toBe('#/triage')
   })
 })
 
@@ -82,37 +82,19 @@ describe('useGlobalKeyboardShortcuts — ? key', () => {
 })
 
 // ---------------------------------------------------------------------------
-// 1-9 keys — focus task card by index
+// 1-9 keys — removed
 // ---------------------------------------------------------------------------
 
-describe('useGlobalKeyboardShortcuts — 1-9 keys', () => {
-  it('focuses the task card with data-task-index="0" when pressing 1', () => {
-    const card = document.createElement('div')
-    card.setAttribute('data-task-index', '0')
-    card.setAttribute('tabindex', '0')
-    document.body.appendChild(card)
-
-    pressKey('1')
-
-    expect(document.activeElement).toBe(card)
-    document.body.removeChild(card)
-  })
-
-  it('focuses the task card at index 2 when pressing 3', () => {
-    const card = document.createElement('div')
-    card.setAttribute('data-task-index', '2')
-    card.setAttribute('tabindex', '0')
-    document.body.appendChild(card)
-
-    pressKey('3')
-
-    expect(document.activeElement).toBe(card)
-    document.body.removeChild(card)
-  })
-
-  it('does not throw when no card with the requested index exists', () => {
-    // No [data-task-index="0"] in DOM — pressing '1' should be a no-op
-    expect(() => pressKey('1')).not.toThrow()
+describe('useGlobalKeyboardShortcuts — digits are not bound', () => {
+  it('leaves the digits alone', () => {
+    // The old handler focused `[data-task-index="<n>"]`. That attribute is
+    // rendered by no component in the app — it existed only in this file,
+    // which set it by hand and then proved the hook could find it. The tests
+    // passed for the whole life of a shortcut that had never worked.
+    for (const k of ['1', '5', '9']) {
+      expect(() => pressKey(k)).not.toThrow()
+      expect(window.location.hash).toBe('#/progress')
+    }
   })
 })
 
@@ -218,15 +200,5 @@ describe('useGlobalKeyboardShortcuts — isComposing guard', () => {
     expect(window.location.hash).toBe('#/progress')
   })
 
-  it('does not focus a task card when 1 is pressed during IME composition', () => {
-    const card = document.createElement('div')
-    card.setAttribute('data-task-index', '0')
-    card.setAttribute('tabindex', '0')
-    document.body.appendChild(card)
 
-    pressKey('1', document, { isComposing: true })
-
-    expect(document.activeElement).not.toBe(card)
-    document.body.removeChild(card)
-  })
 })

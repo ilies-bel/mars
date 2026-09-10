@@ -1,4 +1,5 @@
 import { SectionHeading } from '@/widgets/primitives/DensityPrimitives'
+import { ChevronRight } from 'lucide-react'
 import { useState } from 'react'
 import { useScorerWorkflows } from '@/entities/watchtower/useScorerWorkflows'
 import { useScorerSuggestions } from '@/entities/watchtower/useScorerSuggestions'
@@ -198,13 +199,27 @@ export const WatchtowerSection = () => (
           lists as Task / Scored / Score. Two tables of one dataset on two
           pages, and a reader could not tell which was authoritative. KPI keeps
           the trend, which is the thing a KPI page is for, and hands over. */}
+      {/* A full-width bordered box with grey placeholder-weight text at the
+          left and a faint glyph at the right reads as a disabled search
+          field, not a link — which is what this was. A destination gets a
+          name in foreground weight and a chevron that points somewhere. */}
       <a
         href="#/studio"
         data-testid="scores-handoff"
-        className="flex items-center justify-between rounded border border-border p-4 text-label text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground"
+        className="group flex items-center gap-2 rounded border border-border px-4 py-3 transition-colors hover:bg-foreground/5"
       >
-        <span>Every scored run, worst first</span>
-        <span aria-hidden="true">→</span>
+        <div className="flex min-w-0 flex-col">
+          <span className="text-title font-medium text-foreground">Scores</span>
+          <span className="text-label text-muted-foreground">
+            Every scored run, worst first
+          </span>
+        </div>
+        <ChevronRight
+          size={16}
+          strokeWidth={2}
+          aria-hidden="true"
+          className="ml-auto shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5"
+        />
       </a>
     </div>
   </div>

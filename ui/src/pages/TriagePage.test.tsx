@@ -749,12 +749,28 @@ describe('TriageRow – daemon-code-drift verb fires invokeAction without entity
     ])
   })
 
-  it('calls invokeAction("restart-daemon", undefined) — process-level op', async () => {
+  it('arms a confirmation first — a daemon restart is not a one-click action', async () => {
+    // This used to assert that one click dispatched. It did, and that was the
+    // defect: a reviewer clicked "Restart (wipe & re-run)" on a Needs You card
+    // expecting to READ a confirmation, and the task restarted with no dialog,
+    // no toast and no undo. Every destructive verb passes the same gate now.
     const { container } = renderPage()
     const btn = container.querySelector('[data-testid="triage-verb-restart-daemon"]') as HTMLButtonElement
     expect(btn).not.toBeNull()
     await act(async () => {
       btn.click()
+    })
+    expect(mockInvokeAction).not.toHaveBeenCalled()
+    expect(container.querySelector('[data-testid="triage-restart-confirm"]')).not.toBeNull()
+  })
+
+  it('dispatches the process-level op once confirmed', async () => {
+    const { container } = renderPage()
+    await act(async () => {
+      ;(container.querySelector('[data-testid="triage-verb-restart-daemon"]') as HTMLButtonElement).click()
+    })
+    await act(async () => {
+      ;(container.querySelector('[data-testid="triage-restart-confirm-yes"]') as HTMLButtonElement).click()
     })
     // PROCESS_LEVEL_OPS.has('restart-daemon') → entityId is undefined
     expect(mockInvokeAction).toHaveBeenCalledWith('restart-daemon', undefined)

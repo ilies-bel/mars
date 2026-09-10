@@ -137,7 +137,14 @@ export const WatchtowerTrendChart = ({
   // One phrase, used by both the visible header and the aria-label. Written
   // twice, they drifted immediately: the header singularised and the label
   // did not, so a screen reader heard "over 1 runs".
-  const runCount = `${scores.length} run${scores.length === 1 ? '' : 's'}`
+  // "17 runs" full stop, with no window anywhere on the panel, sat directly
+  // above a link to a page listing 47 — and the reader had no reason to
+  // suspect the two numbers were measuring different spans. This chart reads
+  // the last `window` ledger entries and keeps the scored ones, so say so.
+  const runCount =
+    scores.length === window
+      ? `last ${window} runs`
+      : `${scores.length} of the last ${window} runs`
 
   return (
     <div className="flex flex-col gap-1 min-h-[104px]">

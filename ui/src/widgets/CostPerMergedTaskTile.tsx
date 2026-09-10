@@ -1,5 +1,5 @@
 import { SkeletonBlock } from '@/components/Skeleton'
-import { kpiBand } from '@/entities/kpi/bands'
+import { kpiBand, kpiTarget } from '@/entities/kpi/bands'
 import { useCostPerMergedTask } from '@/entities/kpi/useCostPerMergedTask'
 import { kpiHash } from '@/shared/routing'
 import { KpiTileShell } from './KpiTileShell'
@@ -80,6 +80,7 @@ export const CostPerMergedTaskTile = () => {
       label="Cost / merged task"
       value={usdFormatter.format(currentValue)}
       band={kpiBand('cost-per-merged-task', currentValue)}
+      target={kpiTarget('cost-per-merged-task')}
       windowDays={WINDOW_DAYS}
       points={sparklinePoints}
       trend={

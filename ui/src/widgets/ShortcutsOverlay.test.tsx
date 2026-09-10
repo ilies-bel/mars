@@ -44,12 +44,7 @@ describe('ShortcutsOverlay – accessible structure', () => {
 // ---------------------------------------------------------------------------
 
 describe('ShortcutsOverlay – shortcut content', () => {
-  it('shows the 1-9 jump shortcut', () => {
-    const html = render()
-    expect(html).toContain('>1-9<')
-    expect(html).toContain('Jump to task')
-  })
-
+  
   it('shows the t triage shortcut', () => {
     const html = render()
     expect(html).toContain('>t<')

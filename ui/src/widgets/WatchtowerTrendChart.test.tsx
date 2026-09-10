@@ -253,20 +253,21 @@ describe('WatchtowerTrendChart — scale and current value', () => {
     expect(html).toContain('/ 1.00')
   })
 
-  it('states how many samples the trend is drawn from', async () => {
+  it('names the WINDOW the samples were drawn from, not just how many there are', async () => {
+    // "3 runs" full stop sat directly above a link to a page listing 47, and
+    // nothing said the two were counting different spans.
     const { WatchtowerTrendChart } = await import('./WatchtowerTrendChart')
     const html = renderToStaticMarkup(<WatchtowerTrendChart workflow="task" />)
-    expect(html).toContain('3 runs')
+    expect(html).toContain('3 of the last 20 runs')
   })
 
-  it('singularises the sample count so a lone point does not read "1 runs"', async () => {
-    vi.mocked(useScorerTrend).mockReturnValue(
-      trendState({ points: [POINTS[0]] }),
-    )
+  it('drops the fraction when every run in the window was scored', async () => {
     const { WatchtowerTrendChart } = await import('./WatchtowerTrendChart')
-    const html = renderToStaticMarkup(<WatchtowerTrendChart workflow="task" />)
-    expect(html).toContain('1 run')
-    expect(html).not.toContain('1 runs')
+    const html = renderToStaticMarkup(
+      <WatchtowerTrendChart workflow="task" window={3} />,
+    )
+    expect(html).toContain('last 3 runs')
+    expect(html).not.toContain('3 of the last 3')
   })
 
   it('labels the p90 reference line with its value', async () => {
@@ -288,7 +289,7 @@ describe('WatchtowerTrendChart — scale and current value', () => {
     const label = /aria-label="([^"]*Score trend[^"]*)"/.exec(html)?.[1] ?? ''
     expect(label).toContain('0.60')
     expect(label).toContain('1.00')
-    expect(label).toContain('3 runs')
+    expect(label).toContain('3 of the last 20 runs')
     expect(label).toContain('p90 0.85')
   })
 })

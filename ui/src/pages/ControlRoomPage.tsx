@@ -677,6 +677,22 @@ const NowSection = () => {
           pauseDetail={dispatch.detail}
         />
 
+        {/* These are TASKS. The board on #/progress counts ARCS — a chain of
+            an origin task and whatever recovery it spawned — so its Failed
+            column read 24 while this strip read 23 at the same instant, both
+            under a label saying "Live". Neither was wrong and nothing said
+            they were different things, which is the worse failure: once you
+            catch two live surfaces disagreeing, you stop trusting the ones
+            that agree. The unit is stated here because this is the number
+            with no visible referent — you can count the board's 24 cards. */}
+        <p className="mb-3 text-label text-muted-foreground">
+          Tasks right now.{' '}
+          <a href="#/progress" className="underline decoration-dotted underline-offset-2 hover:text-foreground">
+            The board
+          </a>{' '}
+          groups these into arcs, so its columns count differently.
+        </p>
+
         <div className="grid grid-cols-3 gap-x-4 gap-y-3 sm:grid-cols-5">
           <Stat
             label="Queued"

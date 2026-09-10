@@ -18,9 +18,7 @@ export const Footer = () => {
   return (
     <footer className="flex h-8 items-center justify-between border-t border-border bg-background px-6">
       <div className="flex items-center gap-3.5">
-        <Hint k="1-9" label="jump to task" />
-        <span className="text-label text-muted-foreground">·</span>
-        <Hint k="t" label="action queue" />
+        <Hint k="t" label="Needs You" />
         <span className="text-label text-muted-foreground">·</span>
         <Hint k="?" label="help" />
       </div>

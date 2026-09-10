@@ -374,6 +374,100 @@ interface TriageRowProps {
   }
 }
 
+/**
+ * What a destructive verb actually destroys, in the operator's terms.
+ *
+ * The old copy was written for `restart` alone and hard-coded into its panel.
+ * Every verb that reaches this gate needs its own sentence: "this can't be
+ * undone" tells a reader that they should be careful without telling them
+ * what they are being careful about.
+ */
+const destructiveConsequence = (
+  op: string,
+  entityId: string,
+  branch: string | null,
+): string => {
+  const where = branch !== null ? `${entityId} (branch ${branch})` : entityId
+  switch (op) {
+    case 'restart':
+      return `Restart ${where} — wipes the worktree and branch, losing any commits the worker made. Continue reuses them instead. This can't be undone.`
+    case 'purge':
+    case 'drop':
+      return `Delete ${where} — removes the task, its worktree, its branch and its blocker edges. This can't be undone.`
+    case 'discard':
+      return `Discard ${where} — the task is dropped and anything on its branch goes with it. This can't be undone.`
+    default:
+      return `${op} on ${where} — this can't be undone.`
+  }
+}
+
+/**
+ * The confirming button's own words.
+ *
+ * Echoing the trigger's full label gave "Yes, restart (wipe & re-run)" — the
+ * parenthetical belongs on the button you are deciding about, not on the one
+ * that commits. The consequence sentence beside it already carries the detail.
+ */
+const confirmLabel = (op: string, label: string): string => {
+  switch (op) {
+    case 'restart':
+      return 'Yes, restart'
+    case 'purge':
+    case 'drop':
+      return 'Yes, delete'
+    case 'discard':
+      return 'Yes, discard'
+    default:
+      return `Yes, ${label.toLowerCase()}`
+  }
+}
+
+/** The single arm-then-confirm gate every destructive verb passes through. */
+const ConfirmDestructive = ({
+  verb,
+  entityId,
+  branch,
+  pending,
+  onConfirm,
+  onCancel,
+}: {
+  verb: AlertVerb
+  entityId: string
+  branch: string | null
+  pending: string | null
+  onConfirm: () => void
+  onCancel: () => void
+}) => (
+  <span
+    className="flex w-full flex-wrap items-center gap-2 rounded border border-error/40 bg-error/5 px-2 py-1.5"
+    data-testid="triage-restart-confirm"
+    data-op={verb.op}
+  >
+    <span className="flex-1 text-micro leading-relaxed text-error">
+      {destructiveConsequence(verb.op, entityId, branch)}
+    </span>
+    <ActionButton
+      variant="danger"
+      size="sm"
+      disabled={pending !== null}
+      pending={pending === verb.op}
+      onClick={onConfirm}
+      data-testid="triage-restart-confirm-yes"
+    >
+      {confirmLabel(verb.op, verb.label)}
+    </ActionButton>
+    <ActionButton
+      variant="ghost"
+      size="sm"
+      disabled={pending !== null}
+      onClick={onCancel}
+      data-testid="triage-restart-cancel"
+    >
+      Cancel
+    </ActionButton>
+  </span>
+)
+
 const TriageRow = ({ item, extraBadges, groupContext }: TriageRowProps) => {
   const qc = useQueryClient()
   const projectId = useFocusedProjectId() ?? undefined
@@ -444,7 +538,20 @@ const leadDecisionIndex = (decisions: Decision[]): number => {
 // Restart is destructive (wipes worktree + branch, discarding commits) — it
   // requires an explicit in-app confirm step before dispatching, rather than
   // firing on first click like the reversible Continue verb.
-  const [confirmRestart, setConfirmRestart] = useState(false)
+  /**
+   * The destructive verb waiting for a second click, or null.
+   *
+   * This used to be a boolean guarding ONE hand-written Restart in the "⋯
+   * More" menu of task-recovery rows. Every other destructive verb — the
+   * daemon's own `restart`, `purge`, `drop`, `discard` — reached the operator
+   * through the generic verb row below, which called handleVerb on the first
+   * click. A reviewer clicked "Restart (wipe & re-run)" expecting to READ a
+   * confirmation; the task restarted, the card vanished, the badge went 35→34,
+   * and nothing on screen said what had happened. Red text is not a
+   * confirmation. Arming is now a property of the verb, not of the row that
+   * happens to render it.
+   */
+  const [armedVerb, setArmedVerb] = useState<AlertVerb | null>(null)
   // Controls the "⋯ More" disclosure that hides Restart (and copy verbs) so
   // they require a deliberate second click rather than sitting at the same
   // visual weight as Continue during a failure storm.
@@ -927,7 +1034,9 @@ const leadDecisionIndex = (decisions: Decision[]): number => {
                 key={verb.op === 'copy' ? `copy-${verb.label}` : verb.op}
                 disabled={pending !== null}
                 pending={pending === verb.op}
-                onClick={() => void handleVerb(verb.op, verb.hint)}
+                onClick={() =>
+                  destructive ? setArmedVerb(verb) : void handleVerb(verb.op, verb.hint)
+                }
                 size={verb.op === 'copy' ? 'sm' : 'md'}
                 variant={
                   // The destructive check comes FIRST and outranks the
@@ -946,6 +1055,21 @@ const leadDecisionIndex = (decisions: Decision[]): number => {
               </ActionButton>
               )
             })}
+
+            {/* Confirm panel — full-width, wraps below the action row.
+                `w-full` forces it onto its own flex line inside the gap-2
+                container. One panel for every destructive verb; the sentence
+                is chosen by op so it names what is actually lost. */}
+            {armedVerb !== null && (
+              <ConfirmDestructive
+                verb={armedVerb}
+                entityId={item.entityId}
+                branch={item.humanDetail?.branch ?? null}
+                pending={pending}
+                onConfirm={() => void handleVerb(armedVerb.op, armedVerb.hint)}
+                onCancel={() => setArmedVerb(null)}
+              />
+            )}
 
             {/* Recovery-exhausted carry-forward panel — only for task-recovery
                 kinds whose single recovery attempt has already been spent. */}
@@ -1095,7 +1219,7 @@ const leadDecisionIndex = (decisions: Decision[]): number => {
                   role="menuitem"
                   disabled={pending !== null}
                   onClick={() => {
-                    setConfirmRestart(true)
+                    setArmedVerb({ op: 'restart', label: 'Restart', style: 'destructive' })
                     setMoreOpen(false)
                   }}
                   className="flex w-full items-center px-3 py-1.5 text-left font-mono text-micro text-error transition-colors hover:bg-error/5 disabled:opacity-50"
@@ -1120,38 +1244,6 @@ const leadDecisionIndex = (decisions: Decision[]): number => {
               </div>
             </div>
 
-            {/* Confirm panel — full-width, wraps below the action row when
-                Restart is clicked inside the disclosure. The `w-full` class
-                forces it to its own flex line inside the gap-2 container. */}
-            {confirmRestart && (
-              <span
-                className="flex w-full flex-wrap items-center gap-2 rounded border border-error/40 bg-error/5 px-2 py-1.5"
-                data-testid="triage-restart-confirm"
-              >
-                <span className="flex-1 font-mono text-micro text-error">
-                  Discard {item.entityId}
-                  {item.humanDetail?.branch ? ` (branch ${item.humanDetail.branch})` : ''} —
-                  wipes the worktree and branch, losing any commits the worker
-                  made. Continue reuses them instead. This can&rsquo;t be undone.
-                </span>
-                <button
-                  disabled={pending !== null}
-                  onClick={() => void handleVerb('restart')}
-                  className="shrink-0 rounded border border-error/60 bg-error/10 px-2 py-1 text-micro text-error transition-colors hover:bg-error/20 disabled:opacity-50"
-                  data-testid="triage-restart-confirm-yes"
-                >
-                  {pending === 'restart' ? '…' : 'Yes, discard & restart'}
-                </button>
-                <button
-                  disabled={pending !== null}
-                  onClick={() => setConfirmRestart(false)}
-                  className="shrink-0 rounded border border-border px-2 py-1 text-micro text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
-                  data-testid="triage-restart-cancel"
-                >
-                  Cancel
-                </button>
-              </span>
-            )}
           </>
         )}
 

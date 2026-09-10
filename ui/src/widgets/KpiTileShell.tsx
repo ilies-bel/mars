@@ -64,6 +64,8 @@ interface KpiTileShellProps {
   points: Array<number | null>
   /** Omitted when the window holds too few comparable points to state a change. */
   trend?: KpiTileTrend | null
+  /** The threshold the band is measured against, e.g. "under 2%". */
+  target?: string
   ariaLabel: string
   testId?: string
 }
@@ -80,6 +82,7 @@ export const KpiTileShell = ({
   windowDays,
   points,
   trend,
+  target,
   ariaLabel,
   testId,
 }: KpiTileShellProps) => {
@@ -116,7 +119,9 @@ export const KpiTileShell = ({
         <span className={`flex items-center gap-1 text-micro ${cue.colorClass}`}>
           <cue.Icon size={11} strokeWidth={2.5} aria-hidden="true" />
           <span>
-            {cue.label} · last {windowDays}d
+            {cue.label}
+            {/* "Off target" without the target is half a sentence. */}
+            {target != null && target !== '' ? ` (${target})` : ''} · last {windowDays}d
           </span>
         </span>
         {moved && (

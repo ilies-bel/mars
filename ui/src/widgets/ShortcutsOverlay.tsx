@@ -12,8 +12,14 @@ interface ShortcutsOverlayProps {
   onClose: () => void
 }
 
+/**
+ * Every row here is a promise. Two of the four were false: `1-9` bound to an
+ * attribute no component renders, and `t` navigated to Chat while this list
+ * said Needs You and the footer said "action queue" — three descriptions, one
+ * key, none of them what happened. A panel where half the rows lie is worse
+ * than no panel, because the rows that work teach the reader to trust it.
+ */
 const SHORTCUTS: ReadonlyArray<{ key: string; desc: string }> = [
-  { key: '1-9', desc: 'Jump to task by position on the board' },
   { key: 't', desc: 'Go to Needs You' },
   { key: '?', desc: 'Open this shortcuts overlay' },
   { key: 'Esc', desc: 'Close any open overlay or drawer' },

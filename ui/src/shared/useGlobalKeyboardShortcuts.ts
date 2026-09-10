@@ -33,7 +33,10 @@ export const useGlobalKeyboardShortcuts = (): void => {
 
       if (e.key === 't') {
         e.preventDefault()
-        window.location.hash = '#/chat'
+        // Both labels for this key said the action queue — the footer's
+        // "action queue" and the overlay's "Go to Needs You" are the same
+        // page. Only the handler disagreed, and it won.
+        window.location.hash = '#/triage'
         return
       }
       if (e.key === '?') {
@@ -41,12 +44,15 @@ export const useGlobalKeyboardShortcuts = (): void => {
         window.location.hash = '#/shortcuts'
         return
       }
-      const digit = parseInt(e.key, 10)
-      if (digit >= 1 && digit <= 9) {
-        e.preventDefault()
-        const card = document.querySelector<HTMLElement>(`[data-task-index="${digit - 1}"]`)
-        card?.focus()
-      }
+      // There is no 1-9 handler any more.
+      //
+      // It looked for `[data-task-index="<n>"]`, an attribute that appears
+      // nowhere in the app — only inside this hook's own test file, which set
+      // it by hand and then proved the hook could find it. So the shortcut had
+      // never once worked, while the footer and the overlay both advertised
+      // it. Even working, it would have been unusable: no card carries a
+      // visible position number, so "jump to task 5" is a guess. Restoring it
+      // means rendering the digit on the card first.
     }
     document.addEventListener('keydown', handleKeyDown)
     return () => {

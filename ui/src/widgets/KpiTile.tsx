@@ -1,6 +1,6 @@
 import type { Kpi, KpiKey } from '@/entities/kpi/types'
 import { KPI_IMPROVEMENT_DIRECTION } from '@/entities/kpi/types'
-import { kpiBand, kpiBandCue } from '@/entities/kpi/bands'
+import { kpiBand, kpiBandCue, kpiTarget } from '@/entities/kpi/bands'
 import { kpiHash } from '@/shared/routing'
 import { KpiTileShell } from './KpiTileShell'
 
@@ -119,6 +119,7 @@ export const KpiTile = ({ kpi }: KpiTileProps) => {
       value={formatKpiValueParts(kpi.key, kpi.currentValue).value}
       unit={formatKpiValueParts(kpi.key, kpi.currentValue).unit}
       band={band}
+      target={kpiTarget(kpi.key)}
       windowDays={windowDays}
       points={(kpi.series ?? []).map((p) => p.value)}
       trend={{

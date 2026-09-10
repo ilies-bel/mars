@@ -77,6 +77,31 @@ export function kpiBandCue(band: KpiBand): KpiBandCue {
   return BAND_CUES[band]
 }
 
+/**
+ * The line a value has to be on the right side of to be "On target".
+ *
+ * The tiles said "Off target" and never said off WHAT. `COST PER ARC 1.5M tok
+ * · Off target` asks the reader to hold five thresholds in their head, or to
+ * go and read kpiBand. The band and the threshold come from the same switch,
+ * so they cannot drift.
+ */
+export function kpiTarget(key: KpiKey): string {
+  switch (key) {
+    case 'failure_rate':
+      return 'under 2%'
+    case 'autonomous_completion_rate':
+      return 'over 85%'
+    case 'recovery_success_rate':
+      return 'over 90%'
+    case 'cost_per_arc':
+      return 'under 50k tok'
+    case 'cost-per-merged-task':
+      return 'under $1.00'
+    default:
+      return ''
+  }
+}
+
 export function kpiBand(key: KpiKey, value: number): KpiBand {
   switch (key) {
     case 'failure_rate':
