@@ -79,7 +79,14 @@ export const SHELL_NAV_GROUPS: NavGroup[] = [
     label: 'Inbox',
     entries: [
       { route: 'triage', label: 'Needs You', href: '#/triage', icon: Inbox },
-      { route: 'proposals', label: 'Proposals', href: '#/proposals', icon: Lightbulb },
+      // "Drafts", not "Proposals". The board's first column is also called
+      // Proposals and counts a different population — every proposal an
+      // in-scope task references (233 today) — while this page lists only the
+      // drafts awaiting a decision (15). The column already says
+      // "PROPOSALS (ALL)" and the page already says "Draft proposals"; the nav
+      // was the last place still using the bare word, so the nav and the page
+      // it opens disagreed about their own name.
+      { route: 'proposals', label: 'Drafts', href: '#/proposals', icon: Lightbulb },
       { route: 'chat', label: 'Chat', href: '#/chat', icon: MessagesSquare },
     ],
   },

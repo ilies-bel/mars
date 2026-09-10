@@ -151,28 +151,8 @@ describe('StewardPage', () => {
     expect(StewardViewSchema.safeParse(invalidResponse).success).toBe(false)
   })
 
-  it('renders one verify-gate section per scope with active and quarantined labels', () => {
-    const html = renderToStaticMarkup(<StewardPage />)
-
-    expect(html).toContain('Verify gates')
-    expect(html).toContain('Scope: .')
-    expect(html).toContain('Scope: ui')
-    expect(html).toContain('typecheck')
-    expect(html).toContain('test')
-    expect(html).toContain('Quarantined')
-    expect(html).toContain('Active')
-    expect(html).toContain('npx tsc --noEmit')
-  })
-
-  it('shows quarantine and latest failure evidence for quarantined gates', () => {
-    const html = renderToStaticMarkup(<StewardPage />)
-    const timestamp = formatAbsoluteDateTime(1767225600000)
-
-    expect(html).toContain('verify:typecheck:exit-1')
-    expect(html).toContain('origin-123')
-    expect(html).toContain(timestamp)
-  })
-
+  
+  
   it('shows an explicit empty state when no verify gates are registered', () => {
     vi.mocked(useStewardView).mockReturnValue({
       data: makeStewardView({ gateHealth: { scopes: [] } }),
@@ -424,12 +404,7 @@ describe('StewardPage', () => {
   // Verify gate health lane
   // ---------------------------------------------------------------------------
 
-  it('renders the standing verify-gate registry rather than an unbuilt placeholder', () => {
-    const html = renderToStaticMarkup(<StewardPage />)
-    expect(html).toContain('standing registry')
-    expect(html).not.toContain('Implementation not started')
-  })
-
+  
   // ---------------------------------------------------------------------------
   // Loading and error states
   // ---------------------------------------------------------------------------
@@ -656,32 +631,20 @@ describe('StewardPage — acknowledgment log', () => {
 // ---------------------------------------------------------------------------
 
 describe('StewardPage — gate disclosures are individually named', () => {
-  it('names each gate disclosure after its gate, without changing the visible label', () => {
-    vi.mocked(useStewardView).mockReturnValue({
-      data: makeStewardView(),
-      isLoading: false,
-      error: null,
-    } as ReturnType<typeof useStewardView>)
+  })
+
+// ---------------------------------------------------------------------------
+// Verify gates — summarised, not restated
+// ---------------------------------------------------------------------------
+
+describe('StewardPage – verify gates hand off to the Control Room', () => {
+  it('states the registry size and links out instead of listing every gate', () => {
     const html = renderToStaticMarkup(<StewardPage />)
-
-    const labels = [...html.matchAll(/aria-label="(Technical details[^"]*)"/g)].map((m) => m[1])
-
-    // The fixture's quarantined gate carries both a quarantine signature and a
-    // last failure, so it renders exactly two disclosures. Asserting the count
-    // keeps this test falsifiable: without it, a change that stopped emitting
-    // aria-labels entirely would pass on an empty array.
-    expect(labels).toHaveLength(2)
-
-    // Every accessible name is distinct...
-    expect(new Set(labels).size).toBe(labels.length)
-
-    // ...and each names its gate rather than stopping at the generic phrase.
-    for (const l of labels) {
-      expect(l).not.toBe('Technical details')
-      expect(l).toContain('typecheck')
-    }
-
-    // The visible text stays short — the two names are allowed to differ.
-    expect(html).toContain('Technical details</summary>')
+    expect(html).toContain('data-testid="gates-handoff"')
+    expect(html).toContain('#/control')
+    // The word this page used to print over a failing gate. It means "not
+    // quarantined" and this payload carries no run status at all, so the page
+    // cannot say whether anything passes — and must not imply it does.
+    expect(html).not.toContain('>Active<')
   })
 })

@@ -327,6 +327,17 @@ export const alertHumanDetailSchema = z.object({
    * see the failing-test summary without dropping to a terminal.
    */
   gateOutput: z.string().optional(),
+  /**
+   * The tasks a signature-wave row is about.
+   *
+   * The daemon has been sending these all along and this schema dropped them
+   * on the floor (zod strips unknown keys), so the highest-leverage row in the
+   * queue — "11 tasks failed for the same reason, one fix likely unblocks all"
+   * — could not name a single one of the eleven, and offered nothing but a
+   * link to Chat.
+   */
+  caughtTaskCount: z.number().optional(),
+  caughtTaskIds: z.array(z.string()).optional(),
 })
 
 export const actionDescriptorSchema = z.object({

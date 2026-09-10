@@ -14,12 +14,10 @@ import { ArrowDown, ArrowUp, ChevronRight, Minus } from 'lucide-react'
 
 import { useState } from 'react'
 import { FallbackSurface } from '@/components/FallbackSurface'
-import { CollapsibleSection } from '@/components/CollapsibleSection'
 import { useStewardView } from './useStewardView'
 import type { StewardView } from './useStewardView'
-import { PageBody, PageHeader, PageShell, SectionHeading } from '@/widgets/primitives/DensityPrimitives'
+import { PageBody, PageHeader, PageShell } from '@/widgets/primitives/DensityPrimitives'
 import { formatAbsoluteDateTime, formatShortDate } from '@/shared/time'
-import { invokeAction } from '@/shared/api'
 
 export type { StewardView }
 export { useStewardView }
@@ -706,6 +704,28 @@ const WorkflowPatchesLane = ({ data }: { data: StewardView['workflowPatches'] })
 // Verify gate health lane
 // ---------------------------------------------------------------------------
 
+/**
+ * Verify gates, summarised — the registry lives on the Control Room.
+ *
+ * This lane used to render every gate in full, and the two pages described
+ * the same `knip` row in two vocabularies:
+ *
+ *   Control Room:  failing · knip · advisory · npm run knip · failed 6d ago
+ *   Steward:       knip · Active · task · optional · Source: operator · …
+ *
+ * "Active" here means "not quarantined". It says nothing about whether the
+ * gate passes — and it cannot, because this payload carries no run status at
+ * all. So an operator landing on Steward read twelve gates marked Active and
+ * concluded the verification stack was healthy while nine of them were
+ * failing. Two surfaces owning one subject is the IA problem; two words for
+ * one state, one of which reads as an all-clear, is the honesty problem on
+ * top of it.
+ *
+ * Control Room already has the run status AND every action this lane offered
+ * — Quarantine, Restore and Retire, each behind a confirmation — so nothing
+ * is lost. Steward keeps what is uniquely its own: the tuning ledger, the
+ * storm breaker, the workflow patches.
+ */
 const GateHealthLane = ({
   data,
   isLoading = false,
@@ -715,34 +735,16 @@ const GateHealthLane = ({
   isLoading?: boolean
   error?: Error | null
 }) => {
-  const [restoringGateIds, setRestoringGateIds] = useState<Set<string>>(new Set())
-
-  const handleRestore = async (gateId: string): Promise<void> => {
-    setRestoringGateIds((prev) => new Set(prev).add(gateId))
-    try {
-      await invokeAction('gate-restore', gateId)
-    } finally {
-      setRestoringGateIds((prev) => {
-        const next = new Set(prev)
-        next.delete(gateId)
-        return next
-      })
-    }
-  }
+  const gates = (data?.scopes ?? []).flatMap((s) => s.gates)
+  const quarantined = gates.filter((g) => g.state === 'quarantined').length
 
   return (
     <article className={laneCardClass(true)} data-testid="lane-gate-health">
-      <header className="mb-4">
+      <header className="mb-3">
         <div className={laneHeaderClass(true)}>
           <StatusDot active={true} />
           <span>Verify gates</span>
-          <span className="ml-auto rounded bg-success/20 px-1.5 py-0.5 text-success">
-            standing registry
-          </span>
         </div>
-        <p className="mt-1 text-micro text-muted-foreground">
-          Health of the registered verification gates. Quarantined gates can be restored from this page.
-        </p>
       </header>
 
       {isLoading ? (
@@ -754,90 +756,25 @@ const GateHealthLane = ({
           <p className="text-micro text-error">Daemon error while loading verify gates.</p>
           <FallbackSurface error={error} of="verify gates" variant="pane" />
         </div>
-      ) : data === undefined || data.scopes.length === 0 ? (
-        <p className="text-micro text-muted-foreground" data-testid="gate-health-empty-state">
+      ) : gates.length === 0 ? (
+        <p className="text-label text-muted-foreground" data-testid="gate-health-empty-state">
           No verify gates are registered.
         </p>
       ) : (
-        <div className="space-y-4">
-          {data.scopes.map((scope) => (
-            <section key={scope.scope} aria-label={`Verify gates for ${scope.scope}`}>
-              <SectionHeading>Scope: {scope.scope}</SectionHeading>
-              <ul className="space-y-2">
-                {scope.gates.map((gate) => (
-                  <li key={gate.id} className="rounded border border-border/40 bg-muted/10 px-3 py-2">
-                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                      <span className="font-mono text-label font-semibold text-foreground">{gate.name}</span>
-                      <span
-                        className={`rounded px-1.5 py-0.5 font-mono text-micro ${gate.state === 'active' ? 'bg-success/20 text-success' : 'bg-error/20 text-error'}`}
-                        aria-label={`Gate status: ${gate.state === 'active' ? 'Active' : 'Quarantined'}`}
-                      >
-                        {gate.state === 'active' ? 'Active' : 'Quarantined'}
-                      </span>
-                      <span className="font-mono text-micro text-muted-foreground">
-                        {gate.tier} · {gate.required ? 'required' : 'optional'}
-                      </span>
-                    </div>
-                    <code className="mt-1 block break-all font-mono text-micro text-foreground">
-                      {gate.command.cmd}{gate.command.args.length > 0 ? ` ${gate.command.args.join(' ')}` : ''}
-                    </code>
-                    <div className="mt-1 font-mono text-micro text-muted-foreground">
-                      <p>Source: {gate.source}</p>
-                      {gate.evidence !== null && <p>Evidence: {gate.evidence}</p>}
-                    </div>
-                    {gate.state === 'quarantined' && (
-                      <div className="mt-2 space-y-1 text-micro text-error">
-                        <p>
-                          This check was temporarily disabled
-                          {gate.quarantinedAt !== null
-                            ? ` on ${formatAbsoluteDateTime(gate.quarantinedAt)}`
-                            : ''}{' '}
-                          after failing repeatedly.
-                        </p>
-                        <CollapsibleSection
-                          label="Technical details"
-                          srLabel={`Technical details of the quarantine for ${gate.scope !== '.' ? `${gate.scope}: ` : ''}${gate.name}`}
-                        >
-                          <p>Signature: {gate.quarantineSignature ?? 'Unavailable'}</p>
-                        </CollapsibleSection>
-                        <button
-                          type="button"
-                          disabled={restoringGateIds.has(gate.id)}
-                          onClick={() => { void handleRestore(gate.id) }}
-                          className="mt-1 flex items-center gap-1 rounded border border-error/40 bg-error/10 px-2 py-1 font-mono text-micro text-error hover:bg-error/20 disabled:cursor-not-allowed disabled:opacity-50"
-                          data-testid={`gate-restore-${gate.id}`}
-                        >
-                          {restoringGateIds.has(gate.id) && (
-                            <span
-                              aria-hidden="true"
-                              className="inline-block h-3 w-3 animate-spin rounded-full border border-current border-t-transparent"
-                            />
-                          )}
-                          Restore
-                        </button>
-                      </div>
-                    )}
-                    {(gate.lastFailureSignature !== null || gate.lastFailureOriginId !== null || gate.lastFailureAt !== null) && (
-                      <div className="mt-2 border-t border-border/30 pt-2 text-label text-muted-foreground">
-                        <p>
-                          Last failed
-                          {gate.lastFailureAt !== null ? ` on ${formatAbsoluteDateTime(gate.lastFailureAt)}` : ''}.
-                        </p>
-                        <CollapsibleSection
-                          label="Technical details"
-                          srLabel={`Technical details of the last failure of ${gate.scope !== '.' ? `${gate.scope}: ` : ''}${gate.name}`}
-                        >
-                          {gate.lastFailureSignature !== null && <p>Signature: {gate.lastFailureSignature}</p>}
-                          {gate.lastFailureOriginId !== null && <p>Origin task: {gate.lastFailureOriginId}</p>}
-                        </CollapsibleSection>
-                      </div>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </section>
-          ))}
-        </div>
+        <p className="max-w-[70ch] text-label leading-relaxed text-muted-foreground">
+          {gates.length} gate{gates.length === 1 ? '' : 's'} registered
+          {quarantined > 0 ? `, ${quarantined} quarantined` : ''}. Whether each
+          one is currently passing — and quarantining, restoring or retiring it
+          — lives on the{' '}
+          <a
+            href="#/control"
+            data-testid="gates-handoff"
+            className="underline decoration-dotted underline-offset-2 hover:text-foreground"
+          >
+            Control Room
+          </a>
+          , which is the only page that reads their run status.
+        </p>
       )}
     </article>
   )

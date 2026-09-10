@@ -624,7 +624,28 @@ const leadDecisionIndex = (decisions: Decision[]): number => {
   // output moves behind an "Output" disclosure. When no goal is available the
   // humanSummary || title falls back to the sole headline.
   const goal = item.operatorGoal ?? null
-  const headline = !goal ? (item.humanSummary || item.title) : null
+
+  /** Prose, not a name: multiple sentences, or long enough to be one. */
+  const readsAsAdvisory = (text: string | null | undefined): boolean =>
+    text != null && text !== '' && (text.length > 88 || /[.!?]\s/.test(text))
+
+  // humanSummary won unconditionally, which cost the queue its best headline.
+  // On a signature-wave row the daemon sends BOTH: a title that is a real
+  // headline ("11 tasks failed for the same reason — one fix likely unblocks
+  // all") and a humanSummary that is a paragraph of advice. Taking the summary
+  // first meant the card rendered a wall of prose with no name on it, while
+  // the name sat unused in the payload. Shape decides now: if the summary is
+  // advisory and the title is not, the title leads and the summary explains.
+  const summaryShadowsTitle =
+    readsAsAdvisory(item.humanSummary) &&
+    item.title != null &&
+    item.title !== '' &&
+    !readsAsAdvisory(item.title)
+  const headline = goal
+    ? null
+    : summaryShadowsTitle
+      ? item.title
+      : item.humanSummary || item.title
 
   // The subhead and the summary are two different fields that, for several
   // kinds, hold the SAME string. `recovery-abandoned` is the clearest case:
@@ -676,6 +697,7 @@ const leadDecisionIndex = (decisions: Decision[]): number => {
   // text is the daemon's — it just stops promoting prose into the name slot.
   const headlineIsAdvisory =
     headline !== null && (headline.length > 88 || /[.!?]\s/.test(headline))
+  const caughtTaskIds = item.humanDetail?.caughtTaskIds ?? []
   const kindLabel = KIND_LABEL[item.kind] ?? item.kind.replace(/-/g, ' ')
   const kindIcon = kindIconNode(item.kind)
   const kindTone = KIND_TONE[item.kind] ?? 'neutral'
@@ -960,6 +982,38 @@ const leadDecisionIndex = (decisions: Decision[]): number => {
             </p>
           )
         )
+      )}
+
+      {/* When the title was promoted over an advisory summary, the summary is
+          still the explanation — it just is not the name. */}
+      {!goal && !inGroup && summaryShadowsTitle && (
+        <p
+          data-testid="triage-advisory"
+          className="mb-1 max-w-[80ch] text-label leading-relaxed text-muted-foreground"
+        >
+          {item.humanSummary}
+        </p>
+      )}
+
+      {/* The tasks a shared-cause row is actually about.
+          It used to name none of them: the ids were in the payload and the
+          schema dropped them, so the one row that stands for eleven tasks was
+          also the only row you could not open anything from. */}
+      {caughtTaskIds.length > 0 && !inGroup && (
+        <div className="mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-1" data-testid="triage-caught-tasks">
+          <span className="text-micro text-muted-foreground">
+            {caughtTaskIds.length} affected:
+          </span>
+          {caughtTaskIds.map((id) => (
+            <a
+              key={id}
+              href={taskHash(id, 'triage')}
+              className="font-mono text-micro text-muted-foreground underline decoration-dotted underline-offset-2 hover:text-foreground"
+            >
+              {id}
+            </a>
+          ))}
+        </div>
       )}
 
 

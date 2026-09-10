@@ -100,9 +100,9 @@ describe('SHELL_NAV_GROUPS', () => {
     expect(allEntries()).toHaveLength(10)
   })
 
-  it('Inbox group contains Needs You, Proposals and Chat', () => {
+  it('Inbox group contains Needs You, Drafts and Chat', () => {
     const labels = groupNamed('Inbox')?.entries.map((e) => e.label)
-    expect(labels).toEqual(['Needs You', 'Proposals', 'Chat'])
+    expect(labels).toEqual(['Needs You', 'Drafts', 'Chat'])
   })
 
   it('Needs You is the first entry in the Inbox group', () => {
@@ -176,8 +176,8 @@ describe('SHELL_NAV_GROUPS', () => {
     }
   })
 
-  it('Proposals entry href is #/proposals', () => {
-    const entry = allEntries().find((e) => e.label === 'Proposals')
+  it('Drafts entry href is #/proposals', () => {
+    const entry = allEntries().find((e) => e.label === 'Drafts')
     expect(entry?.href).toBe('#/proposals')
   })
 })
