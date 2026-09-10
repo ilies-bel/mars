@@ -210,6 +210,21 @@ export const ConversationTimeline = ({
   const isSuperseded = (entry: ChatConversationEntry): boolean =>
     entry.kind === 'situation' && entry.id !== currentSituationId
 
+  // Being the newest Situation does not make it true.
+  //
+  // The survivor sits at the bottom of the thread as Mars's current word, in
+  // flat present tense — "0 queued tasks, 2 running tasks … 31 items need
+  // attention" — when the app's own header said 36 and four of its five
+  // numbers were days out of date. Collapsing the older ones was right; it
+  // just left one stale block standing as the truth.
+  //
+  // A snapshot older than an hour is history, and says so above itself.
+  const STALE_SITUATION_MS = 60 * 60 * 1000
+  const isStaleSituation = (entry: ChatConversationEntry): boolean =>
+    entry.kind === 'situation' &&
+    entry.id === currentSituationId &&
+    Date.now() - new Date(entry.createdAt).getTime() > STALE_SITUATION_MS
+
   // Paginate: show only the most recent N subjects on first paint.
   // Older subjects are hidden behind "Show N earlier" so the first paint stays
   // fast — the same pattern used by the Control Room's steward timeline.
@@ -453,6 +468,15 @@ export const ConversationTimeline = ({
                   )}
                   <MessageTime at={entry.createdAt} />
                 </header>
+                {isStaleSituation(entry) && (
+                  <p
+                    className="mb-1 text-micro text-warn"
+                    data-testid="conversation-situation-stale"
+                  >
+                    Snapshot from {formatAbsoluteDateTime(entry.createdAt)} — the counts below
+                    were true then. The sidebar has the live ones.
+                  </p>
+                )}
                 {isNotice ? (
                   <TypedBody
                     id={entry.id}
@@ -460,7 +484,14 @@ export const ConversationTimeline = ({
                     className="max-w-[68ch] whitespace-pre-wrap text-body leading-relaxed text-foreground"
                   />
                 ) : (
-                  <p className="max-w-[68ch] whitespace-pre-wrap text-body leading-relaxed text-foreground">{body}</p>
+                  <p
+                    className={[
+                      'max-w-[68ch] whitespace-pre-wrap text-body leading-relaxed',
+                      isStaleSituation(entry) ? 'text-muted-foreground' : 'text-foreground',
+                    ].join(' ')}
+                  >
+                    {body}
+                  </p>
                 )}
                 {entry.segments.filter(isOfferSegment).map((segment) => (
                   <PreloadedResponses

@@ -556,6 +556,18 @@ const GatesSection = () => {
                   {/* Timing sits in its own right-aligned column so the eye can
                       read "when did this last break" down the list. */}
                   <div className="hidden shrink-0 flex-col items-end gap-0.5 text-micro tabular-nums sm:flex">
+                    {/* A gate with neither timestamp left this column
+                        completely blank. In a list where every other row ends
+                        in "failed 6d ago", a blank cell reads as "fine" — and
+                        a gate that has never run is materially WORSE than one
+                        that failed six days ago, because nothing has ever
+                        checked what it checks. It is the only state on this
+                        page that was presented as unremarkable. */}
+                    {gate.lastPassAt === null && gate.lastFailureAt === null && (
+                      <span className="text-warn" data-testid="gate-never-run">
+                        never run
+                      </span>
+                    )}
                     {!failing && gate.lastPassAt !== null && (
                       <span className="text-muted-foreground" data-testid="gate-last-pass">
                         passed{' '}

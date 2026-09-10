@@ -64,12 +64,18 @@ export const buildQueueItemSeed = (item: ActionQueueItem): string => {
     lines.push('', clipped)
   }
 
+  // Name where the verbs actually are. This opener is durable text stored in a
+  // chat thread; the chat pane has no verb buttons at all — nothing in it is
+  // clickable except Reply — so "use the buttons above" pointed at an
+  // affordance that has never existed on this surface, and the row those verbs
+  // DO live on went unnamed.
   const verbs = (item.verbs ?? []).map((verb) => verb.label).filter(Boolean)
   if (verbs.length > 0) {
-    lines.push('', `Your options: ${verbs.join(', ')}.`)
+    lines.push('', `Your options on the Needs You row: ${verbs.join(', ')}.`)
+    lines.push('', 'Ask me anything about it, or act on it from Needs You.')
+  } else {
+    lines.push('', 'Ask me anything about it.')
   }
-
-  lines.push('', 'Ask me anything about it, or use the buttons above.')
 
   return lines.join('\n')
 }

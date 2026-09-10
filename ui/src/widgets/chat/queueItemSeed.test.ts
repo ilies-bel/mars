@@ -59,7 +59,7 @@ describe('buildQueueItemSeed', () => {
         ],
       } as Partial<ActionQueueItem>),
     )
-    expect(seed).toContain('Your options: Dismiss, Snooze.')
+    expect(seed).toContain('Your options on the Needs You row: Dismiss, Snooze.')
   })
 
   it('clips a long body rather than pasting a whole log into the opener', () => {
@@ -75,8 +75,22 @@ describe('buildQueueItemSeed', () => {
     expect(seed).not.toContain('This concerns')
   })
 
-  it('always closes with an invitation to ask', () => {
-    const seed = buildQueueItemSeed(make({ humanSummary: 'Gate broken' }))
-    expect(seed.trimEnd().endsWith('Ask me anything about it, or use the buttons above.')).toBe(true)
+  it('closes by inviting a question and naming where the verbs actually are', () => {
+    // Never "the buttons above": the chat pane has no verb buttons, so that
+    // pointed at an affordance this surface has never had.
+    const seed = buildQueueItemSeed(
+      make({
+        humanSummary: 'Gate broken',
+        verbs: [{ op: 'dismiss', label: 'Dismiss', style: 'default' }],
+      } as Partial<ActionQueueItem>),
+    )
+    expect(seed.trimEnd().endsWith('Ask me anything about it, or act on it from Needs You.')).toBe(true)
+    expect(seed).not.toContain('buttons above')
+  })
+
+  it('does not promise a verb row when the item carries no verbs', () => {
+    const seed = buildQueueItemSeed(make({ humanSummary: 'Gate broken', verbs: [] }))
+    expect(seed.trimEnd().endsWith('Ask me anything about it.')).toBe(true)
+    expect(seed).not.toContain('Needs You row')
   })
 })

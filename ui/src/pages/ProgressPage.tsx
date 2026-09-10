@@ -324,7 +324,13 @@ export const ProgressPage = () => {
             )}
           </div>
         )}
-        {/* Text search — always visible */}
+        {/* Text search — for the two tabs that HAVE something to search.
+            It used to render on every tab, including Most-changed files, where
+            typing did nothing at all: the field would not even retain the
+            text, because it drives a task/proposal filter that tab does not
+            consume. A focusable primary input at the top of the screen that
+            silently ignores you is worse than no search. */}
+        {activeTab !== 'hot-paths' && (
         <div className="flex items-center border-b border-border bg-background px-6 py-2">
           <div className="relative min-w-0 flex-1">
             <Search
@@ -343,6 +349,7 @@ export const ProgressPage = () => {
             />
           </div>
         </div>
+        )}
         {error && tasks === null ? (
           <main className="flex min-h-0 flex-1 overflow-hidden bg-background">
             <FallbackSurface error={error} of="tasks" variant="pane" />
