@@ -6,6 +6,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { NAV_SHORTCUTS } from '@/shared/useGlobalKeyboardShortcuts'
 
 interface ShortcutsOverlayProps {
   /** Clears the `#/shortcuts` hash so the overlay closes. */
@@ -13,14 +14,16 @@ interface ShortcutsOverlayProps {
 }
 
 /**
- * Every row here is a promise. Two of the four were false: `1-9` bound to an
- * attribute no component renders, and `t` navigated to Chat while this list
- * said Needs You and the footer said "action queue" — three descriptions, one
- * key, none of them what happened. A panel where half the rows lie is worse
- * than no panel, because the rows that work teach the reader to trust it.
+ * Every row here is a promise, and the rows are not written here — the
+ * navigation ones are read from the same table the handler dispatches on, so
+ * a key cannot do one thing and be described as another. Two of the four rows
+ * used to be false: `1-9` bound to an attribute no component renders, and `t`
+ * navigated to Chat while this list said Needs You. A panel where half the
+ * rows lie is worse than no panel, because the rows that work teach the reader
+ * to trust it.
  */
 const SHORTCUTS: ReadonlyArray<{ key: string; desc: string }> = [
-  { key: 't', desc: 'Go to Needs You' },
+  ...NAV_SHORTCUTS.map((s) => ({ key: s.key, desc: `Go to ${s.desc}` })),
   { key: '?', desc: 'Open this shortcuts overlay' },
   { key: 'Esc', desc: 'Close any open overlay or drawer' },
 ]

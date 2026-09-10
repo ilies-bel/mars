@@ -11,17 +11,50 @@ const isOverlayHash = (hash: string): boolean => {
 }
 
 /**
+ * Every navigation shortcut, in one table.
+ *
+ * The handler and the help overlay both read it, so a key cannot do one thing
+ * and be described as another — which is exactly what happened before: `t`
+ * navigated to Chat while the overlay said "Go to Needs You" and the footer
+ * said "action queue", and a `1-9` row was advertised for an attribute no
+ * component rendered.
+ *
+ * Letters mirror the sidebar's own names where the initial is free, so the
+ * mapping is learnable from the nav rather than memorised from this file.
+ * There are no other single-key bindings in the app, and the handler stands
+ * down inside inputs, so a bare letter is safe here.
+ */
+export const NAV_SHORTCUTS: ReadonlyArray<{ key: string; hash: string; desc: string }> = [
+  { key: 't', hash: '#/triage', desc: 'Needs You' },
+  { key: 'd', hash: '#/proposals', desc: 'Drafts' },
+  { key: 'c', hash: '#/chat', desc: 'Chat' },
+  { key: 'b', hash: '#/progress', desc: 'Progress board' },
+  { key: 'e', hash: '#/events', desc: 'Events' },
+  { key: 'k', hash: '#/kpi', desc: 'KPI' },
+  { key: 's', hash: '#/studio', desc: 'Scores' },
+  { key: 'r', hash: '#/reflections', desc: 'Reflections' },
+  { key: 'o', hash: '#/control', desc: 'Control Room' },
+  { key: 'w', hash: '#/steward', desc: 'Steward' },
+]
+
+/**
  * Registers global keyboard shortcuts for the operator keyboard-first workflow.
  *
- * - 1-9  focus the nth visible task card on the Board (via [data-task-index])
- * - t     navigate to #/chat (triage — the chat page hosts the action queue)
- * - ?     open the keyboard shortcuts help overlay (#/shortcuts)
+ * - the letters in {@link NAV_SHORTCUTS} jump to that page
+ * - `?` opens the keyboard shortcuts help overlay (#/shortcuts)
  *
  * Shortcuts are silenced when:
  *   - focus is inside an input, textarea, select, or contenteditable element
  *   - the event is part of an IME composition sequence (isComposing)
  *   - a drawer or modal overlay is currently open (hash-based detection)
  *   - a modifier key (Ctrl, Meta, Alt) is held
+ *
+ * There is no 1-9 handler. It looked for `[data-task-index="<n>"]`, an
+ * attribute that appears nowhere in the app — only inside this hook's own test
+ * file, which set it by hand and then proved the hook could find it. Even
+ * working it would have been unusable: no card carries a visible position
+ * number, so "jump to task 5" is a guess. Restoring it means rendering the
+ * digit on the card first.
  */
 export const useGlobalKeyboardShortcuts = (): void => {
   useEffect(() => {
@@ -31,28 +64,16 @@ export const useGlobalKeyboardShortcuts = (): void => {
       if (isEditableTarget(e.target)) return
       if (isOverlayHash(window.location.hash)) return
 
-      if (e.key === 't') {
-        e.preventDefault()
-        // Both labels for this key said the action queue — the footer's
-        // "action queue" and the overlay's "Go to Needs You" are the same
-        // page. Only the handler disagreed, and it won.
-        window.location.hash = '#/triage'
-        return
-      }
       if (e.key === '?') {
         e.preventDefault()
         window.location.hash = '#/shortcuts'
         return
       }
-      // There is no 1-9 handler any more.
-      //
-      // It looked for `[data-task-index="<n>"]`, an attribute that appears
-      // nowhere in the app — only inside this hook's own test file, which set
-      // it by hand and then proved the hook could find it. So the shortcut had
-      // never once worked, while the footer and the overlay both advertised
-      // it. Even working, it would have been unusable: no card carries a
-      // visible position number, so "jump to task 5" is a guess. Restoring it
-      // means rendering the digit on the card first.
+      const nav = NAV_SHORTCUTS.find((s) => s.key === e.key)
+      if (nav) {
+        e.preventDefault()
+        window.location.hash = nav.hash
+      }
     }
     document.addEventListener('keydown', handleKeyDown)
     return () => {
