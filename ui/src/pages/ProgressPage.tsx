@@ -20,7 +20,7 @@ import { TopologyView } from '@/widgets/TopologyView'
 import { TopStripe } from '@/widgets/TopStripe'
 import { useDispatchState } from '@/entities/operator/useDispatchState'
 import { useDaemonHealth } from '@/entities/daemon/useDaemonHealth'
-import type { HotPathEntry } from '@/shared/schemas'
+import type { HotPathEntry, ProgressTask } from '@/shared/schemas'
 
 // ── Hot paths section ─────────────────────────────────────────────────────────
 
@@ -269,6 +269,25 @@ export const ProgressPage = () => {
     return new Set([...matchingTaskIds, ...matchingProposalIds])
   }, [searchQuery, tasks, proposals])
 
+  // What the four columns draw, filtered and unfiltered — the only population
+  // the header above them is entitled to describe.
+  const boardCounts = useMemo(() => {
+    const onBoard = (t: ProgressTask): boolean =>
+      t.cluster === 'Queued' || t.cluster === 'In progress' || t.cluster === 'Blocked' || t.cluster === 'Failed'
+    const boardTasks = (tasks ?? []).filter(onBoard)
+    const matches = (id: string): boolean => searchMatchIds == null || searchMatchIds.has(id)
+    const inProposal = (pid: string | null | undefined): boolean =>
+      selectedProposalId === null || pid === selectedProposalId
+    const shownTasks = boardTasks.filter((t) => matches(t.id) && inProposal(t.parentProposalId))
+    const shownProposals = proposals.filter(
+      (p) => matches(p.id) && (selectedProposalId === null || p.id === selectedProposalId),
+    )
+    return {
+      shown: shownTasks.length + shownProposals.length,
+      total: boardTasks.length + proposals.length,
+    }
+  }, [tasks, proposals, searchMatchIds, selectedProposalId])
+
   // Sync filter state to the URL after every change (debounced at 300 ms so
   // rapid search keystrokes don't produce a history entry per character).
   // history.replaceState is used — no hashchange event fires, so the app-level
@@ -323,12 +342,16 @@ export const ProgressPage = () => {
                       : 'Dispatch is paused — queued tasks will not start until it resumes.'}
             </span>
             {dispatch.reason === 'baseline' ? (
+              /* This pointed at #/triage — the unfiltered queue, which
+                 contains no gate at all. The gates live on the Control Room,
+                 which the Steward page itself names as "the only page that
+                 reads their run status". */
               <a
-                href="#/triage"
+                href="#/control"
                 data-testid="dispatch-pause-banner-gate-link"
                 className="shrink-0 rounded-md border border-warn/40 px-3 py-1 text-warn transition-colors hover:bg-warn/20"
               >
-                View failing gate
+                View failing gates
               </a>
             ) : (
               <button
@@ -381,14 +404,20 @@ export const ProgressPage = () => {
               </button>
             )}
           </div>
-          {/* Same sentence as Drafts and Needs You. Three search boxes on this
-              app used three grammars, and this one reported no count at all. */}
+          {/* Same sentence as Drafts and Needs You — over the population this
+              board actually draws.
+              It first counted `searchMatchIds.size` against every task and
+              proposal in the feed, which includes DONE tasks the board has no
+              column for. So "Showing 18 of 266" sat directly above columns
+              reading 0 · 0 · 0 · 13, and the unfiltered columns added to 258,
+              not 266. Both numbers described a set the operator could not
+              see. */}
           {searchQuery.trim() !== '' && (
             <span
               className="ml-3 shrink-0 text-label tabular-nums text-muted-foreground"
               data-testid="search-tasks-count"
             >
-              {`Showing ${searchMatchIds?.size ?? 0} of ${(tasks?.length ?? 0) + proposals.length}`}
+              {`Showing ${boardCounts.shown} of ${boardCounts.total}`}
             </span>
           )}
         </div>

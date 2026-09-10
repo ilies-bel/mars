@@ -34,7 +34,15 @@ mock.module('@/shared/api', () => ({
 
 describe('RecoveryCommands — normal failed task', () => {
   const html = renderToStaticMarkup(
-    <RecoveryCommands taskId="mars-abc123" error="code:context-exhausted" />,
+    // A normal failed task HAS a worktree — that is what makes it continuable.
+    // `mars continue` degrades to a destructive restart without one, so the
+    // fixture has to carry the branch and worktree the real payload does.
+    <RecoveryCommands
+      taskId="mars-abc123"
+      error="code:context-exhausted"
+      branch="task/mars-abc123"
+      worktreePath="/repo/.mars/worktrees/mars-abc123"
+    />,
   )
 
   it('renders the Continue button', () => {

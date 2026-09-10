@@ -376,14 +376,14 @@ describe('ProgressPage – dispatch pause banner', () => {
     expect(html).toContain('data-testid="dispatch-pause-banner-resume"')
   })
 
-  it('renders a gate link instead of Resume when reason is baseline', () => {
+  it('links to the gates themselves, not the queue, when reason is baseline', () => {
     // Resuming dispatch does not fix a red integration branch — a link to Needs
     // You (where the failing gate row lives) is offered instead.
     mockDispatchState = { paused: true, reason: 'baseline', since: null, detail: null }
     const html = renderToStaticMarkup(<ProgressPage />)
     expect(html).not.toContain('data-testid="dispatch-pause-banner-resume"')
     expect(html).toContain('data-testid="dispatch-pause-banner-gate-link"')
-    expect(html).toContain('#/triage')
+    expect(html).toContain('#/control')
   })
 
   it('renders only the banner as the pause indicator — no duplicate dispatch-paused-chip', () => {

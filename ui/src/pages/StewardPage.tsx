@@ -500,9 +500,27 @@ const SignatureStormLane = ({ data }: { data: StewardView['signatureStorm'] }) =
     last_task_id,
   } = data
 
-  // Two states can disagree: `tripped` persists in Postgres,
-  // `isPaused` is in-memory. A daemon restart clears isPaused while tripped stays.
-  const disagree = tripped !== isPaused
+  // Two states can disagree: `tripped` persists across restarts, `isPaused`
+  // does not — so a restart can clear the pause while the breaker stays
+  // tripped.
+  //
+  // But dispatch pauses for four causes and this lane owns exactly one of
+  // them. Comparing the two booleans alone made every operator-, quota- or
+  // baseline-held pause look like a storm-breaker disagreement: with `main`
+  // failing a required gate, this panel announced "Breaker is clear in
+  // Postgres, but dispatch is paused in memory. The daemon was likely
+  // restarted…" while the Control Room two clicks away correctly said
+  // "Reason: broken baseline" with nine failing gates listed beneath it. The
+  // page asserted a cause the rest of the app contradicted.
+  //
+  // So only ONE direction is a disagreement this lane can assert: the breaker
+  // is tripped and yet nothing is paused, which means a storm would not stop
+  // dispatch. The other direction — paused while the breaker is clear — is
+  // indistinguishable from an operator, quota or baseline pause, which are
+  // none of this lane's business, and reading it as a storm defect is how the
+  // page came to announce a restart-induced drift while the Control Room two
+  // clicks away correctly said "Reason: broken baseline".
+  const disagree = tripped && !isPaused
 
   return (
     <article className={laneCardClass(true)} data-testid="lane-signature-storm">
@@ -535,11 +553,16 @@ const SignatureStormLane = ({ data }: { data: StewardView['signatureStorm'] }) =
           <p className="text-label font-semibold text-warn">
             State disagreement detected
           </p>
+          {/* No storage layers in operator-facing copy: "in Postgres" and "in
+              memory" describe where Mars keeps things, which is not something
+              the reader can act on. What they can act on is that the breaker
+              and the queue disagree, and the one command that fixes it —
+              `mars operator` alone is not runnable. */}
           <p className="mt-0.5 text-micro text-warn/80">
-            Breaker is {tripped ? 'tripped' : 'clear'} in Postgres, but dispatch is{' '}
-            {isPaused ? 'paused' : 'running'} in memory. The daemon was likely restarted while the
-            breaker was {tripped ? 'tripped' : 'clear'}. Run{' '}
-            <code className="rounded bg-warn/20 px-1">mars operator</code> to re-align.
+            The breaker is tripped but dispatch is running, so a repeat storm
+            would not stop it. The trip survives restarts; dispatch does not.
+            Run <code className="rounded bg-warn/20 px-1">mars daemon reset-breaker</code> to
+            clear it.
           </p>
         </div>
       )}

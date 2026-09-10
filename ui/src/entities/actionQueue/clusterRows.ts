@@ -157,6 +157,12 @@ export type RenderedRow =
        */
       causeLabel?: string
       count: number
+      /**
+       * Extra condition kinds folded onto a member row, keyed by member id —
+       * conditions raised independently for the same task (ADR-0057) that
+       * would otherwise draw a second row for it elsewhere on the page.
+       */
+      memberBadges?: Record<string, string[]>
       /** Highest priority among members. */
       priority: 'high' | 'normal' | 'low'
       /** All member rows — expose for expand display and bulk actions. */
@@ -259,9 +265,14 @@ export function buildRenderedRows(
   // Prepend server-pre-grouped rows as causeGroup RenderedRows, and exclude
   // their members from the flat sort so they are not double-rendered.
   const serverGroupMemberIds = new Set<string>()
+  // entityId → the group member row that already stands for that task.
+  const memberIdByEntity = new Map<string, string>()
   const serverGroupRows: RenderedRow[] = []
   for (const sg of (serverGroups ?? [])) {
-    for (const m of sg.members) serverGroupMemberIds.add(m.id)
+    for (const m of sg.members) {
+      serverGroupMemberIds.add(m.id)
+      if (m.entityId) memberIdByEntity.set(m.entityId, m.id)
+    }
     serverGroupRows.push({
       type: 'causeGroup',
       id: `causeGroup:${sg.kind}:${sg.signature}`,
@@ -272,11 +283,41 @@ export function buildRenderedRows(
       priority: sg.priority,
       members: sg.members,
       bulkResolveVerb: sg.bulkResolveVerb,
+      memberBadges: {},
     })
   }
-  const remainingSorted = serverGroupMemberIds.size > 0
-    ? sorted.filter((i) => !serverGroupMemberIds.has(i.id))
-    : sorted
+
+  // A task whose entity ALREADY appears inside a server group does not get a
+  // second row of its own — it gets a badge on the row that already stands
+  // for it, exactly as co-occurring conditions do within `entityBuckets`.
+  //
+  // Without this, one task rendered twice in two places under two different
+  // names: a loose `env-incident` row headlined with its arc's goal, and a
+  // group member headlined with the rescue-operator's summary. Restarting
+  // from the first, an operator believed they were restarting the other.
+  //
+  // It is also why the queue could not be added up. `countNeedsYou` folds
+  // these onto one subject — correctly — while the page drew both, so the
+  // rows summed two higher than every count on the screen.
+  const foldedIntoGroup = new Set<string>()
+  for (const item of sorted) {
+    if (serverGroupMemberIds.has(item.id)) continue
+    if (!item.entityId) continue
+    const memberId = memberIdByEntity.get(item.entityId)
+    if (memberId === undefined) continue
+    foldedIntoGroup.add(item.id)
+    for (const row of serverGroupRows) {
+      if (row.type !== 'causeGroup' || row.memberBadges === undefined) continue
+      if (!row.members.some((m) => m.id === memberId)) continue
+      const existing = row.memberBadges[memberId] ?? []
+      if (!existing.includes(item.kind)) row.memberBadges[memberId] = [...existing, item.kind]
+    }
+  }
+
+  const remainingSorted =
+    serverGroupMemberIds.size > 0 || foldedIntoGroup.size > 0
+      ? sorted.filter((i) => !serverGroupMemberIds.has(i.id) && !foldedIntoGroup.has(i.id))
+      : sorted
   const kindCounts = new Map<string, number>()
   for (const item of remainingSorted) {
     kindCounts.set(item.kind, (kindCounts.get(item.kind) ?? 0) + 1)

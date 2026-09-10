@@ -295,6 +295,17 @@ const TriageClusterRow = ({ kind, count, latestAt }: TriageClusterRowProps) => {
           : `${count} ${kindLabel} items`}
       </p>
 
+      {/* Drafts are a backlog of shaped ideas, not operational work, so they
+          are excluded from the queue's count — deliberately, and identically,
+          here and on the server. But this row is ON the page, so a reader
+          adding up the rows to check the header lands one over and has no way
+          to know which row to drop. Say which. */}
+      {isDraftProposal && (
+        <p className="mb-1 text-micro text-muted-foreground" data-testid="cluster-not-counted">
+          Ideas waiting to be shaped — not counted in the queue above.
+        </p>
+      )}
+
       {/* Navigation link to the relevant surface */}
       <ActionLink
         href={isDraftProposal ? '#/proposals' : '#/triage'}
@@ -762,8 +773,17 @@ const leadDecisionIndex = (decisions: Decision[]): number => {
   // A grouped member inherits the group's bulk verb as its own single-row
   // action, unless the daemon already sent it one by that op.
   const groupVerb = groupContext?.memberVerb ?? null
+  // A member does not inherit a verb it is already about to render itself.
+  //
+  // The group's bulk verb is now derived as `continue` for a continuable
+  // failed group, and every one of its members ALSO renders its own Continue
+  // below — so each row drew two buttons reading "Continue", side by side,
+  // one outlined and one filled, with nothing to tell them apart. The daemon's
+  // own verb list is checked for the same collision; the row's own affordances
+  // were not.
+  const rendersOwnVerb = (op: string): boolean => op === 'continue' && continueAvailable
   const withGroupVerb =
-    groupVerb !== null && !verbs.some((v) => v.op === groupVerb.op)
+    groupVerb !== null && !rendersOwnVerb(groupVerb.op) && !verbs.some((v) => v.op === groupVerb.op)
       ? // Deliberately NOT primary. The recipe marks it primary because it is
         // the group's recommended bulk action; on a member it is the exception
         // to that ("retry just this one"), and seventeen filled buttons in a
@@ -1722,6 +1742,9 @@ export const TriageCauseGroupRow = ({
             <TriageRow
               key={member.id}
               item={member}
+              /* Conditions raised separately for this same task, folded here
+                 rather than drawn as their own row elsewhere on the page. */
+              extraBadges={group.memberBadges?.[member.id]}
               groupContext={{
                 memberName: nameOf(member),
                 memberVerb: bulkVerb,

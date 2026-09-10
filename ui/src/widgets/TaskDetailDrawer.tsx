@@ -550,11 +550,33 @@ const RECOVERY_EXHAUSTED_PREFIX = 'recovery_exhausted:'
 export const RecoveryCommands = ({
   taskId,
   error,
+  recoverySpawnedCount = 0,
+  branch = null,
+  worktreePath = null,
 }: {
   taskId: string
   error: string | null
+  /** Mars allows exactly ONE recovery attempt per origin failure. */
+  recoverySpawnedCount?: number
+  branch?: string | null
+  worktreePath?: string | null
 }) => {
-  const recoveryExhausted = error?.includes(RECOVERY_EXHAUSTED_PREFIX) ?? false
+  // Exhaustion was inferred from a substring of the error text, so this
+  // drawer and the Needs You row disagreed about the same task: the queue read
+  // the daemon's own flag and withheld Continue, while the drawer found no
+  // prefix and made Continue its primary. One task, two screens, opposite
+  // recommendations. The spawn count is the same fact the daemon is reporting.
+  const recoveryExhausted =
+    (error?.includes(RECOVERY_EXHAUSTED_PREFIX) ?? false) || recoverySpawnedCount >= 1
+
+  // `mars continue` needs a worktree to resume ON. Without one it silently
+  // DEGRADES INTO A RESTART — it wipes and re-runs — so offering it here for a
+  // task that died before setup produced a branch is offering a hidden
+  // destructive action under the name of the safe one. The drawer was also
+  // promising, in its CLI note, to keep "every commit the coder already
+  // landed" for a task that has never had a commit.
+  const resumable = branch !== null && branch !== '' && worktreePath !== null && worktreePath !== ''
+  const canContinue = !recoveryExhausted && resumable
   const [confirming, setConfirming] = useState<'restart' | 'drop' | null>(null)
   const [loading, setLoading] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
@@ -662,7 +684,7 @@ export const RecoveryCommands = ({
 
       {/* Action buttons */}
       <div className="flex flex-wrap gap-2">
-        {!recoveryExhausted ? (
+        {canContinue ? (
           <button
             data-testid="continue-btn"
             onClick={() => void invoke('continue')}
@@ -761,7 +783,7 @@ export const RecoveryCommands = ({
           Show CLI equivalent
         </summary>
         <div className="mt-1 space-y-0.5">
-          {!recoveryExhausted ? (
+          {canContinue ? (
             <>
               <p className="font-mono text-micro text-muted-foreground">
                 <code>mars continue {taskId}</code> — Resumes on the existing
@@ -770,6 +792,21 @@ export const RecoveryCommands = ({
               <p className="font-mono text-micro text-muted-foreground">
                 <code>mars restart {taskId}</code> — Discards the worktree,
                 branch and all commits, then re-runs from setup.
+              </p>
+            </>
+          ) : !recoveryExhausted ? (
+            <>
+              {/* Not exhausted, but nothing to resume on. `mars continue`
+                  degrades to a restart when the worktree is missing, so the
+                  promise above ("keeping every commit") would be false and the
+                  command destructive under a safe-sounding name. */}
+              <p className="font-mono text-micro text-muted-foreground">
+                This task has no worktree, so <code>mars continue</code> would
+                silently fall back to a restart. Only the wipe is available:
+              </p>
+              <p className="font-mono text-micro text-muted-foreground">
+                <code>mars restart {taskId}</code> — Re-runs from setup. Nothing
+                is on disk for it to discard.
               </p>
             </>
           ) : (
@@ -1336,7 +1373,13 @@ export const TaskDetailBody = ({
           ) : null}
           {/* Action buttons for failed tasks. */}
           {task.status === 'failed' ? (
-            <RecoveryCommands taskId={task.id} error={task.error} />
+            <RecoveryCommands
+              taskId={task.id}
+              error={task.error}
+              recoverySpawnedCount={task.recoverySpawnedCount ?? 0}
+              branch={task.branch}
+              worktreePath={task.worktreePath}
+            />
           ) : null}
         </div>
       ) : null}

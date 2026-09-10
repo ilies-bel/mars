@@ -2799,9 +2799,24 @@ describe('TaskDetailDrawer – proposal mode (slice-3 no-regression)', () => {
 // ---------------------------------------------------------------------------
 
 describe('RecoveryCommands', () => {
+  it('withholds continue when there is no worktree to resume on', () => {
+    // Without a worktree `mars continue` silently falls back to a restart, so
+    // offering it is offering a wipe under the name of the safe verb.
+    const html = renderToStaticMarkup(
+      <RecoveryCommands taskId="mars-nobranch" error="setup:unclassified" />,
+    )
+    expect(html).not.toContain('data-testid="continue-btn"')
+    expect(html).toContain('silently fall back to a restart')
+  })
+
   it('leads with continue and marks restart as the lossy one', () => {
     const html = renderToStaticMarkup(
-      <RecoveryCommands taskId="mars-c7f01ce6" error="code:context-exhausted" />,
+      <RecoveryCommands
+        taskId="mars-c7f01ce6"
+        error="code:context-exhausted"
+        branch="task/mars-c7f01ce6"
+        worktreePath="/repo/.mars/worktrees/mars-c7f01ce6"
+      />,
     )
     expect(html).toContain('mars continue mars-c7f01ce6')
     expect(html).toContain('mars restart mars-c7f01ce6')
