@@ -66,6 +66,48 @@ const StatusDot = ({ active, label }: { active: boolean; label?: string }) => (
 )
 
 /** Formats a timestamp as a short, unambiguous "last activity" label. */
+/**
+ * A lowercase inline disclosure — the Steward's "raw transitions" and
+ * "N earlier" toggles.
+ *
+ * Not CollapsibleSection: that primitive sets its label in `eyebrow` (11px
+ * uppercase), which is right for a section header and wrong for a sentence
+ * fragment like "3 earlier". What IS shared is the fix — the chevron rotates
+ * from React state, because the `group-open:rotate-90` variant these two
+ * toggles used compiled to no CSS and neither chevron had ever moved.
+ */
+const InlineDisclosure = ({
+  label,
+  className = '',
+  children,
+}: {
+  label: string
+  className?: string
+  children: React.ReactNode
+}) => {
+  const [open, setOpen] = useState(false)
+  return (
+    <details className={className} onToggle={(e) => setOpen(e.currentTarget.open)}>
+      {/* `flex list-none` is not cosmetic here. Tailwind's preflight sets
+          `svg { display: block }`, so inside a plain block <summary> the
+          Lucide chevron became a block and pushed the label onto a second
+          line, with the UA's own disclosure marker left stranded beside it.
+          min-h-6 keeps the control at a 24px target on one line. */}
+      <summary className="flex min-h-6 cursor-pointer list-none items-center gap-1 text-micro text-muted-foreground select-none hover:text-foreground">
+        <ChevronRight
+          size={11}
+          strokeWidth={2}
+          aria-hidden="true"
+          className="shrink-0 transition-transform"
+          style={open ? { transform: 'rotate(90deg)' } : undefined}
+        />
+        {label}
+      </summary>
+      {children}
+    </details>
+  )
+}
+
 const formatLastActivity = (timestamp: string | null): string =>
   timestamp === null
     ? 'no activity yet'
@@ -236,23 +278,7 @@ export const CapRatchet = ({
 
       {/* Raw transitions — collapsed by default, available for exact sequence inspection */}
       {entries.length > 0 && (
-        <details className="group mt-1">
-          {/* `flex list-none` is not cosmetic here. Tailwind's preflight sets
-              `svg { display: block }`, so inside a plain block <summary> the
-              Lucide chevron became a block and pushed "raw transitions" onto a
-              second line, with the UA's own disclosure marker left stranded
-              beside it. Every other <summary> in this file already uses this
-              shape; this one was the exception. min-h-6 keeps the control at a
-              24px target once it collapses back to one line. */}
-          <summary className="flex min-h-6 cursor-pointer list-none items-center gap-1 text-micro text-muted-foreground select-none hover:text-foreground">
-            <ChevronRight
-              size={11}
-              strokeWidth={2}
-              aria-hidden="true"
-              className="shrink-0 transition-transform group-open:rotate-90"
-            />
-            raw transitions
-          </summary>
+        <InlineDisclosure label="raw transitions" className="mt-1">
           <div className="mt-1 flex flex-wrap items-center gap-1 text-label text-muted-foreground">
             <span className="text-muted-foreground">{baseline}</span>
             {entries.map((e) => (
@@ -262,7 +288,7 @@ export const CapRatchet = ({
               </span>
             ))}
           </div>
-        </details>
+        </InlineDisclosure>
       )}
     </div>
   )
@@ -375,22 +401,13 @@ const AckLog = ({ acks }: { acks: Ack[] }) => {
           </div>
 
           {earlier.length > 0 && (
-            <details className="group">
-              <summary className="flex min-h-6 cursor-pointer list-none items-center gap-1 text-micro text-muted-foreground select-none hover:text-foreground">
-                <ChevronRight
-                  size={11}
-                  strokeWidth={2}
-                  aria-hidden="true"
-                  className="shrink-0 transition-transform group-open:rotate-90"
-                />
-                {`${earlier.length} earlier`}
-              </summary>
+            <InlineDisclosure label={`${earlier.length} earlier`}>
               <div className="mt-1">
                 {earlier.map((ack) => (
                   <AckCard key={ack.timestamp} ack={ack} />
                 ))}
               </div>
-            </details>
+            </InlineDisclosure>
           )}
         </>
       )}

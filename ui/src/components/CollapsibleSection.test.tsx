@@ -57,9 +57,12 @@ describe('CollapsibleSection', () => {
       </CollapsibleSection>,
     )
     // A real chevron icon is always present in the summary. This used to be a
-    // "▸" text glyph; it is a Lucide <svg> now, so assert the icon and the
-    // group-open rotation that makes it read as a disclosure control.
+    // "▸" text glyph; it is a Lucide <svg> now.
     expect(html).toContain('lucide-chevron-right')
-    expect(html).toContain('group-open:rotate-90')
+    // Deliberately NOT asserting a class string. The previous version of this
+    // test asserted `group-open:rotate-90` was present in the markup, and it
+    // always was — while the variant compiled to no CSS at all, so the chevron
+    // never rotated in any browser. A class name is not a behaviour.
+    expect(html).not.toContain('rotate(90deg)')
   })
 })

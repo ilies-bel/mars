@@ -1,4 +1,5 @@
 import { ChevronRight } from 'lucide-react'
+import { useState } from 'react'
 import type { ReactNode } from 'react'
 
 interface CollapsibleSectionProps {
@@ -45,29 +46,40 @@ export const CollapsibleSection = ({
   defaultOpen = false,
   'data-testid': testId,
   className = '',
-}: CollapsibleSectionProps) => (
-  <details
-    open={defaultOpen || undefined}
-    data-testid={testId}
-    className={`group ${className}`}
-  >
-    <summary
-      aria-label={srLabel}
-      className="eyebrow flex cursor-pointer list-none items-center gap-1.5 py-0.5 text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden"
+}: CollapsibleSectionProps) => {
+  // Open state is tracked here rather than left to a CSS `group-open:`
+  // variant. The variant compiled to nothing: the class landed on the svg in
+  // every rendered disclosure in the app and no rule was ever emitted for it,
+  // so every chevron in Mars pointed right whether its panel was open or shut
+  // — and a unit test asserting the class STRING was present kept passing
+  // throughout. Behaviour that matters is checked by reading the computed
+  // transform, not by grepping the markup for a class name.
+  const [open, setOpen] = useState(defaultOpen)
+  return (
+    <details
+      open={defaultOpen || undefined}
+      data-testid={testId}
+      className={className}
+      onToggle={(e) => setOpen(e.currentTarget.open)}
     >
-      {/* A real chevron, not a "▸" text glyph: the character's metrics and
-          vertical centring vary per font, and it cannot take a stroke weight.
-          Rotates 90° when the <details> is open via the group-open variant. */}
-      <ChevronRight
-        size={11}
-        strokeWidth={2.5}
-        className="shrink-0 transition-transform duration-150 group-open:rotate-90"
-        aria-hidden="true"
-      />
-      {label}
-    </summary>
-    <div className="mt-1.5">
-      {children}
-    </div>
-  </details>
-)
+      <summary
+        aria-label={srLabel}
+        className="eyebrow flex cursor-pointer list-none items-center gap-1.5 py-0.5 text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden"
+      >
+        {/* A real chevron, not a "▸" text glyph: the character's metrics and
+            vertical centring vary per font, and it cannot take a stroke weight. */}
+        <ChevronRight
+          size={11}
+          strokeWidth={2.5}
+          className="shrink-0 transition-transform duration-150"
+          style={open ? { transform: 'rotate(90deg)' } : undefined}
+          aria-hidden="true"
+        />
+        {label}
+      </summary>
+      <div className="mt-1.5">
+        {children}
+      </div>
+    </details>
+  )
+}

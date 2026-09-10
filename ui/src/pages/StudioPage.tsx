@@ -21,6 +21,9 @@ import { PageHeader } from '@/widgets/primitives/DensityPrimitives'
 import { taskSchema } from '@/shared/schemas'
 import { taskTitle } from '@/shared/promptTitle'
 import { useFocusedProject } from '@/shared/useFocusedProject'
+import { useTaskScore } from '@/entities/watchtower/useTaskScore'
+import { ScoreBar } from '@/components/ScoreBar'
+import { relativeTime } from '@/shared/time'
 
 export interface StudioPageProps {
   /** Task id parsed from `#/studio/<taskId>`. */
@@ -59,6 +62,10 @@ export const StudioPage = ({ taskId, fetchImpl }: StudioPageProps) => {
 
   const { timeline, isLoading, error } = useStudio(taskId, fetchImpl)
 
+  // The score is why the operator is here — this page is reached by clicking
+  // one in the Scores table. It used to be dropped on arrival.
+  const { entry: score, isLoading: scoreLoading } = useTaskScore(taskId)
+
   return (
     <div data-testid="studio-page" className="flex h-full flex-col overflow-hidden bg-background">
       <PageHeader
@@ -68,11 +75,30 @@ export const StudioPage = ({ taskId, fetchImpl }: StudioPageProps) => {
           <a
             href={taskHash(taskId)}
             data-testid="studio-back-to-task"
-            className="text-title text-muted-foreground hover:text-foreground"
-            aria-label={`Back to task ${taskId}`}
+            className="inline-flex items-center gap-1.5 rounded border border-border px-2 py-1 text-label text-muted-foreground hover:bg-foreground/5 hover:text-foreground"
           >
-            <ArrowLeft size={12} strokeWidth={2} aria-hidden="true" /> Task
+            <ArrowLeft size={13} strokeWidth={2} aria-hidden="true" />
+            Back to task
           </a>
+        }
+        toolbar={
+          scoreLoading ? null : (
+            <div data-testid="studio-score" className="flex items-center gap-3">
+              {score !== null && score.score !== null ? (
+                <>
+                  <ScoreBar score={score.score} size="lg" data-testid="studio-score-bar" />
+                  <p className="text-label text-muted-foreground">
+                    {score.recorded ? 'Scored' : 'Scored, not recorded'}
+                    {score.scoredAt !== null ? ` ${relativeTime(score.scoredAt)}` : ''}
+                  </p>
+                </>
+              ) : (
+                <p className="text-label text-muted-foreground">
+                  Not scored — this run has no scorer verdict.
+                </p>
+              )}
+            </div>
+          )
         }
       />
 

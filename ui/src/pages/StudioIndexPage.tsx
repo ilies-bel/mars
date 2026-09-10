@@ -1,5 +1,6 @@
 import { SelectField } from '@/components/SelectField'
 import { EmptyState } from '@/components/EmptyState'
+import { ScoreBar } from '@/components/ScoreBar'
 /**
  * StudioIndexPage — the Studio landing at `#/studio` (bare, no task id).
  *
@@ -70,26 +71,6 @@ const SortHeader = ({
           : <ChevronsUpDown size={10} strokeWidth={2} aria-hidden="true" className="opacity-0 transition-opacity group-hover:opacity-100" />}
       </button>
     </th>
-  )
-}
-
-/**
- * A score rendered as a value, not just a number. 0.35 and 0.85 used to be the
- * same 13px black text, so the table encoded its most important column in
- * digits alone — you had to read every row to find the bad ones.
- */
-const ScoreCell = ({ score }: { score: number | null }) => {
-  if (score === null) return <span className="text-muted-foreground">—</span>
-  const pct = Math.max(0, Math.min(1, score)) * 100
-  const tone =
-    score >= 0.8 ? 'bg-success' : score >= 0.5 ? 'bg-warn' : 'bg-error'
-  return (
-    <span className="flex items-center gap-2">
-      <span className="h-1.5 w-24 shrink-0 overflow-hidden rounded-full bg-foreground/8">
-        <span className={cn('block h-full rounded-full', tone)} style={{ width: `${pct}%` }} />
-      </span>
-      <span className="tabular-nums text-label text-foreground">{score.toFixed(2)}</span>
-    </span>
   )
 }
 
@@ -245,7 +226,7 @@ export const StudioIndexPage = () => {
                       {entry.scoredAt !== null ? relativeTime(entry.scoredAt) : '—'}
                     </td>
                     <td className="py-2">
-                      <ScoreCell score={entry.score} />
+                      <ScoreBar score={entry.score} />
                     </td>
                   </tr>
                 )

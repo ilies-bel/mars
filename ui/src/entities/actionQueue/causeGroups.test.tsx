@@ -289,6 +289,85 @@ describe('TriageCauseGroupRow', () => {
     expect(snoozeButton).not.toBeNull()
   })
 
+  it('offers the group bulk verb on each member too, so one task can be retried alone', () => {
+    // The header offered "Retry all 17" while every member's own verbs array
+    // carried nothing but Snooze — the queue could retry seventeen tasks and
+    // not one. It is the same op either way: handleBulkAction already calls
+    // dispatchAlertVerb per member in a loop.
+    const group = makeGroup(3, {
+      bulkResolveVerb: { op: 'proposal.slice', label: 'Retry', style: 'primary' as const },
+    })
+    group.members.forEach((m) => {
+      m.verbs = [{ op: 'snooze', label: 'Snooze', style: 'snooze' as const }]
+    })
+    act(() => {
+      root.render(<TriageCauseGroupRow group={group} />)
+    })
+    act(() => {
+      ;(container.querySelector('[data-testid="cause-group-toggle"]') as HTMLButtonElement).click()
+    })
+
+    const members = container.querySelector('[data-testid="cause-group-members"]')!
+    expect(members.querySelectorAll('[data-testid="triage-verb-proposal.slice"]')).toHaveLength(3)
+    // ...and still exactly one filled bulk button above them.
+    expect(container.querySelectorAll('[data-testid="cause-group-bulk-action"]')).toHaveLength(1)
+  })
+
+  it('does not repeat the cause sentence in every member Output panel', () => {
+    // The group is keyed on the failure signature, so the members' excerpts
+    // are byte-identical and the header is a truncation of them. Expanding
+    // used to offer one disclosure per member onto a sentence already read.
+    const group = makeGroup(3)
+    group.members.forEach((m, i) => {
+      // The Output disclosure only exists on rows that carry an operatorGoal.
+      m.operatorGoal = `goal ${i}`
+      m.humanDetail = { errorExcerpt: 'provider worker exited 1: API Error' } as never
+    })
+    act(() => {
+      root.render(<TriageCauseGroupRow group={group} />)
+    })
+    act(() => {
+      ;(container.querySelector('[data-testid="cause-group-toggle"]') as HTMLButtonElement).click()
+    })
+
+    // This file stubs CollapsibleSection, so count the rendered <details>
+    // rather than the testid the stub drops.
+    const members = container.querySelector('[data-testid="cause-group-members"]')!
+    expect(members.querySelectorAll('details')).toHaveLength(0)
+  })
+
+  it('keeps a member Output panel when the members do not share one excerpt', () => {
+    const group = makeGroup(3)
+    group.members.forEach((m, i) => {
+      m.operatorGoal = `goal ${i}`
+      m.humanDetail = { errorExcerpt: `distinct failure ${i}` } as never
+    })
+    act(() => {
+      root.render(<TriageCauseGroupRow group={group} />)
+    })
+    act(() => {
+      ;(container.querySelector('[data-testid="cause-group-toggle"]') as HTMLButtonElement).click()
+    })
+
+    const members = container.querySelector('[data-testid="cause-group-members"]')!
+    expect(members.querySelectorAll('details')).toHaveLength(3)
+  })
+
+  it('states a shared age once on the header instead of on every member', () => {
+    const group = makeGroup(3) // makeItem gives every member the same `at`
+    act(() => {
+      root.render(<TriageCauseGroupRow group={group} />)
+    })
+    act(() => {
+      ;(container.querySelector('[data-testid="cause-group-toggle"]') as HTMLButtonElement).click()
+    })
+
+    expect(container.querySelector('[data-testid="cause-group-age"]')).not.toBeNull()
+    const members = container.querySelector('[data-testid="cause-group-members"]')!
+    // No member repeats it — the group header is the one place it is stated.
+    expect(members.textContent).not.toContain('ago')
+  })
+
   it('expanding the toggle reveals all member rows', () => {
     const group = makeGroup(5)
     act(() => {

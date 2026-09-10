@@ -55,7 +55,7 @@ import { taskHash, parseTriageKind } from '@/shared/routing'
 import { prdTitleFromBody } from '@/shared/memberName'
 import { hasResolvableTask, isConditionActionQueueKind } from '@/shared/schemas'
 import type { ActionQueueItem, ActionQueueKind } from '@/shared/schemas'
-import type { Decision } from '@/shared/schemas'
+import type { AlertVerb, Decision } from '@/shared/schemas'
 
 // ── Kind display ──────────────────────────────────────────────────────────────
 
@@ -339,6 +339,38 @@ interface TriageRowProps {
      * of them — a distinguisher that distinguished nothing.
      */
     memberName: string | null
+    /**
+     * The verb the group's bulk button runs, offered on THIS member alone.
+     *
+     * The group header offers "Retry all 17" while every member's own `verbs`
+     * array carries nothing but Snooze — so the queue let an operator retry
+     * seventeen tasks and not one. It is the same op either way:
+     * handleBulkAction already calls dispatchAlertVerb(member, op) per member
+     * in a loop, so offering it on a single row invents no new capability, it
+     * just stops hiding one. (The recipes declaring a bulkResolveVerb and no
+     * per-item verb for the same kind is the upstream defect; filed.)
+     */
+    memberVerb: AlertVerb | null
+    /**
+     * True when every member's output panel would print the same text the
+     * group header already states.
+     *
+     * The group is keyed by failure signature, so on the seventeen
+     * slice-failed members the excerpt is byte-identical on all of them and
+     * the header's cause sentence is a truncation of it. Expanding therefore
+     * offered seventeen disclosures onto one sentence you had already read.
+     */
+    sharedOutput: boolean
+    /**
+     * True when every member renders the same age label.
+     *
+     * Members of a cause usually failed in the same minute, so seventeen rows
+     * each said "1h ago" — and because the kind and priority chips are the
+     * group's too, that timestamp was the ONLY thing left in the member's top
+     * row, costing a full near-empty line per member and reading as though it
+     * belonged to the row above. The group header states it once instead.
+     */
+    sharedAge: boolean
   }
 }
 
@@ -561,7 +593,22 @@ const leadDecisionIndex = (decisions: Decision[]): number => {
   // For task-recovery rows, copy verbs move into the "⋯ More" disclosure so
   // they don't clutter the primary action row. Non-copy verbs (purge, dismiss,
   // …) remain visible because they are the primary CTA for their recipe.
-  const mainVerbs = isTaskRecovery ? verbs.filter((v) => v.op !== 'copy') : verbs
+  // A grouped member inherits the group's bulk verb as its own single-row
+  // action, unless the daemon already sent it one by that op.
+  const groupVerb = groupContext?.memberVerb ?? null
+  const withGroupVerb =
+    groupVerb !== null && !verbs.some((v) => v.op === groupVerb.op)
+      ? // Deliberately NOT primary. The recipe marks it primary because it is
+        // the group's recommended bulk action; on a member it is the exception
+        // to that ("retry just this one"), and seventeen filled buttons in a
+        // column would out-shout the single bulk button they are the exception
+        // to. One filled primary per SCREEN is the point of the ladder, not
+        // one per row.
+        [{ ...groupVerb, style: 'default' as const }, ...verbs]
+      : verbs
+  const mainVerbs = isTaskRecovery
+    ? withGroupVerb.filter((v) => v.op !== 'copy')
+    : withGroupVerb
   const disclosureVerbs = isTaskRecovery ? verbs.filter((v) => v.op === 'copy') : []
 
   const handleDecision = useCallback(
@@ -632,36 +679,60 @@ const leadDecisionIndex = (decisions: Decision[]): number => {
 
   return (
     <div
-      className="mars-card group/row relative rounded-lg bg-card px-4 py-3"
+      className={
+        inGroup
+          ? // A member is contained BY the group, not a peer of it. Wearing the
+            // same card chrome as a top-level row, expanding a cause turned one
+            // row into seventeen things of identical visual weight — and the
+            // 21px of indentation that was supposed to signal containment was
+            // imperceptible next to a 1080px card. Members drop the card and
+            // sit as hairline-separated rows inside the group's left rule.
+            'group/row relative px-1 py-2.5'
+          : 'mars-card group/row relative rounded-lg bg-card px-4 py-3'
+      }
     >
       {/* Top row: kind chip + priority badge + age.
           Inside a group the kind and the priority are properties of the GROUP,
           identical on every member — seventeen `slice failed` chips and
           seventeen `high` chips said nothing seventeen times. The group header
           states both, once. */}
-      <div className="mb-1.5 flex items-center gap-2">
-        {!inGroup && (
-          <>
-            <Chip tone={kindTone} icon={kindIcon}>
-              {kindLabel}
-            </Chip>
-            {item.priority === 'high' && <Chip tone="error">high</Chip>}
-            {item.priority === 'normal' && <Chip tone="neutral">normal</Chip>}
-          </>
-        )}
-        {inGroup && !goal && memberName !== null && (
-          <span
-            className="min-w-0 flex-1 truncate text-label font-medium text-foreground"
-            data-testid="cause-group-member-name"
-            title={memberName}
-          >
-            {memberName}
-          </span>
-        )}
-        <span className="ml-auto text-micro tabular-nums text-muted-foreground">
-          {age}
-        </span>
-      </div>
+      {(() => {
+        // Inside a group this row can be empty: the kind and priority belong
+        // to the group, the member name is only shown when it is not already
+        // the headline, and a shared age is stated once on the header. An
+        // empty flex row still takes a line, which is what put a lone "1h ago"
+        // above every member with nothing beside it.
+        const showName = inGroup && !goal && memberName !== null
+        const showAge = !inGroup || !groupContext.sharedAge
+        if (inGroup && !showName && !showAge) return null
+        return (
+          <div className="mb-1.5 flex items-center gap-2">
+            {!inGroup && (
+              <>
+                <Chip tone={kindTone} icon={kindIcon}>
+                  {kindLabel}
+                </Chip>
+                {item.priority === 'high' && <Chip tone="error">high</Chip>}
+                {item.priority === 'normal' && <Chip tone="neutral">normal</Chip>}
+              </>
+            )}
+            {showName && (
+              <span
+                className="min-w-0 flex-1 truncate text-label font-medium text-foreground"
+                data-testid="cause-group-member-name"
+                title={memberName ?? undefined}
+              >
+                {memberName}
+              </span>
+            )}
+            {showAge && (
+              <span className="ml-auto text-micro tabular-nums text-muted-foreground">
+                {age}
+              </span>
+            )}
+          </div>
+        )
+      })()}
 
       {/* Other condition rows collapsed into this card (entity grouping —
           see clusterRows.ts). Read-only labels, no buttons: exactly one verb
@@ -733,7 +804,8 @@ const leadDecisionIndex = (decisions: Decision[]): number => {
               {item.humanSummary}
             </p>
           )}
-          {(item.humanDetail?.errorExcerpt ?? item.humanDetail?.rawError ?? item.humanDetail?.failureSignature) != null && (
+          {(item.humanDetail?.errorExcerpt ?? item.humanDetail?.rawError ?? item.humanDetail?.failureSignature) != null &&
+            !(inGroup && groupContext.sharedOutput) && (
             <CollapsibleSection
               label="Output"
               className="mt-1.5"
@@ -1207,6 +1279,37 @@ export const TriageCauseGroupRow = ({
   // A kind that declares none shows only Snooze — no invented action.
   const bulkVerb = group.bulkResolveVerb ?? null
 
+  // Does every member's output panel say what the header already says?
+  // The group is keyed by failure signature, so this is true whenever the
+  // members were clustered on the text itself — seventeen disclosures onto
+  // one sentence. Computed rather than assumed, because a group can also be
+  // keyed on something the excerpts do not share.
+  const outputTextOf = (m: (typeof group.members)[number]): string | null =>
+    m.humanDetail?.errorExcerpt ??
+    m.humanDetail?.rawError ??
+    m.humanDetail?.failureSignature ??
+    null
+  const sharedOutput =
+    group.members.length > 1 &&
+    new Set(group.members.map(outputTextOf)).size === 1
+
+  // Same question for the timestamp: members of one cause normally failed
+  // together, so their age labels collapse to a single value.
+  const memberAges = group.members.map((m) => relativeTime(m.at))
+  const sharedAge = memberAges.length > 0 && new Set(memberAges).size === 1
+  // When ages differ, the header states the most recent one — a cause is as
+  // old as its freshest occurrence, not its oldest.
+  const newestAt = group.members.reduce<string | null>(
+    (newest, m) =>
+      newest === null || Date.parse(m.at) > Date.parse(newest) ? m.at : newest,
+    null,
+  )
+  const groupAge = sharedAge
+    ? memberAges[0]
+    : newestAt !== null
+      ? relativeTime(newestAt)
+      : ''
+
   const handleBulkAction = useCallback(async () => {
     if (!bulkVerb || pending !== null) return
     const total = group.members.length
@@ -1309,6 +1412,13 @@ export const TriageCauseGroupRow = ({
             {label}
           </span>
         </button>
+        {/* Stated once here so seventeen members need not each repeat it. */}
+        <span
+          className="shrink-0 text-micro tabular-nums text-muted-foreground"
+          data-testid="cause-group-age"
+        >
+          {groupAge}
+        </span>
         {bulkVerb && (
           <button
             disabled={pending !== null}
@@ -1343,14 +1453,19 @@ export const TriageCauseGroupRow = ({
       {/* Expanded member list — individual TriageRow cards */}
       {expanded && (
         <div
-          className="mt-3 flex flex-col gap-3"
+          className="ml-2.5 mt-2 flex flex-col divide-y divide-border/60 border-l-2 border-border pl-4"
           data-testid="cause-group-members"
         >
           {group.members.map((member) => (
             <TriageRow
               key={member.id}
               item={member}
-              groupContext={{ memberName: nameOf(member) }}
+              groupContext={{
+                memberName: nameOf(member),
+                memberVerb: bulkVerb,
+                sharedOutput,
+                sharedAge,
+              }}
             />
           ))}
         </div>

@@ -41,10 +41,10 @@ describe('deriveBreadcrumbs', () => {
     expect(crumbs[1].href).toBeNull()
   })
 
-  it('returns Progress > Studio for studio routes', () => {
+  it('parents a studio route under Scores, the name the nav uses', () => {
     const crumbs = deriveBreadcrumbs('#/studio/task-xyz')
     expect(crumbs).toEqual([
-      { label: 'Progress', href: '#/progress' },
+      { label: 'Scores', href: '#/studio' },
       { label: expect.stringContaining('task-xyz'), href: null },
     ])
   })

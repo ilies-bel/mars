@@ -227,7 +227,7 @@ describe('StudioView', () => {
     expect(html).toContain('cached 200')
   })
 
-  it('renders the persisted prompt verbatim in the trace panel via the stepPrompts seam', () => {
+  it('renders the persisted prompt verbatim in the Input panel via the stepPrompts seam', () => {
     const prompt: StepPrompt = {
       workflowInstanceId: 'wf-1',
       stepName: 'run-claude-code',
@@ -288,7 +288,10 @@ describe('StudioView', () => {
     expect(html).toContain('No prompt recorded for this step')
   })
 
-  it('renders a non-worker message instead of a prompt for non-LLM steps', () => {
+  it('offers no panel at all on a step with nothing recorded behind one', () => {
+    // A non-worker step with no result has no prompt and no output by
+    // construction. It used to render three disclosure rows, all of which
+    // opened onto a sentence explaining there was nothing there.
     const html = render(
       <StudioView
         taskId="task-1"
@@ -296,7 +299,35 @@ describe('StudioView', () => {
       />,
     )
 
-    expect(html).toContain('Non-worker step')
+    expect(html).toContain('setup-worktree')
+    expect(html).not.toContain('studio-input-panel')
+    expect(html).not.toContain('studio-output-panel')
+  })
+
+  it('offers Output but not Input on a non-worker step that recorded a result', () => {
+    const html = render(
+      <StudioView
+        taskId="task-1"
+        timeline={timeline([step({ stepName: 'merge', resultJson: '{"merged":true}' })])}
+      />,
+    )
+
+    expect(html).toContain('studio-output-panel')
+    expect(html).not.toContain('studio-input-panel')
+  })
+
+  it('folds the trace panel into Input, so one worker step offers one prompt panel', () => {
+    // Input and "Show trace" rendered the same fetched prompt; only the copy
+    // button and session chip differed. Both now live on Input.
+    const html = render(
+      <StudioView
+        taskId="task-1"
+        timeline={timeline([step({ stepName: 'run-agent', workerName: 'Coder' })])}
+      />,
+    )
+
+    expect(html).not.toContain('Show trace')
+    expect(html.match(/studio-input-panel/g) ?? []).toHaveLength(1)
   })
 
   it('renders an explicit empty state naming the task when no runs exist', () => {

@@ -27,6 +27,7 @@
  */
 
 import { useEffect, useState } from 'react'
+import { ChevronRight } from 'lucide-react'
 import type { RunTimeline, RunTimelineEntry, StepCardEntry } from '@/widgets/TaskDetailDrawer'
 import { formatDuration, runStepToCard, StepStatusIcon } from '@/widgets/TaskDetailDrawer'
 import { useStepPrompt } from '@/entities/studio/useStudio'
@@ -89,8 +90,15 @@ export const liveElapsedLabel = (startedAt: string, nowMs: number): string => {
 
 // ── Panels ────────────────────────────────────────────────────────────────────
 
+/**
+ * A disclosure chip, not a bar. These summaries used to carry `basis-full`, so
+ * each rendered as a full-bleed bordered row with a tiny label at the left
+ * edge — visually a disabled text input, three of them stacked per step. They
+ * now hug their label and sit inline; only an OPEN panel claims the full row
+ * (`open:basis-full` on the <details>), so its body still gets the width.
+ */
 const PANEL_SUMMARY_CLASS =
-  'cursor-pointer list-none rounded border border-border px-2 py-0.5 text-micro text-muted-foreground hover:bg-foreground/5 [&::-webkit-details-marker]:hidden'
+  'inline-flex w-fit cursor-pointer list-none items-center gap-1 rounded border border-border px-2 py-0.5 text-micro text-muted-foreground hover:bg-foreground/5 hover:text-foreground [&::-webkit-details-marker]:hidden'
 
 /** Space-key toggle for <details>, mirroring the drawer's step cards. */
 const toggleOnSpace = (e: React.KeyboardEvent): void => {
@@ -99,6 +107,53 @@ const toggleOnSpace = (e: React.KeyboardEvent): void => {
     const parent = e.currentTarget.closest('details') as HTMLDetailsElement | null
     if (parent) parent.open = !parent.open
   }
+}
+
+/**
+ * One disclosure panel on a node face.
+ *
+ * The open state is React state rather than a CSS `open:` variant because the
+ * two things that must change on open — the chevron rotating and the panel
+ * claiming the full row so its body gets the width — were both silently
+ * dropped by the utility generator (the classes landed on the elements and no
+ * rule was ever emitted for them). A boolean is not clever, but it is checkable.
+ */
+const NodePanel = ({
+  label,
+  testId,
+  onOpen,
+  children,
+}: {
+  label: string
+  testId: string
+  /** Fired the first time the panel is opened — the lazy prompt fetch trigger. */
+  onOpen?: () => void
+  children: React.ReactNode
+}) => {
+  const [open, setOpen] = useState(false)
+  return (
+    <details
+      data-testid={testId}
+      className={`min-w-0 ${open ? 'basis-full' : ''}`}
+      onToggle={(e: React.SyntheticEvent<HTMLDetailsElement>) => {
+        const isOpen = e.currentTarget.open
+        setOpen(isOpen)
+        if (isOpen) onOpen?.()
+      }}
+    >
+      <summary tabIndex={0} className={PANEL_SUMMARY_CLASS} onKeyDown={toggleOnSpace}>
+        <ChevronRight
+          size={10}
+          strokeWidth={2.5}
+          aria-hidden="true"
+          className="shrink-0 transition-transform"
+          style={open ? { transform: 'rotate(90deg)' } : undefined}
+        />
+        {label}
+      </summary>
+      <div className="mt-1.5 border-t border-border pt-1.5">{children}</div>
+    </details>
+  )
 }
 
 /** The prompt body shared by the Input and Show-trace panels. */
@@ -239,6 +294,9 @@ const StudioNode = ({
   const isRunning = entry.outcome === 'running'
   const now = useNowMs(isRunning, nowMs)
   const isLlmStep = entry.workerName != null
+  // A completed step with no recorded result has nothing to open; a running
+  // one does ("no output yet" is news, "no output recorded" is not).
+  const hasOutput = entry.resultJson != null || entry.outcome === 'running'
 
   const borderClass =
     entry.outcome === 'running'
@@ -262,10 +320,6 @@ const StudioNode = ({
     : entry.durationMs != null
       ? formatDuration(entry.durationMs)
       : null
-
-  const onPromptPanelToggle = (e: React.SyntheticEvent<HTMLDetailsElement>): void => {
-    if (e.currentTarget.open) setPromptWanted(true)
-  }
 
   return (
     <li data-step-name={entry.stepName} className="list-none">
@@ -315,71 +369,28 @@ const StudioNode = ({
         ) : null}
       </div>
 
-      {/* Affordances — Input / Output / Show trace */}
-      <div className="mt-2 flex flex-wrap items-start gap-2">
-        <details
-          data-testid="studio-input-panel"
-          className="min-w-0 basis-full"
-          onToggle={onPromptPanelToggle}
-        >
-          <summary tabIndex={0} className={PANEL_SUMMARY_CLASS} onKeyDown={toggleOnSpace}>
-            Input
-          </summary>
-          <div className="mt-1.5 border-t border-border pt-1.5">
-            {isLlmStep ? (
-              <PromptBody
-                prompt={prompt}
-                isLoading={promptQuery.isLoading}
-                error={promptQuery.error}
-                withCopy={false}
-              />
-            ) : (
-              <p className="text-label text-muted-foreground">
-                Non-worker step — it consumes workflow state, not a prompt. No
-                input is recorded for this step.
-              </p>
-            )}
-          </div>
-        </details>
+      {/*
+        Only offer a panel that has something behind it.
 
-        <details data-testid="studio-output-panel" className="min-w-0 basis-full">
-          <summary tabIndex={0} className={PANEL_SUMMARY_CLASS} onKeyDown={toggleOnSpace}>
-            Output
-          </summary>
-          <div className="mt-1.5 border-t border-border pt-1.5">
-            {entry.resultJson != null ? (
-              <pre
-                data-testid="studio-output-json"
-                className="max-h-48 overflow-y-auto whitespace-pre-wrap break-all rounded bg-secondary/60 p-1.5 font-mono text-micro text-muted-foreground"
-              >
-                {(() => {
-                  try {
-                    return JSON.stringify(JSON.parse(entry.resultJson), null, 2)
-                  } catch {
-                    return entry.resultJson
-                  }
-                })()}
-              </pre>
-            ) : (
-              <p className="text-label text-muted-foreground">
-                {entry.outcome === 'running'
-                  ? 'Still running — no output yet.'
-                  : 'No output recorded for this step.'}
-              </p>
-            )}
-          </div>
-        </details>
+        Every node used to render all three panels unconditionally. On a
+        four-step run that is fifteen disclosure rows, and NINE of them expand
+        onto a sentence explaining that nothing was recorded — the operator
+        learns that opening one is a coin flip and stops opening any.
 
-        <details
-          data-testid="studio-trace-panel"
-          className="min-w-0 basis-full"
-          onToggle={onPromptPanelToggle}
-        >
-          <summary tabIndex={0} className={PANEL_SUMMARY_CLASS} onKeyDown={toggleOnSpace}>
-            Show trace
-          </summary>
-          <div className="mt-1.5 border-t border-border pt-1.5">
-            {isLlmStep ? (
+        Two of the three were also the same panel. "Input" and "Show trace"
+        both rendered `PromptBody` over the same fetched prompt; the only
+        difference was that trace added a copy button and the session id. They
+        are merged into one "Input" panel that carries both.
+
+        What is left is knowable in advance: a non-worker step (setup, verify,
+        merge) has no prompt by construction, and Output is gated on a recorded
+        result. A step with nothing to show renders as its face alone, which is
+        the honest shape for it.
+      */}
+      {isLlmStep || hasOutput ? (
+        <div className="mt-2 flex flex-wrap items-start gap-2">
+          {isLlmStep ? (
+            <NodePanel label="Input" testId="studio-input-panel" onOpen={() => setPromptWanted(true)}>
               <PromptBody
                 prompt={prompt}
                 isLoading={promptQuery.isLoading}
@@ -387,14 +398,31 @@ const StudioNode = ({
                 claudeSessionId={entry.claudeSessionId}
                 withCopy
               />
-            ) : (
-              <p className="text-label text-muted-foreground">
-                Non-worker step — no worker session or prompt to trace.
-              </p>
-            )}
-          </div>
-        </details>
-      </div>
+            </NodePanel>
+          ) : null}
+
+          {hasOutput ? (
+            <NodePanel label="Output" testId="studio-output-panel">
+              {entry.resultJson != null ? (
+                <pre
+                  data-testid="studio-output-json"
+                  className="max-h-48 overflow-y-auto whitespace-pre-wrap break-all rounded bg-secondary/60 p-1.5 font-mono text-micro text-muted-foreground"
+                >
+                  {(() => {
+                    try {
+                      return JSON.stringify(JSON.parse(entry.resultJson), null, 2)
+                    } catch {
+                      return entry.resultJson
+                    }
+                  })()}
+                </pre>
+              ) : (
+                <p className="text-label text-muted-foreground">Still running — no output yet.</p>
+              )}
+            </NodePanel>
+          ) : null}
+        </div>
+      ) : null}
       </div>
 
       {/* Connector to the next node — execution order made visible. */}

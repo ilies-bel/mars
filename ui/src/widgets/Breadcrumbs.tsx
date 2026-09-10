@@ -58,9 +58,12 @@ export function deriveBreadcrumbs(hash: string): Crumb[] {
 
   const studioTaskId = parseStudioRoute(hash)
   if (studioTaskId) {
+    // The nav calls this section "Scores"; the trail used to call it "Studio"
+    // and to parent it under Progress, which it has never been a child of.
+    // Three names for one place is two too many.
     return [
-      { label: 'Progress', href: '#/progress' },
-      { label: 'Studio: ' + truncateId(studioTaskId), href: null },
+      { label: 'Scores', href: '#/studio' },
+      { label: truncateId(studioTaskId), href: null },
     ]
   }
 
