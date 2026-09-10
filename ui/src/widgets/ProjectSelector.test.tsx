@@ -326,9 +326,12 @@ describe('ProjectSelector – Start control in dropdown', () => {
     expect(html).toMatch(/data-testid="start-btn-proj-down"[^>]*>Start</)
   })
 
-  it('Start button shows spinner text when that project is starting', () => {
+  it('Start button shows a pending state when that project is starting', () => {
     const html = renderOpen('proj-live', 'proj-down')
-    expect(html).toMatch(/data-testid="start-btn-proj-down"[^>]*>…</)
+    // ActionButton emits attributes in its own order, so assert the button
+    // and its disabled state rather than their adjacency.
+    const btn = html.slice(html.indexOf('start-btn-proj-down') - 400, html.indexOf('start-btn-proj-down') + 200)
+    expect(btn).toContain('disabled')
   })
 
   it('Start button is disabled while starting', () => {
@@ -362,9 +365,10 @@ describe('ProjectSelector – Restart control in dropdown', () => {
     expect(html).toMatch(/data-testid="restart-btn-proj-live"[^>]*>Restart</)
   })
 
-  it('Restart button shows spinner text when that project is restarting', () => {
+  it('Restart trigger is disabled while a restart is already in flight', () => {
     const html = renderOpen('proj-live', null, 'proj-live')
-    expect(html).toMatch(/data-testid="restart-btn-proj-live"[^>]*>…</)
+    const btn = html.slice(html.indexOf('restart-btn-proj-live') - 400, html.indexOf('restart-btn-proj-live') + 200)
+    expect(btn).toContain('disabled')
   })
 
   it('Restart button is disabled while restarting', () => {
@@ -372,11 +376,23 @@ describe('ProjectSelector – Restart control in dropdown', () => {
     expect(html).toContain('disabled')
   })
 
-  it('a down focused project shows both Start and Restart buttons', () => {
-    // proj-down is both health=down (shows Start) and focused (shows Restart).
+  it('a down focused project offers Start and NOT Restart', () => {
+    // It used to render both, side by side and identically styled. Restarting
+    // a daemon that is not running is not an action, and putting it next to
+    // the button that IS the action makes the pair a coin toss.
     const html = renderOpen('proj-down')
     expect(html).toContain('data-testid="start-btn-proj-down"')
-    expect(html).toContain('data-testid="restart-btn-proj-down"')
+    expect(html).not.toContain('data-testid="restart-btn-proj-down"')
+  })
+
+  it('does not fire a restart on the first click — it arms a confirmation', () => {
+    // Restart hard-stops every in-flight task on the daemon you are looking
+    // at and re-queues them. At rest the row shows only the quiet trigger;
+    // the destructive verb appears once, after arming.
+    const html = renderOpen('proj-live')
+    expect(html).toContain('data-testid="restart-btn-proj-live"')
+    expect(html).not.toContain('data-testid="restart-confirm-proj-live"')
+    expect(html).not.toContain('Stop tasks and restart')
   })
 })
 

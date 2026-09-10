@@ -245,6 +245,24 @@ interface EventRowProps {
   onToggleFields: (eventId: string) => void
 }
 
+/**
+ * The column grid every row in the Flat list uses.
+ *
+ *   time · severity · kind · source·phase · task · message
+ *
+ * EventRow was given this grid to stop the message shifting between rows.
+ * The three COLLAPSED group rows — incident, consecutive-duplicate, tool-call
+ * — kept their own `flex gap-2` with content-sized cells, so the list still
+ * ran two incompatible layouts interleaved: measured at 1512px, an incident
+ * row put its message at x≈490 and the single rows beneath it put theirs at
+ * x≈672. Two grids in one column of text is not a list you can scan; the eye
+ * has to re-find the message on every row.
+ *
+ * A group row spends the kind column on its ×N count, which is what that row
+ * is instead of a kind.
+ */
+const FLAT_ROW_GRID = '3.5rem 2.75rem 5.25rem 5.5rem 7rem minmax(0, 1fr)'
+
 const EventRow = memo(({ event, now, fieldsExpanded, onToggleFields }: EventRowProps) => {
   const toggleFields = useCallback(() => onToggleFields(event.id), [onToggleFields, event.id])
 
@@ -302,7 +320,7 @@ const EventRow = memo(({ event, now, fieldsExpanded, onToggleFields }: EventRowP
          * Three layouts in one list: nothing lined up and the column could not
          * be scanned. The id now has its own column, so prose always starts at
          * the same x whatever the row is carrying. */
-        style={{ gridTemplateColumns: '3.5rem 2.75rem 3.75rem 5.5rem 7rem minmax(0, 1fr)' }}
+        style={{ gridTemplateColumns: FLAT_ROW_GRID }}
       >
         <span className="truncate text-muted-foreground">{relativeTime(event.timestamp, now)}</span>
         <span
@@ -556,14 +574,20 @@ const GroupedRow = memo(({
     <button
       type="button"
       onClick={handleToggle}
-      className="flex w-full items-center gap-2 rounded-md border border-border bg-foreground/[0.03] px-3 py-1.5 font-mono text-body text-foreground transition-colors duration-[var(--dur-fast)] hover:bg-foreground/8"
+      className="grid w-full items-baseline gap-x-2.5 border-b border-l-2 border-b-border/45 border-l-transparent px-3 py-1.5 text-left font-mono text-body text-foreground transition-colors duration-[var(--dur-fast)] hover:bg-foreground/5"
+      style={{ gridTemplateColumns: FLAT_ROW_GRID }}
       data-testid={`group-row-${first.id}`}
+      title={`${relativeTime(first.timestamp, now)} – ${relativeTime(last.timestamp, now)}`}
     >
-      <span className="shrink-0 text-micro text-muted-foreground">{relativeTime(first.timestamp, now)}</span>
-      <span className="shrink-0 text-micro text-muted-foreground">–</span>
-      <span className="shrink-0 text-micro text-muted-foreground">{relativeTime(last.timestamp, now)}</span>
-      <span className="shrink-0 rounded bg-primary/20 px-1.5 font-mono text-micro font-semibold text-muted-foreground">×{events.length}</span>
-      <span className="min-w-0 truncate text-label text-muted-foreground">{summarizeTraceEvent(first)}</span>
+      <span className="truncate text-micro text-muted-foreground">{relativeTime(first.timestamp, now)}</span>
+      <span aria-hidden="true" />
+      <span className="w-fit justify-self-start rounded bg-primary/20 px-1.5 font-mono text-micro font-semibold text-muted-foreground">×{events.length}</span>
+      {/* The span of the run, in the column the single rows use for source. */}
+      <span className="truncate font-mono text-micro text-muted-foreground">
+        – {relativeTime(last.timestamp, now)}
+      </span>
+      <span aria-hidden="true" />
+      <span className="min-w-0 truncate text-muted-foreground">{summarizeTraceEvent(first)}</span>
     </button>
   )
 })
@@ -669,16 +693,20 @@ const IncidentGroup = memo(({
     <button
       type="button"
       onClick={handleToggle}
-      className={`flex w-full items-center gap-2 border-b border-l-2 border-b-border/45 px-3 py-1.5 font-mono text-body transition-colors duration-[var(--dur-fast)] hover:bg-foreground/5 ${severityRowClass(worst)}`}
+      className={`grid w-full items-baseline gap-x-2.5 border-b border-l-2 border-b-border/45 px-3 py-1.5 text-left font-mono text-body transition-colors duration-[var(--dur-fast)] hover:bg-foreground/5 ${severityRowClass(worst)}`}
+      style={{ gridTemplateColumns: FLAT_ROW_GRID }}
       data-testid={`incident-group-row-${first.id}`}
     >
-      <span className="shrink-0 text-micro text-muted-foreground">{relativeTime(first.timestamp, now)}</span>
-      <span className={`eyebrow shrink-0 ${severityColor(worst)} text-muted-foreground`}>{worst}</span>
-      <span className="shrink-0 rounded bg-primary/20 px-1.5 font-mono text-micro font-semibold text-muted-foreground">×{events.length}</span>
+      <span className="truncate text-micro text-muted-foreground">{relativeTime(first.timestamp, now)}</span>
+      <span className={`eyebrow font-semibold ${severityColor(worst)}`}>{worst}</span>
+      <span className="w-fit justify-self-start rounded bg-primary/20 px-1.5 font-mono text-micro font-semibold text-muted-foreground">×{events.length}</span>
+      <span aria-hidden="true" />
       {taskId ? (
-        <span className="shrink-0 font-mono text-micro text-muted-foreground">{fullId(taskId)}</span>
-      ) : null}
-      <span className="min-w-0 truncate text-label text-muted-foreground">{summary}</span>
+        <span className="truncate font-mono text-micro text-muted-foreground">{fullId(taskId)}</span>
+      ) : (
+        <span aria-hidden="true" />
+      )}
+      <span className="min-w-0 truncate text-muted-foreground">{summary}</span>
     </button>
   )
 })
@@ -757,11 +785,16 @@ const ToolCallGroup = memo(({
     <button
       type="button"
       onClick={handleToggle}
-      className="flex w-full items-center gap-2 rounded-md border border-border bg-foreground/[0.03] px-3 py-1.5 font-mono text-body text-muted-foreground transition-colors duration-[var(--dur-fast)] hover:bg-foreground/8"
+      className="grid w-full items-baseline gap-x-2.5 border-b border-l-2 border-b-border/45 border-l-transparent px-3 py-1.5 text-left font-mono text-body text-muted-foreground transition-colors duration-[var(--dur-fast)] hover:bg-foreground/5"
+      style={{ gridTemplateColumns: FLAT_ROW_GRID }}
       data-testid={`tool-group-row-${first.id}`}
     >
-      <span className="shrink-0 text-micro">{relativeTime(first.timestamp, now)}</span>
-      <span className="min-w-0 truncate text-label font-medium text-foreground">{label}</span>
+      <span className="truncate text-micro">{relativeTime(first.timestamp, now)}</span>
+      <span aria-hidden="true" />
+      <span className="w-fit justify-self-start rounded bg-primary/20 px-1.5 font-mono text-micro font-semibold text-muted-foreground">×{events.length}</span>
+      <span aria-hidden="true" />
+      <span aria-hidden="true" />
+      <span className="min-w-0 truncate font-medium text-foreground">{label}</span>
     </button>
   )
 })
@@ -1233,6 +1266,27 @@ export const EventsPage = ({
   const fetchedAtIsStale =
     initial.dataUpdatedAt > 0 && now - initial.dataUpdatedAt > 5 * 60_000
 
+  // Which facet, if any, has had every one of its options switched off.
+  // Ordered so the first one a reader would think to check is named first.
+  const emptyFacet: 'severity' | 'kind' | 'phase' | null =
+    state.severities.size === 0
+      ? 'severity'
+      : state.kinds.size === 0
+        ? 'kind'
+        : state.phases.size === 0
+          ? 'phase'
+          : null
+
+  const restoreFacet = useCallback(() => {
+    setState((prev) =>
+      prev.severities.size === 0
+        ? { ...prev, severities: new Set(ALL_SEVERITIES) }
+        : prev.kinds.size === 0
+          ? { ...prev, kinds: new Set(ALL_KINDS) }
+          : { ...prev, phases: new Set(ALL_PHASES) },
+    )
+  }, [])
+
   // --- filter mutators ---
   const toggleIn = <T extends string>(
     key: 'severities' | 'kinds' | 'phases',
@@ -1476,6 +1530,25 @@ export const EventsPage = ({
       >
         {initial.isPending ? (
           <SkeletonList rows={8} rowClassName="h-8 w-full mb-1" label="Loading events" />
+        ) : emptyFacet !== null ? (
+          /* Turning every option in a facet OFF used to return MORE events,
+             not fewer: buildFilter omits a facet when the selection is empty
+             (its "no constraint" encoding) exactly as it does when everything
+             is selected, so the two opposite states sent the same request.
+             Measured: deselecting warn and error took the list from 17 rows to
+             31, INFO included. A facet with nothing selected can match
+             nothing; the list says so rather than quietly widening. */
+          <EmptyState
+            data-testid="events-facet-empty"
+            title={`No ${emptyFacet} selected`}
+            action={
+              <ActionButton variant="secondary" onClick={restoreFacet}>
+                {`Show all ${emptyFacet}s`}
+              </ActionButton>
+            }
+          >
+            {`Nothing can match while every ${emptyFacet} is switched off.`}
+          </EmptyState>
         ) : viewMode === 'timeline' ? (
           <TimelineView events={events} now={now} />
         ) : events.length === 0 ? (

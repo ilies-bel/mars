@@ -28,6 +28,7 @@ import { useFocusedProject, useRefreshProjects } from '@/shared/useFocusedProjec
 import { projectIdentity } from '@/shared/projectIdentity'
 import { startProject, restartProject } from '@/shared/api'
 import type { DaemonHealth, Project } from '@/shared/schemas'
+import { ActionButton } from '@/components/ActionButton'
 
 const healthColorClass = (health: DaemonHealth): string => {
   if (health === 'live') return 'text-success'
@@ -91,6 +92,9 @@ export const ProjectSelectorInner = ({
   listboxRef,
   onListboxKeyDown,
 }: ProjectSelectorInnerProps) => {
+  // Which project's Restart has been armed, if any. Local because arming is a
+  // property of this open menu, not of the app.
+  const [armedRestart, setArmedRestart] = useState<string | null>(null)
   const focusedProject =
     projects.find((p) => p.projectId === focusedProjectId) ?? projects[0]
   const { name: focusedName } = projectIdentity(focusedProject)
@@ -149,6 +153,8 @@ export const ProjectSelectorInner = ({
             const isActive = activeIndex === idx
             const isStarting = starting === p.projectId
             const isRestarting = restarting === p.projectId
+            const canRestart = isFocused && p.health !== 'down'
+            const isArmed = armedRestart === p.projectId
             return (
               <li
                 id={`ps-opt-${p.projectId}`}
@@ -177,29 +183,75 @@ export const ProjectSelectorInner = ({
                     <HealthDot health={p.health} />
                   </span>
                   <span className="truncate font-mono">{name}</span>
-                  {(p.health === 'down' || isFocused) ? (
+                  {/* Start and Restart used to wear identical chrome: the
+                      same border, the same hover, the same 11px caps. One
+                      spawns a daemon that is not running; the other hard-stops
+                      every in-flight task on the daemon you are looking at
+                      right now and re-queues them, on a single click, with no
+                      confirmation. Restart is now armed first — the same
+                      pattern the failed-task rows use — and wears the danger
+                      rung rather than the neutral one.
+
+                      Restart also required `health !== 'down'`. A focused
+                      project whose daemon is stopped rendered Start AND
+                      Restart side by side, and restarting a thing that is not
+                      running is not an action. */}
+                  {(p.health === 'down' || canRestart) ? (
                     <span className="ml-auto flex items-center gap-1">
                       {p.health === 'down' ? (
-                        <button
-                          type="button"
+                        <ActionButton
+                          variant="secondary"
+                          size="sm"
                           disabled={isStarting}
+                          pending={isStarting}
                           onClick={(e) => onStart(p.projectId, e)}
                           data-testid={`start-btn-${p.projectId}`}
-                          className="eyebrow rounded border border-border px-1.5 py-0.5 text-foreground hover:bg-primary/20 disabled:opacity-50"
                         >
-                          {isStarting ? '…' : 'Start'}
-                        </button>
+                          Start
+                        </ActionButton>
                       ) : null}
-                      {isFocused ? (
-                        <button
-                          type="button"
-                          disabled={isRestarting}
-                          onClick={(e) => onRestart(p.projectId, e)}
-                          data-testid={`restart-btn-${p.projectId}`}
-                          className="eyebrow rounded border border-border px-1.5 py-0.5 text-foreground hover:bg-primary/20 disabled:opacity-50"
-                        >
-                          {isRestarting ? '…' : 'Restart'}
-                        </button>
+                      {canRestart ? (
+                        isArmed ? (
+                          <>
+                            <ActionButton
+                              variant="danger"
+                              size="sm"
+                              disabled={isRestarting}
+                              pending={isRestarting}
+                              onClick={(e) => {
+                                setArmedRestart(null)
+                                onRestart(p.projectId, e)
+                              }}
+                              data-testid={`restart-confirm-${p.projectId}`}
+                            >
+                              Stop tasks and restart
+                            </ActionButton>
+                            <ActionButton
+                              variant="ghost"
+                              size="sm"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setArmedRestart(null)
+                              }}
+                              data-testid={`restart-cancel-${p.projectId}`}
+                            >
+                              Cancel
+                            </ActionButton>
+                          </>
+                        ) : (
+                          <ActionButton
+                            variant="ghost"
+                            size="sm"
+                            disabled={isRestarting}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setArmedRestart(p.projectId)
+                            }}
+                            data-testid={`restart-btn-${p.projectId}`}
+                          >
+                            Restart
+                          </ActionButton>
+                        )
                       ) : null}
                     </span>
                   ) : null}

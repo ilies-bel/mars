@@ -211,6 +211,31 @@ describe('toWireFilter', () => {
   })
 })
 
+describe('an emptied facet cannot widen the result', () => {
+  it('sends the same "no constraint" wire filter for none-selected as for all-selected', () => {
+    // This is the shape of the bug, pinned so the UI guard is not removed by
+    // someone who reads buildFilter and concludes it already handles it.
+    // buildFilter omits a facet when the set is empty exactly as it does when
+    // the set is full — its "no constraint" encoding — so the two OPPOSITE
+    // states produce identical requests. Measured in the browser: deselecting
+    // warn and error took the flat list from 17 rows to 31, INFO included.
+    const none = toWireFilter(
+      { ...initialFilterState(), severities: new Set() },
+      null,
+      100,
+    )
+    const all = toWireFilter(
+      { ...initialFilterState(), severities: new Set(['info', 'warn', 'error'] as const) },
+      null,
+      100,
+    )
+    expect(none.severity).toBeUndefined()
+    expect(all.severity).toBeUndefined()
+    // Hence the page must not rely on the wire filter here: EventsPage renders
+    // the events-facet-empty state instead of a list. See the render test.
+  })
+})
+
 describe('sinceFromRange', () => {
   it('returns undefined for "all"', () => {
     expect(sinceFromRange('all')).toBeUndefined()
