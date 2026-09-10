@@ -1,5 +1,7 @@
+import type { RouteName } from '@/shared/routing'
 import {
   parseKpiRoute,
+  parseTaskOrigin,
   parsePrimitiveRoute,
   parseProposalRoute,
   parseProposalNodeRoute,
@@ -34,6 +36,30 @@ const KPI_LABELS: Record<KpiKey, string> = {
 const truncateId = (id: string): string =>
   id.length > 20 ? `${id.slice(0, 12)}…${id.slice(-4)}` : id
 
+/**
+ * Where a task overlay was opened FROM, as a crumb.
+ *
+ * The trail replaced the page you were on instead of appending to it: opening
+ * a task from Needs You showed "Task mars-…" alone, so the one control whose
+ * whole job is to say where you are said nothing about where you came from,
+ * and the way back was the browser button. The route already carries the
+ * origin in `?from=` — the drawer uses it to decide where to return on close —
+ * so the trail can simply say the same thing.
+ */
+const ORIGIN_CRUMBS: Record<RouteName, Crumb> = {
+  triage: { label: 'Needs You', href: '#/triage' },
+  proposals: { label: 'Drafts', href: '#/proposals' },
+  chat: { label: 'Chat', href: '#/chat' },
+  progress: { label: 'Progress', href: '#/progress' },
+  events: { label: 'Events', href: '#/events' },
+  kpi: { label: 'KPI', href: '#/kpi' },
+  studio: { label: 'Scores', href: '#/studio' },
+  reflections: { label: 'Reflections', href: '#/reflections' },
+  control: { label: 'Control Room', href: '#/control' },
+  steward: { label: 'Steward', href: '#/steward' },
+  'arc-qa': { label: 'Arc QA', href: null },
+}
+
 export function deriveBreadcrumbs(hash: string): Crumb[] {
   const kpiKey = parseKpiRoute(hash)
   if (kpiKey) {
@@ -46,11 +72,13 @@ export function deriveBreadcrumbs(hash: string): Crumb[] {
   const taskId = parseTaskRoute(hash)
   if (taskId) {
     const step = parseTaskStep(hash)
-    const crumbs: Crumb[] = [
-      { label: 'Task ' + truncateId(taskId), href: null },
-    ]
+    const origin = parseTaskOrigin(hash)
+    const crumbs: Crumb[] = []
+    if (origin !== null) crumbs.push(ORIGIN_CRUMBS[origin])
+    crumbs.push({ label: 'Task ' + truncateId(taskId), href: null })
     if (step) {
-      crumbs[0] = { ...crumbs[0], href: taskHash(taskId) }
+      const last = crumbs.length - 1
+      crumbs[last] = { ...crumbs[last]!, href: taskHash(taskId) }
       crumbs.push({ label: `Step: ${step}`, href: null })
     }
     return crumbs
