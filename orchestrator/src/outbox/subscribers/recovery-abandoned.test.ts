@@ -473,4 +473,125 @@ describe('recovery-abandoned outbox subscriber', () => {
     expect(row!.body).not.toContain(`mars remerge ${origin.id}`)
     expect(row!.body).not.toContain(`mars task add --supersede`)
   })
+
+  // -------------------------------------------------------------------------
+  // main-commiter drop contract: when a `main-commiter` recovery task is
+  // dropped, the subscriber must raise a `failed` action-queue row naming
+  // the checkpoint ref where the operator's uncommitted work is preserved.
+  //
+  // This covers the incident recorded in the task brief (2026-09-10): a
+  // main-committer task was dropped after capturing the integration branch's
+  // dirty state; the operator's edits appeared gone because the working tree
+  // was clean, but they were still in refs/mars/checkpoint/<committerTaskId>.
+  // -------------------------------------------------------------------------
+
+  it('raises a failed row naming the checkpoint ref when a main-commiter fix task is dropped with a checkpoint', async () => {
+    const { q, ra, pub, client } = await loadModules(repo)
+
+    // The main-committer needs a source task to point at (fix_for_task_id FK).
+    const origin = await q.enqueueTask('source task blocked on committer', undefined, {
+      skipTriage: true,
+    })
+    // Leave origin in 'blocked' status — that's the real state when a committer
+    // is dropped: origin is blocked waiting for the committer to finish.
+    await setTaskStatus(client, origin.id, 'blocked')
+
+    const fixTaskId = 'fix-mc-dropped-checkpoint'
+
+    // Create a real git checkpoint ref so raiseOrphanedCheckpointRow can probe
+    // it.  We branch off main, add a file, and point the checkpoint ref at the
+    // commit — then switch back to main so the integration branch is "clean".
+    const checkpointFile = 'operator-edit.ts'
+    const checkpointRef = `refs/mars/checkpoint/${fixTaskId}`
+    execFileSync('git', ['checkout', '-q', '-b', `temp-${fixTaskId}`], { cwd: repo })
+    writeFileSync(resolve(repo, checkpointFile), '// operator uncommitted work\n')
+    execFileSync('git', ['add', checkpointFile], { cwd: repo })
+    execFileSync(
+      'git',
+      ['commit', '-q', '-m', `mars main-commiter spawn ${fixTaskId}`],
+      { cwd: repo },
+    )
+    const checkpointSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo })
+      .toString()
+      .trim()
+    execFileSync('git', ['update-ref', checkpointRef, checkpointSha], { cwd: repo })
+    execFileSync('git', ['checkout', '-q', 'main'], { cwd: repo })
+
+    // Insert the main-committer fix task directly.  recovery_payload must
+    // encode recipe='main-commiter' so the subscriber's check fires.
+    const now = new Date().toISOString()
+    await client.execute({
+      sql: `INSERT INTO tasks
+              (id, prompt, status, fix_for_task_id, kind, recovery_payload, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      args: [
+        fixTaskId,
+        'clean integration branch',
+        'dropped',
+        origin.id,
+        'fix',
+        JSON.stringify({ recipe: 'main-commiter', integrationBranch: 'main' }),
+        now,
+        now,
+      ],
+    })
+
+    await ra.ensureRecoveryAbandonedSubscriber(client)
+    await publish(pub, client, 'task.terminal', { taskId: fixTaskId, reason: 'dropped' })
+
+    const { processed } = await ra.drainRecoveryAbandoned(client)
+
+    // The event must be consumed (processed = 1).
+    expect(processed).toBe(1)
+
+    // An action-queue row must be raised.
+    expect(await openRowCount(client)).toBe(1)
+
+    // The row must be keyed on the committer task id (origin_task_id = fixTaskId,
+    // not the source task id), and its body must name the checkpoint ref and the
+    // captured file.
+    const row = await openRowForOrigin(client, fixTaskId)
+    expect(row).not.toBeNull()
+    expect(row!.kind).toBe('failed')
+    expect(row!.body).toContain(checkpointRef)
+    expect(row!.body).toContain(checkpointFile)
+  })
+
+  it('does not raise a row when a main-commiter fix task is dropped but has no checkpoint', async () => {
+    const { q, ra, pub, client } = await loadModules(repo)
+
+    const origin = await q.enqueueTask('source task no-checkpoint', undefined, {
+      skipTriage: true,
+    })
+    await setTaskStatus(client, origin.id, 'blocked')
+
+    // Fix task with main-commiter payload but NO checkpoint ref in git.
+    const fixTaskId = 'fix-mc-no-checkpoint'
+    const now = new Date().toISOString()
+    await client.execute({
+      sql: `INSERT INTO tasks
+              (id, prompt, status, fix_for_task_id, kind, recovery_payload, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      args: [
+        fixTaskId,
+        'clean integration branch',
+        'dropped',
+        origin.id,
+        'fix',
+        JSON.stringify({ recipe: 'main-commiter', integrationBranch: 'main' }),
+        now,
+        now,
+      ],
+    })
+
+    await ra.ensureRecoveryAbandonedSubscriber(client)
+    await publish(pub, client, 'task.terminal', { taskId: fixTaskId, reason: 'dropped' })
+
+    const { processed } = await ra.drainRecoveryAbandoned(client)
+
+    // Event was consumed (we handled the main-commiter drop path) ...
+    expect(processed).toBe(1)
+    // ... but no row is raised because there is nothing to surface.
+    expect(await openRowCount(client)).toBe(0)
+  })
 })

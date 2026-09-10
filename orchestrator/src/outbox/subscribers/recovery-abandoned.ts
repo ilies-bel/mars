@@ -9,6 +9,8 @@ import { integrationBranchName } from '../../core/lib/blocker-resolution-primiti
 import { getRepoRoot } from '../../core/context.js'
 import { listUniqueCommitsAhead, type OrphanCommit } from '../../core/lib/sweep.js'
 import { SALVAGE_CHECKPOINT_SUBJECT_PREFIX } from '../../core/lib/git/checkpoint.js'
+import { parseMainCommiterPayload, MAIN_COMMITER_RECIPE } from '../../core/lib/main-commiter-payload.js'
+import { raiseOrphanedCheckpointRow } from '../../core/daemon/main-dirty-action-queue.js'
 
 /**
  * Durable outbox subscriber that raises an action-queue row when a fix
@@ -89,6 +91,28 @@ export async function drainRecoveryAbandoned(
       const fixTask = await getTask(payload.taskId)
       if (!fixTask) return false
       if (fixTask.fixForTaskId === null) return false
+
+      // Special case — `main-commiter` recoveries: their role is to commit the
+      // integration branch's dirty state, not to deliver the origin task's work.
+      // When a committer is dropped, the origin is in `blocked` status (not
+      // `failed`), so the generic origin-status guard below would silently skip
+      // this event.  But the committer may have already captured the operator's
+      // uncommitted edits into `refs/mars/checkpoint/<committerTaskId>` before
+      // being dropped — those edits are invisible on the integration branch and
+      // there is no other notification path.  Surface the checkpoint ref here so
+      // the operator knows where their work went.
+      const committerPayload = parseMainCommiterPayload(fixTask.recoveryPayload ?? null)
+      if (committerPayload?.recipe === MAIN_COMMITER_RECIPE) {
+        const itemId = await raiseOrphanedCheckpointRow(fixTask.id, (msg) => log?.(msg))
+        if (itemId !== null) {
+          log?.(
+            `[recovery-abandoned] main-committer ${fixTask.id} dropped; raised orphaned-checkpoint row ${itemId}`,
+          )
+        }
+        // Return true whether or not a checkpoint existed: the event was a
+        // valid main-committer drop and we handled it (even if silently).
+        return true
+      }
 
       const originId = fixTask.fixForTaskId
 
