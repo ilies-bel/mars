@@ -32,8 +32,9 @@ import {
   autoCommitWorktreeIfDeterministic,
 } from '../../lib/git/commit-main'
 import {
-  hasRealCommitAboveBase as gitHasRealCommitAboveBase,
-} from '../../lib/git/checkpoint'
+  SALVAGE_CHECKPOINT_TRAILER_KEY,
+  SALVAGE_CHECKPOINT_TRAILER_VALUE,
+} from '../../lib/salvage-checkpoint-subjects'
 import { resolveGitBin, exec, execProbe, branchExists } from '../../lib/git/internal'
 import { attributeIntegrationDirt as gitAttributeIntegrationDirt } from '../../lib/git/stale-tree-attribution'
 import { readLastSyncedSha as gitReadLastSyncedSha } from '../../lib/git/last-synced-sha'
@@ -105,7 +106,6 @@ import type {
   WorktreeSyncOutcome,
 } from './types'
 // Self-registers after `localGitVcs` is fully constructed — see bottom of file.
-import { registerVcs } from './registry'
 
 // ---------------------------------------------------------------------------
 // Ambient trace store registry
@@ -765,13 +765,37 @@ export const localGitVcs: Vcs = {
 
   // --- Slice 7: no-progress guard ---
 
+  /**
+   * Composed from this implementation's own `revListRange` + `hasCommitTrailer`
+   * rather than from `lib/git/checkpoint.ts`.
+   *
+   * The checkpoint helper reaches back through `resolveVcs()` to run these two
+   * primitives — a Vcs implementation resolving the Vcs port that resolves it.
+   * Beyond the indirection, that import is what made this module depend on the
+   * registry (`local-git → checkpoint → vcs/registry`), and that cycle is why
+   * `registerVcs(localGitVcs)` could not live in the registry. Composing here
+   * keeps the graph acyclic, so the registry can import this file and built-in
+   * registration stops depending on which module an entry point loaded first.
+   *
+   * Fails open to `true` (assume real progress exists) on any git error, so an
+   * unanswerable case stays in the conservative "genuine defect" bucket rather
+   * than being reclassified as "no coder ever landed real work here".
+   */
   async hasRealCommitAboveBase(spec: VcsHasRealCommitAboveBaseSpec): Promise<boolean> {
-    return gitHasRealCommitAboveBase(
-      spec.cwd,
-      spec.baseSha,
-      spec.tipSha,
-      reconstructTraceCtx(spec.trace),
-    )
+    const { cwd, baseSha, tipSha, trace } = spec
+    const shas = await localGitVcs.revListRange({ cwd, range: `${baseSha}..${tipSha}`, trace })
+    if (shas === null) return true
+    for (const sha of shas) {
+      const isCheckpoint = await localGitVcs.hasCommitTrailer({
+        cwd,
+        sha,
+        trailerKey: SALVAGE_CHECKPOINT_TRAILER_KEY,
+        trailerValue: SALVAGE_CHECKPOINT_TRAILER_VALUE,
+        trace,
+      })
+      if (!isCheckpoint) return true
+    }
+    return false
   },
 }
 
@@ -792,10 +816,11 @@ const parseCommitSummaries = (stdout: string): VcsCommitSummary[] =>
         : { sha: line.slice(0, spaceIdx), subject: line.slice(spaceIdx + 1) }
     })
 
-// Self-registration: done here (not in registry.ts) to avoid the circular
-// local-git → checkpoint → vcs/registry → local-git. By the time this line
-// runs, `localGitVcs` is fully constructed and `registerVcs` is available
-// because registry.ts (which checkpoint.ts imports) has no dependency on
-// this file. The `registerVcs` import is declared at the top of this file.
-registerVcs(localGitVcs)
+// No self-registration here, and no import of `./registry`: this module is a
+// leaf of the Vcs graph. `registry.ts` imports `localGitVcs` and registers it
+// in its own body, which is both acyclic and unconditional. Registering from
+// here instead made built-in availability depend on some other module having
+// imported this file first — in practice only `app-services.ts` did, so every
+// entry point that reached `resolveVcs()` on its own (the setup step among
+// them) failed with `Unknown Vcs implementation 'local-git'`.
 
