@@ -416,6 +416,16 @@ const GatesSection = () => {
     null,
   )
 
+  // "9 of 12 failing" says the other three pass. Three of them had never been
+  // run, so the sentence invented three passing gates out of three unknowns —
+  // and "0 passing" is exactly the fact it was hiding. State the partition
+  // whenever it does not divide cleanly into failing and passing.
+  const passingGateCount = gatesData.length - failingGates.length - neverRunGates.length
+  const failingVerdict =
+    neverRunGates.length > 0
+      ? `${failingGates.length} failing · ${neverRunGates.length} never run · ${passingGateCount} passing`
+      : `${failingGates.length} of ${gatesData.length} failing`
+
   const copy = pending ? GATE_ACTION_COPY[pending.kind] : null
 
   return (
@@ -431,7 +441,7 @@ const GatesSection = () => {
           verdict={
             failingGates.length > 0 ? (
               <span className="font-medium text-error" data-testid="gates-verdict">
-                {`${failingGates.length} of ${gatesData.length} failing`}
+                {failingVerdict}
                 {oldestFailureAt !== null && ` · oldest ${relativeTime(oldestFailureAt)}`}
               </span>
             ) : (
