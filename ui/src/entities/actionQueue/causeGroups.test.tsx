@@ -396,7 +396,10 @@ describe('TriageCauseGroupRow', () => {
 
     const count = container.querySelector('[data-testid="cause-group-count"]')
     expect(count).not.toBeNull()
-    expect(count!.textContent).toBe('19tasks')
+    // `makeGroup` builds a slice-failed group, which holds PRDs Mars could not
+    // turn into tasks — so the unit is proposals. Calling them tasks was the
+    // page's own loose slice-failed row's account of them, contradicted.
+    expect(count!.textContent).toBe('19proposals')
 
     // The number itself, not the whole span, carries the size. A cause holding
     // nineteen tasks rendered as a `19\u00d7` info chip on the thinnest row on
@@ -420,7 +423,17 @@ describe('TriageCauseGroupRow', () => {
     })
     expect(
       container.querySelector('[data-testid="cause-group-count"]')!.textContent,
-    ).toBe('1task')
+    ).toBe('1proposal')
+  })
+
+  it('still counts a failed group in tasks', () => {
+    const group = { ...makeGroup(3), kind: 'failed' }
+    act(() => {
+      root.render(<TriageCauseGroupRow group={group} />)
+    })
+    expect(
+      container.querySelector('[data-testid="cause-group-count"]')!.textContent,
+    ).toBe('3tasks')
   })
 
   it('gives each expanded member a line the others do not have', () => {

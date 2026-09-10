@@ -397,6 +397,37 @@ interface TriageRowProps {
 }
 
 /**
+ * Whether an entityId names a TASK rather than a condition slug.
+ *
+ * Rows carry either: `mars-c587ad23` / `fix-2cb27c58` (a task), or a slug like
+ * `baseline-broken`, `signature-wave:setup:…`, `qa-step-list-capability-…`
+ * (the condition itself). Only the first is worth showing or linking.
+ *
+ * This exists because the `dag` was doing the job and getting it wrong. The
+ * one parked task on the page carries a real task id and a null dag, so it was
+ * the only row on the queue that named nothing at all — no id, no link — while
+ * its primary button asked the operator to certify that work was finished on
+ * it.
+ */
+const looksLikeTaskId = (id: string): boolean => /^(mars|fix)-[0-9a-f]{8,}$/.test(id)
+
+/**
+ * What a cause group is counting.
+ *
+ * Every group said "N tasks". The largest one on the page — seventeen
+ * `slice-failed` rows, nearly half the queue's headline number — holds PRDs
+ * that Mars could not turn into tasks, which the page's own loose slice-failed
+ * row says in as many words: "Mars could not turn this PRD into tasks". There
+ * is no task behind any of them, and unlike every other group member they
+ * carry no link to one.
+ */
+const groupUnit = (kind: string, count: number): string => {
+  if (kind === 'slice-failed') return count === 1 ? 'proposal' : 'proposals'
+  if (kind === 'draft-proposal') return count === 1 ? 'draft' : 'drafts'
+  return count === 1 ? 'task' : 'tasks'
+}
+
+/**
  * What a destructive verb actually destroys, in the operator's terms.
  *
  * The old copy was written for `restart` alone and hard-coded into its panel.
@@ -704,7 +735,10 @@ const leadDecisionIndex = (decisions: Decision[]): number => {
   // arriving through two fields.
   // Non-task-backed rows (entityId is a kind slug like "daemon-code-drift")
   // have nothing to open, so their headline stays inert text.
-  const taskLink = hasResolvableTask(item) ? taskHash(item.entityId, 'triage') : null
+  const taskLink =
+    hasResolvableTask(item) || looksLikeTaskId(item.entityId)
+      ? taskHash(item.entityId, 'triage')
+      : null
   const subhead = signatureFamilyPhrase(item.humanDetail?.failureSignature) ?? item.title
   const summaryAddsInfo =
     item.humanSummary != null &&
@@ -908,7 +942,7 @@ const leadDecisionIndex = (decisions: Decision[]): number => {
         // cause were mutually indistinguishable and none of them could be
         // followed anywhere else. Quiet, selectable, and only where there is a
         // task to name.
-        const showId = taskLink !== null && item.entityId !== ''
+        const showId = looksLikeTaskId(item.entityId)
         if (inGroup && !showName && !showAge && !showId) return null
         return (
           <div className="mb-1.5 flex items-center gap-2">
@@ -1674,7 +1708,7 @@ export const TriageCauseGroupRow = ({
               {group.count}
             </span>
             <span className="text-micro text-muted-foreground">
-              {group.count === 1 ? 'task' : 'tasks'}
+              {groupUnit(group.kind, group.count)}
             </span>
           </span>
           <Chip tone={kindTone} icon={kindIcon}>
