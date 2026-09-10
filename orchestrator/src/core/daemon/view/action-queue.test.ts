@@ -310,7 +310,11 @@ describe('buildActionQueueView — failure-kind title/body derivation', () => {
     })
 
     // §9 beat 3: "Task [id] failed: [reason]" when no phase or error head.
-    expect(rows[0]!.title).toBe('Task task-1 failed: Mars could not determine why this task failed')
+    // The implementation deliberately says "no diagnostic recorded" when a failure
+    // is stored without any structured reason or captured output — this is itself
+    // a bug signal, and naming it directly helps the operator investigate why
+    // the failure arrived with no reason (see 2026-09-07 incident, mars-87b7c958).
+    expect(rows[0]!.title).toBe('Task task-1 failed: no diagnostic recorded')
   })
 
   it('keeps a purpose-built persisted title on a failed row with no signature', async () => {
@@ -339,14 +343,18 @@ describe('buildActionQueueView — non-failure kinds keep their raiser copy', ()
   // are alerts, not task failures: their raisers already write specific
   // operator copy, which derived failure copy must never overwrite.
 
-  it('daemon-code-drift keeps the running-vs-head SHA title', async () => {
+  it('daemon-code-drift title is derived from the recipe humanSummary (includes SHA)', async () => {
+    // HR-3 normalisation promotes humanSummary to title for non-REGISTRY_TITLED_KINDS
+    // when no operational-copy renderer overrides it. For daemon-code-drift the
+    // recipe reads runningCommit/headCommit from the payload and constructs a
+    // human-readable summary that includes the SHA comparison.
     const rows = await buildActionQueueView({
       stateStore: makeStateStore([
         makeRow({
           kind: 'daemon-code-drift',
           title: 'Daemon running stale code — a1b2c3d → e4f5g6h',
           body: 'daemon running a1b2c3d, main is at e4f5g6h — run `mars daemon restart`',
-          payload: { sourceSha: 'a1b2c3d', currentSha: 'e4f5g6h' },
+          payload: { runningCommit: 'a1b2c3d', headCommit: 'e4f5g6h' },
           signature: 'daemon-code-drift',
         }),
       ]),
@@ -355,7 +363,9 @@ describe('buildActionQueueView — non-failure kinds keep their raiser copy', ()
       filter: 'open',
     })
 
-    expect(rows[0]!.title).toBe('Daemon running stale code — a1b2c3d → e4f5g6h')
+    // The title now comes from the recipe humanSummary (HR-3), which includes
+    // the SHA comparison when runningCommit/headCommit are in the payload.
+    expect(rows[0]!.title).toContain('a1b2c3d → e4f5g6h')
     expect(rows[0]!.title).not.toContain('A pipeline step did not complete')
     expect(rows[0]!.body).toContain('mars daemon restart')
   })
@@ -404,7 +414,10 @@ describe('buildActionQueueView — non-failure kinds keep their raiser copy', ()
     expect(rows[0]!.title).toBe('Re-queue ceiling exceeded')
   })
 
-  it('non-failed-task rows (stale-worktree) still use the persisted title/body', async () => {
+  it('non-failed-task rows (stale-worktree) derive title from recipe humanSummary', async () => {
+    // HR-3 normalisation promotes humanSummary to title for non-REGISTRY_TITLED_KINDS
+    // when no operational-copy renderer overrides. For stale-worktree the recipe
+    // produces a notice-class sentence; body stays as the raiser's persisted copy.
     const rows = await buildActionQueueView({
       stateStore: makeStateStore([
         makeRow({ kind: 'stale-worktree', payload: { taskId: 'task-1' } }),
@@ -414,7 +427,10 @@ describe('buildActionQueueView — non-failure kinds keep their raiser copy', ()
       filter: 'open',
     })
 
-    expect(rows[0]!.title).toBe('Legacy persisted title')
+    // Title comes from recipe humanSummary (HR-3); body stays persisted.
+    expect(rows[0]!.title).toBe(
+      'Mars is cleaning up a task workspace that has been inactive for a while — no action needed from you (task-1).',
+    )
     expect(rows[0]!.body).toBe('Legacy persisted body')
   })
 })
@@ -572,7 +588,12 @@ describe('buildActionQueueView — diagnose-failure is suppressed on task-less c
     expect(rows[0]!.actions.some((a) => a.op === 'diagnose-failure')).toBe(false)
   })
 
-  it('keeps diagnose-failure on a gate-broken row that carries a real task id and dag', async () => {
+  it('gate-broken row with taskId in payload: dag is null, actions come from derivedRowActions', async () => {
+    // gate-broken is in NON_TASK_FAILURE_KINDS (added to prevent the origin
+    // task's intent from showing as the card headline — the gate is the subject,
+    // not the task). The entityId resolves to the gate name (not the taskId),
+    // so dag is always null and actions come from derivedRowActions (which
+    // returns [] for gate-broken, using recipe verbs instead).
     const rows = await buildActionQueueView({
       ...BASE_PARAMS,
       stateStore: makeStateStore([
@@ -581,7 +602,7 @@ describe('buildActionQueueView — diagnose-failure is suppressed on task-less c
           kind: 'gate-broken',
           title: 'Gate test is consistently failing (1 tasks)',
           body: 'The test check has repeatedly produced verify:test/test-assertion-error.',
-          // Payload carries a taskId so entityId resolves to the real task.
+          // Payload carries a taskId but entityId still resolves to the gate name.
           payload: {
             gate: 'test',
             verdict: 'verify:test/test-assertion-error',
@@ -597,9 +618,12 @@ describe('buildActionQueueView — diagnose-failure is suppressed on task-less c
     })
 
     expect(rows).toHaveLength(1)
-    // dag is non-null when a real task backs the row.
-    expect(rows[0]!.dag).not.toBeNull()
-    expect(rows[0]!.actions.some((a) => a.op === 'diagnose-failure')).toBe(true)
+    // dag is null because gate-broken is in NON_TASK_FAILURE_KINDS.
+    expect(rows[0]!.dag).toBeNull()
+    // diagnose-failure is not in derivedRowActions for gate-broken; the recipe
+    // verbs (gate-restore, copy) are the operator's action surface instead.
+    expect(rows[0]!.actions.some((a) => a.op === 'diagnose-failure')).toBe(false)
+    expect(rows[0]!.verbs.some((v) => v.op === 'gate-restore')).toBe(true)
   })
 })
 
@@ -1026,7 +1050,10 @@ describe('buildActionQueueView — hitl-slice-needs-operator row', () => {
     signature: 'prop-hitl-abc:hitl:2',
   })
 
-  it('uses the persisted title instead of the failure-registry warmTitle', async () => {
+  it('derives title from the recipe humanSummary (not the persisted raiser title)', async () => {
+    // HR-3 normalisation promotes the recipe humanSummary to title for
+    // non-REGISTRY_TITLED_KINDS when no operational-copy renderer overrides it.
+    // hitl-slice-needs-operator has neither, so its recipe humanSummary wins.
     const rows = await buildActionQueueView({
       ...BASE_PARAMS,
       stateStore: makeStateStore([hitlRow]),
@@ -1034,7 +1061,9 @@ describe('buildActionQueueView — hitl-slice-needs-operator row', () => {
     })
 
     expect(rows).toHaveLength(1)
-    expect(rows[0]!.title).toBe('HITL: End-to-end smoke against a real OpenShift cluster')
+    expect(rows[0]!.title).toBe(
+      'You need to take over a task in this plan — pick it up and complete the work manually.',
+    )
   })
 
   it('uses the persisted body instead of the failure-registry verboseReason', async () => {
@@ -1162,7 +1191,7 @@ describe('buildActionQueueView — operational alert copy', () => {
     // With no pauseState supplied (defaults to unpaused), dispatch is NOT claimed to be paused.
     expect(byId.get('storm')!.title).not.toContain('dispatch is paused')
     expect(byId.get('storm')!.body).toContain('.mars/watch.log')
-    expect(byId.get('gate')!.title).toContain('Gate test')
+    expect(byId.get('gate')!.title).toContain('test check keeps failing')
     expect(byId.get('gate')!.body).toContain('verify:test/test-assertion-error')
     expect(byId.get('daemon')!.title).toContain('pid 4242')
     expect(byId.get('daemon')!.body).toContain('.mars/watch.log')
@@ -1942,8 +1971,11 @@ describe('taskFailureKinds drift gate — orchestrator side', () => {
       'NON_TASK_FAILURE_KINDS extraction returned empty — check regex against action-queue.ts',
     ).toBeGreaterThan(0)
 
+    // taskFailureKinds is generated in action-queue-kinds.generated.ts and
+    // re-exported from schemas.ts. Read the generated file directly where the
+    // array literal lives.
     const uiSource = readFileSync(
-      path.resolve(here, '../../../../../ui/src/shared/schemas.ts'),
+      path.resolve(here, '../../../../../ui/src/shared/action-queue-kinds.generated.ts'),
       'utf8',
     )
     const uiKinds = extractQuotedList(
@@ -1952,7 +1984,7 @@ describe('taskFailureKinds drift gate — orchestrator side', () => {
     )
     expect(
       uiKinds.length,
-      'taskFailureKinds extraction returned empty — check regex against ui/src/shared/schemas.ts',
+      'taskFailureKinds extraction returned empty — check regex against ui/src/shared/action-queue-kinds.generated.ts',
     ).toBeGreaterThan(0)
 
     const nonTaskSet = new Set(nonTaskKinds)

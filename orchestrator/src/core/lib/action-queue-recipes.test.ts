@@ -286,9 +286,10 @@ describe('compound verb mapping', () => {
   it('every gate-broken verb op is one the daemon actually handles', () => {
     // gate-restore POSTs to /actions/gate-restore/:id — the handler runs the
     // gate's command asynchronously via restoreVerifyGate (app-service).
+    // copy hands the operator a pre-filled `mars verify-gate restore <id>` command.
     const recipe = lookupRecipe('gate-broken')
     const ctx = makeCtx({ kind: 'gate-broken', payload: { gate: 'gate-abc123' } })
-    const handled = new Set(['gate-restore', 'dismiss', 'snooze'])
+    const handled = new Set(['gate-restore', 'copy', 'dismiss', 'snooze'])
     for (const verb of getRecipeVerbs(recipe, ctx)) {
       expect(handled).toContain(verb.op)
     }
@@ -322,7 +323,7 @@ describe('compound verb mapping', () => {
     })
     const verbs = getRecipeVerbs(recipe, ctx)
     const copyVerb = verbs.find((v) => v.op === 'copy')
-    expect(copyVerb).toMatchObject({ label: 'Add gate check', style: 'primary' })
+    expect(copyVerb).toMatchObject({ label: 'Copy gate command', style: 'primary' })
     expect(copyVerb?.hint).toBe(
       'mars verify-gate add --scope orchestrator --name typecheck --cmd npx -- tsc --noEmit',
     )
