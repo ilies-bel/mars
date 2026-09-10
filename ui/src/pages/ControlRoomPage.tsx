@@ -73,26 +73,32 @@ type ConfirmAction =
   | { kind: 'recovery-off' }
   | { kind: 'recovery-on' }
 
+/**
+ * These are asked BEFORE the lever moves, so every body is in the future
+ * tense. "Dispatch paused. In-flight tasks unaffected." read as a report of
+ * something already done, in a dialog whose whole purpose was to ask whether
+ * to do it — the reader could not tell whether their click had landed.
+ */
 const CONFIRM_COPY: Record<ConfirmAction['kind'], { title: string; body: string; button: string }> =
   {
     'dispatch-off': {
       title: 'Pause dispatch?',
-      body: 'Dispatch paused. In-flight tasks unaffected.',
+      body: 'No new task will be dispatched until you resume. Tasks already running finish normally, and the pause survives a daemon restart.',
       button: 'Pause dispatch',
     },
     'dispatch-on': {
       title: 'Resume dispatch?',
-      body: 'Queued tasks will dispatch. Storm-breaker flag cleared.',
+      body: 'Queued tasks start dispatching again, and the storm-breaker flag is cleared so a restart will not re-pause the queue.',
       button: 'Resume dispatch',
     },
     'recovery-off': {
       title: 'Disable recovery?',
-      body: 'The orchestrator will stop spawning fix tasks when a worker fails. Failed tasks will accumulate until recovery is re-enabled.',
+      body: 'Mars stops spawning a fix task when a worker fails. Failures will pile up in Needs You until you turn recovery back on.',
       button: 'Disable recovery',
     },
     'recovery-on': {
       title: 'Enable recovery?',
-      body: 'The orchestrator will resume spawning fix tasks when a worker fails.',
+      body: 'Mars resumes spawning one fix task per failure. Failures already waiting in Needs You are not retried retroactively.',
       button: 'Enable recovery',
     },
   }
@@ -269,19 +275,22 @@ const LeversSection = () => {
               {actError && (
                 <p className="text-label text-error">{actError}</p>
               )}
+              {/* Cancel wore a full border and the committing button a 10%
+                  wash, so the dialog's own recommendation read as "don't".
+                  One filled primary per row, and it is the verb you opened the
+                  dialog to run. */}
               <DialogFooter>
                 <DialogClose asChild>
-                  <button className="rounded border border-border px-3 py-1.5 text-label text-foreground hover:border-border/80">
-                    Cancel
-                  </button>
+                  <ActionButton variant="ghost">Cancel</ActionButton>
                 </DialogClose>
-                <button
+                <ActionButton
+                  variant="primary"
                   onClick={() => { void confirm() }}
                   disabled={acting}
-                  className="rounded border border-border bg-primary/10 px-3 py-1.5 text-label text-foreground hover:bg-primary/20 disabled:opacity-50"
+                  pending={acting}
                 >
-                  {acting ? 'Working…' : copy.button}
-                </button>
+                  {copy.button}
+                </ActionButton>
               </DialogFooter>
             </>
           )}

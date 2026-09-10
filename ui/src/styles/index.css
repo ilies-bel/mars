@@ -321,6 +321,15 @@
  * components render on the Mars palette. Do NOT edit the @theme block for this.
  */
 :root {
+  /* Width of the persistent nav rail (Shell's first grid column).
+   *
+   * Lives here because a modal is portalled to <body>, outside the Shell, and
+   * a `left: 50%` modal is centred on the VIEWPORT — which puts it half a rail
+   * (112px) to the left of the content area it belongs to. Every dialog was
+   * landing off-centre against the only thing on screen it referred to. The
+   * Shell and the dialog now read the same number. */
+  --shell-rail: 224px;
+
   --background: var(--color-bg);             /* #F5EDE4 */
   --foreground: var(--color-fg);             /* #1A0F0A */
   --card: var(--color-surface);              /* #FFFFFF */

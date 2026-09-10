@@ -364,7 +364,7 @@ interface ShellProps {
  * Persistent shell that wraps every page.
  *
  * Renders a CSS grid:
- *   columns  224 px sidebar | 1 fr content
+ *   columns  --shell-rail sidebar | 1 fr content
  *   rows     48 px topbar   | 1 fr body
  *
  * The topbar spans both columns (col-span-2). Shell fills the remaining flex
@@ -386,7 +386,7 @@ export const Shell = ({ hash, children }: ShellProps) => {
       : undefined
 
   return (
-    <div className="relative grid min-h-0 flex-1 grid-cols-[224px_1fr] grid-rows-[48px_1fr]">
+    <div className="relative grid min-h-0 flex-1 grid-cols-[var(--shell-rail)_1fr] grid-rows-[48px_1fr]">
       {/* Thirteen tab stops stood between the keyboard and the first control on
           the page — the project switcher, the parked-task chip, the bell, then
           all ten nav links, on every route, every time. The chrome is
