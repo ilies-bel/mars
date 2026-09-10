@@ -14,7 +14,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'bun:test'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ReactElement } from 'react'
-import type { PrimitiveDetail, PrimitiveRun } from '@/entities/primitive/types'
+import type { PrimitiveDetail, PrimitiveRun, PrimitiveSummary } from '@/entities/primitive/types'
 import { primitiveForStep } from '@/entities/primitive/types'
 import {
   executorLabel,
@@ -23,10 +23,13 @@ import {
   windowSuccessRate,
 } from './PrimitiveDetailDrawer'
 
-const render = (element: ReactElement): string => {
+const render = (element: ReactElement, seedPrimitives?: PrimitiveSummary[]): string => {
   const qc = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: Infinity } },
   })
+  // Seeding ['primitives'] stands in for GET /api/primitives, which reads the
+  // daemon's live registry.
+  if (seedPrimitives) qc.setQueryData(['primitives'], seedPrimitives)
   return renderToStaticMarkup(
     <QueryClientProvider client={qc}>{element}</QueryClientProvider>,
   )
@@ -362,5 +365,38 @@ describe('PrimitiveDetailDrawer — chrome and navigation', () => {
   it('renders the loading state before any detail arrives', () => {
     const loadingHtml = render(<PrimitiveDetailDrawer name="verify" onClose={() => {}} />)
     expect(loadingHtml).toContain('aria-busy="true"')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Operator-registered primitives — the sibling nav reads the live registry
+// ---------------------------------------------------------------------------
+
+describe('PrimitiveDetailDrawer — sibling nav', () => {
+  const summary = (name: string): PrimitiveSummary => ({
+    name,
+    description: `${name} does a thing`,
+    phase: 'code',
+    executor: 'shell',
+  })
+
+  it('lists a primitive that is not one of the built-in names', () => {
+    // The nav used to map over the code-pinned PRIMITIVE_NAMES array, so a
+    // primitive an operator registered in their own workflow code executed
+    // correctly and never appeared in the list that enumerates primitives.
+    const html = render(
+      <PrimitiveDetailDrawer name="runAgent" onClose={() => {}} detail={detail()} />,
+      [summary('setupWorktree'), summary('runAgent'), summary('deployToStaging')],
+    )
+    expect(html).toContain('deployToStaging')
+  })
+
+  it('falls back to the built-in names before the registry fetch resolves', () => {
+    // No seed — the query is still pending, and the nav must not flash empty.
+    const html = render(
+      <PrimitiveDetailDrawer name="runAgent" onClose={() => {}} detail={detail()} />,
+    )
+    expect(html).toContain('setupWorktree')
+    expect(html).toContain('merge')
   })
 })

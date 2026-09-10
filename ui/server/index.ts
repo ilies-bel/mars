@@ -1355,7 +1355,8 @@ export const startServer = async (
           return jsonResponse(r.status, r.body)
         }
 
-        // GET /api/primitives — the fixed catalog of workflow primitives.
+        // GET /api/primitives — every primitive in the daemon's live registry,
+        // including any an operator registered in their own workflow code.
         // Proxied to the daemon's GET /view/primitives so the daemon remains
         // the single projection source for primitive identity.
         if (path === '/api/primitives' && req.method === 'GET') {

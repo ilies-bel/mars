@@ -9,8 +9,8 @@
  */
 
 import { useQuery } from '@tanstack/react-query'
-import { fetchPrimitiveDetail } from './api'
-import type { PrimitiveDetail, PrimitiveName } from './types'
+import { fetchPrimitiveDetail, fetchPrimitives } from './api'
+import type { PrimitiveDetail, PrimitiveName, PrimitiveSummary } from './types'
 
 interface PrimitiveDetailState {
   detail: PrimitiveDetail | undefined
@@ -37,5 +37,27 @@ export const usePrimitiveDetail = (
     detail: query.data,
     isLoading: enabled && query.isPending,
     error: query.error as Error | null,
+  }
+}
+
+/**
+ * Every primitive the daemon knows about, in registry order.
+ *
+ * `fallback` is rendered until the fetch resolves so the sibling nav does not
+ * flash empty on drawer open; it is the built-in names, never a bound on what
+ * can come back.
+ */
+export const usePrimitives = (
+  fallback: readonly string[],
+  fetchImpl?: typeof fetch,
+): { names: readonly string[]; summaries: PrimitiveSummary[] | undefined } => {
+  const query = useQuery<PrimitiveSummary[]>({
+    queryKey: ['primitives'],
+    queryFn: () => fetchPrimitives(fetchImpl ?? fetch),
+    retry: false,
+  })
+  return {
+    names: query.data ? query.data.map((p) => p.name) : fallback,
+    summaries: query.data,
   }
 }

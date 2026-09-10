@@ -1,6 +1,6 @@
 import type { KpiKey } from './schemas'
 import type { StaleWorktreesPayload } from './schemas'
-import { PRIMITIVE_NAMES, type PrimitiveName } from '@/entities/primitive/types'
+import { type PrimitiveName } from '@/entities/primitive/types'
 
 /**
  * Thin wrapper around `decodeURIComponent` that catches `URIError` and
@@ -90,7 +90,7 @@ export const isKnownRoute = (hash: string): boolean => {
   if (hash.startsWith('#/proposal-node/')) return true
   // Any non-empty `#/primitive/<name>` is a known address — unknown names render
   // a not-found overlay instead of silently redirecting to #/progress.
-  if (parseRawPrimitiveSegment(hash) !== null) return true
+  if (parsePrimitiveRoute(hash) !== null) return true
   if (hash === '#/release-notes') return true
   if (hash === '#/shortcuts') return true
   return false
@@ -414,37 +414,17 @@ export const parseProposalNodeRoute = (hash: string): string | null => {
  * the proposal overlays. Studio step nodes link here; the route stays
  * deep-linkable on its own.
  *
- * Mirrors `parseKpiRoute`: the name must be one of the six known primitives;
- * unrecognised names normalise to `null` so a stray `#/primitive/typo` never
- * opens an empty drawer.
+ * The name is NOT checked against a code-pinned list. It used to be, and that
+ * made every operator-registered primitive unreachable: the daemon serves it
+ * from its live registry, but `#/primitive/<thatName>` normalised to null and
+ * the router rendered "<name> is not a known primitive" — a flat contradiction
+ * of what the API would have returned. The daemon owns the answer, so the
+ * drawer asks it and renders whatever comes back, including a fetch failure.
  */
 export const parsePrimitiveRoute = (hash: string): PrimitiveName | null => {
   const m = /^#\/primitive\/([^/?#]+)/.exec(hash)
   if (!m) return null
-  const name = safeDecode(m[1])
-  if (name === null) return null
-  return (PRIMITIVE_NAMES as readonly string[]).includes(name)
-    ? (name as PrimitiveName)
-    : null
-}
-
-/**
- * Extracts the raw primitive name segment from a `#/primitive/<name>` hash
- * WITHOUT validating it against the known `PRIMITIVE_NAMES` set.
- *
- * Used to distinguish "valid primitive overlay" from "unknown primitive name"
- * in App so the router can render a not-found state instead of redirecting —
- * any `#/primitive/<non-empty>` is a known route address.
- *
- * Returns the decoded segment, or `null` when the hash is not a primitive URL
- * at all (empty segment, malformed encoding, or wrong prefix).
- */
-export const parseRawPrimitiveSegment = (hash: string): string | null => {
-  const m = /^#\/primitive\/([^/?#]+)/.exec(hash)
-  if (!m) return null
-  const name = safeDecode(m[1])
-  if (name === null) return null
-  return name.length > 0 ? name : null
+  return safeDecode(m[1])
 }
 
 /**
@@ -613,7 +593,7 @@ export const resolvePageRoute = (hash: string): RouteName => {
   }
   const primitiveName = parsePrimitiveRoute(hash)
   // Any `#/primitive/<name>` (valid or not) keeps Progress behind the overlay.
-  if (primitiveName !== null || parseRawPrimitiveSegment(hash) !== null) {
+  if (primitiveName !== null) {
     return parseOverlayOrigin(hash) ?? 'progress'
   }
   if (parseReleaseNotesRoute(hash)) {

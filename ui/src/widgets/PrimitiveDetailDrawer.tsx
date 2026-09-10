@@ -25,10 +25,11 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { EmptyState } from '@/components/EmptyState'
 import type { ReactNode } from 'react'
 import type { RunTimelineStep, StepCardEntry } from '@/widgets/TaskDetailDrawer'
 import { formatDuration, runStepToCard, StepStatusIcon } from '@/widgets/TaskDetailDrawer'
-import { usePrimitiveDetail } from '@/entities/primitive/usePrimitive'
+import { usePrimitiveDetail, usePrimitives } from '@/entities/primitive/usePrimitive'
 import type {
   PrimitiveDetail,
   PrimitiveName,
@@ -231,6 +232,11 @@ export const PrimitiveDetailDrawer = ({
   const closingRef = useRef(false)
 
   const query = usePrimitiveDetail(name, seededDetail === undefined, fetchImpl)
+  // The sibling list comes from the daemon's live registry, not from a
+  // code-pinned array — otherwise a primitive an operator registered in their
+  // own workflow code runs fine and never appears in the nav that is supposed
+  // to enumerate primitives. PRIMITIVE_NAMES is the pre-fetch placeholder.
+  const { names: siblingNames } = usePrimitives(PRIMITIVE_NAMES, fetchImpl)
   const detail = seededDetail ?? query.detail
 
   /** Exit animation (180 ms) then the onClose prop — mirrors the proposal drawer. */
@@ -355,12 +361,27 @@ export const PrimitiveDetailDrawer = ({
           {detail === undefined ? (
             <div className="px-4 py-3">
               {query.error !== null ? (
-                <p
-                  data-testid="primitive-detail-error"
-                  className="text-body text-error/80"
-                >
-                  Could not load the primitive ({query.error.message}).
-                </p>
+                // A 404 means the registry has no primitive by this name — a
+                // different fact from "the fetch failed", and the one a reader
+                // hitting a stale link or a typo actually has. The names it
+                // does have come from the same live registry, so this stays
+                // true the moment someone registers another one.
+                /404/.test(query.error.message) ? (
+                  <EmptyState
+                    data-testid="primitive-detail-error"
+                    variant="inline"
+                    title={`No primitive named ${name}`}
+                  >
+                    The registry currently holds {siblingNames.join(', ')}.
+                  </EmptyState>
+                ) : (
+                  <p
+                    data-testid="primitive-detail-error"
+                    className="text-body text-error/80"
+                  >
+                    Could not load the primitive ({query.error.message}).
+                  </p>
+                )
               ) : (
                 <SkeletonList rows={4} rowClassName="h-6 w-full mb-2" label="Loading primitive" />
               )}
@@ -532,14 +553,14 @@ export const PrimitiveDetailDrawer = ({
           )}
         </div>
 
-        {/* Sibling primitives — code-pinned names, no fetch needed */}
+        {/* Sibling primitives — whatever the daemon's registry currently holds */}
         <nav
           aria-label="Other primitives"
           className="border-t border-border px-4 py-3"
         >
           <SectionLabel>Primitives</SectionLabel>
           <ul className="flex flex-wrap gap-1.5">
-            {PRIMITIVE_NAMES.map((sibling) =>
+            {siblingNames.map((sibling) =>
               sibling === name ? (
                 <li
                   key={sibling}

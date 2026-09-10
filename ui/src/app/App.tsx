@@ -19,7 +19,6 @@ import {
   parseKpiRoute,
   parseOverlayOrigin,
   parsePrimitiveRoute,
-  parseRawPrimitiveSegment,
   parseProposalOrigin,
   parseProposalRoute,
   parseProposalNodeRoute,
@@ -148,7 +147,6 @@ const AppInner = () => {
   const proposalId = parseProposalRoute(hash)
   const proposalNodeId = parseProposalNodeRoute(hash)
   const primitiveName = parsePrimitiveRoute(hash)
-  const rawPrimitiveName = parseRawPrimitiveSegment(hash)
   const showReleaseNotes = parseReleaseNotesRoute(hash)
   const showShortcuts = parseShortcutsRoute(hash)
   // When a task overlay is open from a KPI detail page, parseKpiRoute returns
@@ -367,44 +365,6 @@ const AppInner = () => {
             }}
           />
         </FallbackBoundary>
-      ) : rawPrimitiveName !== null ? (
-        <>
-          {/* Scrim — clicks outside dismiss the not-found panel */}
-          <div
-            aria-hidden="true"
-            className="fixed inset-0 z-40 bg-foreground/40"
-            onClick={() => navigateReplace('#/progress')}
-          />
-          <aside
-            role="dialog"
-            aria-modal="true"
-            aria-label="Primitive not found"
-            data-testid="primitive-not-found"
-            className="fixed inset-y-0 right-0 z-50 flex w-[min(560px,100vw)] flex-col border-l border-border bg-background shadow-2xl"
-          >
-            <header className="flex items-start justify-between gap-3 border-b border-border px-4 py-3">
-              <h2 className="break-words font-mono text-title font-semibold text-foreground">
-                Unknown primitive
-              </h2>
-              <button
-                type="button"
-                onClick={() => navigateReplace('#/progress')}
-                aria-label="Close"
-                className="shrink-0 rounded border border-border px-2 py-0.5 font-mono text-body text-muted-foreground hover:bg-foreground/5"
-              >
-                Close
-              </button>
-            </header>
-            <div className="flex flex-1 flex-col gap-3 px-4 py-3">
-              <p className="font-mono text-body text-foreground">
-                <span className="text-error">{rawPrimitiveName}</span> is not a known primitive.
-              </p>
-              <p className="font-mono text-micro text-muted-foreground">
-                Valid primitives: setupWorktree, runAgent, verify, behaviourVerify, merge, awaitHuman
-              </p>
-            </div>
-          </aside>
-        </>
       ) : null}
       {showReleaseNotes ? (
         <FallbackBoundary of="release notes" variant="inline">

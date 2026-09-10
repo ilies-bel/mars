@@ -13,7 +13,6 @@ import {
   parseProposalNodeRoute,
   parseProposalOrigin,
   parsePrimitiveRoute,
-  parseRawPrimitiveSegment,
   parseReleaseNotesRoute,
   parseStudioRoute,
   primitiveHash,
@@ -650,9 +649,14 @@ describe('parsePrimitiveRoute', () => {
     }
   })
 
-  it('normalises unknown names to null', () => {
-    expect(parsePrimitiveRoute('#/primitive/typo')).toBeNull()
-    expect(parsePrimitiveRoute('#/primitive/setupworktree')).toBeNull()
+  it('routes a name the built-in list does not contain', () => {
+    // A primitive an operator registers in their own workflow code executes
+    // fine and is served by the daemon's live registry. This used to return
+    // null for exactly those names, so the router rendered "<name> is not a
+    // known primitive" — contradicting the API. Validation belongs to the
+    // daemon; the drawer fetches and renders whatever comes back.
+    expect(parsePrimitiveRoute('#/primitive/deployToStaging')).toBe('deployToStaging')
+    expect(parsePrimitiveRoute('#/primitive/setupworktree')).toBe('setupworktree')
   })
 })
 
@@ -852,28 +856,6 @@ describe('taskHash round-trip with special characters', () => {
 })
 
 // ---------------------------------------------------------------------------
-// parseRawPrimitiveSegment — extracts segment without name validation
-// ---------------------------------------------------------------------------
-
-describe('parseRawPrimitiveSegment', () => {
-  it('returns the segment for a valid primitive name', () => {
-    expect(parseRawPrimitiveSegment('#/primitive/runAgent')).toBe('runAgent')
-  })
-
-  it('returns the segment for an unknown name', () => {
-    expect(parseRawPrimitiveSegment('#/primitive/task')).toBe('task')
-    expect(parseRawPrimitiveSegment('#/primitive/bogus')).toBe('bogus')
-  })
-
-  it('returns null for a bare #/primitive/ (empty segment)', () => {
-    expect(parseRawPrimitiveSegment('#/primitive/')).toBeNull()
-  })
-
-  it('returns null for hashes that are not primitive URLs', () => {
-    expect(parseRawPrimitiveSegment('#/progress')).toBeNull()
-    expect(parseRawPrimitiveSegment('#/task/abc')).toBeNull()
-  })
-})
 
 // ---------------------------------------------------------------------------
 // isKnownRoute — unknown primitive name is now a known address

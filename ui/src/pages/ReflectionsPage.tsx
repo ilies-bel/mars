@@ -488,34 +488,35 @@ const RunStateBanner = ({ autoRunReflect, autoEnqueue, lastReflectedAt, originId
       <span className={autoRunReflect === 'on' && autoEnqueue ? 'text-success' : 'text-warn'}>
         {triggerLabel}
       </span>
-      {needsManualTrigger && (
+      {' '}
+      {reflectCmd && needsManualTrigger ? (
+        <span className="inline-flex items-center gap-1.5 align-middle">
+          Run manually:
+          <CopyButton
+            text={reflectCmd}
+            label={reflectCmd}
+            aria-label={`Copy ${reflectCmd}`}
+            className="rounded border border-border px-1.5 py-0.5 text-micro text-muted-foreground hover:bg-foreground/5 hover:text-muted-foreground"
+          />
+        </span>
+      ) : onToggleAutoReflect ? (
+        // Rendered whichever way the lever is set. It used to appear only
+        // while auto-reflect was OFF, so the one control on this banner could
+        // turn the lever on and then never turn it off again — the operator
+        // had to go back to the CLI for the other half of a toggle.
+        <button
+          onClick={onToggleAutoReflect}
+          data-testid="toggle-auto-reflect"
+          className="rounded border border-primary/30 px-1.5 py-0.5 text-micro text-primary/70 hover:bg-primary/10 hover:text-primary"
+          aria-label={autoRunReflect === 'on' ? 'Turn auto-reflect off' : 'Enable auto-reflect'}
+        >
+          {autoRunReflect === 'on' ? 'Turn auto-reflect off' : 'Enable auto-reflect'}
+        </button>
+      ) : needsManualTrigger ? (
         <>
-          {' '}
-          {reflectCmd ? (
-            <span className="inline-flex items-center gap-1.5 align-middle">
-              Run manually:
-              <CopyButton
-                text={reflectCmd}
-                label={reflectCmd}
-                aria-label={`Copy ${reflectCmd}`}
-                className="rounded border border-border px-1.5 py-0.5 text-micro text-muted-foreground hover:bg-foreground/5 hover:text-muted-foreground"
-              />
-            </span>
-          ) : onToggleAutoReflect ? (
-            <button
-              onClick={onToggleAutoReflect}
-              className="rounded border border-primary/30 px-1.5 py-0.5 font-mono text-micro text-primary/70 hover:bg-primary/10 hover:text-primary"
-              aria-label="Enable auto-reflect"
-            >
-              Enable auto-reflect
-            </button>
-          ) : (
-            <>
-              Enable it with <code>mars operator set auto-reflect on</code>.
-            </>
-          )}
+          Enable it with <code>mars operator set auto-reflect on</code>.
         </>
-      )}
+      ) : null}
     </div>
   )
 }
