@@ -1964,14 +1964,35 @@ const StepCard = ({
  *
  * Replaces the old flat StepTimeline and RunTimelineSection components.
  */
+/** The pipeline phase a failure signature blames — the word before the colon. */
+const blamedPhaseOf = (signature: string | null | undefined): string | null => {
+  if (signature == null || signature === '') return null
+  const head = signature.split(':')[0]?.trim().toLowerCase() ?? ''
+  return ['setup', 'code', 'verify', 'merge'].includes(head) ? head : null
+}
+
 const StepCardList = ({
   cards,
   toolEvents,
   agentToolCallsBySession,
   activeStepName,
   studioHref,
+  blamedPhase,
 }: {
   cards: StepCardEntry[]
+  /**
+   * The pipeline phase the failure signature blames, when no step card carries
+   * that name.
+   *
+   * A merge-preflight failure happens AFTER verify passes, so the run timeline
+   * has no merge entry at all and its red ✕ lands on `verify` — while the
+   * board's chip, the queue's summary and this drawer's own banner all say
+   * merge. Three readings of one failure, and nothing said they were answering
+   * different questions: this list is what RAN, the signature is what is
+   * BLAMED. Naming the gap is the difference between a contradiction and a
+   * sequence.
+   */
+  blamedPhase?: string | null
   toolEvents: TraceEvent[]
   /**
    * Agent (Claude Code) tool calls keyed by claudeSessionId. Each step card
@@ -1994,7 +2015,7 @@ const StepCardList = ({
   >
     <div className="mb-3 flex items-baseline justify-between">
       <h3 className="eyebrow text-muted-foreground">
-        Steps
+        Steps that ran
       </h3>
       {studioHref !== undefined ? (
         <a
@@ -2006,6 +2027,14 @@ const StepCardList = ({
         </a>
       ) : null}
     </div>
+    {blamedPhase != null &&
+      blamedPhase !== '' &&
+      !cards.some((c) => c.stepName.toLowerCase().includes(blamedPhase.toLowerCase())) && (
+        <p className="mb-3 text-micro text-muted-foreground" data-testid="step-blamed-phase-gap">
+          The failure is blamed on <span className="text-foreground">{blamedPhase}</span>, which
+          runs after these and left no step of its own.
+        </p>
+      )}
     {cards.length === 0 ? (
       <p className="text-body text-muted-foreground">No steps recorded yet</p>
     ) : (
@@ -2675,6 +2704,7 @@ export const TaskDetailDrawer = ({
           agentToolCallsBySession={resolvedAgentToolCallsBySession}
           activeStepName={activeStepName}
           studioHref={isProposal ? undefined : studioHash(currentId)}
+          blamedPhase={blamedPhaseOf(state.kind === 'ready' ? state.task.failureSignature : null)}
         />
       ) : resolvedSpans !== null ? (
         isProposal ? (

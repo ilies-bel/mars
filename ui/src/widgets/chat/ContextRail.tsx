@@ -421,9 +421,28 @@ interface AlertsPileProps {
 
 const AlertsPile = ({ items, onOpenWork }: AlertsPileProps) => {
   if (items.length === 0) return null
+  const alertCount = items.filter((i) => i.source === 'alert').length
+  const blockedCount = items.length - alertCount
   return (
     <RailPile title="Alerts" count={items.length}>
       {(visibleCount) => (
+        <>
+        {/* This is a RANKED SHORTLIST over two sources — unresolved alerts and
+            blocked tasks — not the queue. It sat inches from the header's
+            "N need you" with a bare count, listing a set that is neither a
+            subset nor a superset of it: it splits conditions the queue merges
+            onto one card, omits every grouped task, drops the proposals row,
+            and adds blocked tasks the queue never surfaces. Two numbers, two
+            populations, and only one of them said which it was. */}
+        <p className="mb-1 text-micro text-muted-foreground">
+          {blockedCount > 0
+            ? `${alertCount} unresolved · ${blockedCount} blocked`
+            : `${alertCount} unresolved`}
+          {' — '}
+          <a href="#/triage" className="underline decoration-dotted underline-offset-2 hover:text-foreground">
+            the full queue
+          </a>
+        </p>
         <ul className="flex flex-col gap-0.5">
           {items.slice(0, visibleCount).map((item) => (
             <li key={`${item.source}:${item.id}`}>
@@ -462,6 +481,7 @@ const AlertsPile = ({ items, onOpenWork }: AlertsPileProps) => {
             </li>
           ))}
         </ul>
+        </>
       )}
     </RailPile>
   )
