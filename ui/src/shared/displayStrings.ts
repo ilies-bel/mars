@@ -145,11 +145,25 @@ export const truncateAtWord = (text: string, max: number): string => {
 // 5. Token / context counters — labelled
 // ---------------------------------------------------------------------------
 
-const formatCount = (n: number): string => {
+/**
+ * One compaction rule for every token count in the app.
+ *
+ * The same magnitude was rendering three ways at once: `103285203` raw on a
+ * subject breadcrumb, `103,285,203` on the boundary line beside it, and
+ * `1.4M tok` on the KPI tile. A reader cannot tell whether those are the same
+ * kind of number, let alone compare them.
+ */
+export const formatCompactCount = (n: number): string => {
+  // One decimal in BOTH bands. The two bands used to disagree with each other
+  // — `.toFixed(1)` above a million, `Math.round` below it — so 1,250 and
+  // 1,900 both printed "1k" while 14,837,809 kept its 14.8. A token counter
+  // that rounds a third of its range away cannot be compared period to period.
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
-  if (n >= 1_000) return `${Math.round(n / 1_000)}k`
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`
   return String(n)
 }
+
+const formatCount = formatCompactCount
 
 /**
  * Format raw token counts as a labelled string for display.

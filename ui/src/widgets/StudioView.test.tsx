@@ -222,7 +222,7 @@ describe('StudioView', () => {
     expect(html).toContain('data-testid="studio-output-json"')
     expect(html).toContain('&quot;ok&quot;: true')
     // 1000 >= 1000 → abbreviated to '1k'; 500 and 200 < 1000 → shown raw
-    expect(html).toContain('in 1k')
+    expect(html).toContain('in 1.0k')
     expect(html).toContain('out 500')
     expect(html).toContain('cached 200')
   })

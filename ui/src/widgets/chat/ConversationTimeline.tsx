@@ -2,6 +2,7 @@ import { Fragment, useRef, useState } from 'react'
 import { ChevronUp } from 'lucide-react'
 import type { ChatConversationEntry, PreloadedResponse, SubjectBoundary } from '@/shared/schemas'
 import { formatAbsoluteDate, formatAbsoluteDateTime, formatClockTime, localDayKey } from '@/shared/time'
+import { formatCompactCount } from '@/shared/displayStrings'
 import { MemoryBoundaryLine } from './MemoryBoundaryLine'
 import { PreloadedResponses } from './PreloadedResponses'
 import { SubjectBoundaryLine } from './SubjectBoundaryLine'
@@ -129,8 +130,8 @@ const ClosedSubjectBreadcrumb = ({
     <span> · {messageCount} {messageCount === 1 ? 'message' : 'messages'}</span>
     {boundary !== undefined && (
       <>
-        <span> · {boundary.producedTokens} produced</span>
-        <span> · {boundary.carriedTokens} carried</span>
+        <span> · {formatCompactCount(boundary.producedTokens)} produced</span>
+        <span> · {formatCompactCount(boundary.carriedTokens)} carried</span>
       </>
     )}
   </div>

@@ -1,4 +1,5 @@
 import type { SubjectBoundary } from '@/shared/schemas'
+import { formatCompactCount } from '@/shared/displayStrings'
 
 export const SubjectBoundaryLine = ({
   boundary,
@@ -18,7 +19,7 @@ export const SubjectBoundaryLine = ({
     {position === 'start' ? (
       <span className="bg-background px-3">Subject started</span>
     ) : (
-      <span className="bg-background px-3">Subject complete · {boundary.producedTokens.toLocaleString()} produced · {boundary.carriedTokens.toLocaleString()} carried</span>
+      <span className="bg-background px-3">Subject complete · {formatCompactCount(boundary.producedTokens)} produced · {formatCompactCount(boundary.carriedTokens)} carried</span>
     )}
     <span className="h-px flex-1 bg-border" />
   </div>

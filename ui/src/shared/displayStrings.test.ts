@@ -182,7 +182,7 @@ describe('formatTokensLabel', () => {
   it('formats all three counts with human-readable labels', () => {
     const result = formatTokensLabel(197, 2443, 14837809)
     expect(result).toContain('in 197')
-    expect(result).toContain('out 2k')
+    expect(result).toContain('out 2.4k')
     // 14837809 / 1_000_000 = 14.837… → toFixed(1) = '14.8'
     expect(result).toContain('cached 14.8M')
   })
@@ -220,7 +220,7 @@ describe('formatTokensLabel', () => {
   })
 
   it('abbreviates thousands with k suffix', () => {
-    expect(formatTokensLabel(5000, null)).toContain('5k')
+    expect(formatTokensLabel(5000, null)).toContain('5.0k')
   })
 
   it('abbreviates millions with M suffix', () => {

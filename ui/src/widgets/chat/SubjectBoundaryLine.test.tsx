@@ -18,8 +18,8 @@ describe('SubjectBoundaryLine', () => {
     )
 
     expect(html).toContain('Subject complete')
-    expect(html).toContain('1,250 produced')
-    expect(html).toContain('5,400 carried')
+    expect(html).toContain('1.3k produced')
+    expect(html).toContain('5.4k carried')
     expect(html).toContain('data-testid="subthread-boundary-end"')
   })
 })

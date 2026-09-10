@@ -3,6 +3,7 @@ import { KPI_IMPROVEMENT_DIRECTION } from '@/entities/kpi/types'
 import { kpiBand, kpiBandCue, kpiTarget } from '@/entities/kpi/bands'
 import { kpiHash } from '@/shared/routing'
 import { KpiTileShell } from './KpiTileShell'
+import { formatCompactCount } from '@/shared/displayStrings'
 
 const KPI_LABELS: Record<KpiKey, string> = {
   cost_per_arc: 'Cost per Arc',
@@ -59,9 +60,7 @@ export function formatKpiValueParts(key: KpiKey, value: number): KpiValueParts {
     return { value: usdFormatter.format(value), unit: null }
   }
   if (key === 'cost_per_arc') {
-    if (value >= 1_000_000) return { value: `${(value / 1_000_000).toFixed(1)}M`, unit: 'tok' }
-    if (value >= 1000) return { value: `${(value / 1000).toFixed(1)}k`, unit: 'tok' }
-    return { value: `${Math.round(value)}`, unit: 'tok' }
+    return { value: formatCompactCount(Math.round(value)), unit: 'tok' }
   }
   return { value: `${(value * 100).toFixed(1)}%`, unit: null }
 }
@@ -82,11 +81,7 @@ export function formatKpiValue(key: KpiKey, value: number): string {
 export function formatKpiDelta(key: KpiKey, delta: number): string {
   const magnitude = Math.abs(delta)
   if (key === 'cost-per-merged-task') return usdFormatter.format(magnitude)
-  if (key === 'cost_per_arc') {
-    if (magnitude >= 1_000_000) return `${(magnitude / 1_000_000).toFixed(1)}M tok`
-    if (magnitude >= 1000) return `${(magnitude / 1000).toFixed(1)}k tok`
-    return `${Math.round(magnitude)} tok`
-  }
+  if (key === 'cost_per_arc') return `${formatCompactCount(Math.round(magnitude))} tok`
   return `${(magnitude * 100).toFixed(1)} pts`
 }
 
