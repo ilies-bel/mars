@@ -762,7 +762,7 @@ export const RecoveryCommands = ({
                 </p>
               ) : null,
             )
-          ) : (
+          ) : !recoveryExhausted ? (
             <>
               <p className="font-mono text-micro text-muted-foreground">
                 <code>mars continue {taskId}</code> — Resumes on the existing
@@ -773,6 +773,11 @@ export const RecoveryCommands = ({
                 branch and all commits, then re-runs from setup.
               </p>
             </>
+          ) : (
+            <p className="font-mono text-micro text-muted-foreground">
+              <code>mars restart {taskId}</code> — Discards the worktree,
+              branch and all commits, then re-runs from setup.
+            </p>
           )}
         </div>
       </details>
