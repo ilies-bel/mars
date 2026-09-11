@@ -379,6 +379,33 @@ export const parseTriageKind = (hash: string): string | null => {
 }
 
 /**
+ * Reads the search term encoded in a `#/triage?q=<term>` hash.
+ *
+ * Triage's search box filtered the page but wrote nothing to the URL, so a
+ * narrowed queue could not be linked, reloaded or shared — and navigating away
+ * and back left the filter applied under a clean `#/triage`, with "Showing 4
+ * of 37" sitting above a search box that looked empty. Progress already puts
+ * its `?q=` in the URL; this is the same contract for the other filtered list.
+ *
+ * Mirrors {@link parseTriageKind}: same path guard, same decoding, `null` for
+ * a missing or undecodable value.
+ */
+export const parseTriageQuery = (hash: string): string | null => {
+  const queryIndex = hash.indexOf('?')
+  if (queryIndex === -1) return null
+  const path = hash.slice(0, queryIndex)
+  if (path !== '#/triage' && path !== '#/triage/') return null
+  for (const pair of hash.slice(queryIndex + 1).split('&')) {
+    const eq = pair.indexOf('=')
+    if (eq === -1) continue
+    if (pair.slice(0, eq) !== 'q') continue
+    const value = safeDecode(pair.slice(eq + 1))
+    return value !== null && value !== '' ? value : null
+  }
+  return null
+}
+
+/**
  * Parses an optional `#/proposal/<id>` overlay route. Proposal rows route here
  * instead of `#/task/<id>` so the App can render the proposal drawer while task
  * rows keep opening the task drawer unchanged.
@@ -542,7 +569,12 @@ export const pageTitle = (route: RouteName): string => {
     case 'kpi':
       return 'KPIs — mars'
     case 'studio':
-      return 'Studio — mars'
+      // `studio` is the ROUTE id; every visible label — nav, breadcrumb, page
+      // header, the drawer's "Open in Scores →" — says Scores. The browser tab
+      // was the last place still showing the internal name, so the one label a
+      // reader uses to find the page among twenty tabs was the one that did not
+      // match the page.
+      return 'Scores — mars'
     case 'steward':
       return 'Steward — mars'
     case 'reflections':

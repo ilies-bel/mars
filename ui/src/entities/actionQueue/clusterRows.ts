@@ -41,6 +41,32 @@ import type { ActionQueueItem, ActionQueueGroupRow, AlertVerb } from '@/shared/s
  * matching the entity-grouping `buildRenderedRows` performs — a task shown
  * on three rows is one subject needing attention, not three.
  */
+/**
+ * Task ids are `mars-<hex>` / `fix-<hex>`. Rows whose entityId is a kind slug
+ * (`daemon-code-drift`) or a proposal id are not task-backed and must not fold
+ * onto a task card.
+ */
+const looksLikeTaskId = (id: string): boolean => /^(mars|fix)-[0-9a-f]{8,}$/.test(id)
+
+/**
+ * THE rule for "this row folds onto its task's card".
+ *
+ * `countNeedsYou` and `buildRenderedRows` must apply it identically: the count
+ * is the promise that the rows add up, and the fold is what the reader adds.
+ * They were two separate expressions and immediately drifted — the fold was
+ * widened to cover every task-backed row so a parked task and its worktree
+ * notice stopped giving contradictory orders from two stacked rows, the count
+ * was not, and the page went back to summing two short of its own badge.
+ * One predicate, both callers, no third copy.
+ */
+export const foldsOntoEntityCard = (item: {
+  kind: string
+  entityId?: string | null
+}): boolean =>
+  item.entityId != null &&
+  item.entityId !== '' &&
+  (isGroupableConditionKind(item.kind) || looksLikeTaskId(item.entityId))
+
 export function countNeedsYou(
   items: readonly ActionQueueItem[],
   serverGroups?: readonly ActionQueueGroupRow[],
@@ -62,7 +88,7 @@ export function countNeedsYou(
     if (sg.kind === 'draft-proposal') continue
     for (const m of sg.members) {
       if (m.class === 'notice') continue
-      if (m.entityId && isGroupableConditionKind(m.kind)) {
+      if (foldsOntoEntityCard(m)) {
         if (seenEntities.has(m.entityId)) continue
         seenEntities.add(m.entityId)
       }
@@ -74,7 +100,7 @@ export function countNeedsYou(
     if (serverGroupMemberIds.has(item.id)) continue // counted via server group
     if (item.kind === 'draft-proposal') continue
     if (item.class === 'notice') continue
-    if (item.entityId && isGroupableConditionKind(item.kind)) {
+    if (foldsOntoEntityCard(item)) {
       if (seenEntities.has(item.entityId)) continue
       seenEntities.add(item.entityId)
     }
@@ -200,6 +226,14 @@ const ENTITY_GROUP_KIND_RANK: Record<string, number> = {
   'recovery-abandoned': 1,
   'gate-broken': 2,
 }
+
+/**
+ * Tiebreak for kinds with no explicit rank: an alert outranks a decision,
+ * which outranks a notice. Without this the primary among two unranked kinds
+ * was whichever the sort happened to put first — so which verb set a task
+ * offered depended on row order.
+ */
+const CLASS_RANK: Record<string, number> = { alert: 10, decision: 20, notice: 30 }
 
 /** Highest priority value among a set of items. */
 function highestPriority(items: ActionQueueItem[]): 'high' | 'normal' | 'low' {
@@ -335,7 +369,20 @@ export function buildRenderedRows(
 
   const entityBuckets = new Map<string, ActionQueueItem[]>()
   for (const item of remainingSorted) {
-    if (!item.entityId || !isGroupableConditionKind(item.kind)) continue
+    // Any row whose subject is a TASK folds onto that task's card — not just
+    // the task-FAILURE kinds.
+    //
+    // The narrow predicate left one task carrying two loose rows, adjacent on
+    // the page, giving opposite orders: "signal done when the step is
+    // finished" directly above "Mars is cleaning up a task workspace …
+    // [Clean up worktree]". Go finish your work in that worktree / we are
+    // deleting that worktree, and neither row acknowledged the other. One
+    // subject gets one card and one verb set; that is what entity grouping is
+    // FOR, and the gate was simply too narrow to reach the case.
+    //
+    // Restricted to task-shaped ids so proposal- and kind-slug-backed rows
+    // (whose "entity" is a category, not a thing) keep their own rows.
+    if (!foldsOntoEntityCard(item)) continue
     const bucket = entityBuckets.get(item.entityId)
     if (bucket) bucket.push(item)
     else entityBuckets.set(item.entityId, [item])
@@ -369,7 +416,9 @@ export function buildRenderedRows(
       emittedEntityGroups.add(item.entityId)
       const primary = bucket.reduce((best, cur) => {
         const rank = (x: ActionQueueItem) =>
-          x.recoveryExhausted ? -1 : (ENTITY_GROUP_KIND_RANK[x.kind] ?? 100)
+          x.recoveryExhausted
+            ? -1
+            : (ENTITY_GROUP_KIND_RANK[x.kind] ?? CLASS_RANK[x.class ?? ''] ?? 100)
         return rank(cur) < rank(best) ? cur : best
       })
       const badgeKinds = [...new Set(bucket.filter((b) => b !== primary).map((b) => b.kind))]

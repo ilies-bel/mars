@@ -56,7 +56,7 @@ import { signatureFamilyPhrase, causeGroupPhrase } from '@/shared/causePhrase'
 import { CollapsibleSection } from '@/components/CollapsibleSection'
 import { useFocusedProjectId } from '@/shared/useFocusedProject'
 import { defaultAqUrlState, encodeAqState } from '@/shared/actionQueueUrlState'
-import { taskHash, parseTriageKind } from '@/shared/routing'
+import { taskHash, parseTriageKind, parseTriageQuery } from '@/shared/routing'
 import { prdTitleFromBody } from '@/shared/memberName'
 import { hasResolvableTask, isConditionActionQueueKind } from '@/shared/schemas'
 import type { ActionQueueItem, ActionQueueKind } from '@/shared/schemas'
@@ -1992,7 +1992,9 @@ export const TriagePage = () => {
   const doneToday = aggregates.doneToday
 
   // ── Search + kind filter ──────────────────────────────────────────────────
-  const [searchQuery, setSearchQuery] = useState('')
+  const [searchQuery, setSearchQuery] = useState(
+    () => parseTriageQuery(window.location.hash) ?? '',
+  )
   // The URL owns the kind filter, so the header's parked-task chip
   // (`#/triage?kind=awaiting-human`) lands on a page that is already narrowed,
   // and a filtered view can be linked to and shared.
@@ -2004,7 +2006,10 @@ export const TriagePage = () => {
   // component never remounts and the initialiser above never runs again.
   // Follow the hash so the filter tracks the URL from either direction.
   useEffect(() => {
-    const sync = () => setKindFilter(parseTriageKind(window.location.hash) ?? '')
+    const sync = () => {
+      setKindFilter(parseTriageKind(window.location.hash) ?? '')
+      setSearchQuery(parseTriageQuery(window.location.hash) ?? '')
+    }
     window.addEventListener('hashchange', sync)
     return () => window.removeEventListener('hashchange', sync)
   }, [])
@@ -2013,11 +2018,35 @@ export const TriagePage = () => {
   // always describes what is on screen. `replaceState` rather than assigning
   // `location.hash`: flipping through a dropdown should not fill the back
   // button with a dozen entries the operator has to walk out of.
-  const selectKind = useCallback((next: string) => {
-    setKindFilter(next)
-    const url = next === '' ? '#/triage' : `#/triage?kind=${encodeURIComponent(next)}`
+  // One writer owns the whole query string, so the two controls cannot
+  // overwrite each other's param. The search box used to write nothing at all:
+  // a filtered page could not be linked or reloaded, and typing a term then
+  // navigating away and back left "Showing 4 of 37" applied with a clean
+  // `#/triage` in the address bar and an empty-looking search box. Progress
+  // already puts its `?q=` in the URL; this makes the two pages behave alike.
+  const writeTriageUrl = useCallback((kind: string, query: string) => {
+    const parts: string[] = []
+    if (kind !== '') parts.push(`kind=${encodeURIComponent(kind)}`)
+    if (query.trim() !== '') parts.push(`q=${encodeURIComponent(query)}`)
+    const url = parts.length === 0 ? '#/triage' : `#/triage?${parts.join('&')}`
     window.history.replaceState(null, '', url)
   }, [])
+
+  const selectKind = useCallback(
+    (next: string) => {
+      setKindFilter(next)
+      writeTriageUrl(next, searchQuery)
+    },
+    [writeTriageUrl, searchQuery],
+  )
+
+  const changeSearch = useCallback(
+    (next: string) => {
+      setSearchQuery(next)
+      writeTriageUrl(kindFilter, next)
+    },
+    [writeTriageUrl, kindFilter],
+  )
 
   /**
    * Distinct kinds present in the current queue, alphabetically sorted.
@@ -2028,8 +2057,17 @@ export const TriagePage = () => {
    */
   const availableKinds = useMemo(() => {
     const kinds = new Set(items.map((i) => i.kind))
-    return [...kinds].filter((k) => k in KIND_LABEL).sort()
-  }, [items])
+    // The ACTIVE filter is always an option, even when nothing currently
+    // matches it. The list was derived purely from kinds present, so a URL
+    // naming a kind the queue no longer holds — `#/triage?kind=baseline-broken`
+    // after the baseline was fixed — filtered the page to nothing while the
+    // dropdown, having no matching option, fell back to displaying "All kinds".
+    // The control then contradicted both the list ("No baseline broken rows")
+    // and the URL that produced it.
+    const withActive: string[] = [...kinds]
+    if (kindFilter !== '' && !withActive.includes(kindFilter)) withActive.push(kindFilter)
+    return withActive.filter((k) => k in KIND_LABEL).sort()
+  }, [items, kindFilter])
 
   const sorted = sortItems(items)
 
@@ -2133,7 +2171,7 @@ export const TriagePage = () => {
                 aria-label="Search the queue"
                 placeholder="Search the queue…"
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                onChange={(e) => changeSearch(e.target.value)}
                 className="h-7 w-full rounded-md border border-border bg-background pl-7.5 pr-2.5 text-label text-foreground shadow-[var(--shadow-e1)] transition-[border-color,box-shadow] duration-[var(--dur-fast)] placeholder:text-muted-foreground focus:border-highlight/50"
                 data-testid="triage-search"
               />
@@ -2177,7 +2215,7 @@ export const TriagePage = () => {
                same queue — they read 53 and 36 twelve pixels apart. */
             total={totalItems}
             onClear={() => {
-              setSearchQuery('')
+              changeSearch('')
               selectKind('')
             }}
           />

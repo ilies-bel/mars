@@ -625,8 +625,8 @@ describe('studio route integration', () => {
     expect(resolvePageRoute('#/studio/mars-abc')).toBe('studio')
   })
 
-  it('pageTitle returns "Studio — mars" for the studio route', () => {
-    expect(pageTitle('studio')).toBe('Studio — mars')
+  it('pageTitle returns "Scores — mars" for the studio route', () => {
+    expect(pageTitle('studio')).toBe('Scores — mars')
   })
 })
 

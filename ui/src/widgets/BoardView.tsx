@@ -219,11 +219,17 @@ export const BoardView = ({
     return searchMatchIds == null || searchMatchIds.has(t.id)
   }
 
-  // "In progress" column shows queued + actively-running tasks
-  const inProgressTasks = [
-    ...byCluster['Queued'],
-    ...byCluster['In progress'],
-  ].filter(filterTask)
+  // "In progress" column shows queued + actively-running tasks.
+  //
+  // Queued tasks have NOT started, and Control Room lists QUEUED as a
+  // first-class bucket — so a column labelled only "In progress" was the one
+  // place in the app where a task's status was contradicted by the heading
+  // above it, and a reader looking for the queued task Control Room had just
+  // told them about found no column claiming to hold it. Both halves are
+  // counted here; the heading now says the split rather than hiding it.
+  const queuedTasks = byCluster['Queued'].filter(filterTask)
+  const runningTasks = byCluster['In progress'].filter(filterTask)
+  const inProgressTasks = [...queuedTasks, ...runningTasks]
   const blockedTasks = byCluster['Blocked'].filter(filterTask)
   const failedTasks = byCluster['Failed'].filter(filterTask)
 
@@ -334,9 +340,14 @@ export const BoardView = ({
         {/* In progress (queued + running/verifying/merging) */}
         <DenseColumn
           label="In progress"
+          qualifier={
+            queuedTasks.length > 0
+              ? `${runningTasks.length} running · ${queuedTasks.length} queued`
+              : undefined
+          }
           count={inProgressTasks.length}
           tooltip="Queued or actively executing"
-          emptyLabel={emptyFor('Nothing is running', 'running tasks')}
+          emptyLabel={emptyFor('Nothing is running or queued', 'running or queued tasks')}
         >
           {inProgressTasks.map((t) => (
             <BoardCard key={t.id} task={t} />
