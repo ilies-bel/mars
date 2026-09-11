@@ -33,7 +33,7 @@ const makeCtx = (overrides: Partial<RecipeContext> = {}): RecipeContext => ({
   entityId: 'test-entity',
   payload: {},
   context: {},
-  title: 'Test title',
+  title: 'Test alert title',
   body: 'Test body',
   raisedAt: '2026-01-01T00:00:00.000Z',
   ...overrides,
