@@ -21,6 +21,7 @@ import {
   type PayloadFor,
 } from './action-queue-payloads'
 import { classifyMarsVerb } from './chat-mars-verbs'
+import { resolveFailureKind } from './failure-kinds'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -1105,9 +1106,11 @@ const RECIPE_DEFINITIONS = {
     humanSummary: (ctx) => {
       const sig = str(ctx.payload['signature'])
       const count = ctx.payload['passCount']
-      return sig
-        ? `Decide whether to retire the auto-added check for "${sig}" — it has passed ${count} consecutive runs and the issue may be resolved.`
-        : `Decide whether to retire an auto-added check that has passed many consecutive runs — the issue it was tracking may be resolved.`
+      if (sig) {
+        const checkLabel = resolveFailureKind(sig, '').warmTitle
+        return `Decide whether to retire the auto-added check for "${checkLabel}" — it has passed ${count} consecutive runs and the issue may be resolved.`
+      }
+      return `Decide whether to retire an auto-added check that has passed many consecutive runs — the issue it was tracking may be resolved.`
     },
     humanDetail: (ctx) => {
       const spec = ctx.payload['stepSpec']
@@ -1237,11 +1240,8 @@ const RECIPE_DEFINITIONS = {
 
   'env-incident': {
     humanSummary: (ctx) => {
-      const sig = str(ctx.payload['signature'])
       const taskId = str(ctx.payload['taskId']) || ctx.entityId
-      return sig
-        ? `Environmental failure on task ${taskId} (${sig}) — queue NOT paused; restart once environment is healthy.`
-        : `Environmental failure on task ${taskId} — infrastructure condition, not a code regression.`
+      return `Environmental failure on task ${taskId} — an infrastructure condition, not a code regression.`
     },
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,

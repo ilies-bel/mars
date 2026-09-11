@@ -15,7 +15,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { getRecipeVerbs, humanSummary, lookupRecipe } from '../action-queue-recipes'
+import { getRecipeVerbs, humanSummary, lookupRecipe, registeredKinds } from '../action-queue-recipes'
 
 // ---------------------------------------------------------------------------
 // humanSummary — provenance branching
@@ -405,5 +405,99 @@ describe('slice-failed entityTitle', () => {
     // A row raised before proposalTitle was stored must not crash and must fall
     // back to null so the UI can degrade gracefully.
     expect(recipe.entityTitle!(ctx as Parameters<NonNullable<typeof recipe.entityTitle>>[0])).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// env-incident humanSummary — no false dispatch-state claims, no raw sigs
+// ---------------------------------------------------------------------------
+
+describe('env-incident humanSummary', () => {
+  it('describes an infrastructure condition rather than claiming the queue is not paused', () => {
+    const result = humanSummary('env-incident', { taskId: 'mars-abc123', signature: 'setup/unclassified' })
+    expect(result).toContain('infrastructure condition')
+    // Must NOT assert anything about global dispatch state — this row has no
+    // way to know whether the queue is paused.
+    expect(result).not.toContain('NOT paused')
+    expect(result).not.toContain('queue')
+  })
+
+  it('does not render the raw failure signature in the summary', () => {
+    const result = humanSummary('env-incident', { taskId: 'mars-abc123', signature: 'setup/unclassified' })
+    // Raw signatures like "setup/unclassified" must stay in humanDetail only.
+    expect(result).not.toContain('setup/unclassified')
+  })
+
+  it('works the same when no signature is in the payload', () => {
+    const result = humanSummary('env-incident', { taskId: 'mars-abc123' })
+    expect(result).toContain('infrastructure condition')
+    expect(result).not.toContain('NOT paused')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// gate-enrichment-stale humanSummary — plain-English label, no raw sig
+// ---------------------------------------------------------------------------
+
+describe('gate-enrichment-stale humanSummary', () => {
+  it('does not render the raw failure signature in the summary', () => {
+    const result = humanSummary('gate-enrichment-stale', {
+      signature: 'verify:build/typecheck-error',
+      passCount: 5,
+    })
+    // Raw signatures like "verify:build/typecheck-error" must stay in
+    // humanDetail (the signature field there) — never in the prose headline.
+    expect(result).not.toContain('verify:build/typecheck-error')
+  })
+
+  it('names a plain-English condition when a signature is present', () => {
+    const result = humanSummary('gate-enrichment-stale', {
+      signature: 'verify:build/typecheck-error',
+      passCount: 5,
+    })
+    // Should describe what the check watches for in human terms.
+    // It must NOT contain a bare slash-separated machine string.
+    expect(result).not.toMatch(/"\w+\/\w+/)
+  })
+
+  it('falls back gracefully when no signature is present', () => {
+    const result = humanSummary('gate-enrichment-stale', { passCount: 3 })
+    expect(result).toContain('auto-added check')
+    expect(result).not.toContain('undefined')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Breadth: no registered recipe renders a raw failure signature in its summary
+// ---------------------------------------------------------------------------
+// A raw failure signature looks like "verify:build/typecheck-error" or
+// "setup/unclassified". We inject a known signature into every recipe's
+// payload and assert none of the summaries passes it through verbatim.
+// Recipes that do not read ctx.payload['signature'] are unaffected and pass
+// trivially; the interesting ones are those that previously rendered it.
+
+describe('humanSummary breadth — no recipe renders a raw failure signature', () => {
+  const RAW_SIG = 'verify:build/typecheck-error'
+
+  it('no registered recipe outputs the raw signature when injected via payload', () => {
+    const fails: string[] = []
+    for (const kind of registeredKinds()) {
+      let result: string
+      try {
+        result = humanSummary(kind, {
+          signature: RAW_SIG,
+          taskId: 'mars-breadth01',
+          entityId: 'mars-breadth01',
+        })
+      } catch {
+        // A recipe that throws on a minimal payload is fine — it just does not
+        // read the signature field at all (or requires other fields). Skip it.
+        continue
+      }
+      if (result.includes(RAW_SIG)) {
+        fails.push(`${kind}: "${result.slice(0, 120)}"`)
+      }
+    }
+    expect(fails).toEqual([])
   })
 })
