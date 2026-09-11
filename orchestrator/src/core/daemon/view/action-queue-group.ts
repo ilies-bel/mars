@@ -36,7 +36,7 @@ import {
 } from '../../lib/failure-kinds'
 import { getGroupBulkVerb, type RecipeVerb } from '../../lib/action-queue-recipes'
 import { isActionQueueKind } from '../../lib/action-queue-kinds'
-import { normaliseExcerptKey, NORM_KEY_MAX } from '../../lib/failure-signature'
+import { normaliseExcerptKey } from '../../lib/failure-signature'
 
 /** How many entity ids to show inline before "…and N more". */
 const PREVIEW_COUNT = 3
@@ -135,7 +135,7 @@ const causeKeyOf = (row: ActionQueueRow): string | undefined =>
 
 // ── Grouping ──────────────────────────────────────────────────────────────────
 
-// NORM_KEY_MAX and normaliseExcerptKey are imported from failure-signature.ts
+// normaliseExcerptKey (and its NORM_KEY_MAX cap) live in failure-signature.ts
 // above — they were moved there so derived-conditions.ts can reuse the same
 // rule without a second copy.
 
