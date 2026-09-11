@@ -1256,8 +1256,32 @@ const leadDecisionIndex = (decisions: Decision[]): number => {
             still fires. */}
         {!isChatOnly && isTaskRecovery && (
           <>
+            {/* When every server verb is destructive the action row would
+                otherwise be a lone ⋯ that reads as decoration. Name what
+                the situation is — the operator needs to know before reaching
+                for the destructive options in the menu. */}
+            {mainVerbs.filter((v) => !item.decisions.some((d) => d.label === v.label)).length === 0 &&
+              disclosureVerbs.length > 0 &&
+              item.decisions.length === 0 && (
+              <span
+                className="text-micro text-muted-foreground"
+                data-testid="triage-only-destructive"
+              >
+                No safe action
+              </span>
+            )}
             {/* More ⋯ — disclosure that hides Restart (and copy verbs) */}
             <div ref={moreRef} className="relative">
+              {/* Scrim — establishes that the menu is a transient layer so
+                  it does not appear to overlay card content without context.
+                  The click-outside mousedown listener on document already
+                  closes the menu; the scrim is a visual affordance only. */}
+              {moreOpen && (
+                <div
+                  className="fixed inset-0 z-[9] bg-background/20"
+                  aria-hidden="true"
+                />
+              )}
               <button
                 type="button"
                 disabled={pending !== null}
@@ -1270,20 +1294,60 @@ const leadDecisionIndex = (decisions: Decision[]): number => {
                 <MoreHorizontal size={14} strokeWidth={2} aria-hidden="true" />
               </button>
               {/* Dropdown — always in the DOM; invisible+pointer-events-none
-                  when closed so the DOM query in tests still finds elements. */}
+                  when closed so the DOM query in tests still finds elements.
+                  Width: driven by content (min-w-[20ch]) capped at 40ch so
+                  long consequence labels like "Restart — discards 1 commit on
+                  task/mars-a85fcea2" do not wrap at 144 px mid-identifier. */}
               <div
                 role="menu"
                 className={[
-                  'absolute right-0 z-10 mt-1 min-w-36 rounded-lg border border-border bg-card py-1 shadow-lg',
+                  'absolute right-0 z-10 mt-1 min-w-[20ch] max-w-[40ch] rounded-lg border border-border bg-card py-1 shadow-lg',
                   moreOpen ? '' : 'invisible pointer-events-none',
                 ].join(' ')}
               >
-                {/* Copy verbs, and the destructive ones. A destructive verb
-                    arms the confirmation rather than firing, exactly as
-                    Restart above it does — the disclosure is not a shortcut
-                    past the gate. */}
-                {disclosureVerbs.map((verb) => {
-                  const destructive = isDestructiveVerb(verb)
+                {/* Non-destructive verbs (copy commands) render first. */}
+                {disclosureVerbs.filter((v) => !isDestructiveVerb(v)).map((verb) => (
+                  <button
+                    key={`${verb.op}-${verb.label}`}
+                    type="button"
+                    role="menuitem"
+                    disabled={pending !== null}
+                    onClick={() => {
+                      setMoreOpen(false)
+                      void handleVerb(verb.op, verb.hint)
+                    }}
+                    className="flex w-full items-center px-3 py-1.5 text-left font-mono text-micro text-muted-foreground transition-colors hover:bg-border/40 hover:text-foreground disabled:opacity-50"
+                    data-testid={`triage-verb-${verb.op}`}
+                  >
+                    {pending === verb.op ? '…' : verb.label}
+                  </button>
+                ))}
+                {/* Divider between safe verbs and destructive ones.
+                    Before this: "Delete task" and "Restart" wore identical
+                    colour and weight, and a reader scanning top-to-bottom
+                    had no structural cue that the lower group destroys work.
+                    The divider makes the grouping visible without relying on
+                    colour contrast alone. */}
+                {disclosureVerbs.some((v) => !isDestructiveVerb(v)) &&
+                  disclosureVerbs.some((v) => isDestructiveVerb(v)) && (
+                  <div
+                    className="my-1 border-t border-border/60"
+                    role="separator"
+                    data-testid="triage-menu-divider"
+                  />
+                )}
+                {/* Destructive verbs. Each label carries a short consequence
+                    clause so the operator knows what the action costs before
+                    the confirm panel opens. purge/drop receive one here
+                    (matching the quality of the server-authored Restart label
+                    which already names its own consequence). Other ops fall
+                    back to the server label unchanged. */}
+                {disclosureVerbs.filter((v) => isDestructiveVerb(v)).map((verb) => {
+                  const branch = item.humanDetail?.branch ?? null
+                  const displayLabel =
+                    verb.op === 'purge' || verb.op === 'drop'
+                      ? `${verb.label} — removes the worktree and branch ${branch ?? item.entityId}`
+                      : verb.label
                   return (
                     <button
                       key={`${verb.op}-${verb.label}`}
@@ -1292,18 +1356,12 @@ const leadDecisionIndex = (decisions: Decision[]): number => {
                       disabled={pending !== null}
                       onClick={() => {
                         setMoreOpen(false)
-                        if (destructive) setArmedVerb(verb)
-                        else void handleVerb(verb.op, verb.hint)
+                        setArmedVerb(verb)
                       }}
-                      className={[
-                        'flex w-full items-center px-3 py-1.5 text-left font-mono text-micro transition-colors disabled:opacity-50',
-                        destructive
-                          ? 'text-error hover:bg-error/5'
-                          : 'text-muted-foreground hover:bg-border/40 hover:text-foreground',
-                      ].join(' ')}
+                      className="flex w-full items-center px-3 py-1.5 text-left font-mono text-micro text-error transition-colors hover:bg-error/5 disabled:opacity-50"
                       data-testid={`triage-verb-${verb.op}`}
                     >
-                      {pending === verb.op ? '…' : verb.label}
+                      {pending === verb.op ? '…' : displayLabel}
                     </button>
                   )
                 })}

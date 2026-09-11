@@ -1578,3 +1578,129 @@ describe('TriageRow – continue control count', () => {
     expect(continueControls(container)).toHaveLength(1)
   })
 })
+
+// ---------------------------------------------------------------------------
+// Overflow menu — width, consequence labels, divider, and destructive-only rows
+// ---------------------------------------------------------------------------
+
+describe('TriageRow – overflow menu label quality and structure', () => {
+  it('renders the Restart label text content intact (no mid-token breaks)', () => {
+    // The label "Restart — discards 1 commit on task/mars-a85fcea2" was
+    // wrapping mid-token at the old 144 px (min-w-36) width. The identifier
+    // must be readable in full to be pasteworthy. Assert on text, not CSS.
+    mockItems.mockReturnValue([
+      makeItem('failed', {
+        entityId: 'mars-a85fcea2',
+        verbs: [
+          {
+            op: 'restart',
+            label: 'Restart — discards 1 commit on task/mars-a85fcea2',
+            style: 'destructive' as const,
+          },
+        ],
+      }),
+    ])
+    const { container } = renderPage()
+    const restartItem = container.querySelector('[data-testid="triage-verb-restart"]')
+    // Full label including the branch identifier must appear as a contiguous string.
+    expect(restartItem?.textContent).toContain('task/mars-a85fcea2')
+  })
+
+  it('Delete task carries a consequence clause naming what it removes', () => {
+    // "Delete task" and "Restart" were typographically identical — same colour,
+    // same weight, no divider. Restart already named its consequence in the
+    // label; Delete task must do the same so a reader knows what each costs.
+    mockItems.mockReturnValue([
+      makeItem('failed', {
+        entityId: 'mars-a85fcea2',
+        humanDetail: { branch: 'task/mars-a85fcea2' },
+        verbs: [
+          { op: 'purge', label: 'Delete task', style: 'destructive' as const },
+        ],
+      }),
+    ])
+    const { container } = renderPage()
+    const deleteItem = container.querySelector('[data-testid="triage-verb-purge"]')
+    // The consequence clause must name what is removed.
+    expect(deleteItem?.textContent).toMatch(/removes the worktree/i)
+    // The branch identifier must appear so it can be copied and confirmed.
+    expect(deleteItem?.textContent).toContain('task/mars-a85fcea2')
+  })
+
+  it('a divider separates safe verbs from destructive ones in the menu', () => {
+    // A reader scanning the menu top-to-bottom must hit a structural cue
+    // before the danger-coloured items — colour alone is not enough.
+    // data-testid makes the assertion structural, not CSS-dependent.
+    mockItems.mockReturnValue([
+      makeItem('failed', {
+        entityId: 'mars-a85fcea2',
+        verbs: [
+          {
+            op: 'copy',
+            label: 'Copy command',
+            style: 'default' as const,
+            hint: 'mars continue mars-a85fcea2',
+          },
+          { op: 'purge', label: 'Delete task', style: 'destructive' as const },
+        ],
+      }),
+    ])
+    const { container } = renderPage()
+    expect(container.querySelector('[data-testid="triage-menu-divider"]')).not.toBeNull()
+  })
+
+  it('no divider when there are only destructive verbs (nothing safe to separate from)', () => {
+    mockItems.mockReturnValue([
+      makeItem('failed', {
+        entityId: 'mars-874b2a81',
+        verbs: [
+          {
+            op: 'restart',
+            label: 'Restart — discards 1 commit on task/mars-874b2a81',
+            style: 'destructive' as const,
+          },
+          { op: 'purge', label: 'Delete task', style: 'destructive' as const },
+        ],
+      }),
+    ])
+    const { container } = renderPage()
+    expect(container.querySelector('[data-testid="triage-menu-divider"]')).toBeNull()
+  })
+})
+
+describe('TriageRow – rows whose only verbs are destructive', () => {
+  it('renders something other than a bare ⋯ when all verbs are destructive', () => {
+    // mars-874b2a81 had verbs=[restart, purge] only — both destructive, both
+    // behind ⋯, leaving its action row as a lone three-dot glyph that read
+    // as decoration. The row must surface an explicit affordance naming
+    // what the situation is.
+    mockItems.mockReturnValue([
+      makeItem('failed', {
+        entityId: 'mars-874b2a81',
+        verbs: [
+          { op: 'restart', label: 'Restart from scratch', style: 'destructive' as const },
+          { op: 'purge', label: 'Delete task', style: 'destructive' as const },
+        ],
+      }),
+    ])
+    const { container } = renderPage()
+    expect(container.querySelector('[data-testid="triage-only-destructive"]')).not.toBeNull()
+  })
+
+  it('does NOT render the "only destructive" label when a safe verb exists (positive control)', () => {
+    // A row with Continue + Restart is the normal case: Continue is the CTA,
+    // Restart is in the ⋯ for deliberate access. The ⋯ stays a plain
+    // disclosure with no additional label beside it.
+    mockItems.mockReturnValue([
+      makeItem('failed', {
+        entityId: 'mars-a85fcea2',
+        verbs: [
+          { op: 'continue', label: 'Resume on existing worktree', style: 'primary' as const },
+          { op: 'restart', label: 'Restart', style: 'destructive' as const },
+        ],
+      }),
+    ])
+    const { container } = renderPage()
+    expect(container.querySelector('[data-testid="triage-only-destructive"]')).toBeNull()
+  })
+})
