@@ -1,4 +1,5 @@
 import type { TraceEventPhase } from '../../lib/trace-events-store'
+import type { AgentEvent } from '../../lib/claude-stream'
 
 /**
  * Serializable identity fragment that Vcs specs carry so the local-git
@@ -125,6 +126,34 @@ export interface CommitResult {
   sha: string
 }
 
+/**
+ * Gate check outcome — passed back from {@link MergeSpec.onVerifyRebasedTree}
+ * and {@link MergeSpec.onProbeIntegrationAfterAutoCommit}.
+ *
+ * Re-declared here (rather than imported from `lib/git/merge`) to avoid a
+ * circular dependency: `lib/git/merge.ts` imports {@link MergeAbortedError}
+ * from this module, so importing back from `merge.ts` would form a cycle.
+ * The two declarations are structurally identical; TypeScript's structural
+ * typing keeps them assignable to each other.
+ */
+export type MergeGateOutcome = { passed: true } | { passed: false; output: string }
+
+/**
+ * Payload delivered to {@link MergeSpec.onOperatorAutoCommit}.
+ *
+ * Re-declared here for the same circular-dependency reason as
+ * {@link MergeGateOutcome}. Mirrors `OperatorAutoCommitInfo` in
+ * `lib/git/merge.ts`.
+ */
+export interface MergeOperatorAutoCommitInfo {
+  /** SHA of the `wip(operator)` commit just created on the integration branch. */
+  commitSha: string
+  /** Tracked paths swept into that commit, in `git status --porcelain` order. */
+  files: string[]
+  /** Post-auto-commit typecheck probe outcome, or `null` when no probe was supplied. */
+  probe: MergeGateOutcome | null
+}
+
 /** Args for {@link Vcs.merge}. */
 export interface MergeSpec {
   branch: string
@@ -135,6 +164,66 @@ export interface MergeSpec {
   watchdogMs?: number
   /** Optional trace identity forwarded to the underlying lib helper. */
   trace?: TraceIdentity
+
+  // -------------------------------------------------------------------------
+  // Non-serializable extras for the in-process `local-git` adapter.
+  //
+  // These fields carry function types and `AbortSignal` — they cannot survive
+  // a JSON serialization boundary. They are present here because the
+  // `local-git` adapter is an in-process call with no serialization seam, so
+  // the port CAN carry them. Any future remote adapter must silently ignore
+  // them (they will be `undefined` after a JSON round-trip).
+  //
+  // The serializable-payload constraint belongs to the *job queue* (the
+  // `merge-worker.ts` → merge job store seam), not to this port. Conflating
+  // the two seams is what caused the gate regression fixed in mars-82a0b56f:
+  // 164 merges landed on `main` with no verify gate running because these
+  // callbacks were not forwarded through the Vcs port.
+  // -------------------------------------------------------------------------
+
+  /** Caller-supplied cancellation signal. When aborted, the in-flight merge is cancelled. */
+  signal?: AbortSignal
+  /**
+   * Task-tier gate run on the rebased task tree, outside the merge lock.
+   * Returning `{ passed: false }` ends the merge without fast-forwarding.
+   */
+  onVerifyRebasedTree?: (info: {
+    baseSha: string
+    taskSha: string
+    attempt: number
+  }) => Promise<MergeGateOutcome>
+  /**
+   * Integration-tier gate run inside the merge lock after the fast-forward.
+   * A throw reverts the fast-forward.
+   */
+  onAfterFastForward?: (info: {
+    finalTaskSha: string
+    finalIntegrationSha: string
+  }) => Promise<void>
+  /** VCS supervisor event sink. */
+  onSupervisorEvent?: (event: AgentEvent) => void | Promise<void>
+  /**
+   * When `true`, genuine operator dirt on the integration checkout is swept
+   * into a `wip(operator)` commit so the merge can proceed.
+   */
+  autoCommitOperatorDirt?: boolean
+  /** Cheap probe (typecheck) of `main` after an operator auto-commit. */
+  onProbeIntegrationAfterAutoCommit?: (info: {
+    commitSha: string
+  }) => Promise<MergeGateOutcome>
+  /** Notification callback fired after an operator auto-commit lands. */
+  onOperatorAutoCommit?: (info: MergeOperatorAutoCommitInfo) => void | Promise<void>
+  /** Fired just before Vega (the vcs-supervisor) is spawned. */
+  onVegaStart?: () => void | Promise<void>
+  /**
+   * TEST-ONLY hook fired immediately before the CAS `git update-ref`.
+   * Never set in production code.
+   */
+  onBeforeFastForward?: () => void | Promise<void>
+  /** Best-effort sub-phase transition callback. */
+  onPhase?: (phase: string) => void | Promise<void>
+  /** Periodic heartbeat while the merge is in flight. */
+  onHeartbeat?: (info: { elapsedMs: number; phase: string; attempt: number }) => void | Promise<void>
 }
 
 /**

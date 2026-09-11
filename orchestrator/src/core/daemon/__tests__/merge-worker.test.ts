@@ -50,14 +50,43 @@ let _mockIntegrationGates: Array<{
 // Re-used mock function; configured per test via mockResolvedValue.
 const _mockVerifierRun = vi.fn()
 
+// Mock for mergeBranch used in the "gate invokes via real Vcs port" regression
+// test. In all other tests, an injected fakeMergeFn/capturingMergeFn is used
+// and this mock is never called. When the test does NOT inject a mergeFn, the
+// default `resolveVcs().merge(args)` → `localGitVcs.merge()` → `mergeBranch`
+// path is exercised, and this mock intercepts that call.
+const _mockMergeBranch = vi.fn()
+
 vi.mock('../../verify-gates.js', () => ({
   loadVerifyGates: () => Promise.resolve(_mockIntegrationGates),
+  recordVerifyGatePasses: vi.fn(),
 }))
 vi.mock('../../store/state-client.js', () => ({
   resolveStateClient: () => ({}),
 }))
 vi.mock('../../ports/verifier/registry.js', () => ({
   resolveVerifier: () => ({ run: _mockVerifierRun, kind: 'test-mock' }),
+}))
+// Mock mergeBranch so the default mergeFn (resolveVcs().merge) does not invoke
+// real git. Each test that uses the default mergeFn configures _mockMergeBranch
+// via mockImplementation. Existing tests that inject their own mergeFn are
+// unaffected (they never call localGitVcs.merge).
+vi.mock('../../lib/git/merge.js', () => ({
+  mergeBranch: (...args: unknown[]) => _mockMergeBranch(...args),
+  isBranchMergedIntoMain: vi.fn().mockResolvedValue(false),
+  isZeroCommitBranch: vi.fn().mockResolvedValue(false),
+  checkMergeTargetStatus: vi.fn().mockResolvedValue({ kind: 'clean' }),
+  DEFAULT_WATCHDOG_MS: 5 * 60 * 1_000,
+  MergeAbortedError: class MergeAbortedError extends Error {
+    constructor(
+      public readonly reason: string,
+      public readonly elapsedMs: number,
+      public readonly lastStep: string,
+    ) {
+      super(`merge aborted (${reason}) after ${elapsedMs}ms`)
+      this.name = 'MergeAbortedError'
+    }
+  },
 }))
 
 // ── Fast no-op merge function (avoids real git in unit tests) ─────────────────
@@ -1163,6 +1192,97 @@ describe('startMergeWorker — onVerifyRebasedTree rebased-tree verify wiring (A
 
     expect(result.passed).toBe(true)
     expect(_mockVerifierRun).not.toHaveBeenCalled()
+  })
+
+  it('gate actually invokes when the default mergeFn routes through the Vcs port', async () => {
+    /**
+     * REGRESSION TEST — mars-82a0b56f: 164 merges landed on `main` with no
+     * verify gate running. This test uses the REAL default mergeFn
+     * (`resolveVcs().merge(args)`) rather than an injected fake. It proves
+     * the complete path:
+     *
+     *   merge-worker constructs onVerifyRebasedTree
+     *     → passes to resolveVcs().merge()
+     *       → localGitVcs.merge() (fixed: now forwards callbacks)
+     *         → mergeBranch (mocked: calls onVerifyRebasedTree)
+     *           → gate runs → _mockVerifierRun is called
+     *
+     * On unfixed code, _mockVerifierRun is never called because the callback
+     * is dropped at the localGitVcs.merge() → mergeBranch boundary.
+     */
+    _mockIntegrationGates = [
+      {
+        scope: '.',
+        steps: [
+          {
+            name: 'orchestrator: typecheck',
+            cmd: 'npx',
+            args: ['tsc', '--noEmit'] as readonly string[],
+            required: true,
+            tier: 'task',
+            dir: '.',
+            timeoutMin: 10,
+          },
+        ],
+      },
+    ]
+    _mockVerifierRun.mockResolvedValue({
+      passed: true,
+      steps: [{ name: 'orchestrator: typecheck', passed: true, output: 'ok' }],
+    })
+
+    // Mock mergeBranch to call onVerifyRebasedTree — simulating what the real
+    // mergeBranch does when the gate is registered. Without the forward fix,
+    // onVerifyRebasedTree arrives as undefined here and the gate is skipped.
+    _mockMergeBranch.mockImplementation(
+      async (args: {
+        onVerifyRebasedTree?: (info: {
+          baseSha: string
+          taskSha: string
+          attempt: number
+        }) => Promise<{ passed: boolean }>
+      }) => {
+        if (args.onVerifyRebasedTree) {
+          await args.onVerifyRebasedTree({
+            baseSha: 'b'.repeat(40),
+            taskSha: 'a'.repeat(40),
+            attempt: 1,
+          })
+        }
+        return {
+          merged: true,
+          conflictResolved: false,
+          aborted: false,
+          output: '',
+          retriesAttempted: 0,
+          vegaSessionId: null,
+          supervisorConversation: [],
+        }
+      },
+    )
+
+    const { store, calls, enqueueJob } = makeFakeStore()
+    const job = enqueueJob({ id: 'j-gate-via-vcs-port', worktreePath: '/tmp' })
+    const { startMergeWorker } = await import('../merge-worker.js')
+    const ac = new AbortController()
+
+    // No mergeFn injected — the default resolveVcs().merge(args) path runs.
+    const handle = startMergeWorker({
+      store,
+      log: () => {},
+      bus: new EventEmitter(),
+      signal: ac.signal,
+      pollIntervalMs: 10,
+    })
+
+    await waitFor(() => calls.includes(`markDone:${job.id}`), { maxMs: 2000 })
+    ac.abort()
+    await handle.stop()
+
+    expect(
+      _mockVerifierRun,
+      'task-tier gate must run when the default mergeFn routes through the Vcs port',
+    ).toHaveBeenCalled()
   })
 })
 

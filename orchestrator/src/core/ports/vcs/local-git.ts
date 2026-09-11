@@ -27,6 +27,7 @@ import {
   isZeroCommitBranch as gitIsZeroCommitBranch,
   checkMergeTargetStatus as gitCheckMergeTargetStatus,
 } from '../../lib/git/merge'
+import type { MergeArgs } from '../../lib/git/merge'
 import {
   commitMain,
   autoCommitWorktreeIfDeterministic,
@@ -250,12 +251,38 @@ export const localGitVcs: Vcs = {
   },
 
   async merge(spec: MergeSpec): Promise<MergeResult> {
-    const result = await mergeBranch({
+    // Exhaustive forward: every field in MergeArgs (except `traceCtx`, which
+    // is translated from `spec.trace`) must appear below.
+    //
+    // The `: Omit<MergeArgs, 'traceCtx'>` annotation ensures this list stays
+    // in sync with MergeArgs:
+    //   - A newly-added REQUIRED field that is not listed here fails the build.
+    //   - An extra key not in MergeArgs triggers an excess-property error.
+    //   - Optional fields CAN be omitted from the literal without a build
+    //     error — so ALL optional MergeArgs fields must be explicitly listed
+    //     below even though TypeScript will not enforce their presence. Do not
+    //     remove any entry from this list; that would silently drop the field
+    //     and reproduce the regression in mars-82a0b56f (164 merges, no gate).
+    const forwardedArgs: Omit<MergeArgs, 'traceCtx'> = {
       branch: spec.branch,
       worktreePath: spec.worktreePath,
       integrationBranch: spec.integrationBranch,
       lockTimeoutMs: spec.lockTimeoutMs,
       watchdogMs: spec.watchdogMs,
+      signal: spec.signal,
+      onSupervisorEvent: spec.onSupervisorEvent,
+      onVegaStart: spec.onVegaStart,
+      onBeforeFastForward: spec.onBeforeFastForward,
+      onAfterFastForward: spec.onAfterFastForward,
+      onPhase: spec.onPhase,
+      onHeartbeat: spec.onHeartbeat,
+      onVerifyRebasedTree: spec.onVerifyRebasedTree,
+      autoCommitOperatorDirt: spec.autoCommitOperatorDirt,
+      onOperatorAutoCommit: spec.onOperatorAutoCommit,
+      onProbeIntegrationAfterAutoCommit: spec.onProbeIntegrationAfterAutoCommit,
+    }
+    const result = await mergeBranch({
+      ...forwardedArgs,
       traceCtx: reconstructTraceCtx(spec.trace),
     })
     return {
