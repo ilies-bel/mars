@@ -193,15 +193,44 @@ const LeversSection = () => {
                   {dispatch.since ? ` · since ${relativeTime(dispatch.since)}` : ''}
                 </p>
               )}
+              {isDispatchPaused && dispatch.reason === 'baseline' && (
+                <p className="mt-0.5 text-micro text-muted-foreground" data-testid="dispatch-baseline-note">
+                  Resuming will not help — the check is re-run and the pause comes
+                  straight back. Fix the failing gate; dispatch resumes on its own.
+                </p>
+              )}
             </div>
-            <ActionButton
-              variant="secondary"
-              onClick={() =>
-                openConfirm(isDispatchPaused ? { kind: 'dispatch-on' } : { kind: 'dispatch-off' })
-              }
+            {/* A baseline pause is the one pause Resume cannot lift.
+                CLAUDE.md is explicit: the command clears the latch, the
+                baseline health checker re-asserts it on its next run because
+                the branch still fails a required gate, and in the window
+                between, work is dispatched into a red integration branch.
+                Offering Resume here is offering the one action the docs single
+                out as harmful — and the Progress banner for the same condition
+                already says the opposite ("Fix the gate to resume"). Three
+                surfaces, one condition, one answer. */}
+            {isDispatchPaused && dispatch.reason === 'baseline' ? (
+              <ActionButton
+                variant="secondary"
+                onClick={() =>
+                  document
+                    .querySelector('[data-testid="gates-section"]')
+                    ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                }
+                data-testid="dispatch-view-gates"
+              >
+                View failing gates
+              </ActionButton>
+            ) : (
+              <ActionButton
+                variant="secondary"
+                onClick={() =>
+                  openConfirm(isDispatchPaused ? { kind: 'dispatch-on' } : { kind: 'dispatch-off' })
+                }
               >
                 {isDispatchPaused ? 'Resume' : 'Pause'}
               </ActionButton>
+            )}
           </div>
 
           {/* Recovery lever */}
@@ -420,6 +449,12 @@ const GatesSection = () => {
   // run, so the sentence invented three passing gates out of three unknowns —
   // and "0 passing" is exactly the fact it was hiding. State the partition
   // whenever it does not divide cleanly into failing and passing.
+  // The gates that actually hold the baseline: required, currently failing,
+  // not quarantined. "Fix the required gate to resume" is unanswerable without
+  // this number — nine red rows and no way to tell which ones matter.
+  const blockingGates = failingGates.filter(
+    (g) => g.required && g.state !== 'quarantined',
+  )
   const passingGateCount = gatesData.length - failingGates.length - neverRunGates.length
   const failingVerdict =
     neverRunGates.length > 0
@@ -442,6 +477,7 @@ const GatesSection = () => {
             failingGates.length > 0 ? (
               <span className="font-medium text-error" data-testid="gates-verdict">
                 {failingVerdict}
+                {blockingGates.length > 0 && ` · ${blockingGates.length} blocking merges`}
                 {oldestFailureAt !== null && ` · oldest ${relativeTime(oldestFailureAt)}`}
               </span>
             ) : (
@@ -544,6 +580,16 @@ const GatesSection = () => {
                       {gate.tier === 'integration' && <Chip tone="info">integration</Chip>}
                       {!gate.required && <Chip tone="warn">advisory</Chip>}
                       {gate.state === 'quarantined' && <Chip tone="error">quarantined</Chip>}
+                      {/* "Fix the required gate to resume" sent the reader to a
+                          list of twelve in which "required" was expressed by the
+                          ABSENCE of the advisory chip, with nine gates red and
+                          nothing saying which one was holding the baseline. A
+                          required gate that is currently failing and not
+                          quarantined is exactly the thing that pauses dispatch —
+                          so name it, positively, on the row. */}
+                      {gate.required && failing && gate.state !== 'quarantined' && (
+                        <Chip tone="error" data-testid="gate-blocking">blocking merges</Chip>
+                      )}
                     </div>
                     <p className="truncate font-mono text-micro text-muted-foreground">
                       {[gate.cmd, ...gate.args].join(' ')}

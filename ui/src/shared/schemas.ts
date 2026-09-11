@@ -97,6 +97,12 @@ export const taskSchema = z.object({
   error: z.string().nullable(),
   dropReason: z.string().nullable(),
   recoverySpawnedCount: z.number(),
+  /**
+   * True when `mars continue` would REFUSE this task. Decided server-side, on
+   * the side of the wire that can read `failure_reason` — the only column the
+   * `recovery_exhausted:` prefix is ever written to. Never recompute it here.
+   */
+  recoveryExhausted: z.boolean().optional().default(false),
   /** Defaults to 0 so legacy daemon responses and test stubs that omit the
    * field still parse cleanly; the real daemon always sends it. */
   priority: z.number().optional().default(0),

@@ -17,6 +17,8 @@ import { ChevronDown, ChevronRight, ChevronUp } from 'lucide-react'
 import { useState, useMemo, type RefObject } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { fetchAdrs, fetchGlossary, fetchTasksForThread } from '@/shared/api'
+import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
+import { countNeedsYou } from '@/entities/actionQueue/clusterRows'
 import { useThreadFocus } from './useThreadFocus'
 import { buildActivityFeed } from './activityFeed'
 import { dispatchAlertVerb, verbButtonClass } from './alertVerbs'
@@ -150,7 +152,15 @@ interface FocusPanelProps {
 const FocusPanel = ({ threadDetail, isStreaming, focusResult, threadId }: FocusPanelProps) => {
   // Linked entity: render kind badge + entity title + optional status chip.
   if (focusResult && focusResult.kind !== 'none' && focusResult.entity) {
-    const { kind, entity, sourceLabel } = focusResult
+    const { kind, entity, sourceLabel, stale } = focusResult
+
+    // The row this thread was opened about is gone and nothing replaced it.
+    // Say so on the panel; a title with no qualifier reads as current state.
+    const staleNote = stale ? (
+      <span className="text-micro text-muted-foreground" data-testid="focus-panel-stale">
+        This alert is no longer open — shown as it was when the thread started.
+      </span>
+    ) : null
 
     if ('cluster' in entity) {
       // ProgressTask entity
@@ -176,6 +186,7 @@ const FocusPanel = ({ threadDetail, isStreaming, focusResult, threadId }: FocusP
           >
             {chip.label}
           </span>
+          {staleNote}
           <DoneCriteriaSection task={task} />
         </div>
       )
@@ -199,7 +210,8 @@ const FocusPanel = ({ threadDetail, isStreaming, focusResult, threadId }: FocusP
         >
           {alertItem.title}
         </span>
-        {kind === 'alert' && threadId && (
+        {staleNote}
+        {kind === 'alert' && threadId && !stale && (
           <FocusVerbsRow item={alertItem} threadId={threadId} resolved={alertResolved} />
         )}
       </div>
@@ -420,6 +432,10 @@ interface AlertsPileProps {
 }
 
 const AlertsPile = ({ items, onOpenWork }: AlertsPileProps) => {
+  // The queue's own number, from the one canonical definition, so the link can
+  // say what the reader will find when they follow it.
+  const { items: queueItems, serverGroups } = useActionQueue()
+  const queueCount = countNeedsYou(queueItems ?? [], serverGroups)
   if (items.length === 0) return null
   const alertCount = items.filter((i) => i.source === 'alert').length
   const blockedCount = items.length - alertCount
@@ -434,13 +450,22 @@ const AlertsPile = ({ items, onOpenWork }: AlertsPileProps) => {
             onto one card, omits every grouped task, drops the proposals row,
             and adds blocked tasks the queue never surfaces. Two numbers, two
             populations, and only one of them said which it was. */}
-        <p className="mb-1 text-micro text-muted-foreground">
+        <p className="mb-1 text-micro text-muted-foreground" data-testid="alerts-pile-scope">
           {blockedCount > 0
             ? `${alertCount} unresolved · ${blockedCount} blocked`
             : `${alertCount} unresolved`}
-          {' — '}
-          <a href="#/triage" className="underline decoration-dotted underline-offset-2 hover:text-foreground">
-            the full queue
+          {' — a shortlist. '}
+          {/* The link used to read "the full queue" and land on a page showing a
+              different number, with nothing on either side connecting the two.
+              Naming the destination's own count is what makes the jump
+              checkable: the reader sees 18 here, 35 there, and a sentence
+              saying these count different things. */}
+          <a
+            href="#/triage"
+            className="underline decoration-dotted underline-offset-2 hover:text-foreground"
+            data-testid="alerts-pile-queue-link"
+          >
+            Needs You counts {queueCount} subjects →
           </a>
         </p>
         <ul className="flex flex-col gap-0.5">

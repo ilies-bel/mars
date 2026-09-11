@@ -2826,7 +2826,6 @@ describe('RecoveryCommands', () => {
     const html = renderToStaticMarkup(
       <RecoveryCommands
         taskId="mars-c7f01ce6"
-        error="code:context-exhausted"
         branch="task/mars-c7f01ce6"
         worktreePath="/repo/.mars/worktrees/mars-c7f01ce6"
       />,
@@ -2844,9 +2843,15 @@ describe('RecoveryCommands', () => {
     // operator into a non-zero exit — and reaching for restart from there
     // discards a branch that has had a coder AND a full recovery spent on it.
     const html = renderToStaticMarkup(
+      // Exhaustion is a SERVER verdict (ui/server/db.ts reads the
+      // `recovery_exhausted:` prefix off `failure_reason`, the one column that
+      // carries it). The fixture states the fact rather than re-encoding the
+      // guess the drawer used to make from `error` text.
       <RecoveryCommands
         taskId="mars-bff7e039"
-        error="recovery_exhausted:fix-cb2b7dea"
+        recoveryExhausted
+        branch="task/mars-bff7e039"
+        worktreePath="/repo/.mars/worktrees/mars-bff7e039"
       />,
     )
     expect(html).toContain('mars remerge mars-bff7e039')

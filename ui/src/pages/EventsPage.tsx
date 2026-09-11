@@ -1335,12 +1335,28 @@ export const EventsPage = ({
           <div className="flex items-center gap-1">
             {/* Event count. A bare "100" in a pill is a number with no noun —
                 it could be the total, the page size, or a limit. The noun is
-                cheap and the pill has room. */}
+                cheap and the pill has room.
+                Two numbers, because there are two: the flat list collapses
+                runs of consecutive identical events into one row
+                (`groupConsecutiveEvents`), so 100 loaded events can draw as 17
+                rows. Naming only the larger one left the densest list in the
+                app as the only one whose header number you could not reach by
+                counting what is under it — every other list says
+                "Showing N of M". */}
             <span
               data-testid="events-count"
               className="rounded-full bg-muted-foreground/10 px-2 py-0.5 text-micro text-muted-foreground"
             >
-              <span className="font-mono tabular-nums">{events.length}</span> loaded
+              {viewMode === 'flat' && groupedRows.length !== events.length ? (
+                <>
+                  <span className="font-mono tabular-nums">{groupedRows.length}</span> rows ·{' '}
+                  <span className="font-mono tabular-nums">{events.length}</span> events loaded
+                </>
+              ) : (
+                <>
+                  <span className="font-mono tabular-nums">{events.length}</span> events loaded
+                </>
+              )}
             </span>
 
             <div className="h-4 w-px shrink-0 bg-primary/20" aria-hidden="true" />

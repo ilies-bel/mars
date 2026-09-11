@@ -18,7 +18,15 @@ import type { ActionQueueItem, ActionQueueGroupRow, AlertVerb } from '@/shared/s
 /**
  * The single canonical "needs you" count: distinct open subjects excluding
  * draft-proposal rows (a backlog of shaped ideas, not an operational alert
- * needing immediate action). Server groups contribute their MEMBERS, matching
+ * needing immediate action) and excluding NOTICES.
+ *
+ * A notice is informational by construction — `action-queue-kinds.ts` classes
+ * `stale-worktree`, `reflect-recommended`, `phantom-task` and friends that way
+ * precisely because Mars handles them itself, and their own copy says so:
+ * "this is informational, no action needed from you". Counting them made the
+ * badge tooltip read "37 items need attention" over a list two of whose rows
+ * stated that they needed nothing. A workload number that includes its own
+ * opt-outs is not a workload number. Server groups contribute their MEMBERS, matching
  * the server's counterpart — grouping is a display collapse, not fewer
  * decisions. Every surface that renders this concept — the
  * triage page badge, the sidebar badge, the chat greeting, the situation
@@ -53,6 +61,7 @@ export function countNeedsYou(
     for (const m of sg.members) serverGroupMemberIds.add(m.id)
     if (sg.kind === 'draft-proposal') continue
     for (const m of sg.members) {
+      if (m.class === 'notice') continue
       if (m.entityId && isGroupableConditionKind(m.kind)) {
         if (seenEntities.has(m.entityId)) continue
         seenEntities.add(m.entityId)
@@ -64,6 +73,7 @@ export function countNeedsYou(
   for (const item of items) {
     if (serverGroupMemberIds.has(item.id)) continue // counted via server group
     if (item.kind === 'draft-proposal') continue
+    if (item.class === 'notice') continue
     if (item.entityId && isGroupableConditionKind(item.kind)) {
       if (seenEntities.has(item.entityId)) continue
       seenEntities.add(item.entityId)

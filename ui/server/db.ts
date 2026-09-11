@@ -76,6 +76,7 @@ interface TaskRow {
   failure_signature: string | null
   drop_reason: string | null
   recovery_spawned_count: number | null
+  failure_reason: string | null
   blocker_task_id: string | null
   blocker_task_ids: string | null
   parent_proposal_id: string | null
@@ -117,6 +118,23 @@ export interface Task {
   failureSignature: string | null
   dropReason: string | null
   recoverySpawnedCount: number
+  /**
+   * True when `mars continue` would REFUSE this task, decided here rather than
+   * in the client.
+   *
+   * The one rule is `continue-task.ts`'s: it refuses only on the
+   * `recovery_exhausted:` prefix, and only on `failure_reason`. Neither
+   * `error` nor `failure_reason_code` ever carries that prefix, and
+   * `recovery_spawned_count` is a different fact entirely — a recovery that
+   * was spawned and then dropped leaves the count at 1 while continue remains
+   * perfectly available.
+   *
+   * The drawer used to test `error` and `recovery_spawned_count >= 1` and so
+   * told the operator to "carry the work forward" on a task whose own queue
+   * row was offering Continue. One answer, decided once, on the side of the
+   * wire that can see the right column.
+   */
+  recoveryExhausted: boolean
   blockerTaskId: string | null
   /**
    * Every Task carries the full list of task ids that block it, derived from
@@ -162,6 +180,18 @@ const parseJsonArray = (raw: string | null): string[] => {
   }
 }
 
+
+/**
+ * The `failure_reason` prefix `mars continue` refuses on. Mirrors
+ * RECOVERY_EXHAUSTED_PREFIX in orchestrator/src/core/lib/failure-signature.ts —
+ * the constant `continue-task.ts` actually tests against.
+ */
+const RECOVERY_EXHAUSTED_PREFIX = 'recovery_exhausted:'
+
+/** True when `mars continue` would refuse this task. See Task.recoveryExhausted. */
+const isRecoveryExhausted = (failureReason: string | null): boolean =>
+  failureReason !== null && failureReason.startsWith(RECOVERY_EXHAUSTED_PREFIX)
+
 const rowToTask = (row: TaskRow): Task => {
   const f = row.plan_functional
   const t = row.plan_technical
@@ -199,6 +229,7 @@ const rowToTask = (row: TaskRow): Task => {
     failureSignature: row.failure_signature ?? null,
     dropReason: row.drop_reason ?? null,
     recoverySpawnedCount: Number(row.recovery_spawned_count ?? 0),
+    recoveryExhausted: isRecoveryExhausted(row.failure_reason ?? null),
     blockerTaskId: row.blocker_task_id ?? null,
     blockedBy: parseBlockedBy(row.blocker_task_ids ?? null),
     parentProposalId: row.parent_proposal_id ?? null,
@@ -260,6 +291,7 @@ export class TaskDb {
     const hasDropReason = colNames.has('drop_reason')
     const hasFailureSignature = colNames.has('failure_signature')
     const hasRecoverySpawnedCount = colNames.has('recovery_spawned_count')
+    const hasFailureReason = colNames.has('failure_reason')
     const hasFilesJson = colNames.has('files_json')
     const hasReadFirstJson = colNames.has('read_first_json')
     const hasPrescriptiveAction = colNames.has('prescriptive_action')
@@ -282,6 +314,7 @@ export class TaskDb {
       hasFailureSignature ? 't.failure_signature' : `NULL AS failure_signature`,
       hasDropReason ? 't.drop_reason' : `NULL AS drop_reason`,
       hasRecoverySpawnedCount ? 't.recovery_spawned_count' : `0 AS recovery_spawned_count`,
+      hasFailureReason ? 't.failure_reason' : `NULL AS failure_reason`,
       't.created_at',
       't.updated_at',
       hasFilesJson ? 't.files_json' : `NULL AS files_json`,

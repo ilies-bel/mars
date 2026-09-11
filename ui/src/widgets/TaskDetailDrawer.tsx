@@ -535,8 +535,6 @@ const MetaCell = ({ label, value }: { label: string; value: ReactNode }) => (
  * attempt is already spent), so that case gets the carry-forward verbs the CLI
  * names in its refusal instead.
  */
-const RECOVERY_EXHAUSTED_PREFIX = 'recovery_exhausted:'
-
 /**
  * Recovery action buttons for a failed task.
  *
@@ -549,25 +547,27 @@ const RECOVERY_EXHAUSTED_PREFIX = 'recovery_exhausted:'
  */
 export const RecoveryCommands = ({
   taskId,
-  error,
-  recoverySpawnedCount = 0,
+  recoveryExhausted = false,
   branch = null,
   worktreePath = null,
 }: {
   taskId: string
-  error: string | null
-  /** Mars allows exactly ONE recovery attempt per origin failure. */
-  recoverySpawnedCount?: number
+  /**
+   * Whether `mars continue` would refuse — decided by the server, never here.
+   *
+   * This drawer used to infer it, and inferred it two different wrong ways at
+   * once: from a substring of `error` (the prefix is only ever written to
+   * `failure_reason`), and from `recoverySpawnedCount >= 1` (a recovery that
+   * was spawned and then dropped leaves that at 1 while continue stays
+   * available). The result was a task whose queue row offered Continue as its
+   * primary while this drawer, open on top of it, said "Continue is spent" and
+   * offered only the two verbs that discard the branch it was telling you to
+   * carry forward. Read the flag; do not re-derive it.
+   */
+  recoveryExhausted?: boolean
   branch?: string | null
   worktreePath?: string | null
 }) => {
-  // Exhaustion was inferred from a substring of the error text, so this
-  // drawer and the Needs You row disagreed about the same task: the queue read
-  // the daemon's own flag and withheld Continue, while the drawer found no
-  // prefix and made Continue its primary. One task, two screens, opposite
-  // recommendations. The spawn count is the same fact the daemon is reporting.
-  const recoveryExhausted =
-    (error?.includes(RECOVERY_EXHAUSTED_PREFIX) ?? false) || recoverySpawnedCount >= 1
 
   // `mars continue` needs a worktree to resume ON. Without one it silently
   // DEGRADES INTO A RESTART — it wipes and re-runs — so offering it here for a
@@ -1375,8 +1375,7 @@ export const TaskDetailBody = ({
           {task.status === 'failed' ? (
             <RecoveryCommands
               taskId={task.id}
-              error={task.error}
-              recoverySpawnedCount={task.recoverySpawnedCount ?? 0}
+              recoveryExhausted={task.recoveryExhausted ?? false}
               branch={task.branch}
               worktreePath={task.worktreePath}
             />
@@ -1415,14 +1414,33 @@ export const TaskDetailBody = ({
         )
       ) : null}
 
-      {/* d. Current workflow step — one line: step name · time since step began. */}
+      {/* d. Current workflow step — one line: step name · time since step began.
+
+          On a FAILED task this field answers a different question from the
+          banner above it, and used to answer it under a label that hid the
+          difference. The banner names the phase the failure is BLAMED on
+          (from the signature); this names the last step that actually RAN.
+          For mars-a85fcea2 those are "merge:preflight" and "verify", so the
+          drawer appeared to contradict itself twice on one screen. Same facts,
+          two questions — so ask them out loud. */}
       {currentStep != null ? (
         <div data-testid="task-detail-current-step">
-          <SectionLabel>Step</SectionLabel>
+          <SectionLabel>{task.status === 'failed' ? 'Last step run' : 'Step'}</SectionLabel>
           <p className="text-label text-foreground">
             {currentStep.stepName}
             <span className="text-muted-foreground"> · {relativeTime(currentStep.startedAt)}</span>
           </p>
+          {task.status === 'failed' &&
+            (() => {
+              const blamed = blamedPhaseOf(task.failureSignature)
+              return blamed != null &&
+                !currentStep.stepName.toLowerCase().includes(blamed) ? (
+                <p className="mt-0.5 text-micro text-muted-foreground" data-testid="last-step-vs-blamed">
+                  The failure is blamed on{' '}
+                  <span className="text-foreground">{blamed}</span>, not on this step.
+                </p>
+              ) : null
+            })()}
         </div>
       ) : null}
 

@@ -1001,6 +1001,18 @@ const leadDecisionIndex = (decisions: Decision[]): number => {
         </div>
       )}
 
+      {/* A notice is informational by construction and says so in its own
+          copy ("no action needed from you"). It is therefore NOT part of the
+          "needs you" count — same rule, same reason, as the drafts cluster.
+          But it is ON the page, so a reader adding the rows up to check the
+          header lands over and cannot tell which rows to drop. Say it here,
+          on the row, exactly as the drafts row says it. */}
+      {item.class === 'notice' && !inGroup && (
+        <p className="mb-1 text-micro text-muted-foreground" data-testid="triage-not-counted">
+          Informational — not counted in the queue above.
+        </p>
+      )}
+
       {/* Headline — §7 hierarchy:
            - When operatorGoal is present: goal is primary headline, the subhead
              is derived from the failure signature (plain English), falling back

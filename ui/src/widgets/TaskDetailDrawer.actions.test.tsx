@@ -39,7 +39,6 @@ describe('RecoveryCommands — normal failed task', () => {
     // fixture has to carry the branch and worktree the real payload does.
     <RecoveryCommands
       taskId="mars-abc123"
-      error="code:context-exhausted"
       branch="task/mars-abc123"
       worktreePath="/repo/.mars/worktrees/mars-abc123"
     />,
@@ -98,9 +97,14 @@ describe('RecoveryCommands — normal failed task', () => {
 
 describe('RecoveryCommands — recovery_exhausted arc', () => {
   const html = renderToStaticMarkup(
+    // Exhaustion is a SERVER verdict now: it is read off `failure_reason`
+    // by ui/server/db.ts, never inferred from error text or the spawn count
+    // here. The fixture states the fact instead of encoding the old guess.
     <RecoveryCommands
       taskId="mars-bff7e039"
-      error="recovery_exhausted:fix-cb2b7dea"
+      recoveryExhausted
+      branch="task/mars-bff7e039"
+      worktreePath="/repo/.mars/worktrees/mars-bff7e039"
     />,
   )
 
@@ -157,7 +161,7 @@ describe('RecoveryCommands — recovery_exhausted arc', () => {
 describe('RecoveryCommands — restart confirm dialog', () => {
   it('confirm dialog is not shown in the initial (pre-click) render', () => {
     const html = renderToStaticMarkup(
-      <RecoveryCommands taskId="mars-xyz" error={null} />,
+      <RecoveryCommands taskId="mars-xyz" />,
     )
     // The confirm dialog only renders after the user clicks Restart.
     // In the initial render (useState(null)) it is absent.
@@ -171,7 +175,7 @@ describe('RecoveryCommands — restart confirm dialog', () => {
     // invokeAction('restart', taskId). DOM click simulation is omitted here
     // because this test runs without a DOM environment (renderToStaticMarkup).
     const html = renderToStaticMarkup(
-      <RecoveryCommands taskId="mars-xyz" error={null} />,
+      <RecoveryCommands taskId="mars-xyz" />,
     )
     expect(html).toContain('data-testid="restart-btn"')
     expect(html).toContain('>Restart<')
