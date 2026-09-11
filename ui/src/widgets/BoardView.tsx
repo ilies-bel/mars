@@ -324,7 +324,7 @@ export const BoardView = ({
       )}
 
       {/* ── Dense 4-column grid ─────────────────────────────────────────────── */}
-      <main className="grid grid-cols-4 gap-3.5 p-6 items-start overflow-y-auto flex-1">
+      <main className="grid grid-cols-2 md:grid-cols-4 gap-3.5 p-6 pb-8 items-start overflow-y-auto flex-1">
         {/* Proposals — renders as "PROPOSALS (ALL)"; see the population note above */}
         <DenseColumn
           label="Proposals"

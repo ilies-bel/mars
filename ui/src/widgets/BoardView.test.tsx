@@ -847,6 +847,40 @@ describe('buildArcsByCluster — proposal-rooted arcs', () => {
 // The dense board renders raw cluster data, not arc-grouped data.
 
 // ---------------------------------------------------------------------------
+// BoardView – responsive grid layout at narrow and wide viewports
+// ---------------------------------------------------------------------------
+
+describe('BoardView – responsive grid layout', () => {
+  it('renders the main grid with grid-cols-2 for the narrow (mobile) breakpoint', () => {
+    // At <768px the 4-column board must collapse to 2 columns so cards are not
+    // cramped to unreadable widths. The class is static in the JSX so Tailwind's
+    // JIT can pick it up; no JS breakpoint logic is needed.
+    const html = renderToStaticMarkup(
+      <BoardView byCluster={emptyByCluster()} proposals={[]} error={null} selectedProposalId={null} />,
+    )
+    expect(html).toContain('grid-cols-2')
+  })
+
+  it('renders the main grid with md:grid-cols-4 for the wide (≥768px) breakpoint', () => {
+    // At ≥768px (Tailwind md: prefix) the board expands to all four columns so
+    // every cluster is visible side by side without horizontal scrolling.
+    const html = renderToStaticMarkup(
+      <BoardView byCluster={emptyByCluster()} proposals={[]} error={null} selectedProposalId={null} />,
+    )
+    expect(html).toContain('md:grid-cols-4')
+  })
+
+  it('main grid carries pb-8 so the last board card is not hidden behind the footer', () => {
+    // The progress footer is h-8 (32px). Without pb-8 the last card scrolls to
+    // a position exactly behind the footer and becomes unreachable by the user.
+    const html = renderToStaticMarkup(
+      <BoardView byCluster={emptyByCluster()} proposals={[]} error={null} selectedProposalId={null} />,
+    )
+    expect(html).toContain('pb-8')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // BoardView – proposal card click-to-open (draw open #/proposal/<id> route)
 // ---------------------------------------------------------------------------
 

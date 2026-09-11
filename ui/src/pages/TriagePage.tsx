@@ -1674,9 +1674,12 @@ export const TriageCauseGroupRow = ({
             {label}
           </span>
         </button>
-        {/* Stated once here so seventeen members need not each repeat it. */}
+        {/* Stated once here so seventeen members need not each repeat it.
+            Hidden below md so the headline is not squeezed to a single
+            character on narrow viewports — age is secondary metadata and
+            should drop before the primary label truncates. */}
         <span
-          className="shrink-0 text-micro tabular-nums text-muted-foreground"
+          className="hidden md:block shrink-0 text-micro tabular-nums text-muted-foreground"
           data-testid="cause-group-age"
         >
           {groupAge}

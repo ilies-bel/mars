@@ -4,6 +4,8 @@ import { ChevronDown, ChevronRight, RefreshCw, Search, SlidersHorizontal } from 
 import { ActionButton } from '@/components/ActionButton'
 import { Segmented } from '@/components/Segmented'
 import { memo, useEffect, useMemo, useRef, useState, useCallback } from 'react'
+import type { CSSProperties } from 'react'
+import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query'
 import { fetchEvents, type EventsFilter } from '@/shared/api'
@@ -261,7 +263,16 @@ interface EventRowProps {
  * A group row spends the kind column on its ×N count, which is what that row
  * is instead of a kind.
  */
+/**
+ * Wide (≥768px): full six-column grid — time · severity · kind · source·phase · task · message.
+ * Narrow (<768px): compressed metadata columns so the message column keeps the majority of space.
+ *
+ * Applied as a CSS custom property (--flat-row-cols) on the list container so every
+ * row inherits it without prop drilling. The property is set in EventsPage by reading
+ * useMediaQuery and switching between the two values.
+ */
 const FLAT_ROW_GRID = '3.5rem 2.75rem 5.25rem 5.5rem 7rem minmax(0, 1fr)'
+const FLAT_ROW_GRID_NARROW = '3rem 2rem 3.5rem 4rem 5rem minmax(0, 1fr)'
 
 const EventRow = memo(({ event, now, fieldsExpanded, onToggleFields }: EventRowProps) => {
   const toggleFields = useCallback(() => onToggleFields(event.id), [onToggleFields, event.id])
@@ -320,7 +331,7 @@ const EventRow = memo(({ event, now, fieldsExpanded, onToggleFields }: EventRowP
          * Three layouts in one list: nothing lined up and the column could not
          * be scanned. The id now has its own column, so prose always starts at
          * the same x whatever the row is carrying. */
-        style={{ gridTemplateColumns: FLAT_ROW_GRID }}
+        style={{ gridTemplateColumns: 'var(--flat-row-cols)' }}
       >
         <span className="truncate text-muted-foreground">{relativeTime(event.timestamp, now)}</span>
         <span
@@ -1114,6 +1125,9 @@ export const EventsPage = ({
     string | null | undefined
   >(undefined)
   const projectId = useFocusedProjectId()
+  // Responsive grid template — switches at the md breakpoint (768px) so
+  // narrow viewports give the message column more breathing room.
+  const isWide = useMediaQuery('(min-width: 768px)')
 
   // Page-level expansion Set — keyed by event id so virtualizer row recycling
   // (unmount → re-mount) re-receives the stored entry and stays expanded.
@@ -1569,11 +1583,16 @@ export const EventsPage = ({
         </div>
       </div>
 
-      {/* Events display — flat virtualized list or grouped timeline */}
+      {/* Events display — flat virtualized list or grouped timeline.
+          --flat-row-cols drives the shared six-column grid in every row type
+          (EventRow, ConsecutiveGroupRow, IncidentGroupRow, ToolCallGroupRow).
+          CSS custom properties inherit through all descendants, including the
+          absolutely-positioned virtualizer items, so no prop-drilling is needed. */}
       <div
         ref={scrollRef}
         className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-6"
         data-testid="events-list"
+        style={{ '--flat-row-cols': isWide ? FLAT_ROW_GRID : FLAT_ROW_GRID_NARROW } as CSSProperties}
       >
         {initial.isPending ? (
           <SkeletonList rows={8} rowClassName="h-8 w-full mb-1" label="Loading events" />

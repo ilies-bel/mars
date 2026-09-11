@@ -1849,3 +1849,73 @@ describe('EventsPage — landing view', () => {
     expect(html.slice(idx, html.indexOf('>', idx))).toContain('bg-surface')
   })
 })
+
+// ---------------------------------------------------------------------------
+// Responsive layout: --flat-row-cols switches with the viewport width
+// ---------------------------------------------------------------------------
+
+describe('EventsPage – responsive events-list grid template', () => {
+  // These values define the observable CSS contract: exactly which column
+  // widths the grid inherits at wide (≥768px) and narrow (<768px) viewports.
+  // They must stay in sync with the FLAT_ROW_GRID constants in EventsPage.tsx.
+  const WIDE_COLS = '3.5rem 2.75rem 5.25rem 5.5rem 7rem minmax(0, 1fr)'
+  const NARROW_COLS = '3rem 2rem 3.5rem 4rem 5rem minmax(0, 1fr)'
+
+  let _savedMatchMedia: typeof window.matchMedia
+
+  beforeEach(() => {
+    _savedMatchMedia = window.matchMedia
+  })
+
+  afterEach(() => {
+    Object.defineProperty(window, 'matchMedia', {
+      value: _savedMatchMedia,
+      writable: true,
+      configurable: true,
+    })
+  })
+
+  it('sets --flat-row-cols to the wide six-column template at 1440px (≥768px)', () => {
+    // At ≥768px useMediaQuery('(min-width: 768px)') returns true and the
+    // events-list container receives the full grid so all metadata columns
+    // have room to breathe without crowding the message column.
+    Object.defineProperty(window, 'matchMedia', {
+      value: vi.fn((_q: string) => ({
+        matches: true,
+        media: _q,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+      writable: true,
+      configurable: true,
+    })
+    const html = renderPage(makeClient(EMPTY_RESPONSE))
+    expect(html).toContain('data-testid="events-list"')
+    // The wide template must be present; the narrow one must not be.
+    expect(html).toContain(WIDE_COLS)
+    expect(html).not.toContain(NARROW_COLS)
+  })
+
+  it('sets --flat-row-cols to the compressed template at a 768px narrow viewport', () => {
+    // Below 768px useMediaQuery returns false → metadata columns compress so
+    // the message column keeps the majority of the available space rather than
+    // being squeezed to a single character.
+    Object.defineProperty(window, 'matchMedia', {
+      value: vi.fn((_q: string) => ({
+        matches: false,
+        media: _q,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+      writable: true,
+      configurable: true,
+    })
+    const html = renderPage(makeClient(EMPTY_RESPONSE))
+    expect(html).toContain('data-testid="events-list"')
+    // The narrow template must be present; the wide one must not be.
+    expect(html).toContain(NARROW_COLS)
+    expect(html).not.toContain(WIDE_COLS)
+  })
+})

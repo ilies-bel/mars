@@ -68,7 +68,7 @@ export function PageHeader({
     <div className={cn('shrink-0 border-b border-border bg-surface', className)}>
       <div className="flex items-center gap-3 px-6 pb-3 pt-3.5">
         <div className="flex min-w-0 items-baseline gap-2.5">
-          <h1 className="truncate text-heading font-semibold text-foreground">{title}</h1>
+          <h1 className="min-w-0 truncate text-heading font-semibold text-foreground">{title}</h1>
           {count !== null && count > 0 && (
             <span
               aria-label={countLabel ?? `${count} items`}
