@@ -1242,7 +1242,17 @@ const RECIPE_DEFINITIONS = {
       caughtTaskCount: ctx.payload['caughtTaskCount'],
       caughtTaskIds: ctx.payload['caughtTaskIds'],
     }),
-    verbs: [],
+    // Offer a bulk-continue button only when every affected task can take it.
+    // The wave entityId is a hash, not a task id, so task-scoped verbs like
+    // restart/purge cannot be used here — the client dispatches continue per
+    // member via the continue-wave op.
+    verbs: (ctx) => {
+      if (ctx.payload['bulkContinuable'] !== true) return []
+      const count = typeof ctx.payload['caughtTaskCount'] === 'number'
+        ? ctx.payload['caughtTaskCount']
+        : (ctx.payload['caughtTaskIds'] as unknown[])?.length ?? 0
+      return [{ op: 'continue-wave', label: `Continue all ${count}`, style: 'primary' as const }]
+    },
   },
 
   /**

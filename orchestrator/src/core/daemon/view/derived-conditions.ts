@@ -1105,14 +1105,20 @@ async function deriveSignatureWaveConditions(
   nowMs: number,
 ): Promise<SignatureWaveResult> {
   const result = await client.execute(
-    `SELECT id, failure_signature, error, updated_at
+    `SELECT id, failure_signature, error, updated_at, worktree_path, failure_reason
        FROM tasks
       WHERE status = 'failed'
         AND failure_signature IS NOT NULL`,
   )
 
   // Per-group state: canonical signature, key type, first raw error (for
-  // error-keyed title), task ids, and latest update timestamp.
+  // error-keyed title), task ids, latest update timestamp, and per-member
+  // continuability data for the bulk verb.
+  interface WaveMember {
+    id: string
+    worktreePath: string | null
+    recoveryExhausted: boolean
+  }
   interface WaveGroup {
     canonical: string
     /** The bucket partition key — used for row identity (id + signature). */
@@ -1120,6 +1126,7 @@ async function deriveSignatureWaveConditions(
     keyType: 'sig' | 'err'
     firstRawError: string | null
     taskIds: string[]
+    members: WaveMember[]
     latestMs: number
   }
 
@@ -1131,6 +1138,8 @@ async function deriveSignatureWaveConditions(
       failure_signature: string
       error: string | null
       updated_at: string | null
+      worktree_path: string | null
+      failure_reason: string | null
     }
     const sig = row.failure_signature
     // Non-diagnostic signatures are always skipped (same gate as before).
@@ -1156,12 +1165,20 @@ async function deriveSignatureWaveConditions(
       keyType = 'err'
     }
 
+    const member: WaveMember = {
+      id: row.id,
+      worktreePath: row.worktree_path ?? null,
+      recoveryExhausted: typeof row.failure_reason === 'string'
+        && row.failure_reason.startsWith(RECOVERY_EXHAUSTED_PREFIX),
+    }
+
     const existing = groups.get(key)
     if (existing) {
       existing.taskIds.push(row.id)
+      existing.members.push(member)
       if (taskMs > existing.latestMs) existing.latestMs = taskMs
     } else {
-      groups.set(key, { canonical: sig, key, keyType, firstRawError, taskIds: [row.id], latestMs: taskMs })
+      groups.set(key, { canonical: sig, key, keyType, firstRawError, taskIds: [row.id], members: [member], latestMs: taskMs })
     }
   }
 
@@ -1174,6 +1191,13 @@ async function deriveSignatureWaveConditions(
   const rows: PersistedActionQueueRow[] = waveGroups.map((group) => {
     const count = group.taskIds.length
     const sortedIds = group.taskIds.slice().sort()
+
+    // A bulk-continue is only safe when EVERY affected task has an existing
+    // worktree (so `mars continue` won't silently degrade to restart) AND
+    // has not exhausted its recovery slot (so continue is actually accepted).
+    const bulkContinuable = group.members.every(
+      (m) => !m.recoveryExhausted && m.worktreePath !== null && existsSync(m.worktreePath),
+    )
 
     // Title names the cause (DEC-18: raw step ids must never be the sole
     // cause description in an operator-facing field).
@@ -1214,6 +1238,9 @@ async function deriveSignatureWaveConditions(
         signature: group.canonical,
         caughtTaskCount: count,
         caughtTaskIds: sortedIds,
+        // true iff every affected task can accept `mars continue` right now:
+        // worktree exists and recovery slot is not exhausted.
+        bulkContinuable,
       },
       context: {},
       raisedAt: group.latestMs,

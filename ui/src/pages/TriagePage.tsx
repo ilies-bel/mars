@@ -50,7 +50,7 @@ import { useProposals } from '@/entities/proposals/useProposals'
 import { useDaemonHealth } from '@/entities/daemon/useDaemonHealth'
 import { DAEMON_DOWN_MESSAGE } from '@/widgets/DaemonDownBanner'
 import { describeFeedFailure } from '@/shared/feedFailure'
-import { postDecision, snoozeActionQueueItem } from '@/shared/api'
+import { postDecision, snoozeActionQueueItem, invokeAction } from '@/shared/api'
 import { relativeTime } from '@/shared/time'
 import { dispatchAlertVerb } from '@/widgets/chat/alertVerbs'
 import { signatureFamilyPhrase, causeGroupPhrase } from '@/shared/causePhrase'
@@ -912,6 +912,25 @@ const leadDecisionIndex = (decisions: Decision[]): number => {
         }
         return
       }
+      if (op === 'continue-wave') {
+        // Bulk-continue: dispatch `continue` individually for each member task.
+        // The wave entityId is a hash, not a task id, so it cannot be passed to
+        // the server directly — we fan out one action per member instead.
+        const taskIds = (item.humanDetail?.caughtTaskIds as string[] | undefined) ?? []
+        if (taskIds.length === 0) return
+        setPending(op)
+        setError(null)
+        try {
+          await Promise.all(taskIds.map((id) => invokeAction('continue', id)))
+          handleSuccess()
+        } catch (err) {
+          setError(err instanceof Error ? err.message : String(err))
+          void qc.invalidateQueries({ queryKey: ['action-queue'] })
+        } finally {
+          setPending(null)
+        }
+        return
+      }
       setPending(op)
       setError(null)
       try {
@@ -928,7 +947,7 @@ const leadDecisionIndex = (decisions: Decision[]): number => {
         setPending(null)
       }
     },
-    [pending, handleSuccess, item.id, item.entityId, qc],
+    [pending, handleSuccess, item.id, item.entityId, item.humanDetail, qc],
   )
 
   // Shareable href that carries this alert's identity — the ChatPage resolves

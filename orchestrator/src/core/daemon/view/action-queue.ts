@@ -60,6 +60,10 @@ const NON_TASK_FAILURE_KINDS = new Set([
   // so a dropped task's title became the card headline even though the card
   // describes a live infrastructure condition, not a task failure.
   'gate-broken',
+  // signature-wave: a derived aggregate over N failed tasks — its entityId is a
+  // hash, not a task id, so task-scoped verbs (restart, purge) cannot address it.
+  // Bulk action is handled client-side via the continue-wave op.
+  'signature-wave',
 ])
 
 /** Preserves the former failure-specific enrichment without changing labels. */
