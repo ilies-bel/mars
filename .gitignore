@@ -94,6 +94,7 @@ hs_err_pid*
 # are docs/assets/*.png (subdirectory), which are unaffected.
 failed-tasks-*
 /*.png
+*-computed.json
 
 # Playwright CLI page snapshots (the `browser` skill writes these into its CWD
 # as page-<iso-timestamp>.yml). Pure session scratch, never an input to a
