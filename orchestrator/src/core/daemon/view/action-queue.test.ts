@@ -1652,6 +1652,91 @@ describe('deriveOperatorGoal — normalisation', () => {
   })
 })
 
+// ── awaiting-human: goal derivation and summary copy ─────────────────────────
+//
+// awaiting-human is not a failure kind (isTaskFailure is false for these rows).
+// Before the fix, arcGoal and operatorGoal were gated on isTaskFailure and were
+// always null even though taskById already held the task. The correct gate is
+// "do we have a task for this entity?", not "is this a failure kind?".
+
+describe('buildActionQueueView — awaiting-human row goal and summary', () => {
+  const makeAwaitingHumanRow = (
+    payloadOverrides: Record<string, unknown> = {},
+  ): PersistedActionQueueRow =>
+    makeRow({
+      kind: 'awaiting-human',
+      payload: {
+        taskId: 'task-1',
+        situation: 'lease-park',
+        leaseOwner: 'workflow:await-human',
+        stepName: 'code',
+        leasedAt: '2024-01-01T00:00:00.000Z',
+        ...payloadOverrides,
+      },
+      context: {},
+    })
+
+  it('operatorGoal is non-null when the entity resolves to a task', async () => {
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([makeAwaitingHumanRow()]),
+      taskStore: makeTaskStore([
+        makeTask({
+          id: 'task-1',
+          status: 'running',
+          prompt: '# Elevate the Mars UI to Cursor / Stripe / Linear tier',
+        }),
+      ]),
+    })
+    expect(rows[0]!.operatorGoal).not.toBeNull()
+    expect(rows[0]!.operatorGoal).toContain('Elevate the Mars UI')
+  })
+
+  it('arcGoal is non-null when the entity resolves to a task', async () => {
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([makeAwaitingHumanRow()]),
+      taskStore: makeTaskStore([
+        makeTask({ id: 'task-1', status: 'running', prompt: 'Add unit tests for the auth module' }),
+      ]),
+    })
+    expect(rows[0]!.arcGoal).not.toBeNull()
+    expect(rows[0]!.arcGoal).toBe('Add unit tests for the auth module')
+  })
+
+  it('operatorGoal and arcGoal are null when the entity is not in the task graph', async () => {
+    // Row points at a task id that is not in the task store — simulates a
+    // row whose entity cannot be resolved (no crash, just null).
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([makeAwaitingHumanRow({ taskId: 'unknown-task' })]),
+      taskStore: makeTaskStore([]),
+    })
+    expect(rows[0]!.operatorGoal).toBeNull()
+    expect(rows[0]!.arcGoal).toBeNull()
+  })
+
+  it('humanSummary for lease-park does not name the workflow identifier as the actor', async () => {
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([makeAwaitingHumanRow()]),
+      taskStore: makeTaskStore([makeTask({ id: 'task-1', status: 'running' })]),
+    })
+    expect(rows[0]!.humanSummary).not.toContain('workflow:await-human')
+    expect(rows[0]!.humanSummary).toContain("step 'code'")
+  })
+
+  it('existing failure-kind operatorGoal derivation is unaffected', async () => {
+    // Confirm the widened gate does not break the original failed-task case.
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([makeRow()]),
+      taskStore: makeTaskStore([makeTask({ prompt: '## Deploy the new service' })]),
+    })
+    expect(rows[0]!.operatorGoal).toBe('Deploy the new service')
+  })
+})
+
 // ── reflect-recommended: age from raisedAt, evidence consistency ──────────────
 
 describe('buildActionQueueView — reflect-recommended row age and evidence', () => {

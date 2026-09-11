@@ -639,16 +639,17 @@ const RECIPE_DEFINITIONS = {
           // `Partial<…>` rather than a plain narrow: rows raised before the
           // `situation` discriminator existed carry the lease keys without it,
           // and must still render this sentence. Key names stay checked.
+          // The lease owner (a machine identifier) is kept in humanDetail where
+          // readers who care about it can find it — the summary addresses the
+          // operator directly instead.
           const p = ctx.payload as Partial<LeaseParkPayload>
-          const owner = str(p.leaseOwner) || 'someone'
           const step = str(p.stepName)
-          return `${owner} is working interactively on this task${step ? ` (step '${step}')` : ''} — signal done when the step is finished.`
+          return `Parked for you${step ? ` at step '${step}'` : ''} — signal done when you have finished.`
         }
         case 'lease-expired': {
           const p = ctx.payload as Partial<LeaseExpiredPayload>
-          const owner = str(p.leaseOwner) || 'someone'
           const age = typeof p.ageMinutes === 'number' ? ` ${p.ageMinutes} min` : ''
-          return `${owner}'s session has been idle${age} — nobody is working on this task. Continue in the worktree or release it.`
+          return `The lease has been idle${age} — nobody is working on this task. Continue in the worktree or release it.`
         }
         case 'escalation': {
           // The escalating agent's own words are the only accurate summary

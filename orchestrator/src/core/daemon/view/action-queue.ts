@@ -1522,27 +1522,16 @@ export const buildActionQueueView = async ({
         ? (taskById.get(entityId)?.fixForTaskId ?? null)
         : null
 
-    // Derive the arc goal via the shared deriveArcGoal helper. For recovery/fix
-    // tasks it follows fixForTaskId; for superseding tasks it follows originId.
-    // Prefers the origin's intent over its raw prompt, and strips markdown heading
-    // markers from intent strings that are actually prompt dumps.
+    // Derive the arc/operator goals for any row whose entity is a task in our
+    // graph. Previously gated on isTaskFailure, which excluded awaiting-human
+    // and other non-failure task-backed kinds. The correct question is "do we
+    // have a task for this entity?", not "is this row a failure kind?".
     let arcGoal: string | null = null
-    if (isTaskFailure) {
-      const task = taskById.get(entityId)
-      if (task) {
-        arcGoal = deriveArcGoal(task, taskById)
-      }
-    }
-
-    // Derive the operator-facing goal via the same resolution chain as arcGoal
-    // but with a richer normaliser: markdown, backticks, bold markers stripped;
-    // second-person rewritten to imperative; capped at 100 chars.
     let operatorGoal: string | null = null
-    if (isTaskFailure) {
-      const task = taskById.get(entityId)
-      if (task) {
-        operatorGoal = deriveOperatorGoal(task, taskById)
-      }
+    const taskForGoals = taskById.get(entityId)
+    if (taskForGoals) {
+      arcGoal = deriveArcGoal(taskForGoals, taskById)
+      operatorGoal = deriveOperatorGoal(taskForGoals, taskById)
     }
     // Recipe-level fallback: for kinds whose entity is not a task (e.g.
     // `slice-failed` where the entity is a proposal), the recipe can supply
