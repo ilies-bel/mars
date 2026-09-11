@@ -35,10 +35,34 @@
  *
  * ── Querying the database directly ──────────────────────────────────────────
  *
- * Timestamp encodings are MIXED across tables. Always use the right expression:
+ * Timestamp encodings are MIXED across tables. Always use the right expression.
+ * The canonical registry is FIXTURE_TIMESTAMP_ENCODINGS in
+ * src/core/lib/timestamp-encodings.ts — consult it for any table not listed
+ * below.
+ *
+ *   timestamptz tables (iso-8601) — display with: to_char(col, 'MM-DD HH24:MI')
+ *     tasks, merge_jobs, task_deployments, task_terminal_reopens,
+ *     arc_rescue_attempts, candidate_lessons, steward_ledger,
+ *     failure_signature_streak, signature_storm_events, dispatch_spend_control,
+ *     purged_tasks_archive, workflow_patch_proposals, usage_snapshots,
+ *     mcp_worker_audit, deferrals, main_thread_entries, archive_entries,
+ *     daemon_heartbeat, domain_flows, chat_thread_tasks
+ *
+ *   bigint epoch-milliseconds tables — display with:
+ *     to_char(to_timestamp(col / 1000.0), 'MM-DD HH24:MI')
+ *     proposals, chat_threads, task_blockers, action_queue_items,
+ *     verify_gates, gate_enrichment, scorers, workflow_configs,
+ *     workflow_runs, workflow_step_runs, chat_messages, ... (see registry)
+ *
+ * Selected common examples:
  *
  *   tasks.created_at / tasks.updated_at
  *     Type: timestamptz
+ *     Display: to_char(created_at, 'MM-DD HH24:MI')
+ *
+ *   merge_jobs.created_at / merge_jobs.updated_at / merge_jobs.claimed_at
+ *     Type: timestamptz (NOT bigint — applying epoch-ms pattern gives
+ *     "operator does not exist: timestamp with time zone / numeric")
  *     Display: to_char(created_at, 'MM-DD HH24:MI')
  *
  *   chat_threads.created_at / chat_threads.updated_at

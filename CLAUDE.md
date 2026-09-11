@@ -112,6 +112,12 @@ silently wrong result:
   Format: `to_char(created_at, 'MM-DD HH24:MI')`.
   Example: `SELECT id, to_char(created_at,'MM-DD HH24:MI') FROM tasks LIMIT 5;`
 
+- `merge_jobs.created_at` / `merge_jobs.updated_at` / `merge_jobs.claimed_at` —
+  **`timestamptz`** (NOT bigint — applying the epoch-ms pattern gives
+  `ERROR: operator does not exist: timestamp with time zone / numeric`).
+  Format: `to_char(created_at, 'MM-DD HH24:MI')`.
+  Example: `SELECT id, status, to_char(created_at,'MM-DD HH24:MI') FROM merge_jobs LIMIT 5;`
+
 - `chat_threads.created_at` / `chat_threads.updated_at` — **`bigint` epoch-milliseconds**.
   Format: `to_char(to_timestamp(created_at / 1000.0), 'MM-DD HH24:MI')`.
   Example: `SELECT id, to_char(to_timestamp(created_at/1000.0),'MM-DD HH24:MI') FROM chat_threads LIMIT 5;`
@@ -132,8 +138,12 @@ silently wrong result:
   blocker confirmation state). Do not confuse it with the lifecycle `status` columns.
 
 The full encoding registry lives in
-`orchestrator/src/core/lib/pg-schema.ts` (the leading doc comment) and
-`orchestrator/src/core/lib/timestamp-encodings.ts`.
+`orchestrator/src/core/lib/timestamp-encodings.ts` (every table, all
+columns). `orchestrator/src/core/lib/pg-schema.ts` (the leading doc comment)
+carries a high-level summary. The exhaustiveness test in
+`orchestrator/src/core/lib/timestamp-encodings.test.ts` enforces that every
+table with timestamp columns is in the registry — update both when adding a
+new table.
 
 **All mutations route through the orchestrator.** Direct `Edit`/`Write`
 on the working tree (i.e. on `main`) is a last resort — see Routing
@@ -760,18 +770,30 @@ target repo. Only the maintainer-side refresh mechanism changed.
 ## Querying the database directly
 
 The embedded PostgreSQL database uses **mixed timestamp encodings** across
-tables. Always use the right expression for the table you are querying:
+tables. Always use the right expression for the table you are querying. The
+canonical registry is `orchestrator/src/core/lib/timestamp-encodings.ts` —
+consult it for any table not listed below, and update it (plus the
+`TABLES_WITH_TIMESTAMP_COLUMNS` set in the sibling `.test.ts`) when adding
+a table with new timestamp columns.
 
 | Table | Timestamp column(s) | Type | SQL display expression |
 |---|---|---|---|
 | `tasks` | `created_at`, `updated_at` | `timestamptz` | `to_char(created_at, 'MM-DD HH24:MI')` |
+| `merge_jobs` | `created_at`, `updated_at`, `claimed_at`, `started_at`, `finished_at` | `timestamptz` | `to_char(created_at, 'MM-DD HH24:MI')` |
+| `task_deployments` | `created_at`, `updated_at`, `torn_down_at` | `timestamptz` | `to_char(created_at, 'MM-DD HH24:MI')` |
+| `daemon_heartbeat` | `boot_ts`, `last_beat_ts` | `timestamptz` | `to_char(boot_ts, 'MM-DD HH24:MI')` |
 | `chat_threads` | `created_at`, `updated_at` | `bigint` epoch-ms | `to_char(to_timestamp(created_at / 1000.0), 'MM-DD HH24:MI')` |
 | `action_queue_items` | `raised_at` | `bigint` epoch-ms | `to_char(to_timestamp(raised_at / 1000.0), 'MM-DD HH24:MI')` |
 | `proposals` | `created_at`, `updated_at` | `bigint` epoch-ms | `to_char(to_timestamp(created_at / 1000.0), 'MM-DD HH24:MI')` |
+| `verify_gates` | `created_at`, `quarantined_at`, `last_failure_at`, `last_pass_at` | `bigint` epoch-ms | `to_char(to_timestamp(created_at / 1000.0), 'MM-DD HH24:MI')` |
+| `scorers` | `created_at`, `updated_at` | `bigint` epoch-ms | `to_char(to_timestamp(created_at / 1000.0), 'MM-DD HH24:MI')` |
 
 Note: `action_queue_items` has **no** `created_at` column — use `raised_at`.
 Note: `proposals.created_at`/`updated_at` are `bigint`, **not** `timestamptz` —
 applying the `tasks` display pattern gives a misleading format-mask error.
+Note: `merge_jobs.created_at` and related columns are `timestamptz`, **not** `bigint` —
+applying the epoch-ms pattern gives `ERROR: operator does not exist: timestamp with
+time zone / numeric`.
 
 **Column naming conventions:**
 
