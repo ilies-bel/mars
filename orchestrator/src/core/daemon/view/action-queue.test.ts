@@ -429,7 +429,7 @@ describe('buildActionQueueView — non-failure kinds keep their raiser copy', ()
 
     // Title comes from recipe humanSummary (HR-3); body stays persisted.
     expect(rows[0]!.title).toBe(
-      'Mars is cleaning up a task workspace that has been inactive for a while — no action needed from you (task-1).',
+      "No activity in this task's workspace for a while (task-1).",
     )
     expect(rows[0]!.body).toBe('Legacy persisted body')
   })
