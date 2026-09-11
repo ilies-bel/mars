@@ -1033,6 +1033,8 @@ async function deriveSignatureWaveConditions(
   // error-keyed title), task ids, and latest update timestamp.
   interface WaveGroup {
     canonical: string
+    /** The bucket partition key — used for row identity (id + signature). */
+    key: string
     keyType: 'sig' | 'err'
     firstRawError: string | null
     taskIds: string[]
@@ -1060,7 +1062,7 @@ async function deriveSignatureWaveConditions(
 
     if (signatureNamesASharedCause(sig)) {
       // Signature names a real cause → group by failure family.
-      key = `sig\0${failureSignatureFamily(sig)}`
+      key = `sig:${failureSignatureFamily(sig)}`
       keyType = 'sig'
     } else {
       // Signature is unnamed (e.g. setup:unhandled/unclassified) →
@@ -1068,7 +1070,7 @@ async function deriveSignatureWaveConditions(
       const normKey = normaliseExcerptKey(row.error ?? '')
       // No error text = no evidence of a shared cause → skip entirely.
       if (!normKey) continue
-      key = `err\0${normKey}`
+      key = `err:${normKey}`
       keyType = 'err'
     }
 
@@ -1077,7 +1079,7 @@ async function deriveSignatureWaveConditions(
       existing.taskIds.push(row.id)
       if (taskMs > existing.latestMs) existing.latestMs = taskMs
     } else {
-      groups.set(key, { canonical: sig, keyType, firstRawError, taskIds: [row.id], latestMs: taskMs })
+      groups.set(key, { canonical: sig, key, keyType, firstRawError, taskIds: [row.id], latestMs: taskMs })
     }
   }
 
@@ -1105,7 +1107,13 @@ async function deriveSignatureWaveConditions(
     }
 
     return {
-      id: deriveId('signature-wave', group.canonical),
+      // Identity comes from the bucket partition key, not from group.canonical.
+      // For err-keyed waves, group.canonical is the raw failure_signature shared
+      // by all members (e.g. 'setup:unhandled/unclassified'), which is the SAME
+      // across different err buckets — using it for id/signature produces
+      // duplicate row ids.  group.key is the composite discriminator that uniquely
+      // identifies each bucket.
+      id: deriveId('signature-wave', group.key),
       kind: 'signature-wave',
       priority: 'high',
       // Title names the cause; raw signature stays in payload for diagnostics.
@@ -1128,7 +1136,7 @@ async function deriveSignatureWaveConditions(
       context: {},
       raisedAt: group.latestMs,
       lastSeenAt: nowMs,
-      signature: `signature-wave:${group.canonical}`,
+      signature: `signature-wave:${group.key}`,
     }
   })
 

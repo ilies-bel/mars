@@ -265,4 +265,58 @@ describe('deriveSignatureWaveConditions', { timeout: 60_000 }, () => {
     // But payload carries it for diagnostic use.
     expect(rows[0]!.payload['signature']).toBe('setup:unhandled/unclassified')
   })
+
+  // ── 8. Two err-keyed waves sharing one raw failure_signature → distinct ids ─
+  //
+  // This is the regression test for the identity-collision bug fixed in this
+  // task.  Before the fix, both waves derived their id and signature from
+  // group.canonical (= the raw failure_signature, shared by all err-keyed
+  // buckets that carry 'setup:unhandled/unclassified').  Two distinct buckets
+  // therefore produced the SAME id, breaking the React key and snooze/verb
+  // targeting in the action queue.
+  //
+  // The fix derives id and signature from the bucket's partition key
+  // (err:<normKey>), which is unique per distinct error text.
+
+  it('two err-keyed waves sharing one raw failure_signature emit different ids and signatures', async () => {
+    // Both groups share setup:unhandled/unclassified as the failure_signature,
+    // but have distinct error texts → different err-keyed buckets.
+    for (let i = 1; i <= 3; i++) {
+      await seedFailedTask(
+        client,
+        `vcs-dedup-${i}`,
+        'setup:unhandled/unclassified',
+        `Unknown Vcs implementation 'local-git' - known: (none registered)`,
+      )
+    }
+    for (let i = 1; i <= 3; i++) {
+      await seedFailedTask(
+        client,
+        `wt-dedup-${i}`,
+        'setup:unhandled/unclassified',
+        `no worktree available: call setupWorktree(ctx, ...) before running agents`,
+      )
+    }
+
+    const { createConditionItemsSource } = await import('../derived-conditions.js')
+    const source = createConditionItemsSource({ getClient: () => client })
+    const rows = await source.derive({ kinds: new Set(['signature-wave']) })
+
+    // Two distinct waves must be produced (split by err key, not by raw sig).
+    expect(rows).toHaveLength(2)
+
+    const [row0, row1] = rows as [typeof rows[number], typeof rows[number]]
+
+    // Before the fix: both rows carry the same id (derived from group.canonical
+    // = 'setup:unhandled/unclassified') — this assertion would FAIL.
+    // After the fix: each row is identified by its unique bucket key.
+    expect(row0.id).not.toBe(row1.id)
+
+    // Same for the row-level signature field.
+    expect(row0.signature).not.toBe(row1.signature)
+
+    // Sanity: the diagnostic payload.signature still carries the raw sig.
+    expect(row0.payload['signature']).toBe('setup:unhandled/unclassified')
+    expect(row1.payload['signature']).toBe('setup:unhandled/unclassified')
+  })
 })
