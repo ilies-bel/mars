@@ -16,7 +16,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createInMemoryPostureStore } from '../posture.js'
 import { createInMemoryAlertStore } from '../pass.js'
-import type { HealthPassDeps } from '../pass.js'
 import type { AlertRouteDeps } from '../routes/alert.js'
 import { routeFixFinding } from '../routes/fix.js'
 import type { FixRouteDeps } from '../routes/fix.js'

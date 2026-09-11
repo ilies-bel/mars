@@ -14,7 +14,7 @@
  *   - viewTaskChanges against a real git repo with two commits ahead
  */
 import { beforeAll, describe, expect, it } from 'vitest'
-import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs'
+import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve, join } from 'node:path'
 import { execSync } from 'node:child_process'

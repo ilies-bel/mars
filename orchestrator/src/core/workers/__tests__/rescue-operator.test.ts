@@ -28,7 +28,6 @@ import {
   pickWorkerForTags,
   providerModel,
   type Worker,
-  type WorkerName,
 } from '..'
 import type { Task } from '../../queue'
 import type { RunAgentResult } from '../../lib/git/claude'

@@ -15,7 +15,6 @@
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { resolveManualStep } from '@mars/workflow'
-import { WorkflowTerminalError } from '../../../core/lib/workflow-terminal-error'
 import { AWAIT_HUMAN_SENTINEL } from '../../../core/lib/sentinels'
 
 // ---------------------------------------------------------------------------
@@ -271,7 +270,7 @@ describe('awaitHuman: onManualPark delegation', () => {
  *   - previewSpawn: fake spawn service injected via ctx.services
  */
 const makeManualCtx = (
-  worktreePath: string,
+  _worktreePath: string,
   previewCmd: string | null,
   previewSpawn: (args: { taskId: string; cmd: string; cwd: string }) => Promise<{ pid: number; logPath: string; url?: string }>,
 ) => {

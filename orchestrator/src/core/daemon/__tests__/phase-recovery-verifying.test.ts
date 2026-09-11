@@ -197,7 +197,7 @@ describe('recoverPhase("verifying") — stale checkpoint detection', () => {
   // ── Existing behaviour: no worktree → mark failed ─────────────────────────
 
   it('marks failed when the worktree directory does not exist on disk', async () => {
-    const { q, store, recovery } = await loadModules(repo)
+    const { q, recovery } = await loadModules(repo)
     const client = q.resolveQueueClient()
 
     const task = await q.enqueueTask('missing worktree task', undefined, { skipTriage: true })

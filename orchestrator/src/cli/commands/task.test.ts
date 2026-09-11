@@ -21,7 +21,6 @@ import { resolvePromptSource, hasUnbalancedQuotes, parseTaskSpec } from '../args
 import {
   runCommandInProcess,
   makeFakeDaemon,
-  type InProcessOptions,
 } from '../test-adapter'
 import type { DomainTaskStore } from '../../core/store/task-store'
 import type { OrchestratorContext } from '../../core/context'
@@ -77,14 +76,6 @@ const loadStoreAndCtx = async (): Promise<{ store: DomainTaskStore; ctx: Orchest
     store: storeModule.createTaskStore(queueModule.resolveQueueClient()),
     ctx: contextModule.resolveContext(repo),
   }
-}
-
-const baseOpts = async (
-  daemonResponder?: Parameters<typeof makeFakeDaemon>[0],
-): Promise<InProcessOptions> => {
-  const fake = makeFakeDaemon(daemonResponder)
-  const { store, ctx } = await loadStoreAndCtx()
-  return { store, ctx, daemon: fake }
 }
 
 beforeEach(() => {

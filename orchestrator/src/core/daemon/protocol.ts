@@ -1,7 +1,7 @@
 import type { Socket } from 'node:net'
 import type { Author } from '../author'
 import type { Task, TaskPlan, TaskTag, TaskSpec } from '../queue'
-import type { RunInitOptions, RunInitResult } from '../../workflows/init-workflow'
+import type { RunInitOptions } from '../../workflows/init-workflow'
 import type { DispatchPauseState } from './pause-state'
 import type { SignatureStormState } from '../lib/signature-storm-monitor'
 
@@ -224,8 +224,6 @@ export type DaemonRequest =
 export type DaemonResponse =
   | { ok: true; data?: unknown }
   | { ok: false; error: string; errorCode?: string }
-
-type InitResponseData = RunInitResult
 
 export interface DaemonStatusPayload {
   pid: number

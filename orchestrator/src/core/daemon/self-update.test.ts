@@ -1,7 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import {
   performSelfUpdate,
-  SelfUpdateError,
   SELF_UPDATE_ERRORS,
   parseSidecarDigest,
   sha256hex,
@@ -308,11 +307,11 @@ describe('performSelfUpdate — happy path', () => {
   })
 
   it('uses the version from the update cache in the download URL', async () => {
-    const fetchBuffer = vi.fn(async (url: string) => {
+    const fetchBuffer = vi.fn(async (_url: string) => {
       const binaryData = makeBuffer('binary v1.9.9')
       return binaryData
     })
-    const fetchText = vi.fn(async (url: string) => {
+    const fetchText = vi.fn(async (_url: string) => {
       // We need to return a sidecar that matches the binaryData
       // Since fetchBuffer always returns the same mock, we just use a matching sidecar
       const binaryData = makeBuffer('binary v1.9.9')

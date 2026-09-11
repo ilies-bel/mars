@@ -207,7 +207,7 @@ describe('runPtySession — abort signal fires', () => {
     // done-signal that fires the abort then hangs, simulating a race
     const provider = makeProvider(
       (_sessionId, _cwd, signal) =>
-        new Promise<void>((resolve, reject) => {
+        new Promise<void>((_resolve, reject) => {
           // abort the external signal after a tick, as if the test fires it
           const onAbort = (): void => {
             reject(Object.assign(new Error('Aborted'), { name: 'AbortError' }))

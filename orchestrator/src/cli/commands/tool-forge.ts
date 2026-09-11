@@ -38,7 +38,7 @@ const toolForgeScan: Command = {
     const db = resolveStateClient()
 
     const result = await scanForRecurringHelperGaps(db, {
-      enqueue: async (prompt, arcIds) => {
+      enqueue: async (prompt, _arcIds) => {
         const task = await enqueueTask(prompt, undefined, {
           workflow: 'tool-forge',
           tags: ['tool-forge'],

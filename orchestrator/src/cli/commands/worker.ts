@@ -13,7 +13,7 @@ import {
   type WorkerDeclaration,
 } from '../../core/workers/persisted-registry'
 import { WORKER_PROVIDER } from '../../core/workers'
-import { PROVIDER_MODELS, tierForModel, type ProviderModelTier, type ProviderName } from '../../core/workers/provider-types'
+import { PROVIDER_MODELS, tierForModel, type ProviderModelTier } from '../../core/workers/provider-types'
 import type { Command } from '../command'
 
 const TIER_NAMES = new Set<string>(['flagship', 'balanced', 'fast'])

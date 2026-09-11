@@ -2,7 +2,6 @@ import { spawn } from 'node:child_process'
 import {
   existsSync,
   writeFileSync,
-  unlinkSync,
   readFileSync,
   openSync,
   closeSync,

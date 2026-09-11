@@ -30,22 +30,6 @@ export const LEARNED_RECIPE_OUTCOME_RESOLVER_SUBSCRIBER = 'action-queue-raiser:t
 registerSubscriberName(LEARNED_RECIPE_OUTCOME_RESOLVER_SUBSCRIBER);
 
 /**
- * Fix task statuses that indicate recovery is actively in progress and no
- * human action is required. Matches the "outstanding" set described in the
- * invariant (ADR-0051): the alert surface must be clear while automated
- * recovery is running.
- */
-const OUTSTANDING_FIX_TASK_STATUSES: ReadonlySet<string> = new Set([
-  'queued',
-  'running',
-  'verifying',
-  'merging',
-  'vega-reconciling',
-  'draft',
-  'blocked',
-]);
-
-/**
  * Mirror the same grace window used by recovery-spawn: treat any failure
  * that fired while the breaker was open (or within 60 s of it opening) as
  * environmental. In practice `close()` clears `openedAt`, so the second arm

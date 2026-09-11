@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import { claudeStreamArgs } from '../../lib/git/claude'
 import {
   ASK_USER_DENIED_TOOL,

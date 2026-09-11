@@ -34,7 +34,7 @@ const checkpointRefFor = (key: string): string => {
   if (safe.length === 0) throw new Error(`checkpoint key '${key}' has no usable characters`)
   return `${CHECKPOINT_REF_PREFIX}/${safe}`
 }
-import { resolveContext, getStateDir } from '../../core/context'
+import { resolveContext } from '../../core/context'
 import { type AgentEvent } from '../../core/lib/claude-stream'
 import { IllegalTransitionError, getTask, updateTask } from '../../core/queue'
 import { handleTaskFailureWithFixTask } from '../../core/queue-fix-tasks'
@@ -52,7 +52,6 @@ import {
   resolveWorktree,
   readWorkflowInput as input,
   resolveTaskId,
-  buildPhaseCtx,
   buildTraceIdentity,
   spanStore,
 } from '../context'
@@ -172,9 +171,6 @@ export const merge = async (
 
   const worktree = await resolveWorktree(ctx, taskId, store, opts.worktree)
   const trace = await resolveTrace(ctx, taskId)
-  const emit = (event: AgentEvent): void =>
-    ctx.emit('vcs-supervisor-event', event)
-
   const worktreePath = worktree.path
   const branch = worktree.branch
 

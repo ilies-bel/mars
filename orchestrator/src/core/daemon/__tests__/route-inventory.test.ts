@@ -15,7 +15,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { readFileSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { resolve } from 'node:path'
 import type { HttpServerDeps, HttpServerHandle } from '../http-server'
 import { stubAppServices, stubChatRunner } from './app-services-stub'
 import { loadRecipeCatalog } from '../../lib/recipes'

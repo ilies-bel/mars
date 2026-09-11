@@ -27,9 +27,6 @@ let prevMarsRepo: string | undefined
 const git = (...args: string[]): string =>
   execFileSync('git', args, { cwd: repoDir, encoding: 'utf8' }).trim()
 
-const gitW = (...args: string[]): string =>
-  execFileSync('git', args, { cwd: worktreeDir, encoding: 'utf8' }).trim()
-
 const commitFile = (
   name: string,
   contents: string,

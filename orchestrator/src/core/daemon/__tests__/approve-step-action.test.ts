@@ -68,7 +68,7 @@ const load = async (repo: string) => {
 const parkAtMergeGate = async (
   q: typeof import('../../queue'),
   actionQueue: typeof import('../../lib/action-queue'),
-  taskId?: string,
+  _taskId?: string,
 ): Promise<string> => {
   const task = await q.enqueueTask('gated merge task', undefined, {
     spec: {

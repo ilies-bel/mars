@@ -230,7 +230,6 @@ describe('mars kpi compare — seeded dataset', () => {
       { ...deps, daemon: fake },
     )
 
-    const output = result.out.join('\n')
     // Before column must show $3.00
     const costLine = result.out.find((l) => l.includes('cost-per-merged-task'))
     expect(costLine).toBeDefined()
@@ -380,7 +379,6 @@ describe('mars kpi compare — seeded dataset', () => {
     const recLine = result.out.find((l) => l.includes('recovery-success-rate'))
     expect(recLine).toBeDefined()
     // After column and delta/verdict should all be n/a
-    const parts = recLine!.trim().split(/\s{2,}/)
     // Somewhere in the line: after = n/a, delta = n/a
     expect(recLine).toContain('n/a')
   })

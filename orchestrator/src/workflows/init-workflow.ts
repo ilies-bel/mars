@@ -17,7 +17,7 @@ import {
 import { writeSlimInit } from '../init/writer'
 import { writeInitManifest } from '../init/init-manifest'
 import { queueScaffoldProposals } from '../init/queue-scaffold-proposals'
-import { activatePlugin, realDeps, type ClaudePluginDeps } from '../commands/claude-plugin.js'
+import { activatePlugin, type ClaudePluginDeps } from '../commands/claude-plugin.js'
 import { ensureProjectRegistered } from '../registry/projects.js'
 import { detectCurrentBranch } from '../init/detect-branch.js'
 import { persistIntegrationBranch } from '../core/daemon/config.js'

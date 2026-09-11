@@ -470,7 +470,6 @@ describe('signature-storm — integration via recovery-spawn subscriber', () => 
   // deliberately ignores — see the isDiagnosticSignature suite.
   const STEP = 'setup:install-failed'
   const ENV_ERROR = 'ENOSPC: no space left on device — install failed'
-  const SIG = 'setup:install-failed/unclassified'
 
   /**
    * Fail a fresh origin task and drain the subscriber. Returns the task id.

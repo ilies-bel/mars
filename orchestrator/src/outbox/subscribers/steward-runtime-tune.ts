@@ -16,7 +16,6 @@ import {
   type MachinePressure,
 } from '../../core/lib/machine-pressure.js'
 import {
-  loadDaemonConfig,
   readAutotuneMaxImplement as readAutotuneMaxImplementFromConfig,
   readLeverAutonomyLevel,
   type AutonomyLevel,

@@ -154,7 +154,7 @@ describe('action-queue reconcile', () => {
   })
 
   it('closes open items with null origin_task_id whose payload.originTaskId is absent from tasks', async () => {
-    const { store, ctx, queue, aq } = await loadModules()
+    const { store, ctx, aq } = await loadModules()
 
     // Simulate an item raised before origin_task_id was populated — NULL column,
     // but originTaskId is in the payload JSON. The underlying task has since been

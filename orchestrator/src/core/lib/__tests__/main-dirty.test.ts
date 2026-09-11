@@ -14,7 +14,6 @@ import {
   mkdirSync,
   mkdtempSync,
   rmSync,
-  unlinkSync,
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -468,7 +467,7 @@ describe('spawnOrAttachMainCommitter', () => {
     const c = queue.resolveQueueClient()
     const now = new Date().toISOString()
     const blockerCreatedAt = Date.now()
-    const { parseMainCommiterPayload, serialiseMainCommiterPayload } = await import('../main-dirty')
+    const { serialiseMainCommiterPayload } = await import('../main-dirty')
 
     // Seed a phantom origin task (needed for FK on fix_for_task_id).
     const origin1 = await queue.enqueueTask('origin-1', undefined, { skipTriage: true })

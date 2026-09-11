@@ -36,7 +36,6 @@ import {
   type NotifierBackend,
   type ConditionWatermarkStore,
   type ConditionWatermark,
-  type ConditionNotifyReconcilerDeps,
   __resetForTests,
 } from '../desktop-notify.js';
 import type { PersistedActionQueueRow, ConditionItemsSource } from '../../../core/daemon/view/action-queue.js';

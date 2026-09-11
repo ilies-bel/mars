@@ -173,7 +173,6 @@ describe('checkAndEscalateRequeueCeiling — outage rebase', () => {
     // The daemon was down for (REQUEUE_MAX_RETRY_MS + 60 min) — more than
     // the excess — so effectiveElapsedMs < REQUEUE_MAX_RETRY_MS.
     const retryDurationMs = REQUEUE_MAX_RETRY_MS + 30 * 60 * 1_000
-    const outageMs = REQUEUE_MAX_RETRY_MS + 60 * 60 * 1_000
     const retryStartMs = Date.now() - retryDurationMs
 
     const task = {

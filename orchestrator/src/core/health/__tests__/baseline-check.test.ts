@@ -413,7 +413,7 @@ describe('startBaselinePauseWatcher', () => {
   })
 
   it('does not run the check when dispatch is not paused for baseline', async () => {
-    const { createBaselineHealthChecker, startBaselinePauseWatcher } = await import(
+    const { startBaselinePauseWatcher } = await import(
       '../../daemon/baseline-health.js'
     )
     const { createPauseController } = await import('../../daemon/pause-state.js')
@@ -506,7 +506,7 @@ describe('startBaselinePauseWatcher', () => {
   })
 
   it('does not re-run the check when the SHA has not changed', async () => {
-    const { createBaselineHealthChecker, startBaselinePauseWatcher } = await import(
+    const { startBaselinePauseWatcher } = await import(
       '../../daemon/baseline-health.js'
     )
     const { createPauseController } = await import('../../daemon/pause-state.js')

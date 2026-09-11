@@ -17,7 +17,6 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { resolvePromptSource } from '../../args'
 import { makeFakeDaemon } from '../../test-adapter'
-import type { InProcessOptions } from '../../test-adapter'
 
 let repo: string
 let dbModule: typeof import('../../../core/lib/db') | null = null

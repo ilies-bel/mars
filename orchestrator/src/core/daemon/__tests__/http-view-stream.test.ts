@@ -8,7 +8,7 @@
  *   - Cleanup: disconnecting a client removes it from the hub (no leak)
  *   - Heartbeat: `: ping` comment arrives after the configured interval
  */
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { beforeAll, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'

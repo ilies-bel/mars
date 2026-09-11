@@ -34,8 +34,6 @@ describe('overlapScore', () => {
 
   it('stopwords do not inflate the score for otherwise disjoint strings', async () => {
     // Only stopwords in common — should score 0 because all shared tokens are stopwords
-    const a = 'the and a is'
-    const b = 'the and a is'
     // Same string: identical, but we care that stopword-only strings behave consistently
     // Two strings that share ONLY stopwords should score 0
     const onlyStopA = 'the and for with'

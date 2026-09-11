@@ -275,7 +275,6 @@ describe('merge — zero-commit branch: non-main-committer must fail', () => {
 
 describe('merge — zero-commit branch: main-committer is a no-op', () => {
   it('returns success when the task is a main-committer recovery', async () => {
-    const taskId = 'mars-zero-main-committer-01'
     mockIsZeroCommitBranch.mockResolvedValue(true)
     // Simulate a main-committer task by returning a recoveryPayload with the
     // MAIN_COMMITER_RECIPE. We stub the dynamic import of main-dirty by providing

@@ -12,8 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { resolve, dirname } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { resolve } from 'node:path'
 import {
   runCommandInProcess,
   makeFakeDaemon,
@@ -21,10 +20,6 @@ import {
 } from '../test-adapter'
 import type { DomainTaskStore } from '../../core/store/task-store'
 import type { OrchestratorContext } from '../../core/context'
-
-const here = dirname(fileURLToPath(import.meta.url))
-// src/cli/commands -> src/cli -> src -> orchestrator
-const projectRoot = resolve(here, '..', '..', '..')
 
 let repo: string
 

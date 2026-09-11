@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events'
-import { acquire, makeSem, release, setSemLimit } from './semaphore'
+import { acquire, makeSem, release } from './semaphore'
 import {
   appendFileSync,
   existsSync,
@@ -16,7 +16,6 @@ import { createServer, type Server, type Socket } from 'node:net'
 import { dirname, resolve as resolvePath } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { findExistingMarsDb, resolveContext, resolveDbTarget } from '../context'
-import { integrationBranchName } from '../lib/blocker-resolution-primitives'
 import { openDb, type DbClient } from '../lib/db'
 import { startEmbeddedPg, type EmbeddedPgHandle } from '../lib/pg-server'
 import { importLegacySqlite } from '../../init/import-sqlite'
@@ -120,7 +119,7 @@ import {
 import { promoteProposal, type ProposalField } from '../proposals'
 import { CANCELLED_FAILURE_REASON } from '../lib/blocker-resolution-primitives'
 import type { RecoverAllBlockedTasksResult } from '../blocker-resolution'
-import { Arc, type ProgressEntry } from '../arc'
+import { Arc } from '../arc'
 import { WorkflowTerminalError } from '../lib/workflow-terminal-error'
 import {
   raiseActionQueueItem,
@@ -136,7 +135,7 @@ import {
 import { DAEMON_KILLED_SIGNATURE } from '../lib/retry-budget'
 import { createDefaultManualPark } from '../lib/park-for-human'
 import { computeFailureSignature, setCustomClassifierRules } from '../lib/failure-signature'
-import { openTraceEventStore, sweepOrphanRunningSpans, type TraceEventStore, type TraceEventPhase } from '../lib/trace-events-store'
+import { openTraceEventStore, type TraceEventStore, type TraceEventPhase } from '../lib/trace-events-store'
 import { setAmbientTraceStore } from '../ports/vcs/ambient-trace-store'
 import { setBusLogSink } from '../../bus/log'
 import { daemonPaths, isProcessAlive, readDaemonPid, tryConnectSocket, waitForProcessExit } from './paths'
@@ -152,8 +151,6 @@ import { startHealthScheduler } from '../agents/steward'
 import { createPauseController } from './pause-state'
 import {
   createStormBreaker,
-  stormEscalationSignature,
-  type StormEscalation,
   type StormStewardOutcome,
   type StormStewardReport,
 } from './storm-breaker'
@@ -178,7 +175,7 @@ import { registerViewInvalidation } from '../../bus/view-invalidation'
 import { createConditionItemsSource } from './view/derived-conditions'
 import { resolveStateClient } from '../store/state-client'
 import { buildEventInsert, withWriteTx } from '../lib/outbox'
-import { createTaskFlightTracker, type TaskFlightTracker } from './task-flight-tracker'
+import { createTaskFlightTracker } from './task-flight-tracker'
 import { startScheduler, type DaemonSemaphores } from './scheduler'
 import { startSweeps } from './sweeps'
 import { startDrains } from './drains'
@@ -6396,7 +6393,7 @@ export const startDaemon = async (
         getCompositionRootClient(),
         log,
         handleSignatureStorm,
-        (taskId, failingStep) => {
+        (_taskId, failingStep) => {
           if (!baselineHealthChecker.isBaselinePoisoned()) return null
           if (!failingStep.startsWith('verify:')) return null
           return 'verify:poisoned-baseline'

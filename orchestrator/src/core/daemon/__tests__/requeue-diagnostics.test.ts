@@ -274,7 +274,7 @@ describe('classifyRequeueBreach', () => {
 
   it('classifies as queue-starvation when attempts are sparse and no blocked wait', () => {
     // 1 attempt, no blocked time, low density — queue starved.
-    const w = makeWindow(1, 0) // single attempt with zero span
+    // single attempt with zero span
     // density = 1/1 = 1 (equals floor) → that would be retry-churn...
     // Use 2 attempts over a long span to keep density below the floor.
     const wSparse = makeWindow(2, 10 * 60_000) // 2 attempts over 10 minutes → 0.2/min

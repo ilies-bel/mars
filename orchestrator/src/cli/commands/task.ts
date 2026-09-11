@@ -188,7 +188,6 @@ const taskAdd: Command = {
   ],
   run: async (args, deps) => {
     const live = hasFlag(args, '--live')
-    const deferrableFlag = hasFlag(args, '--deferrable')
     const positional = args.positional
     const unknownFlag = positional.find((arg) => arg.startsWith('--'))
     if (unknownFlag !== undefined) {

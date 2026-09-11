@@ -21,7 +21,7 @@ import {
   STOP_GRACE_PERIOD_MS,
   type StopDeps,
 } from './ui-stop'
-import { getPidFilePath, readPidEntry, stopUi, type UiPidEntry } from './ui'
+import { stopUi, type UiPidEntry } from './ui'
 
 // ---------------------------------------------------------------------------
 // Test harness helpers
