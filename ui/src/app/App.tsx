@@ -32,7 +32,6 @@ import {
   resolvePageRoute,
   routeBase,
 } from '@/shared/routing'
-import type { RouteName } from '@/shared/routing'
 import { useCounts } from '@/entities/counts/useCounts'
 import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
 import { useSseConnected } from '@/shared/sseStatus'
