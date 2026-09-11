@@ -440,7 +440,7 @@ const RECIPE_DEFINITIONS = {
       const status = str(ctx.payload['status'])
       const ageText = typeof ageHours === 'number' ? `${ageHours}h` : 'a while'
       const statusText = status ? ` (status: ${status})` : ''
-      return `Mars is cleaning up a task workspace that has been inactive for ${ageText}${statusText} — no action needed from you (${taskId}).`
+      return `No activity in this task's workspace for ${ageText}${statusText} (${taskId}).`
     },
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,

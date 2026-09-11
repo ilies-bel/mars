@@ -766,8 +766,38 @@ function deriveBaselineBrokenConditions(
 
 /**
  * Derive `stale-worktree` rows by probing the filesystem for worktrees whose
- * last-modified time exceeds the configured threshold.  Only non-terminal tasks
- * that have a worktree directory are checked.
+ * most-recent activity signal exceeds the configured threshold.
+ *
+ * ## Activity signals (cheapest first, all taken via Math.max)
+ *
+ * 1. `<worktree>/.git` mtime — any commit, index write (`git add`), or ref
+ *    update touches this directory.  It is the single best cheap proxy for
+ *    "git work happened inside this tree."
+ * 2. `task.updated_at` — the DB row advances on every status change; useful
+ *    when a task was just dispatched but no commit has landed yet.
+ * 3. `<worktree>` root dir mtime — fallback of last resort.  A task worktree's
+ *    top-level entries (`ui/`, `orchestrator/`, `packages/`, …) are created
+ *    once at setup time and never touched again by normal coding work, so this
+ *    timestamp almost always reflects setup time, not recent activity.
+ *
+ * Taking Math.max of all three means the row only appears when NOTHING has
+ * moved — not just when one cheap proxy has not moved.
+ *
+ * ## `awaiting-human` tasks are excluded entirely
+ *
+ * A task in `awaiting-human` is explicitly parked waiting for a human who is
+ * WORKING INSIDE the worktree.  It is never "idle": human presence is the
+ * expected operating mode.  Raising a stale-worktree row for such a task
+ * would be a false alarm at best and, worse, could cause the operator to
+ * dismiss a whole class of rows on the assumption they are always noise —
+ * exactly the failure mode that matters when the kind eventually drives a
+ * real cleanup action.  Exclude `awaiting-human` unconditionally.
+ *
+ * ## Do NOT walk the tree recursively
+ *
+ * This function runs on an action-queue READ path on every poll, once per
+ * candidate worktree.  A recursive stat of a repo-sized tree here is not
+ * acceptable.  The three probes above are O(1) each.
  */
 async function deriveStaleWorktreeConditions(
   client: DbClient,
@@ -781,9 +811,10 @@ async function deriveStaleWorktreeConditions(
   })()
   const thresholdMs = thresholdHours * 3_600_000
 
+  // `awaiting-human` is excluded: see doc comment above.
   const result = await client.execute(
     `SELECT id, status, prompt, branch, updated_at FROM tasks
-       WHERE status NOT IN ('done', 'failed', 'dropped')
+       WHERE status NOT IN ('done', 'failed', 'dropped', 'awaiting-human')
        ORDER BY updated_at ASC`,
   )
 
@@ -798,14 +829,33 @@ async function deriveStaleWorktreeConditions(
     }
     const worktreePath = join(repoRoot, '.mars', 'worktrees', task.id)
     if (!existsSync(worktreePath)) continue
-    let mtimeMs: number
+
+    // Collect all available activity signals.
+    let activityMs: number
     try {
-      mtimeMs = statSync(worktreePath).mtimeMs
+      activityMs = statSync(worktreePath).mtimeMs
     } catch {
       continue
     }
-    if (nowMs - mtimeMs <= thresholdMs) continue
-    const ageHours = Math.round((nowMs - mtimeMs) / 3_600_000)
+
+    // Signal 1: <worktree>/.git mtime — moves on every commit / git-add / ref update.
+    const gitPath = join(worktreePath, '.git')
+    if (existsSync(gitPath)) {
+      try {
+        activityMs = Math.max(activityMs, statSync(gitPath).mtimeMs)
+      } catch {
+        // probe failed — fall through to other signals
+      }
+    }
+
+    // Signal 2: task.updated_at from the DB row.
+    const updatedAtMs = new Date(task.updated_at).getTime()
+    if (Number.isFinite(updatedAtMs)) {
+      activityMs = Math.max(activityMs, updatedAtMs)
+    }
+
+    if (nowMs - activityMs <= thresholdMs) continue
+    const ageHours = Math.round((nowMs - activityMs) / 3_600_000)
     rows.push({
       id: deriveId('stale-worktree', task.id),
       kind: 'stale-worktree',
@@ -832,7 +882,7 @@ async function deriveStaleWorktreeConditions(
         updatedAt: task.updated_at,
       },
       context: { taskId: task.id },
-      raisedAt: mtimeMs,
+      raisedAt: activityMs,
       lastSeenAt: nowMs,
       signature: `stale-worktree:${task.id}`,
     })
