@@ -279,3 +279,40 @@ describe('TaskCard – type scale', () => {
     expect(html).not.toContain('text-[10px]')
   })
 })
+
+describe('TaskCard – failed vs blocked visual distinction', () => {
+  it('applies a status-failed background tint to a failed card', () => {
+    const html = renderCard(
+      <TaskCard task={minTask('t-fail-tint', { status: 'failed' })} index={0} />,
+    )
+    // bg-status-failed/10 uses a semantic token (not raw palette) so it passes lint:tokens
+    expect(html).toContain('bg-status-failed/10')
+  })
+
+  it('applies a left-border accent to a failed card for non-colour distinction', () => {
+    const html = renderCard(
+      <TaskCard task={minTask('t-fail-border', { status: 'failed' })} index={0} />,
+    )
+    // The thicker left border is the structural (non-colour) signal distinguishing
+    // a failed card from a blocked card when rendered in greyscale.
+    expect(html).toContain('border-l-2')
+    expect(html).toContain('border-l-status-failed')
+  })
+
+  it('blocked card has no failed tint or left-border accent', () => {
+    const html = renderCard(
+      <TaskCard task={minTask('t-blocked-no-accent', { status: 'blocked' })} index={0} />,
+    )
+    expect(html).not.toContain('bg-status-failed')
+    expect(html).not.toContain('border-l-status-failed')
+  })
+
+  it('failed card does not carry the old bg-primary/10 accent that rendered white', () => {
+    const html = renderCard(
+      <TaskCard task={minTask('t-fail-no-primary', { status: 'failed' })} index={0} />,
+    )
+    // bg-primary/10 resolved as white due to a deep CSS var chain.
+    // It must no longer appear on failed cards.
+    expect(html).not.toContain('bg-primary/10')
+  })
+})

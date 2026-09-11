@@ -51,7 +51,7 @@ export const TaskCard = memo(({ task, index }: Props) => {
 
   const accent =
     task.status === 'failed'
-      ? 'bg-primary/10'
+      ? 'bg-status-failed/10 border-l-2 border-l-status-failed'
       : task.status === 'dropped'
         ? 'opacity-70'
         : ''

@@ -360,6 +360,22 @@
   --input: var(--color-neutral-200);
   --ring: var(--color-flame);                /* #9A4F00 — matches :focus-visible */
   --radius: 0.5rem;                          /* rounded-lg */
+
+  /* ── Bare semantic aliases ─────────────────────────────────────────────────
+   * These four names (no --color- prefix) are referenced by Tailwind-generated
+   * class output and must resolve on :root. They alias the @theme counterparts
+   * above so any code path that uses var(--highlight) etc. finds a value.
+   *
+   * Contrast ratios against --background (#F7F3EE):
+   *   --highlight  #9A4F00  4.7:1  ✓ WCAG AA
+   *   --success    #166534  6.1:1  ✓ WCAG AA
+   *   --warning    #92400E  5.6:1  ✓ WCAG AA  (mirrors --color-warn)
+   *   --danger     #B91C1C  5.3:1  ✓ WCAG AA  (mirrors --color-error)
+   * -------------------------------------------------------------------------*/
+  --highlight: var(--color-flame);           /* #9A4F00 — 4.7:1 on --background */
+  --success:   var(--color-success);         /* #166534 — 6.1:1 on --background */
+  --warning:   var(--color-warn);            /* #92400E — 5.6:1 on --background */
+  --danger:    var(--color-error);           /* #B91C1C — 5.3:1 on --background */
 }
 
 @theme inline {
