@@ -190,15 +190,6 @@ const TASK_RECOVERY_KINDS = new Set([
 ])
 
 /**
- * Phantom-merge condition kinds: task was marked done but no merge SHA was
- * recorded. These are derived conditions (no stored row). The operator should
- * remerge the branch or supersede the task to carry the work forward.
- * `mars continue` would be refused here — the underlying task is `done`,
- * not `failed` — so these kinds get a dedicated carry-forward panel instead.
- */
-const PHANTOM_MERGE_KINDS = new Set(['phantom-merge', 'phantom-merge-unknown'])
-
-/**
  * Kinds whose rows surface only the Chat → link and no action buttons.
  * The reflect and scorer flows are purely conversational — the operator
  * discusses proposals in chat rather than clicking a verb in this view.
@@ -371,7 +362,6 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
   // (refused for non-failed tasks) nor Restart (destructive) is the right CTA.
   // A dedicated carry-forward panel offers Remerge (branch still has commits)
   // and Supersede (carry work forward from checkpoint ref).
-  const isPhantomMerge = PHANTOM_MERGE_KINDS.has(item.kind)
   // A task-recovery row renders its own restart affordance below: guarded by a
   // confirm step that names the branch and says what is lost, or — once the
   // single recovery attempt is spent — deliberately withheld in favour of the
@@ -635,92 +625,7 @@ const TriageRow = ({ item, extraBadges }: TriageRowProps) => {
               </button>
             ))}
 
-            {/* Recovery-exhausted carry-forward panel — only for task-recovery
-                kinds whose single recovery attempt has already been spent. */}
-            {isTaskRecovery && isRecoveryExhausted && (
-              <div
-                className="mt-1 flex w-full flex-col gap-2 rounded border border-warn/30 bg-warn/5 px-3 py-2"
-                data-testid="triage-recovery-exhausted"
-              >
-                <p className="font-mono text-micro text-warn">
-                  Recovery spent — carry the work forward:
-                </p>
-                <div className="flex flex-wrap items-center gap-2">
-                  <code className="font-mono text-micro text-warn/70 select-all">
-                    mars remerge {item.entityId}
-                  </code>
-                  <button
-                    disabled={pending !== null}
-                    onClick={() => void handleVerb('remerge')}
-                    className="rounded border border-warn/60 bg-warn/10 px-2 py-1 font-mono text-micro text-warn transition-colors hover:bg-warn/20 disabled:opacity-50"
-                    data-testid="triage-remerge"
-                  >
-                    {pending === 'remerge' ? '…' : 'Remerge'}
-                  </button>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <code className="font-mono text-micro text-warn/70 select-all">
-                    mars task add --supersede {item.entityId}
-                  </code>
-                  <button
-                    disabled={pending !== null}
-                    onClick={() => void handleVerb('supersede')}
-                    className="rounded border border-warn/40 px-2 py-1 font-mono text-micro text-warn transition-colors hover:bg-warn/10 disabled:opacity-50"
-                    data-testid="triage-supersede"
-                  >
-                    {pending === 'supersede' ? '…' : 'Supersede'}
-                  </button>
-                </div>
-              </div>
-            )}
           </>
-        )}
-
-        {/* ── Phantom-merge carry-forward panel ───────────────────────────────
-            The task is `done` but no merge SHA was recorded — mars continue
-            would be refused (it only works on `failed` tasks). Instead offer
-            Remerge (re-land the branch if it still holds commits) and Supersede
-            (carry the work forward from the checkpoint ref). For the unknown
-            variant (no surviving evidence) only Supersede is applicable. */}
-        {isPhantomMerge && (
-          <div
-            className="mt-1 flex w-full flex-col gap-2 rounded border border-warn/30 bg-warn/5 px-3 py-2"
-            data-testid="triage-phantom-merge-panel"
-          >
-            <p className="font-mono text-micro text-warn">
-              {item.kind === 'phantom-merge'
-                ? 'Marked done — no merge SHA on record. Carry the commits forward:'
-                : 'No surviving evidence — verify manually, then carry forward:'}
-            </p>
-            {item.kind === 'phantom-merge' && (
-              <div className="flex flex-wrap items-center gap-2">
-                <code className="select-all font-mono text-micro text-warn/70">
-                  mars remerge {item.entityId}
-                </code>
-                <button
-                  disabled={pending !== null}
-                  onClick={() => void handleVerb('remerge')}
-                  className="rounded border border-warn/60 bg-warn/10 px-2 py-1 font-mono text-micro text-warn transition-colors hover:bg-warn/20 disabled:opacity-50"
-                  data-testid="triage-remerge"
-                >
-                  {pending === 'remerge' ? '…' : 'Remerge — branch still has commits'}
-                </button>
-              </div>
-            )}
-            <div className="flex flex-wrap items-center gap-2">
-              <code className="select-all font-mono text-micro text-warn/70">
-                mars task add --supersede {item.entityId}
-              </code>
-              <button
-                disabled={pending !== null}
-                onClick={() => void handleVerb('supersede')}
-                className="rounded border border-warn/40 px-2 py-1 font-mono text-micro text-warn transition-colors hover:bg-warn/10 disabled:opacity-50"
-                data-testid="triage-supersede"
-              >
-                {pending === 'supersede' ? '…' : 'Supersede — run from checkpoint'}
-              </button>
-            </div>
-          </div>
         )}
 
         {/* ── Task-recovery primary actions ────────────────────────────────────

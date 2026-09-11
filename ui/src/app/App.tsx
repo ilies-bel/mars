@@ -189,6 +189,14 @@ const AppInner = () => {
   const sseConnected = useSseConnected()
   useTabTitleBadge(countNeedsYou(aqItems), sseConnected)
 
+  // Server-sent verbs for the currently-open task drawer. Found by matching the
+  // drawer's taskId against the action queue's entityId. When present, the
+  // drawer renders these verbs instead of deriving them from recoveryExhausted
+  // locally — keeping the triage row and the drawer in agreement.
+  const drawerFailedVerbs = taskId
+    ? (aqItems.find((item) => item.entityId === taskId)?.verbs ?? undefined)
+    : undefined
+
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-background">
       <AlertNotifier />
@@ -241,6 +249,7 @@ const AppInner = () => {
             tasks={tasks ?? []}
             proposals={proposals}
             activeStepName={activeStepName}
+            failedVerbs={drawerFailedVerbs}
           />
         </FallbackBoundary>
       ) : null}

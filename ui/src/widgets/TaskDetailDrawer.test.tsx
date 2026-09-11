@@ -2763,7 +2763,8 @@ describe('TaskDetailDrawer – proposal mode (slice-3 no-regression)', () => {
 // ---------------------------------------------------------------------------
 
 describe('RecoveryCommands', () => {
-  it('leads with continue and marks restart as the lossy one', () => {
+  it('leads with continue and marks restart as the lossy one (no server verbs)', () => {
+    // When no verbs are provided, fall back to the static Continue / Restart hints.
     const html = renderToStaticMarkup(
       <RecoveryCommands taskId="mars-c7f01ce6" error="code:context-exhausted" />,
     )
@@ -2775,23 +2776,68 @@ describe('RecoveryCommands', () => {
     expect(html).toContain('Discards the worktree, branch and all commits')
   })
 
-  it('offers the carry-forward verbs when recovery is exhausted', () => {
-    // `mars continue` refuses on these, so suggesting it would send the
-    // operator into a non-zero exit — and reaching for restart from there
-    // discards a branch that has had a coder AND a full recovery spent on it.
+  it('renders server verbs when provided (recovery exhausted + remerge verb)', () => {
+    // Server sends remerge (real commits ahead). RecoveryCommands must render it.
     const html = renderToStaticMarkup(
       <RecoveryCommands
         taskId="mars-bff7e039"
-        error="recovery_exhausted:fix-cb2b7dea"
+        error={null}
+        recoveryExhausted={true}
+        verbs={[
+          { op: 'remerge', label: 'Remerge (2 commits)', style: 'primary' },
+        ]}
       />,
     )
+    expect(html).toContain('data-testid="recovery-verb-remerge"')
+    expect(html).toContain('Remerge (2 commits)')
+    // Must NOT render the client-inferred remerge-btn or supersede-btn.
+    expect(html).not.toContain('data-testid="remerge-btn"')
+    expect(html).not.toContain('data-testid="supersede-btn"')
+    // CLI hints: should show `mars remerge mars-bff7e039` (from server verb).
     expect(html).toContain('mars remerge mars-bff7e039')
-    expect(html).toContain('mars task add --supersede mars-bff7e039')
-    // The prose names `mars continue` to explain that it refuses here — but it
-    // must never be offered as a copyable command.
-    expect(html).not.toContain('mars continue mars-bff7e039')
-    expect(html).toContain('will refuse')
-    expect(html.indexOf('mars remerge')).toBeLessThan(html.indexOf('mars restart'))
+  })
+
+  it('renders only restart when verbs=[restart,purge] (nothing ahead, server decides)', () => {
+    // Server sends restart+purge — branch holds nothing. Client must NOT infer
+    // remerge or supersede from recoveryExhausted alone.
+    const html = renderToStaticMarkup(
+      <RecoveryCommands
+        taskId="mars-874b2a81"
+        error={null}
+        recoveryExhausted={true}
+        verbs={[
+          { op: 'restart', label: 'Restart from scratch', style: 'destructive' },
+          { op: 'purge', label: 'Discard task', style: 'destructive' },
+        ]}
+      />,
+    )
+    // No remerge or supersede buttons from client inference.
+    expect(html).not.toContain('data-testid="remerge-btn"')
+    expect(html).not.toContain('data-testid="supersede-btn"')
+    expect(html).not.toContain('data-testid="recovery-verb-remerge"')
+    expect(html).not.toContain('data-testid="recovery-verb-supersede"')
+    // No client-inferred CLI hints for remerge/supersede.
+    expect(html).not.toContain('mars remerge mars-874b2a81')
+    expect(html).not.toContain('mars task add --supersede mars-874b2a81')
+  })
+
+  it('renders copy-verb hint in CLI section for supersede copy verbs', () => {
+    // Server sends copy verb for supersede (checkpoints only).
+    const html = renderToStaticMarkup(
+      <RecoveryCommands
+        taskId="mars-abc999"
+        error={null}
+        recoveryExhausted={true}
+        verbs={[
+          { op: 'copy', label: 'Supersede — run from checkpoint', style: 'default', hint: 'mars task add --supersede mars-abc999' },
+        ]}
+      />,
+    )
+    expect(html).toContain('data-testid="recovery-verb-copy"')
+    // CLI section shows the hint command.
+    expect(html).toContain('mars task add --supersede mars-abc999')
+    // No client-inferred remerge.
+    expect(html).not.toContain('mars remerge mars-abc999')
   })
 })
 
