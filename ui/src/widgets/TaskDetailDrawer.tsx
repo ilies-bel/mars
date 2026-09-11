@@ -549,11 +549,26 @@ const RECOVERY_EXHAUSTED_PREFIX = 'recovery_exhausted:'
 export const RecoveryCommands = ({
   taskId,
   error,
+  recoveryExhausted: recoveryExhaustedProp,
 }: {
   taskId: string
   error: string | null
+  /**
+   * Whether the task's single recovery attempt is already spent. Derived by
+   * the caller from `task.failureReason?.startsWith('recovery_exhausted:')`.
+   * When omitted, falls back to scanning `error` for the legacy prefix string
+   * — but that reads the wrong column and the check silently never fires on
+   * most rows. Always pass this prop for new callers.
+   */
+  recoveryExhausted?: boolean
 }) => {
-  const recoveryExhausted = error?.includes(RECOVERY_EXHAUSTED_PREFIX) ?? false
+  // Prefer the explicit boolean prop (daemon-decided, correct column).
+  // Fall back to the legacy string-scan only when the prop is absent, to
+  // avoid breaking callers that pre-date the prop.
+  const recoveryExhausted =
+    recoveryExhaustedProp !== undefined
+      ? recoveryExhaustedProp
+      : (error?.includes(RECOVERY_EXHAUSTED_PREFIX) ?? false)
   const [confirming, setConfirming] = useState<'restart' | 'drop' | null>(null)
   const [loading, setLoading] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
@@ -1259,7 +1274,11 @@ export const TaskDetailBody = ({
           ) : null}
           {/* Action buttons for failed tasks. */}
           {task.status === 'failed' ? (
-            <RecoveryCommands taskId={task.id} error={task.error} />
+            <RecoveryCommands
+              taskId={task.id}
+              error={task.error}
+              recoveryExhausted={task.failureReason?.startsWith(RECOVERY_EXHAUSTED_PREFIX) ?? false}
+            />
           ) : null}
         </div>
       ) : null}

@@ -146,6 +146,14 @@ export const taskSchema = z.object({
    */
   activityDetail: z.string().nullable().optional(),
   /**
+   * Machine-readable failure reason from `tasks.failure_reason`. Absent on
+   * non-failed or legacy rows. When this starts with `'recovery_exhausted:'`
+   * the task's single recovery attempt is spent — `mars continue` refuses.
+   * Do NOT re-derive this logic from `failureReasonCode`, which is a different
+   * column and never carries the `recovery_exhausted:` prefix.
+   */
+  failureReason: z.string().nullable().optional(),
+  /**
    * Short human-readable summary set at enqueue. Card titles prefer this over
    * `prompt`, which is routinely a multi-paragraph brief on a single line and
    * makes the board unscannable. Null/absent on legacy rows.

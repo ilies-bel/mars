@@ -45,6 +45,19 @@ export type RecipeHumanDetail = {
    * verbs on this card must not read a failed probe as nothing to lose.
    */
   worktreeDirtyCount?: number | null
+  /**
+   * Real (human/coder-authored) commits the task's branch holds ahead of the
+   * integration branch, or `null` when not probed (beyond MAX_DIRTY_PROBES or
+   * repoRoot absent). `null` means "unknown", NOT "zero" — never treat null as
+   * "nothing to lose" (same ADR-0057 rule as worktreeDirtyCount).
+   */
+  realCommitsAhead?: number | null
+  /**
+   * Human-readable consequence string for the Restart action when commits are
+   * at risk — e.g. "Restart discards 2 commits on task/mars-3176234e."
+   * Absent when `realCommitsAhead` is 0 or null.
+   */
+  restartConsequence?: string
   /** Additional kind-specific structured fields. */
   [key: string]: unknown
 }
@@ -301,22 +314,111 @@ const RECIPE_DEFINITIONS = {
         ? `${base} Its working copy holds ${dirty} uncommitted path(s) — Restart and Discard would destroy them; use Continue to keep them.`
         : base
     },
-    humanDetail: (ctx) => ({
-      raisedAt: ctx.raisedAt,
-      entityId: ctx.entityId,
-      failureSignature: str(ctx.payload['failureSignature']),
-      errorExcerpt: str(ctx.payload['errorExcerpt']),
-      branch: str(ctx.payload['branch']),
-      worktree: str(ctx.payload['worktree']),
-      worktreeDirtyCount:
-        typeof ctx.payload['worktreeDirtyCount'] === 'number'
-          ? ctx.payload['worktreeDirtyCount']
-          : null,
-    }),
-    verbs: [
-      { op: 'restart', label: 'Restart', style: 'destructive' },
-      { op: 'purge', label: 'Delete task', style: 'destructive' },
-    ],
+    humanDetail: (ctx) => {
+      const realCommitsAhead =
+        typeof ctx.payload['realCommitsAhead'] === 'number'
+          ? (ctx.payload['realCommitsAhead'] as number)
+          : null
+      const branch =
+        typeof ctx.payload['branch'] === 'string'
+          ? (ctx.payload['branch'] as string)
+          : null
+      const detail: RecipeHumanDetail = {
+        raisedAt: ctx.raisedAt,
+        entityId: ctx.entityId,
+        failureSignature: str(ctx.payload['failureSignature']),
+        errorExcerpt: str(ctx.payload['errorExcerpt']),
+        ...(branch !== null ? { branch } : {}),
+        worktree: str(ctx.payload['worktree']),
+        worktreeDirtyCount:
+          typeof ctx.payload['worktreeDirtyCount'] === 'number'
+            ? (ctx.payload['worktreeDirtyCount'] as number)
+            : null,
+        ...(realCommitsAhead !== null ? { realCommitsAhead } : {}),
+      }
+      if (realCommitsAhead !== null && realCommitsAhead > 0 && branch !== null) {
+        detail['restartConsequence'] =
+          `Restart discards ${realCommitsAhead} commit${realCommitsAhead === 1 ? '' : 's'} on ${branch}.`
+      }
+      return detail
+    },
+    /**
+     * Decision table — mirrors continue-task.ts, does NOT re-derive:
+     *
+     *  recoveryExhausted=false  → continue (primary)
+     *  exhausted + realCommitsAhead > 0  → remerge (primary)
+     *  exhausted + realCommitsAhead=0, checkpoints > 0  → copy supersede command (no one-click primary)
+     *  exhausted + realCommitsAhead=0, checkpoints=0  → restart is the only forward path
+     *  realCommitsAhead=null (not probed)  → no safe-verb claim
+     *
+     * Restart is ALWAYS appended as destructive + needsConfirm. Its label
+     * names the commit count it would discard when commits are at risk, the
+     * same way `recovery-abandoned` does (the correct pattern).
+     */
+    verbs: (ctx) => {
+      const recoveryExhausted = ctx.payload['recoveryExhausted'] === true
+      const realCommitsAhead =
+        typeof ctx.payload['realCommitsAhead'] === 'number'
+          ? (ctx.payload['realCommitsAhead'] as number)
+          : null
+      const checkpointCommitsAhead =
+        typeof ctx.payload['checkpointCommitsAhead'] === 'number'
+          ? (ctx.payload['checkpointCommitsAhead'] as number)
+          : null
+      const branch =
+        typeof ctx.payload['branch'] === 'string'
+          ? (ctx.payload['branch'] as string)
+          : null
+      const taskId =
+        typeof ctx.payload['taskId'] === 'string'
+          ? (ctx.payload['taskId'] as string)
+          : ctx.entityId
+
+      const verbs: RecipeVerb[] = []
+
+      if (!recoveryExhausted) {
+        // Not exhausted: continue is always the safe default — it resumes the
+        // coder on the existing worktree without discarding any commits.
+        verbs.push({ op: 'continue', label: 'Resume on existing worktree', style: 'primary' })
+      } else if (realCommitsAhead === null) {
+        // Not probed (beyond cap or repoRoot absent) — cannot claim any safe
+        // verb. The destructive pair below still requires confirmation.
+      } else if (realCommitsAhead > 0) {
+        // Recovery exhausted, real (human/coder) commits ahead: remerge
+        // re-verifies and merges them without re-running the coder.
+        const n = realCommitsAhead
+        verbs.push({
+          op: 'remerge',
+          label: `Re-verify and merge ${n} commit${n === 1 ? '' : 's'}`,
+          style: 'primary',
+        })
+      } else if (checkpointCommitsAhead !== null && checkpointCommitsAhead > 0) {
+        // Recovery exhausted, checkpoint-only ahead: mars remerge would send
+        // an auto-generated salvage snapshot straight to verify — use supersede
+        // instead so a fresh coder can finish the salvaged work. Supersede needs
+        // a prompt, so it cannot be a one-click op; copy the runnable command.
+        verbs.push({
+          op: 'copy',
+          label: 'Copy supersede command',
+          style: 'default',
+          hint: `mars task add --supersede ${taskId} --prompt-file <path>`,
+        })
+      }
+      // else: exhausted + 0 real + 0 checkpoint → restart is the only forward
+      // path; the destructive pair below communicates this.
+
+      // Restart label names the commit count it would discard when commits are
+      // at risk — an operator reading the label cannot miss what Restart deletes.
+      const restartLabel =
+        realCommitsAhead !== null && realCommitsAhead > 0 && branch !== null
+          ? `Restart — discards ${realCommitsAhead} commit${realCommitsAhead === 1 ? '' : 's'} on ${branch}`
+          : 'Restart'
+
+      verbs.push({ op: 'restart', label: restartLabel, style: 'destructive', needsConfirm: true })
+      verbs.push({ op: 'purge', label: 'Delete task', style: 'destructive', needsConfirm: true })
+
+      return verbs
+    },
   },
 
   'steward-repeat': {

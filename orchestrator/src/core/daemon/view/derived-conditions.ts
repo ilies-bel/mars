@@ -163,6 +163,7 @@ async function deriveFailedConditions(
   nowMs: number,
   baselineCaughtTaskIds: ReadonlySet<string>,
   waveCaughtTaskIds: ReadonlySet<string>,
+  repoRoot?: string,
 ): Promise<PersistedActionQueueRow[]> {
   const result = await client.execute(
     `SELECT t.id, t.failure_signature, t.prompt, t.updated_at, t.failure_reason_code,
@@ -249,6 +250,12 @@ async function deriveFailedConditions(
         // Filled in by the live probe below. Absent/null means "not looked at",
         // which the recipe renders as nothing rather than as "clean".
         worktreeDirtyCount: null as number | null,
+        // Filled by the commits-ahead probe below. Null means "not probed" (beyond
+        // MAX_DIRTY_PROBES cap or repoRoot absent), not "zero" — the recipe must
+        // never read null as safe (ADR-0057: absent/null means unknown, not clean).
+        realCommitsAhead: null as number | null,
+        checkpointCommitsAhead: null as number | null,
+        firstRealCommitSubject: null as string | null,
         // Filled by the recovery-in-flight check below. True when a fix/recovery
         // task is currently live for this failed task (queued/running/verifying/merging).
         // The view layer uses this to classify the row as 'notice' instead of 'alert'.
@@ -311,21 +318,60 @@ async function deriveFailedConditions(
   const { resolveVcs } = await import('../../ports/vcs/registry')
   const vcs = resolveVcs()
   const probeTargets = rows.slice(0, MAX_DIRTY_PROBES)
+
+  // Commits-ahead probe: resolve the integration branch once, outside the
+  // per-row loop. The `classifyCommitsAheadForBranch` call is the SAME
+  // classifier continue-task.ts uses to decide between remerge / supersede /
+  // restart — we import it dynamically here rather than at module top-level
+  // to avoid a static cycle between the view layer and the daemon action layer.
+  // A missing repoRoot means the outer ConditionsDeps did not wire it in —
+  // treat as "not probed" (null) rather than crashing.
+  let integrationBranch: string | null = null
+  if (repoRoot) {
+    const { resolveIntegrationBranch } = await import('../../config/daemon-intervals')
+    integrationBranch = resolveIntegrationBranch()
+  }
+
   for (let i = 0; i < probeTargets.length; i += DIRTY_PROBE_CONCURRENCY) {
     const batch = probeTargets.slice(i, i + DIRTY_PROBE_CONCURRENCY)
     await Promise.all(
       batch.map(async (queueRow) => {
+        // Dirty-worktree probe (unchanged from before).
         const paths = await vcs.listUncommittedPaths(
           typeof queueRow.payload.worktree === 'string' ? queueRow.payload.worktree : null,
         ).catch(() => null)
         if (paths !== null) queueRow.payload.worktreeDirtyCount = paths.length
+
+        // Commits-ahead classification — runs in the SAME bounded loop so we
+        // never add a second git-subprocess pass over the same worktrees.
+        // Null means "not probed"; the recipe renders null as nothing rather
+        // than assuming safe. Rows beyond MAX_DIRTY_PROBES carry null.
+        const branch = typeof queueRow.payload.branch === 'string'
+          ? queueRow.payload.branch
+          : null
+        if (branch && repoRoot && integrationBranch) {
+          try {
+            const { classifyCommitsAheadForBranch } = await import('../continue-task')
+            const classification = await classifyCommitsAheadForBranch(
+              branch,
+              integrationBranch,
+              repoRoot,
+            )
+            queueRow.payload.realCommitsAhead = classification.realCommits.length
+            queueRow.payload.checkpointCommitsAhead = classification.checkpointCommits.length
+            queueRow.payload.firstRealCommitSubject =
+              classification.realCommits[0]?.subject ?? null
+          } catch {
+            // Probe failed (branch missing, git error) — leave null ("not probed").
+          }
+        }
       }),
     )
   }
   if (rows.length > MAX_DIRTY_PROBES) {
     console.warn(
       `[action-queue] ${rows.length - MAX_DIRTY_PROBES} failed row(s) beyond the newest ` +
-        `${MAX_DIRTY_PROBES} were not probed for uncommitted work; their rows omit it rather than claim clean`,
+        `${MAX_DIRTY_PROBES} were not probed for uncommitted work or commits-ahead; their rows omit it rather than claim clean`,
     )
   }
 
@@ -1464,7 +1510,7 @@ export const createConditionItemsSource = (deps: ConditionsDeps): ConditionItems
     ])
 
     const results = await Promise.all([
-      wants('failed') ? deriveFailedConditions(client, nowMs, baselineCaughtTaskIds, waveResult.caughtTaskIds) : [],
+      wants('failed') ? deriveFailedConditions(client, nowMs, baselineCaughtTaskIds, waveResult.caughtTaskIds, deps.repoRoot) : [],
       wants('stale-queued') ? deriveStaleQueuedConditions(client, deps) : [],
       wants('gate-broken') ? deriveGateBrokenConditions(client, nowMs) : [],
       wants('subscriber-stalled') ? deriveSubscriberStalledConditions(client, nowMs) : [],
