@@ -1630,6 +1630,16 @@ export const TriageCauseGroupRow = ({
 
   const bulkVerb = group.bulkResolveVerb ?? derivedBulkVerb
 
+  // Snooze is only offered when EVERY member has a server-sent snooze verb.
+  // Per ADR-0094, many queue rows are derived on read and have no stored row,
+  // so snoozeActionQueueItem will 404 on them by construction. The single-row
+  // path already gets this right — it only renders Snooze when the server
+  // sends the verb. Apply the same precondition here so the group header does
+  // not offer a verb it cannot execute.
+  const canSnoozeAll =
+    group.members.length > 0 &&
+    group.members.every((m) => (m.verbs ?? []).some((v) => v.op === 'snooze'))
+
   // Does every member's output panel say what the header already says?
   // The group is keyed by failure signature, so this is true whenever the
   // members were clustered on the text itself — seventeen disclosures onto
@@ -1691,16 +1701,23 @@ export const TriageCauseGroupRow = ({
     if (pending !== null) return
     setPending('snooze')
     setError(null)
-    try {
-      await Promise.all(
-        group.members.map((member) => snoozeActionQueueItem(member.id, '1h')),
+    const results = await Promise.allSettled(
+      group.members.map((member) => snoozeActionQueueItem(member.id, '1h')),
+    )
+    await qc.invalidateQueries({ queryKey: ['action-queue'] })
+    const failedIndices = results
+      .map((r, i) => (r.status === 'rejected' ? i : null))
+      .filter((i): i is number => i !== null)
+    if (failedIndices.length > 0) {
+      const succeeded = results.length - failedIndices.length
+      const failedIds = failedIndices
+        .map((i) => group.members[i]?.entityId || group.members[i]?.id || String(i))
+        .join(', ')
+      setError(
+        `${succeeded} of ${results.length} snoozed; ${failedIndices.length} could not be snoozed — ${failedIds}`,
       )
-      await qc.invalidateQueries({ queryKey: ['action-queue'] })
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setPending(null)
     }
+    setPending(null)
   }, [pending, group.members, qc])
 
   return (
@@ -1783,14 +1800,16 @@ export const TriageCauseGroupRow = ({
               : `${bulkVerb.label} all ${group.count}`}
           </button>
         )}
-        <button
-          disabled={pending !== null}
-          onClick={() => void handleSnoozeAll()}
-          className="shrink-0 rounded border border-border px-2 py-1 text-micro text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
-          data-testid="cause-group-snooze-all"
-        >
-          Snooze all
-        </button>
+        {canSnoozeAll && (
+          <button
+            disabled={pending !== null}
+            onClick={() => void handleSnoozeAll()}
+            className="shrink-0 rounded border border-border px-2 py-1 text-micro text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+            data-testid="cause-group-snooze-all"
+          >
+            Snooze all
+          </button>
+        )}
       </div>
 
       {error && (

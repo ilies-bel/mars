@@ -31,11 +31,13 @@ const mockPostDecision = vi.fn<[], Promise<Response>>().mockResolvedValue(
 // createChatThread it used to call knew nothing about the row: it minted a new
 // thread per click and opened it blank.
 const mockStartThreadForQueueItem = vi.fn().mockResolvedValue({ id: 'new-thread-id' })
+const mockSnoozeActionQueueItem = vi.fn().mockResolvedValue(undefined)
 
 vi.mock('@/shared/api', () => ({
   invokeAction: (...args: unknown[]) => mockInvokeAction(...args),
   postDecision: (...args: unknown[]) => mockPostDecision(...args),
   startThreadForQueueItem: (...args: unknown[]) => mockStartThreadForQueueItem(...args),
+  snoozeActionQueueItem: (...args: unknown[]) => mockSnoozeActionQueueItem(...args),
 }))
 
 const mockStartThreadFromAlert = vi.fn().mockResolvedValue({ threadId: 'alert-thread-id' })
@@ -197,6 +199,7 @@ afterEach(() => {
   mockQueuePending.mockReturnValue(false)
   mockProposalsError.mockReturnValue(null)
   mockFocusedProjectId.mockReturnValue(null)
+  mockSnoozeActionQueueItem.mockResolvedValue(undefined)
   window.location.hash = ''
 })
 
@@ -2108,5 +2111,85 @@ describe('TriageRow – signature-wave verb rules', () => {
     expect(mockInvokeAction).toHaveBeenCalledWith('continue', 'task-1')
     expect(mockInvokeAction).toHaveBeenCalledWith('continue', 'task-2')
     expect(mockInvokeAction).toHaveBeenCalledWith('continue', 'task-3')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// TriageCauseGroupRow – Snooze all
+// ---------------------------------------------------------------------------
+// Items with the same kind + failureReasonCode and different entityIds trigger
+// client-side cause grouping inside buildRenderedRows, producing a
+// TriageCauseGroupRow without needing serverGroups in the mock.
+// ---------------------------------------------------------------------------
+
+describe('TriageCauseGroupRow – Snooze all', () => {
+  /**
+   * Two items that will be cause-grouped together. Caller supplies the verbs
+   * for each member to control whether snooze is available.
+   */
+  const makePair = (
+    aVerbs: ActionQueueItem['verbs'],
+    bVerbs: ActionQueueItem['verbs'],
+  ) => [
+    makeItem('failed', {
+      id: 'grp-a',
+      entityId: 'mars-aaaaaaa001',
+      failureReasonCode: 'slice-timeout',
+      verbs: aVerbs,
+    }),
+    makeItem('failed', {
+      id: 'grp-b',
+      entityId: 'mars-bbbbbbb002',
+      failureReasonCode: 'slice-timeout',
+      verbs: bVerbs,
+    }),
+  ]
+
+  it('renders Snooze all when every member has a server-sent snooze verb', () => {
+    const snoozeVerb = [{ op: 'snooze' as const, label: 'Snooze', style: 'snooze' as const }]
+    mockItems.mockReturnValue(makePair(snoozeVerb, snoozeVerb))
+    const { container } = renderPage()
+    expect(container.querySelector('[data-testid="cause-group-snooze-all"]')).not.toBeNull()
+  })
+
+  it('does not render Snooze all when any member lacks a snooze verb', () => {
+    // Member A has snooze; member B does not — so canSnoozeAll is false.
+    // Both have continue so derivedBulkVerb = Continue all (positive control
+    // that the group header itself still renders).
+    const withSnooze = [
+      { op: 'continue' as const, label: 'Resume on existing worktree', style: 'primary' as const },
+      { op: 'snooze' as const, label: 'Snooze', style: 'snooze' as const },
+    ]
+    const withoutSnooze = [
+      { op: 'continue' as const, label: 'Resume on existing worktree', style: 'primary' as const },
+    ]
+    mockItems.mockReturnValue(makePair(withSnooze, withoutSnooze))
+    const { container } = renderPage()
+    expect(container.querySelector('[data-testid="cause-group-snooze-all"]')).toBeNull()
+    // The group header still renders its other bulk verb (Continue all).
+    expect(container.querySelector('[data-testid="cause-group-bulk-action"]')).not.toBeNull()
+  })
+
+  it('reports a success/failure count on partial bulk failure without HTTP details', async () => {
+    // First snooze succeeds, second rejects — should report "1 of 2 snoozed; 1 could not be snoozed".
+    mockSnoozeActionQueueItem
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('POST /api/actions/snooze → 404: action-queue item not found: grp-b'))
+    const snoozeVerb = [{ op: 'snooze' as const, label: 'Snooze', style: 'snooze' as const }]
+    mockItems.mockReturnValue(makePair(snoozeVerb, snoozeVerb))
+    const { container } = renderPage()
+    const btn = container.querySelector('[data-testid="cause-group-snooze-all"]') as HTMLButtonElement
+    await act(async () => { btn.click() })
+    const errorEl = container.querySelector('[data-testid="cause-group-error"]')
+    expect(errorEl).not.toBeNull()
+    // Reports count — not raw HTTP verb, path, or status code.
+    expect(errorEl?.textContent).toContain('1 of 2 snoozed')
+    expect(errorEl?.textContent).toContain('1 could not be snoozed')
+    // Names the failed member by its task id, not a raw internal row id.
+    expect(errorEl?.textContent).toContain('mars-bbbbbbb002')
+    // Must NOT expose raw HTTP details to the operator.
+    expect(errorEl?.textContent).not.toContain('POST')
+    expect(errorEl?.textContent).not.toContain('404')
+    expect(errorEl?.textContent).not.toContain('/api/')
   })
 })
