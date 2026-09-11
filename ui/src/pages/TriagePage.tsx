@@ -1891,9 +1891,7 @@ const UnreachableState = () => (
     data-testid="triage-unreachable"
     role="alert"
   >
-    <span className="mb-3 text-4xl text-error opacity-40" aria-hidden="true">
-      ⃠
-    </span>
+    <PowerOff className="mb-3 size-10 text-error opacity-40" aria-hidden="true" />
     <p className="mb-1 text-title font-medium text-foreground">
       {DAEMON_DOWN_MESSAGE}
     </p>
@@ -1919,9 +1917,7 @@ const LoadingState = () => (
     data-testid="triage-loading"
     aria-busy="true"
   >
-    <span className="mb-3 text-4xl text-muted-foreground opacity-30" aria-hidden="true">
-      ◌
-    </span>
+    <CircleDashed className="mb-3 size-10 text-muted-foreground opacity-30" aria-hidden="true" />
     <p className="text-label text-muted-foreground">Loading…</p>
   </div>
 )

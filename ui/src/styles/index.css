@@ -549,6 +549,7 @@ a[href][class~="rounded"] {
    *    glyph stays 12px, the thing you can hit is 24px. */
   button::after,
   [role="button"]::after,
+  summary::after,
   /* Anchors that are laid out as controls get the pad too. A bare inline link
    * inside prose is exempt from WCAG 2.5.8 (its size is constrained by the
    * line-height of the surrounding text) and giving it a 24px pad would make
@@ -570,6 +571,7 @@ a[href][class~="rounded"] {
   }
   button,
   [role="button"],
+  summary,
   a[href][class*="inline-flex"],
   a[href][class*="inline-block"] {
     position: relative;

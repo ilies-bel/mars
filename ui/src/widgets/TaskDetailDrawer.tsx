@@ -1183,7 +1183,7 @@ const ChangesSection = ({ taskId, taskStatus, changesData: injected, projectId, 
                     aria-expanded={hasHunks ? isExpanded : undefined}
                   >
                     <span
-                      className={`eyebrow rounded border px-1 ${statusPillClass[f.status] ?? ''} text-muted-foreground`}
+                      className={`eyebrow rounded border px-1 ${statusPillClass[f.status] ?? ''}`}
                     >
                       {f.status}
                     </span>

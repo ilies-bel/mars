@@ -550,7 +550,7 @@ const GroupedRow = memo(({
           className="mb-1 flex w-full items-center gap-2 rounded-md border border-border bg-foreground/[0.04] px-3 py-1 font-mono text-micro text-muted-foreground transition-colors duration-[var(--dur-fast)] hover:bg-foreground/8 hover:text-foreground"
           data-testid={`group-row-${first.id}`}
         >
-          <span>▾</span>
+          <ChevronDown className="size-3 shrink-0" />
           <span className="rounded bg-primary/20 px-1 font-semibold">×{events.length}</span>
           <span className="text-muted-foreground">{relativeTime(first.timestamp, now)} – {relativeTime(last.timestamp, now)}</span>
           <span className="min-w-0 truncate">{summarizeTraceEvent(first)}</span>
@@ -579,7 +579,7 @@ const GroupedRow = memo(({
       data-testid={`group-row-${first.id}`}
       title={`${relativeTime(first.timestamp, now)} – ${relativeTime(last.timestamp, now)}`}
     >
-      <span className="truncate text-micro text-muted-foreground">{relativeTime(first.timestamp, now)}</span>
+      <span className="flex items-center gap-1 overflow-hidden text-micro text-muted-foreground"><ChevronRight className="size-3 shrink-0" /><span className="truncate">{relativeTime(first.timestamp, now)}</span></span>
       <span aria-hidden="true" />
       <span className="w-fit justify-self-start rounded bg-primary/20 px-1.5 font-mono text-micro font-semibold text-muted-foreground">×{events.length}</span>
       {/* The span of the run, in the column the single rows use for source. */}
@@ -668,8 +668,8 @@ const IncidentGroup = memo(({
           className={`flex w-full items-center gap-2 border-b border-l-2 border-b-border/45 px-3 py-1 font-mono text-micro transition-colors duration-[var(--dur-fast)] hover:bg-foreground/5 hover:text-foreground ${severityRowClass(worst)}`}
           data-testid={`incident-group-row-${first.id}`}
         >
-          <span>▾</span>
-          <span className={`eyebrow ${severityColor(worst)} text-muted-foreground`}>{worst}</span>
+          <ChevronDown className="size-3 shrink-0" />
+          <span className={`eyebrow ${severityColor(worst)}`}>{worst}</span>
           <span className="rounded bg-primary/20 px-1 font-semibold">×{events.length}</span>
           {taskId ? <span className="text-muted-foreground">{fullId(taskId)}</span> : null}
           <span className="min-w-0 truncate">{summary}</span>
@@ -697,7 +697,7 @@ const IncidentGroup = memo(({
       style={{ gridTemplateColumns: FLAT_ROW_GRID }}
       data-testid={`incident-group-row-${first.id}`}
     >
-      <span className="truncate text-micro text-muted-foreground">{relativeTime(first.timestamp, now)}</span>
+      <span className="flex items-center gap-1 overflow-hidden text-micro text-muted-foreground"><ChevronRight className="size-3 shrink-0" /><span className="truncate">{relativeTime(first.timestamp, now)}</span></span>
       <span className={`eyebrow font-semibold ${severityColor(worst)}`}>{worst}</span>
       <span className="w-fit justify-self-start rounded bg-primary/20 px-1.5 font-mono text-micro font-semibold text-muted-foreground">×{events.length}</span>
       <span aria-hidden="true" />
@@ -762,7 +762,7 @@ const ToolCallGroup = memo(({
           className="mb-1 flex w-full items-center gap-2 rounded-md border border-border bg-foreground/[0.04] px-3 py-1 font-mono text-micro text-muted-foreground transition-colors duration-[var(--dur-fast)] hover:bg-foreground/8 hover:text-foreground"
           data-testid={`tool-group-row-${first.id}`}
         >
-          <span>▾</span>
+          <ChevronDown className="size-3 shrink-0" />
           <span>{label}</span>
           <span className="text-muted-foreground">{relativeTime(first.timestamp, now)}</span>
         </button>
@@ -789,7 +789,7 @@ const ToolCallGroup = memo(({
       style={{ gridTemplateColumns: FLAT_ROW_GRID }}
       data-testid={`tool-group-row-${first.id}`}
     >
-      <span className="truncate text-micro">{relativeTime(first.timestamp, now)}</span>
+      <span className="flex items-center gap-1 overflow-hidden text-micro"><ChevronRight className="size-3 shrink-0" /><span className="truncate">{relativeTime(first.timestamp, now)}</span></span>
       <span aria-hidden="true" />
       <span className="w-fit justify-self-start rounded bg-primary/20 px-1.5 font-mono text-micro font-semibold text-muted-foreground">×{events.length}</span>
       <span aria-hidden="true" />
