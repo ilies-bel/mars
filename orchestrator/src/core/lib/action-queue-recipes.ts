@@ -46,6 +46,14 @@ export type RecipeHumanDetail = {
    */
   worktreeDirtyCount?: number | null
   /**
+   * Whether the task's worktree directory exists on disk, or `null` when not
+   * probed (beyond MAX_DIRTY_PROBES cap, or no worktree_path stored). `null`
+   * means "unknown", NOT "present" — never treat null as true (ADR-0057).
+   * Do NOT infer this from `worktreeDirtyCount === null`: that is also null for
+   * rows beyond the probe cap, so conflating the two masks a missing worktree.
+   */
+  worktreeExists?: boolean | null
+  /**
    * Real (human/coder-authored) commits the task's branch holds ahead of the
    * integration branch, or `null` when not probed (beyond MAX_DIRTY_PROBES or
    * repoRoot absent). `null` means "unknown", NOT "zero" — never treat null as
@@ -323,6 +331,10 @@ const RECIPE_DEFINITIONS = {
         typeof ctx.payload['branch'] === 'string'
           ? (ctx.payload['branch'] as string)
           : null
+      const worktreeExists =
+        typeof ctx.payload['worktreeExists'] === 'boolean'
+          ? (ctx.payload['worktreeExists'] as boolean)
+          : null
       const detail: RecipeHumanDetail = {
         raisedAt: ctx.raisedAt,
         entityId: ctx.entityId,
@@ -330,6 +342,7 @@ const RECIPE_DEFINITIONS = {
         errorExcerpt: str(ctx.payload['errorExcerpt']),
         ...(branch !== null ? { branch } : {}),
         worktree: str(ctx.payload['worktree']),
+        ...(worktreeExists !== null ? { worktreeExists } : {}),
         worktreeDirtyCount:
           typeof ctx.payload['worktreeDirtyCount'] === 'number'
             ? (ctx.payload['worktreeDirtyCount'] as number)
@@ -343,13 +356,36 @@ const RECIPE_DEFINITIONS = {
       return detail
     },
     /**
-     * Decision table — mirrors continue-task.ts, does NOT re-derive:
+     * Decision table — worktreeExists gates continue; commit counts decide the
+     * rest. Mirrors classifyCommitsAheadForBranch in continue-task.ts — does
+     * NOT re-derive, reads from probed payload fields set by derived-conditions.
      *
-     *  recoveryExhausted=false  → continue (primary)
-     *  exhausted + realCommitsAhead > 0  → remerge (primary)
-     *  exhausted + realCommitsAhead=0, checkpoints > 0  → copy supersede command (no one-click primary)
-     *  exhausted + realCommitsAhead=0, checkpoints=0  → restart is the only forward path
-     *  realCommitsAhead=null (not probed)  → no safe-verb claim
+     *  worktreeExists=null (not probed)
+     *    → no safe-verb claim; destructive pair still confirm-gated
+     *
+     *  worktreeExists=true, recoveryExhausted=false
+     *    → continue (primary) — resumes the coder on the worktree
+     *
+     *  worktreeExists=true, recoveryExhausted=true, realCommitsAhead > 0
+     *    → remerge (primary)
+     *
+     *  worktreeExists=true, recoveryExhausted=true, realCommitsAhead=0, checkpoints > 0
+     *    → copy supersede command
+     *
+     *  worktreeExists=true, recoveryExhausted=true, realCommitsAhead=0, checkpoints=0
+     *    → restart is the only forward path
+     *
+     *  worktreeExists=false, realCommitsAhead > 0 (either exhausted state)
+     *    → remerge (primary) — mars remerge does not need the worktree
+     *
+     *  worktreeExists=false, realCommitsAhead=0, checkpoints > 0
+     *    → copy supersede command
+     *
+     *  worktreeExists=false, realCommitsAhead=0, checkpoints=0
+     *    → restart is the only forward path
+     *
+     *  worktreeExists=false, realCommitsAhead=null (not probed)
+     *    → no safe-verb claim
      *
      * Restart is ALWAYS appended as destructive + needsConfirm. Its label
      * names the commit count it would discard when commits are at risk, the
@@ -357,6 +393,10 @@ const RECIPE_DEFINITIONS = {
      */
     verbs: (ctx) => {
       const recoveryExhausted = ctx.payload['recoveryExhausted'] === true
+      const worktreeExists =
+        typeof ctx.payload['worktreeExists'] === 'boolean'
+          ? (ctx.payload['worktreeExists'] as boolean)
+          : null
       const realCommitsAhead =
         typeof ctx.payload['realCommitsAhead'] === 'number'
           ? (ctx.payload['realCommitsAhead'] as number)
@@ -376,36 +416,60 @@ const RECIPE_DEFINITIONS = {
 
       const verbs: RecipeVerb[] = []
 
-      if (!recoveryExhausted) {
-        // Not exhausted: continue is always the safe default — it resumes the
-        // coder on the existing worktree without discarding any commits.
-        verbs.push({ op: 'continue', label: 'Resume on existing worktree', style: 'primary' })
-      } else if (realCommitsAhead === null) {
-        // Not probed (beyond cap or repoRoot absent) — cannot claim any safe
-        // verb. The destructive pair below still requires confirmation.
-      } else if (realCommitsAhead > 0) {
-        // Recovery exhausted, real (human/coder) commits ahead: remerge
-        // re-verifies and merges them without re-running the coder.
-        const n = realCommitsAhead
-        verbs.push({
-          op: 'remerge',
-          label: `Re-verify and merge ${n} commit${n === 1 ? '' : 's'}`,
-          style: 'primary',
-        })
-      } else if (checkpointCommitsAhead !== null && checkpointCommitsAhead > 0) {
-        // Recovery exhausted, checkpoint-only ahead: mars remerge would send
-        // an auto-generated salvage snapshot straight to verify — use supersede
-        // instead so a fresh coder can finish the salvaged work. Supersede needs
-        // a prompt, so it cannot be a one-click op; copy the runnable command.
-        verbs.push({
-          op: 'copy',
-          label: 'Copy supersede command',
-          style: 'default',
-          hint: `mars task add --supersede ${taskId} --prompt-file <path>`,
-        })
+      if (worktreeExists === null) {
+        // Not probed (beyond MAX_DIRTY_PROBES cap or repoRoot absent) — cannot
+        // claim any safe verb. The destructive pair below still requires confirmation.
+      } else if (worktreeExists) {
+        // Worktree exists. Continue is safe when recovery has not been exhausted.
+        // When exhausted, the coder cannot run there again; fall through to the
+        // commits-ahead classification to determine what can be salvaged.
+        if (!recoveryExhausted) {
+          verbs.push({ op: 'continue', label: 'Resume on existing worktree', style: 'primary' })
+        } else if (realCommitsAhead === null) {
+          // Not probed — cannot claim any safe verb.
+        } else if (realCommitsAhead > 0) {
+          const n = realCommitsAhead
+          verbs.push({
+            op: 'remerge',
+            label: `Re-verify and merge ${n} commit${n === 1 ? '' : 's'}`,
+            style: 'primary',
+          })
+        } else if (checkpointCommitsAhead !== null && checkpointCommitsAhead > 0) {
+          verbs.push({
+            op: 'copy',
+            label: 'Copy supersede command',
+            style: 'default',
+            hint: `mars task add --supersede ${taskId} --prompt-file <path>`,
+          })
+        }
+        // else: exhausted + 0 real + 0 checkpoint → restart is the only forward
+        // path; the destructive pair below communicates this.
+      } else {
+        // Worktree missing (worktreeExists === false). `mars continue` requires
+        // the worktree to be on disk — without it the operation hard-errors or
+        // silently degrades to a destructive restart. Real commits on the branch
+        // are still accessible via `mars remerge`, which does not need the
+        // worktree directory. Decision is based on commit counts alone.
+        if (realCommitsAhead === null) {
+          // Not probed — cannot claim any safe verb.
+        } else if (realCommitsAhead > 0) {
+          const n = realCommitsAhead
+          verbs.push({
+            op: 'remerge',
+            label: `Re-verify and merge ${n} commit${n === 1 ? '' : 's'}`,
+            style: 'primary',
+          })
+        } else if (checkpointCommitsAhead !== null && checkpointCommitsAhead > 0) {
+          verbs.push({
+            op: 'copy',
+            label: 'Copy supersede command',
+            style: 'default',
+            hint: `mars task add --supersede ${taskId} --prompt-file <path>`,
+          })
+        }
+        // else: missing worktree + 0 real + 0 checkpoint → restart is the only
+        // forward path; the destructive pair below communicates this.
       }
-      // else: exhausted + 0 real + 0 checkpoint → restart is the only forward
-      // path; the destructive pair below communicates this.
 
       // Restart label names the commit count it would discard when commits are
       // at risk — an operator reading the label cannot miss what Restart deletes.

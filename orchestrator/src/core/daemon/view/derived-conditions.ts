@@ -250,6 +250,12 @@ async function deriveFailedConditions(
         // Filled in by the live probe below. Absent/null means "not looked at",
         // which the recipe renders as nothing rather than as "clean".
         worktreeDirtyCount: null as number | null,
+        // Explicitly probed by the live loop below (one existsSync per row).
+        // null = not probed (beyond MAX_DIRTY_PROBES cap or no worktree_path).
+        // Never infer from worktreeDirtyCount — that is ALSO null for rows beyond
+        // the cap, so conflating the two meanings is exactly how "missing worktree"
+        // keeps masquerading as "not looked at" (ADR-0057).
+        worktreeExists: null as boolean | null,
         // Filled by the commits-ahead probe below. Null means "not probed" (beyond
         // MAX_DIRTY_PROBES cap or repoRoot absent), not "zero" — the recipe must
         // never read null as safe (ADR-0057: absent/null means unknown, not clean).
@@ -336,10 +342,16 @@ async function deriveFailedConditions(
     const batch = probeTargets.slice(i, i + DIRTY_PROBE_CONCURRENCY)
     await Promise.all(
       batch.map(async (queueRow) => {
+        // Worktree-existence probe — one existsSync per row, cheaper than the
+        // git subprocess probes that follow. Must be an EXPLICIT boolean, never
+        // inferred from worktreeDirtyCount (which is also null for rows beyond
+        // the cap — the two nulls have different meanings). See ADR-0057.
+        const worktreePath =
+          typeof queueRow.payload.worktree === 'string' ? queueRow.payload.worktree : null
+        queueRow.payload.worktreeExists = worktreePath !== null ? existsSync(worktreePath) : null
+
         // Dirty-worktree probe (unchanged from before).
-        const paths = await vcs.listUncommittedPaths(
-          typeof queueRow.payload.worktree === 'string' ? queueRow.payload.worktree : null,
-        ).catch(() => null)
+        const paths = await vcs.listUncommittedPaths(worktreePath).catch(() => null)
         if (paths !== null) queueRow.payload.worktreeDirtyCount = paths.length
 
         // Commits-ahead classification — runs in the SAME bounded loop so we

@@ -875,11 +875,16 @@ const leadDecisionIndex = (decisions: Decision[]): number => {
         handleSuccess()
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err))
+        // Re-fetch the action-queue on failure so the row re-renders with
+        // updated verbs — e.g. a 500 from `continue` when the worktree is
+        // missing should show `remerge` on the next render, not keep the
+        // now-dead button sitting above the error message.
+        void qc.invalidateQueries({ queryKey: ['action-queue'] })
       } finally {
         setPending(null)
       }
     },
-    [pending, handleSuccess, item.id, item.entityId],
+    [pending, handleSuccess, item.id, item.entityId, qc],
   )
 
   // Shareable href that carries this alert's identity — the ChatPage resolves

@@ -458,36 +458,72 @@ describe('failed recipe — verb decision table', () => {
   const verbs = (payload: Record<string, unknown>) =>
     getRecipeVerbs(recipe, makeCtx({ kind: 'failed', entityId: 'mars-abc123', payload }))
 
-  it('recoveryExhausted=false → primary verb is "continue" (Resume on existing worktree)', () => {
-    const v = verbs({ recoveryExhausted: false })
+  it('recoveryExhausted=false, worktreeExists=true → primary verb is "continue" (Resume on existing worktree)', () => {
+    const v = verbs({ recoveryExhausted: false, worktreeExists: true })
     const primary = v.find((x) => x.style === 'primary')
     expect(primary).toMatchObject({ op: 'continue', style: 'primary' })
     expect(primary?.label).toContain('Resume')
   })
 
-  it('recoveryExhausted=false → does NOT emit remerge', () => {
-    const v = verbs({ recoveryExhausted: false, realCommitsAhead: 5 })
+  it('recoveryExhausted=false, worktreeExists=true → does NOT emit remerge', () => {
+    const v = verbs({ recoveryExhausted: false, worktreeExists: true, realCommitsAhead: 5 })
     expect(v.find((x) => x.op === 'remerge')).toBeUndefined()
   })
 
-  it('recoveryExhausted=true, realCommitsAhead=1 → primary verb is "remerge" (NOT continue)', () => {
-    const v = verbs({ recoveryExhausted: true, realCommitsAhead: 1, checkpointCommitsAhead: 0 })
+  // ── Key discriminating case (was the bug) ────────────────────────────────────
+  // Before the fix: worktreeExists was not checked; recoveryExhausted=false
+  // always emitted `continue`, even when the worktree was missing on disk.
+  // After the fix: worktreeExists=false + realCommitsAhead>0 → remerge, NOT continue.
+  it('recoveryExhausted=false, worktreeExists=false, realCommitsAhead=1 → remerge, never continue', () => {
+    const v = verbs({ recoveryExhausted: false, worktreeExists: false, realCommitsAhead: 1, checkpointCommitsAhead: 0 })
+    const primary = v.find((x) => x.style === 'primary')
+    expect(primary).toMatchObject({ op: 'remerge', style: 'primary' })
+    expect(v.find((x) => x.op === 'continue')).toBeUndefined()
+  })
+
+  it('worktreeExists=null (not probed) → no safe-verb claim: neither continue nor remerge emitted', () => {
+    const v = verbs({ recoveryExhausted: false, worktreeExists: null, realCommitsAhead: 1 })
+    expect(v.find((x) => x.op === 'continue')).toBeUndefined()
+    expect(v.find((x) => x.op === 'remerge')).toBeUndefined()
+    // Destructive pair must still be present
+    expect(v.find((x) => x.op === 'restart')).toBeDefined()
+    expect(v.find((x) => x.op === 'purge')).toBeDefined()
+  })
+
+  it('worktreeExists=false, realCommitsAhead=1, recoveryExhausted=true → remerge (same as non-exhausted missing worktree)', () => {
+    const v = verbs({ recoveryExhausted: true, worktreeExists: false, realCommitsAhead: 1, checkpointCommitsAhead: 0 })
+    const primary = v.find((x) => x.style === 'primary')
+    expect(primary).toMatchObject({ op: 'remerge', style: 'primary' })
+    expect(v.find((x) => x.op === 'continue')).toBeUndefined()
+  })
+
+  it('worktreeExists=false, realCommitsAhead=0, checkpointCommitsAhead=0 → restart only (no safe verb)', () => {
+    const v = verbs({ recoveryExhausted: false, worktreeExists: false, realCommitsAhead: 0, checkpointCommitsAhead: 0 })
+    expect(v.find((x) => x.op === 'continue')).toBeUndefined()
+    expect(v.find((x) => x.op === 'remerge')).toBeUndefined()
+    expect(v.find((x) => x.op === 'copy')).toBeUndefined()
+    expect(v.find((x) => x.op === 'restart')).toBeDefined()
+  })
+
+  it('recoveryExhausted=true, worktreeExists=true, realCommitsAhead=1 → primary verb is "remerge" (NOT continue)', () => {
+    const v = verbs({ recoveryExhausted: true, worktreeExists: true, realCommitsAhead: 1, checkpointCommitsAhead: 0 })
     const primary = v.find((x) => x.style === 'primary')
     expect(primary).toMatchObject({ op: 'remerge', style: 'primary' })
     // Must NOT emit continue when recovery is exhausted
     expect(v.find((x) => x.op === 'continue')).toBeUndefined()
   })
 
-  it('recoveryExhausted=true, realCommitsAhead=3 → remerge label names commit count', () => {
-    const v = verbs({ recoveryExhausted: true, realCommitsAhead: 3, checkpointCommitsAhead: 0 })
+  it('recoveryExhausted=true, worktreeExists=true, realCommitsAhead=3 → remerge label names commit count', () => {
+    const v = verbs({ recoveryExhausted: true, worktreeExists: true, realCommitsAhead: 3, checkpointCommitsAhead: 0 })
     const remerge = v.find((x) => x.op === 'remerge')
     expect(remerge?.label).toContain('3')
     expect(remerge?.label).toContain('commits')
   })
 
-  it('recoveryExhausted=true, realCommitsAhead=0, checkpointCommitsAhead=2 → copy verb (supersede hint)', () => {
+  it('recoveryExhausted=true, worktreeExists=true, realCommitsAhead=0, checkpointCommitsAhead=2 → copy verb (supersede hint)', () => {
     const v = verbs({
       recoveryExhausted: true,
+      worktreeExists: true,
       realCommitsAhead: 0,
       checkpointCommitsAhead: 2,
       taskId: 'mars-abc123',
@@ -502,8 +538,8 @@ describe('failed recipe — verb decision table', () => {
     expect(v.find((x) => x.op === 'continue')).toBeUndefined()
   })
 
-  it('recoveryExhausted=true, realCommitsAhead=0, checkpointCommitsAhead=0 → no primary safe verb (restart is the only forward path)', () => {
-    const v = verbs({ recoveryExhausted: true, realCommitsAhead: 0, checkpointCommitsAhead: 0 })
+  it('recoveryExhausted=true, worktreeExists=true, realCommitsAhead=0, checkpointCommitsAhead=0 → no primary safe verb (restart is the only forward path)', () => {
+    const v = verbs({ recoveryExhausted: true, worktreeExists: true, realCommitsAhead: 0, checkpointCommitsAhead: 0 })
     expect(v.find((x) => x.op === 'continue')).toBeUndefined()
     expect(v.find((x) => x.op === 'remerge')).toBeUndefined()
     expect(v.find((x) => x.op === 'copy')).toBeUndefined()
@@ -511,8 +547,8 @@ describe('failed recipe — verb decision table', () => {
     expect(v.find((x) => x.op === 'restart')).toBeDefined()
   })
 
-  it('realCommitsAhead=null (not probed) → no safe-verb claim emitted', () => {
-    const v = verbs({ recoveryExhausted: true, realCommitsAhead: null })
+  it('worktreeExists=true, realCommitsAhead=null (not probed) → no safe-verb claim emitted', () => {
+    const v = verbs({ recoveryExhausted: true, worktreeExists: true, realCommitsAhead: null })
     expect(v.find((x) => x.op === 'continue')).toBeUndefined()
     expect(v.find((x) => x.op === 'remerge')).toBeUndefined()
     expect(v.find((x) => x.op === 'copy')).toBeUndefined()
@@ -520,11 +556,13 @@ describe('failed recipe — verb decision table', () => {
 
   it('restart always appended (all decision table rows)', () => {
     const cases = [
-      { recoveryExhausted: false },
-      { recoveryExhausted: true, realCommitsAhead: 1 },
-      { recoveryExhausted: true, realCommitsAhead: 0, checkpointCommitsAhead: 1 },
-      { recoveryExhausted: true, realCommitsAhead: 0, checkpointCommitsAhead: 0 },
-      { recoveryExhausted: true, realCommitsAhead: null },
+      { recoveryExhausted: false, worktreeExists: true },
+      { recoveryExhausted: true, worktreeExists: true, realCommitsAhead: 1 },
+      { recoveryExhausted: true, worktreeExists: true, realCommitsAhead: 0, checkpointCommitsAhead: 1 },
+      { recoveryExhausted: true, worktreeExists: true, realCommitsAhead: 0, checkpointCommitsAhead: 0 },
+      { recoveryExhausted: true, worktreeExists: true, realCommitsAhead: null },
+      { recoveryExhausted: false, worktreeExists: false, realCommitsAhead: 1 },
+      { worktreeExists: null, realCommitsAhead: 1 },
     ] as Record<string, unknown>[]
 
     for (const payload of cases) {
@@ -535,9 +573,11 @@ describe('failed recipe — verb decision table', () => {
 
   it('purge always appended (all decision table rows)', () => {
     const cases = [
-      { recoveryExhausted: false },
-      { recoveryExhausted: true, realCommitsAhead: 1 },
-      { recoveryExhausted: true, realCommitsAhead: 0, checkpointCommitsAhead: 0 },
+      { recoveryExhausted: false, worktreeExists: true },
+      { recoveryExhausted: true, worktreeExists: true, realCommitsAhead: 1 },
+      { recoveryExhausted: true, worktreeExists: true, realCommitsAhead: 0, checkpointCommitsAhead: 0 },
+      { recoveryExhausted: false, worktreeExists: false, realCommitsAhead: 1 },
+      { worktreeExists: null },
     ] as Record<string, unknown>[]
 
     for (const payload of cases) {
@@ -547,13 +587,13 @@ describe('failed recipe — verb decision table', () => {
   })
 
   it('restart has needsConfirm:true (never fires without user confirmation)', () => {
-    const v = verbs({ recoveryExhausted: false })
+    const v = verbs({ recoveryExhausted: false, worktreeExists: true })
     const restart = v.find((x) => x.op === 'restart')
     expect(restart?.needsConfirm).toBe(true)
   })
 
   it('purge has needsConfirm:true', () => {
-    const v = verbs({ recoveryExhausted: false })
+    const v = verbs({ recoveryExhausted: false, worktreeExists: true })
     const purge = v.find((x) => x.op === 'purge')
     expect(purge?.needsConfirm).toBe(true)
   })
@@ -561,6 +601,7 @@ describe('failed recipe — verb decision table', () => {
   it('restart label names commit count when realCommitsAhead > 0 and branch is set', () => {
     const v = verbs({
       recoveryExhausted: true,
+      worktreeExists: true,
       realCommitsAhead: 2,
       branch: 'task/mars-abc123',
     })
@@ -570,7 +611,7 @@ describe('failed recipe — verb decision table', () => {
   })
 
   it('restart has plain "Restart" label when realCommitsAhead=0', () => {
-    const v = verbs({ recoveryExhausted: true, realCommitsAhead: 0, checkpointCommitsAhead: 0 })
+    const v = verbs({ recoveryExhausted: true, worktreeExists: true, realCommitsAhead: 0, checkpointCommitsAhead: 0 })
     const restart = v.find((x) => x.op === 'restart')
     expect(restart?.label).toBe('Restart')
   })
