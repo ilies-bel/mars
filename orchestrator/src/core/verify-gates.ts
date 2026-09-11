@@ -43,6 +43,74 @@ const VERIFY_GATES_DDL = `CREATE TABLE IF NOT EXISTS verify_gates (
   UNIQUE(scope, name)
 )`
 
+/**
+ * Return `true` when `cmd + args` is a bare whole-suite test invocation that
+ * cannot be scoped to a specific test file.
+ *
+ * Matches the same patterns the `mars task add --verify` CLI rejects:
+ * - `npm test` (any form)
+ * - `npm run test` (bare — no file argument can be passed this way)
+ * - `vitest run` with no positional file argument (also covers `npx vitest run`)
+ *
+ * Exported so the check is independently testable without a DB insertion.
+ */
+export const isWholeSuiteCommand = (cmd: string, args: string[]): boolean => {
+  // npm test — always whole suite (npm test cannot target a specific file)
+  if (cmd === 'npm' && args[0] === 'test') return true
+  // npm run test — always whole suite
+  if (cmd === 'npm' && args[0] === 'run' && args[1] === 'test') return true
+
+  // Detect vitest / npx vitest invocations
+  const isVitest =
+    cmd === 'vitest' || (cmd === 'npx' && args[0] === 'vitest')
+  if (!isVitest) return false
+
+  const vitestArgs = cmd === 'vitest' ? args : args.slice(1)
+  // Strip the optional 'run' subcommand
+  const afterRun = vitestArgs[0] === 'run' ? vitestArgs.slice(1) : vitestArgs
+  // A file argument is any non-flag positional argument
+  const hasFileArg = afterRun.some((arg) => !arg.startsWith('-'))
+  return !hasFileArg
+}
+
+/**
+ * Assert that a required integration-tier gate does not use a whole-suite
+ * test command that cannot complete within its declared budget.
+ *
+ * Called both by {@link addVerifyGate} (defence-in-depth guard) and by CLI
+ * commands before they reach the core insertion path.
+ *
+ * Exported so the assertion is independently testable without a DB insertion.
+ *
+ * Mirror of the whole-suite rejection that `mars task add --verify` already
+ * enforces at enqueue time: a required integration gate holding the merge lock
+ * with a whole-suite command blocks every merge indefinitely.
+ */
+export const assertNotWholeSuiteIntegrationGate = (
+  tier: string | undefined,
+  required: boolean | undefined,
+  cmd: string,
+  args: string[],
+  gateName: string,
+): void => {
+  const isIntegration = tier === 'integration'
+  const isRequired = required !== false // defaults to true
+  if (isIntegration && isRequired && isWholeSuiteCommand(cmd, args)) {
+    throw Object.assign(
+      new Error(
+        `verify gate '${gateName}': a required integration-tier gate must target a specific ` +
+          `test file or scope, not the whole suite. ` +
+          `Bare 'npm test', 'npm run test', and 'vitest run' with no file argument are ` +
+          `rejected — they cannot complete within the integration gate's declared budget ` +
+          `and hold the merge lock indefinitely. ` +
+          `Scope the command to the files your change can actually break, e.g. ` +
+          `cmd='npx' args=['vitest','run','src/path/to/cross-package.test.ts'].`,
+      ),
+      { code: 'WHOLE_SUITE_INTEGRATION_GATE' as const },
+    )
+  }
+}
+
 /** Idempotent CREATE TABLE for the verify_gates table. */
 export const ensureVerifyGatesSchema = async (client: DbTx): Promise<void> => {
   await client.execute(VERIFY_GATES_DDL)
@@ -61,6 +129,32 @@ export const ensureVerifyGatesSchema = async (client: DbTx): Promise<void> => {
   // Added to distinguish "currently passing" from "last run was a failure".
   await client.execute(`ALTER TABLE verify_gates ADD COLUMN IF NOT EXISTS last_pass_at bigint`)
   await client.execute(`UPDATE verify_gates SET state = 'active' WHERE state IS NULL`)
+
+  // Migration: downgrade any required integration-tier gate whose command is a
+  // bare whole-suite invocation. Such commands cannot complete within a
+  // reasonable budget and hold the merge lock indefinitely.
+  //
+  // This mirrors the guardrail `mars task add --verify` already enforces at
+  // task-enqueue time and is applied here so pre-existing broken rows in the
+  // registry are repaired without requiring manual intervention.
+  const integrationGateRows = await client.execute(
+    `SELECT id, cmd, args_json FROM verify_gates WHERE tier = 'integration' AND required = 1`,
+  )
+  for (const row of integrationGateRows.rows as unknown as {
+    id: string
+    cmd: string
+    args_json: string
+  }[]) {
+    let args: string[]
+    try {
+      args = JSON.parse(row.args_json) as string[]
+    } catch {
+      continue
+    }
+    if (isWholeSuiteCommand(row.cmd, args)) {
+      await client.execute(`UPDATE verify_gates SET required = 0 WHERE id = ?`, [row.id])
+    }
+  }
 }
 
 /** Runtime validation shared by gate creation, onboarding, and workflow input. */
@@ -293,6 +387,10 @@ export const addVerifyGate = async (input: VerifyGateInput): Promise<string> => 
 
   // DEC-11: human/operator gates must carry evidence. See assertGateEvidenceProvided.
   assertGateEvidenceProvided(source, evidence, name)
+
+  // A required integration-tier gate with a whole-suite command cannot complete
+  // within its declared budget — it holds the merge lock indefinitely.
+  assertNotWholeSuiteIntegrationGate(tier, required, cmd, args, name)
 
   const createdAt = Date.now()
   await c.execute(
