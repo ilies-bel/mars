@@ -100,14 +100,68 @@ export interface RecordFailureSignatureResult {
 
 const NON_DIAGNOSTIC_SEGMENTS: ReadonlySet<string> = new Set(['', 'unknown', 'unclassified'])
 
-export const isDiagnosticSignature = (signature: string): boolean => {
+/**
+ * Extract the "last diagnostic slot" from a signature — the segment that
+ * carries the most specific diagnostic information.
+ *
+ * For a signature like `setup:unhandled/unclassified`:
+ *   - step = `setup:unhandled`, errorClass = `unclassified`
+ *   - last colon in step is at `setup:`, so slot = `unhandled`
+ *
+ * For a signature like `code/unclassified`:
+ *   - step = `code`, errorClass = `unclassified`
+ *   - no colon in step, so slot = errorClass = `unclassified`
+ *
+ * Shared by `isDiagnosticSignature` and `signatureNamesASharedCause` so the
+ * two callers cannot drift on the parsing rule.
+ */
+const getLastDiagnosticSlot = (signature: string): string => {
   const slash = signature.indexOf('/')
   const failingStep = slash === -1 ? signature : signature.slice(0, slash)
   const errorClass = slash === -1 ? '' : signature.slice(slash + 1).split('/')[0] ?? ''
   const colon = failingStep.lastIndexOf(':')
-  const diagnosticSlot = colon === -1 ? errorClass : failingStep.slice(colon + 1)
-  return !NON_DIAGNOSTIC_SEGMENTS.has(diagnosticSlot)
+  return colon === -1 ? errorClass : failingStep.slice(colon + 1)
 }
+
+export const isDiagnosticSignature = (signature: string): boolean =>
+  !NON_DIAGNOSTIC_SEGMENTS.has(getLastDiagnosticSlot(signature))
+
+/**
+ * Segments that carry no named cause — a superset of `NON_DIAGNOSTIC_SEGMENTS`
+ * that also includes `unhandled`, which is the step-qualifier spelling of
+ * `unclassified`.
+ *
+ * **Why a separate set, not an addition to `NON_DIAGNOSTIC_SEGMENTS`:**
+ * `NON_DIAGNOSTIC_SEGMENTS` is also read by the signature-storm circuit
+ * breaker, which SHOULD trip on repeated `setup:unhandled` failures (the
+ * step alone is enough evidence for the storm detector).  Adding `unhandled`
+ * there would suppress exactly the incident this predicate is designed to
+ * surface.  The two callers ask different questions:
+ *
+ *   - storm breaker: "is this specific enough to count as a repeat?" → same
+ *     step suffix is sufficient → `isDiagnosticSignature`.
+ *   - wave row: "can I claim these N tasks share ONE cause and ONE fix?" → a
+ *     much stronger claim → `signatureNamesASharedCause`.
+ */
+const UNNAMED_CAUSE_SEGMENTS: ReadonlySet<string> = new Set([
+  ...NON_DIAGNOSTIC_SEGMENTS,
+  'unhandled',
+])
+
+/**
+ * Stricter sibling of {@link isDiagnosticSignature}, for callers that assert a
+ * SHARED CAUSE rather than a repeat.
+ *
+ * `unhandled` is the step-qualifier spelling of `unclassified`: it names no
+ * cause, so signatures carrying it must not be used to claim two failures share
+ * the same fix. This predicate rejects them; {@link isDiagnosticSignature}
+ * accepts them (intentionally — the storm breaker must still trip on those).
+ *
+ * Uses {@link getLastDiagnosticSlot} so the slot extraction is exactly one
+ * implementation shared between the two predicates.
+ */
+export const signatureNamesASharedCause = (signature: string): boolean =>
+  !UNNAMED_CAUSE_SEGMENTS.has(getLastDiagnosticSlot(signature))
 
 /** Durable state of the signature-storm circuit breaker. */
 export interface SignatureStormState {

@@ -12,6 +12,7 @@ import {
   isRecoveryFailedReason,
   isTerminalVerdictReason,
   isUnclassifiedSignature,
+  normaliseExcerptKey,
   setCustomClassifierRules,
   STEP_ID_RE,
   stripRecoveryFailedPrefixes,
@@ -1408,5 +1409,43 @@ describe('custom classifier rules', () => {
     )
     expect(sig).toBe('verify:spec-verify-cmd/jest-failure')
     expect(isUnclassifiedSignature(sig)).toBe(false)
+  })
+})
+
+describe('normaliseExcerptKey', () => {
+  it('strips 8+ char hex runs so task-id-bearing errors normalise to the same key', () => {
+    // Six errors that differ only by an embedded 8-char hex task id should all
+    // produce the same normalised key — confirming that signatureWave groups them.
+    const errors = [
+      `code: task mars-1bb3d8e6 re-queued: API unreachable (attempt 1/10)`,
+      `code: task mars-2cc4e9f7 re-queued: API unreachable (attempt 1/10)`,
+      `code: task mars-3dd5fa08 re-queued: API unreachable (attempt 1/10)`,
+      `code: task mars-4ee6ab19 re-queued: API unreachable (attempt 1/10)`,
+      `code: task mars-5ff7bc2a re-queued: API unreachable (attempt 1/10)`,
+      `code: task mars-60a8cd3b re-queued: API unreachable (attempt 1/10)`,
+    ]
+    const keys = errors.map(normaliseExcerptKey)
+    // All six must normalise to the same string.
+    expect(new Set(keys).size).toBe(1)
+    // The common key must be non-empty.
+    expect(keys[0]).not.toBe('')
+  })
+
+  it('returns empty string for an empty input', () => {
+    expect(normaliseExcerptKey('')).toBe('')
+  })
+
+  it('strips UUIDs', () => {
+    const a = normaliseExcerptKey('Error for task 550e8400-e29b-41d4-a716-446655440000: timeout')
+    const b = normaliseExcerptKey('Error for task 660f9511-f30c-52e5-b827-557766551111: timeout')
+    expect(a).toBe(b)
+    expect(a).not.toBe('')
+  })
+
+  it('strips standalone numbers but keeps alphabetic words', () => {
+    const key = normaliseExcerptKey('exited with code 137 on port 8080')
+    expect(key).not.toContain('137')
+    expect(key).not.toContain('8080')
+    expect(key).toContain('exited')
   })
 })

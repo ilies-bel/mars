@@ -20,11 +20,12 @@ import { spawnSync } from 'node:child_process'
 import type { PersistedActionQueueRow, ConditionItemsSource } from './action-queue'
 import type { DispatchPauseState } from '../pause-state'
 import type { DbClient } from '../../lib/db'
-import { RECOVERY_EXHAUSTED_PREFIX, classifyError, isSameFailureFamily } from '../../lib/failure-signature'
+import { RECOVERY_EXHAUSTED_PREFIX, classifyError, failureSignatureFamily, normaliseExcerptKey, firstNonBlankLine } from '../../lib/failure-signature'
 import { findBaselineCaughtTaskIds } from '../../lib/baseline-attribution'
 import { readBudgetConfig } from '../../lib/spend-meter'
 import type { BudgetArcPayload } from '../../lib/payload-contracts/spend'
-import { isDiagnosticSignature, SIGNATURE_STORM_TRIP_THRESHOLD } from '../../lib/signature-storm-monitor'
+import { isDiagnosticSignature, signatureNamesASharedCause, SIGNATURE_STORM_TRIP_THRESHOLD } from '../../lib/signature-storm-monitor'
+import { resolveFailureKind } from '../../lib/failure-kinds'
 import { integrationBranchName } from '../../lib/blocker-resolution-primitives.js'
 
 // ── Stable ID helper ─────────────────────────────────────────────────────────
@@ -978,80 +979,148 @@ interface SignatureWaveResult {
   caughtTaskIds: ReadonlySet<string>
 }
 
+/** Cap for the cause excerpt used in error-keyed wave titles. */
+const WAVE_TITLE_CAUSE_MAX = 80
+
 /**
  * Derive `signature-wave` rows from currently-failed tasks.
  *
  * When N ≥ {@link SIGNATURE_WAVE_THRESHOLD} distinct failed tasks share the
- * same failure family (same {@link isSameFailureFamily} bucket), one wave row
- * is raised in place of the N individual `failed` rows.  The wave row states
- * the shared-cause implication plainly; its `caughtTaskIds` payload lets the
- * operator see which tasks are affected without having to read N identical
- * alerts.
+ * same cause key, one wave row is raised in place of the N individual `failed`
+ * rows.  The wave row states the shared-cause implication plainly; its
+ * `caughtTaskIds` payload lets the operator see which tasks are affected.
  *
  * The result also carries `caughtTaskIds` as a set so
  * {@link deriveFailedConditions} can suppress the individual rows — exactly the
  * shape `baseline-broken` / `baselineCaughtTaskIds` uses.
  *
- * Only diagnostic signatures ({@link isDiagnosticSignature}) are eligible for
- * grouping: generic buckets like `code/unclassified` must not accidentally fold
- * unrelated failures.
+ * ## Two disjoint key spaces
+ *
+ * Only {@link isDiagnosticSignature} tasks are eligible. For eligible tasks
+ * the cause key lives in one of two disjoint key spaces:
+ *
+ * - **Signature-keyed** (`signatureNamesASharedCause(sig)` is true):
+ *   key = `sig\0${failureSignatureFamily(sig)}`.  The family key lets two
+ *   signatures that differ only in step granularity (e.g. `code:commit-contract/uncommitted-changes`
+ *   vs. `code/uncommitted-changes`) join the same group.  This is today's
+ *   behaviour for genuine named signatures like `verify:typecheck/typecheck-error`.
+ *
+ * - **Error-keyed** (signature does NOT name a shared cause — e.g.
+ *   `setup:unhandled/unclassified`): key = `err\0${normaliseExcerptKey(error)}`.
+ *   Tasks with an empty or null error are SKIPPED (no error text = no evidence
+ *   of a shared cause = no claim).  The normaliser strips hex IDs and numbers
+ *   so tasks that differ only by an embedded task-id produce the same key.
+ *
+ * The two key-space prefixes (`sig\0` vs `err\0`) are structurally disjoint:
+ * a named signature and an unnamed cause can never collide into the same bucket,
+ * which prevents `code:worktree-lease-held/unclassified` (named cause → sig key)
+ * from being absorbed into a wave seeded by `code:unhandled/unclassified`
+ * (unnamed cause → err key), even though `failureSignatureFamily` maps both to
+ * `code/unclassified`.
  */
 async function deriveSignatureWaveConditions(
   client: DbClient,
   nowMs: number,
 ): Promise<SignatureWaveResult> {
   const result = await client.execute(
-    `SELECT id, failure_signature, updated_at
+    `SELECT id, failure_signature, error, updated_at
        FROM tasks
       WHERE status = 'failed'
         AND failure_signature IS NOT NULL`,
   )
 
-  // Group tasks by failure family using isSameFailureFamily semantics.
-  // A family is seeded by the first signature seen; subsequent tasks are
-  // folded in if isSameFailureFamily matches any existing family's canonical.
-  // O(n * m) where m = distinct families; acceptable because failed-task count
-  // is bounded in practice (action-queue reads are not hot paths).
-  const families: { canonical: string; taskIds: string[]; latestMs: number }[] = []
+  // Per-group state: canonical signature, key type, first raw error (for
+  // error-keyed title), task ids, and latest update timestamp.
+  interface WaveGroup {
+    canonical: string
+    keyType: 'sig' | 'err'
+    firstRawError: string | null
+    taskIds: string[]
+    latestMs: number
+  }
+
+  const groups = new Map<string, WaveGroup>()
 
   for (const r of result.rows) {
-    const row = r as { id: string; failure_signature: string; updated_at: string | null }
+    const row = r as {
+      id: string
+      failure_signature: string
+      error: string | null
+      updated_at: string | null
+    }
     const sig = row.failure_signature
+    // Non-diagnostic signatures are always skipped (same gate as before).
     if (!isDiagnosticSignature(sig)) continue
 
-    const existing = families.find((f) => isSameFailureFamily(f.canonical, sig))
     const taskMs = row.updated_at ? Date.parse(row.updated_at) : nowMs
+
+    let key: string
+    let keyType: 'sig' | 'err'
+    const firstRawError = row.error ?? null
+
+    if (signatureNamesASharedCause(sig)) {
+      // Signature names a real cause → group by failure family.
+      key = `sig\0${failureSignatureFamily(sig)}`
+      keyType = 'sig'
+    } else {
+      // Signature is unnamed (e.g. setup:unhandled/unclassified) →
+      // group by normalised error text.
+      const normKey = normaliseExcerptKey(row.error ?? '')
+      // No error text = no evidence of a shared cause → skip entirely.
+      if (!normKey) continue
+      key = `err\0${normKey}`
+      keyType = 'err'
+    }
+
+    const existing = groups.get(key)
     if (existing) {
       existing.taskIds.push(row.id)
       if (taskMs > existing.latestMs) existing.latestMs = taskMs
     } else {
-      families.push({ canonical: sig, taskIds: [row.id], latestMs: taskMs })
+      groups.set(key, { canonical: sig, keyType, firstRawError, taskIds: [row.id], latestMs: taskMs })
     }
   }
 
-  const waveGroups = families.filter((f) => f.taskIds.length >= SIGNATURE_WAVE_THRESHOLD)
+  const waveGroups = Array.from(groups.values()).filter(
+    (g) => g.taskIds.length >= SIGNATURE_WAVE_THRESHOLD,
+  )
 
   const caughtTaskIds = new Set<string>(waveGroups.flatMap((g) => g.taskIds))
 
   const rows: PersistedActionQueueRow[] = waveGroups.map((group) => {
     const count = group.taskIds.length
     const sortedIds = group.taskIds.slice().sort()
+
+    // Title names the cause (DEC-18: raw step ids must never be the sole
+    // cause description in an operator-facing field).
+    let causeText: string
+    if (group.keyType === 'sig') {
+      causeText = resolveFailureKind(group.canonical, '').warmTitle
+    } else {
+      // Use the first line of the raw (un-normalised) error of the first member.
+      const firstLine = group.firstRawError ? firstNonBlankLine(group.firstRawError) : ''
+      causeText = firstLine.length > WAVE_TITLE_CAUSE_MAX
+        ? `${firstLine.slice(0, WAVE_TITLE_CAUSE_MAX - 1)}…`
+        : firstLine || group.canonical
+    }
+
     return {
       id: deriveId('signature-wave', group.canonical),
       kind: 'signature-wave',
       priority: 'high',
-      // Cold-reader headline (DEC-18: signature is an internal — disclosed in body, not subject).
-      title: `${count} tasks failed for the same reason — one fix likely unblocks all`,
+      // Title names the cause; raw signature stays in payload for diagnostics.
+      title: `${count} tasks failed the same way: ${causeText} — one fix likely unblocks all`,
       body: [
-        `${count} tasks all failed with the same failure pattern. This is the shape of an`,
+        `${count} tasks all failed the same way. This is the shape of an`,
         `environmental or systemic failure, not a per-task regression.`,
         ``,
-        `Shared failure pattern: ${group.canonical}`,
         `Affected tasks (${count}): ${sortedIds.join(', ')}`,
         ``,
-        `Fix the root cause, then \`mars continue\` or \`mars restart\` each affected task.`,
+        `Fix the root cause, then \`mars continue\` each affected task.`,
       ].join('\n'),
       payload: {
+        // Raw signature lives in payload for detail views / diagnostic scripts
+        // only — it must not appear in the title or body prose (DEC-18).
         signature: group.canonical,
         caughtTaskCount: count,
         caughtTaskIds: sortedIds,

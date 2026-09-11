@@ -1075,6 +1075,36 @@ export const failureSignatureFamily = (signature: string): string => {
 export const isSameFailureFamily = (a: string, b: string): boolean =>
   failureSignatureFamily(a) === failureSignatureFamily(b)
 
+/** Max chars of the normalized excerpt key kept in a synthetic group id. */
+export const NORM_KEY_MAX = 64
+
+/**
+ * Strip variable tokens from a raw error excerpt to produce a stable cause
+ * key. UUIDs, long hex ids, file paths, standalone numbers (port numbers,
+ * exit codes, line numbers), and punctuation/whitespace runs are removed and
+ * the result is lowercased. Two excerpts that differ only in such variable
+ * tokens normalise to the same key and are placed in the same bucket.
+ *
+ * Moved here from `action-queue-group.ts` so `derived-conditions.ts` can
+ * reuse the same normalisation rule without a second copy (ADR-0001: one
+ * implementation, many callers).
+ */
+export const normaliseExcerptKey = (excerpt: string): string =>
+  excerpt
+    // Strip UUIDs before the generic hex strip so the boundary anchors fire.
+    .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '')
+    // Strip hex runs of 8+ chars (short ids, SHAs, …).
+    .replace(/\b[0-9a-f]{8,}\b/gi, '')
+    // Strip file-system paths (absolute or relative starting with /).
+    .replace(/\/[^\s,;)'"]+/g, '')
+    // Strip standalone numbers (exit codes, ports, line numbers, timestamps).
+    .replace(/\b\d+\b/g, '')
+    .toLowerCase()
+    // Collapse any remaining non-alpha characters to a single space.
+    .replace(/[^a-z]+/g, ' ')
+    .trim()
+    .slice(0, NORM_KEY_MAX)
+
 /**
  * SQL twin of {@link failureSignatureFamily}: an expression that computes the
  * family of a signature COLUMN, so a query can select every row in the family
