@@ -38,6 +38,17 @@ describe('PROVIDERS registry', () => {
     expect(PROVIDER_MODELS.gemini.flagship).toMatch(/^gemini-/)
   })
 
+  it('claude tier model ids are current-generation and all three are distinct (no tier collapse)', () => {
+    const { flagship, balanced, fast } = PROVIDER_MODELS.claude
+    // Current generation: Opus 5 / Sonnet 5 / Haiku 4.5
+    expect(flagship).toBe('claude-opus-5')
+    expect(balanced).toBe('claude-sonnet-5')
+    expect(fast).toBe('claude-haiku-4-5-20251001')
+    // Guard: all three tiers must be distinct so a copy-paste collapse is caught immediately.
+    const unique = new Set([flagship, balanced, fast])
+    expect(unique.size).toBe(3)
+  })
+
   it("contains the 'claude' entry", () => {
     expect(Object.keys(PROVIDERS)).toContain('claude')
   })

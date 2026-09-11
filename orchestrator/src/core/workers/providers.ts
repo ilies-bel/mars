@@ -68,9 +68,9 @@ export const usageSemanticsOf = (provider: ProviderName): ProviderUsageSemantics
 
 /** Provider-native model ids behind MARS's semantic worker tiers. */
 const CLAUDE_MODELS: ProviderDescriptor['models'] = {
-  flagship: 'claude-opus-4-6',
-  balanced: 'claude-sonnet-4-6',
-  fast: 'claude-sonnet-4-6',
+  flagship: 'claude-opus-5',
+  balanced: 'claude-sonnet-5',
+  fast: 'claude-haiku-4-5-20251001',
 }
 
 const GEMINI_MODELS: ProviderDescriptor['models'] = {
