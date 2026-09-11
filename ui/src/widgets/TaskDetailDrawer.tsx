@@ -32,6 +32,8 @@ import { relativeTime, formatDuration } from '@/shared/time'
 import { studioHash, taskHash } from '@/shared/routing'
 import { humanizeFailureCode } from '@/shared/actionQueueDetail'
 import { formatTokensLabel } from '@/shared/displayStrings'
+import { isDestructiveVerb } from '@/entities/actionQueue/destructiveVerb'
+import { ConfirmDestructive } from '@/entities/actionQueue/ConfirmDestructive'
 import { taskTitle } from '@/shared/promptTitle'
 import { FallbackSurface } from '@/components/FallbackSurface'
 import { CopyButton } from '@/components/CopyButton'
@@ -598,12 +600,15 @@ export const RecoveryCommands = ({
   // carries none, and it must not be looser than the server's own rule.
   const resumable = branch !== null && branch !== '' && worktreePath !== null && worktreePath !== ''
   const canContinue = !recoveryExhausted && resumable
-  // Primary verbs from the server: filter out restart/drop since those are
-  // always rendered below with dedicated confirmation dialogs.
-  const serverVerbs = (verbsProp ?? []).filter(
-    (v) => v.op !== 'restart' && v.op !== 'drop',
-  )
-  const [confirming, setConfirming] = useState<'restart' | 'drop' | null>(null)
+  // Primary verbs from the server: filter out ALL destructive verbs since every
+  // destructive verb goes through the arm-then-confirm gate (ConfirmDestructive).
+  // Previously this filtered only 'restart' and 'drop'; other destructive verbs
+  // (purge, discard, …) rendered inline with no confirmation — the bug.
+  const serverVerbs = (verbsProp ?? []).filter((v) => !isDestructiveVerb(v))
+  // armedVerb: the destructive verb waiting for a second-click confirmation.
+  // Replaces the hand-rolled `confirming: 'restart' | 'drop' | null` so the
+  // shared ConfirmDestructive component can handle ANY destructive verb.
+  const [armedVerb, setArmedVerb] = useState<AlertVerb | null>(null)
   const [loading, setLoading] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const [moreOpen, setMoreOpen] = useState(false)
@@ -636,7 +641,7 @@ export const RecoveryCommands = ({
       setActionError(err instanceof Error ? err.message : String(err))
     } finally {
       setLoading(null)
-      setConfirming(null)
+      setArmedVerb(null)
     }
   }
 
@@ -646,67 +651,22 @@ export const RecoveryCommands = ({
         <p className="mb-2 text-micro text-error">{actionError}</p>
       ) : null}
 
-      {/* Restart confirm dialog */}
-      {confirming === 'restart' ? (
-        <div
-          data-testid="restart-confirm"
-          className="mb-2 rounded border border-error/40 bg-error/5 px-3 py-2"
-        >
-          <p className="font-mono text-label text-error">
-            Discards the worktree, branch, and all commits on{' '}
-            <code>task/{taskId}</code>. This cannot be undone.
-          </p>
-          <div className="mt-2 flex gap-2">
-            <button
-              data-testid="restart-confirm-yes"
-              onClick={() => void invoke('restart')}
-              disabled={loading === 'restart'}
-              className="rounded border border-error/40 bg-error/10 px-3 py-1 font-mono text-label text-error hover:bg-error/20 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              {loading === 'restart' ? 'Restarting…' : 'Yes, restart'}
-            </button>
-            <button
-              data-testid="restart-confirm-cancel"
-              onClick={() => setConfirming(null)}
-              className="rounded border border-border px-3 py-1 text-label text-muted-foreground hover:bg-foreground/5"
-            >
-              Cancel
-            </button>
-          </div>
+      {/* Destructive verb confirm panel — shared ConfirmDestructive component,
+          the same gate TriagePage uses so "single canonical gate" is actually
+          true across both surfaces (was two divergent hand-rolled panels here). */}
+      {armedVerb !== null && (
+        <div className="mb-2">
+          <ConfirmDestructive
+            verb={armedVerb}
+            entityId={taskId}
+            branch={branch ?? null}
+            continueAvailable={canContinue}
+            pending={loading}
+            onConfirm={() => void invoke(armedVerb.op)}
+            onCancel={() => setArmedVerb(null)}
+          />
         </div>
-      ) : null}
-
-      {/* Drop confirm dialog */}
-      {confirming === 'drop' ? (
-        <div
-          data-testid="drop-confirm"
-          className="mb-2 rounded border border-error/40 bg-error/5 px-3 py-2"
-        >
-          <p className="font-mono text-label text-error">
-            Delete <code>task/{taskId}</code> — removes the task, its worktree,
-            its branch and its blocker edges. If the branch has commits ahead of
-            main the server refuses; override from the CLI with{' '}
-            <code>--force</code>. This can&apos;t be undone.
-          </p>
-          <div className="mt-2 flex gap-2">
-            <button
-              data-testid="drop-confirm-yes"
-              onClick={() => void invoke('drop')}
-              disabled={loading === 'drop'}
-              className="rounded border border-error/40 bg-error/10 px-3 py-1 font-mono text-label text-error hover:bg-error/20 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              {loading === 'drop' ? 'Deleting…' : 'Yes, delete'}
-            </button>
-            <button
-              data-testid="drop-confirm-cancel"
-              onClick={() => setConfirming(null)}
-              className="rounded border border-border px-3 py-1 text-label text-muted-foreground hover:bg-foreground/5"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      ) : null}
+      )}
 
       {/* Action buttons — primary area.
           When the server has sent verbs (`serverVerbs`), render those instead
@@ -731,7 +691,7 @@ export const RecoveryCommands = ({
                     void invoke(verb.op)
                   }
                 }}
-                disabled={loading !== null || confirming !== null}
+                disabled={loading !== null || armedVerb !== null}
                 className={
                   verb.style === 'primary'
                     ? 'rounded border border-highlight/60 bg-highlight/10 px-3 py-1 font-mono text-label text-highlight hover:bg-highlight/20 disabled:cursor-not-allowed disabled:opacity-40'
@@ -748,7 +708,7 @@ export const RecoveryCommands = ({
           <button
             data-testid="continue-btn"
             onClick={() => void invoke('continue')}
-            disabled={loading !== null || confirming !== null}
+            disabled={loading !== null || armedVerb !== null}
             className="rounded border border-highlight/60 bg-highlight/10 px-3 py-1 font-mono text-label text-highlight hover:bg-highlight/20 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {loading === 'continue' ? 'Continuing…' : 'Continue'}
@@ -764,7 +724,7 @@ export const RecoveryCommands = ({
           <button
             type="button"
             onClick={() => setMoreOpen((o) => !o)}
-            disabled={loading !== null || confirming !== null}
+            disabled={loading !== null || armedVerb !== null}
             aria-expanded={moreOpen}
             aria-label="More actions"
             data-testid="task-more-toggle"
@@ -785,8 +745,8 @@ export const RecoveryCommands = ({
               type="button"
               role="menuitem"
               data-testid="restart-btn"
-              onClick={() => { setMoreOpen(false); setConfirming('restart') }}
-              disabled={loading !== null || confirming !== null}
+              onClick={() => { setMoreOpen(false); setArmedVerb({ op: 'restart', label: 'Restart', style: 'destructive' as const }) }}
+              disabled={loading !== null || armedVerb !== null}
               className="flex w-full items-center px-3 py-1.5 text-left font-mono text-micro text-error transition-colors hover:bg-error/5 disabled:cursor-not-allowed disabled:opacity-40"
             >
               Restart
@@ -795,8 +755,8 @@ export const RecoveryCommands = ({
               type="button"
               role="menuitem"
               data-testid="drop-btn"
-              onClick={() => { setMoreOpen(false); setConfirming('drop') }}
-              disabled={loading !== null || confirming !== null}
+              onClick={() => { setMoreOpen(false); setArmedVerb({ op: 'drop', label: 'Delete task', style: 'destructive' as const }) }}
+              disabled={loading !== null || armedVerb !== null}
               className="flex w-full items-center px-3 py-1.5 text-left font-mono text-micro text-error transition-colors hover:bg-error/5 disabled:cursor-not-allowed disabled:opacity-40"
             >
               Delete task

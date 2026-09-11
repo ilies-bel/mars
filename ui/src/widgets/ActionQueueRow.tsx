@@ -13,6 +13,7 @@ import { AlertCard } from '@/widgets/chat/AlertCard'
 import { signatureFamilyPhrase } from '@/shared/causePhrase'
 import { isTaskFailureActionQueueKind, hasResolvableTask } from '@/shared/schemas'
 import type { ActionQueueItem, AlertVerb } from '@/shared/schemas'
+import { isDestructiveVerb } from '@/entities/actionQueue/destructiveVerb'
 
 interface ActionQueueRowProps {
   item: ActionQueueItem
@@ -29,8 +30,8 @@ export const ActionQueueRow = ({ item }: ActionQueueRowProps) => {
       ? recipeVerbs
       : item.actions.map((a) => ({ op: a.op, label: a.label, hint: a.hint }))
 
-  // Style is derived from the op, never from the style field the backend sends,
-  // so one row cannot disagree with the next about what a verb costs.
+  // Style is derived from the op/label, never from the style field the backend
+  // sends, so one row cannot disagree with the next about what a verb costs.
   //
   // `restart` is DESTRUCTIVE, and is named "Restart".
   //
@@ -44,8 +45,12 @@ export const ActionQueueRow = ({ item }: ActionQueueRowProps) => {
   //
   // The reversible verb is now offered as itself, first, on rows that can
   // take it — `continue` is a first-class daemon op.
-  const style = (op: string): AlertVerb['style'] =>
-    (['purge', 'drop', 'restart', 'dismiss', 'reject'] as string[]).includes(op)
+  //
+  // isDestructiveVerb is the single shared predicate (entities/actionQueue/
+  // destructiveVerb.ts); do NOT pass style here — this row derives style from
+  // op/label only, never trusting the server's style field.
+  const style = (op: string, label: string): AlertVerb['style'] =>
+    isDestructiveVerb({ op, label })
       ? 'destructive'
       : op === 'continue'
         ? 'primary'
@@ -64,7 +69,7 @@ export const ActionQueueRow = ({ item }: ActionQueueRowProps) => {
     op: v.op,
     label: canonicalLabel(v.op, v.label),
     hint: v.hint,
-    style: style(v.op),
+    style: style(v.op, canonicalLabel(v.op, v.label)),
   }))
 
   // A failed task with a worktree can always be continued, and that is the

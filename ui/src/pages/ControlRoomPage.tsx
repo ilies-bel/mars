@@ -754,21 +754,20 @@ const GatesSection = () => {
                 Cancel
               </button>
             </DialogClose>
-            <button
+            <ActionButton
               onClick={() => { void handleConfirm() }}
               disabled={acting}
-              className={[
-                'rounded-md px-4 py-2 text-label font-medium text-white transition-colors disabled:opacity-50',
-                pending?.kind === 'retire'
-                  ? 'bg-error hover:bg-error/90'
-                  : pending?.kind === 'quarantine'
-                    ? 'bg-warn hover:bg-warn/90'
-                    : 'bg-primary hover:bg-primary/90',
-              ].join(' ')}
+              pending={acting}
+              variant={pending?.kind === 'retire' ? 'danger' : 'primary'}
+              className={
+                pending?.kind === 'quarantine'
+                  ? 'bg-warn text-white hover:bg-warn/90 border-transparent'
+                  : undefined
+              }
               data-testid="gate-action-confirm-btn"
             >
-              {acting ? 'Working…' : (copy?.button ?? 'Confirm')}
-            </button>
+              {copy?.button ?? 'Confirm'}
+            </ActionButton>
           </DialogFooter>
         </DialogContent>
       </Dialog>

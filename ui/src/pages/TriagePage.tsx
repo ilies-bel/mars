@@ -62,6 +62,8 @@ import { prdTitleFromBody } from '@/shared/memberName'
 import { hasResolvableTask, isConditionActionQueueKind } from '@/shared/schemas'
 import type { ActionQueueItem, ActionQueueKind } from '@/shared/schemas'
 import type { AlertVerb, Decision } from '@/shared/schemas'
+import { isDestructiveVerb } from '@/entities/actionQueue/destructiveVerb'
+import { ConfirmDestructive } from '@/entities/actionQueue/ConfirmDestructive'
 
 // ── Kind display ──────────────────────────────────────────────────────────────
 
@@ -450,121 +452,8 @@ const groupUnit = (kind: string, count: number): string => {
   return count === 1 ? 'task' : 'tasks'
 }
 
-/**
- * What a destructive verb actually destroys, in the operator's terms.
- *
- * The old copy was written for `restart` alone and hard-coded into its panel.
- * Every verb that reaches this gate needs its own sentence: "this can't be
- * undone" tells a reader that they should be careful without telling them
- * what they are being careful about.
- */
-const destructiveConsequence = (
-  op: string,
-  entityId: string,
-  branch: string | null,
-  /**
-   * Whether this row is actually offering Continue. The restart sentence used
-   * to recommend Continue unconditionally — including on rows that withhold
-   * it because the task's one recovery attempt is spent, and on setup
-   * failures with no worktree to continue on. Pointing at a button that is
-   * not on screen is worse than not naming an alternative at all.
-   */
-  continueAvailable: boolean,
-): string => {
-  // An empty branch means the task never got one — it died before setup
-  // finished — so there is nothing on disk for a restart to destroy. Saying
-  // "losing any commits the worker made" there contradicts the task drawer,
-  // which reports the branch as gone for the same task, and it is the drawer
-  // that is right. The two surfaces decide between Continue, Restart and
-  // Delete, so they must not take opposite sides on whether work exists.
-  const hasBranch = branch !== null && branch !== ''
-  const where = hasBranch ? `${entityId} (branch ${branch})` : entityId
-  switch (op) {
-    case 'restart':
-      if (!hasBranch) {
-        return `Restart ${entityId} — re-runs it from setup. No branch was ever created for this task, so nothing on disk is lost.`
-      }
-      return continueAvailable
-        ? `Restart ${where} — wipes the worktree and branch, losing any commits the worker made. Continue reuses them instead. This can't be undone.`
-        : `Restart ${where} — wipes the worktree and branch, losing any commits the worker made. This can't be undone.`
-    case 'purge':
-    case 'drop':
-      return `Delete ${where} — removes the task, its worktree, its branch and its blocker edges. This can't be undone.`
-    case 'discard':
-      return `Discard ${where} — the task is dropped and anything on its branch goes with it. This can't be undone.`
-    default:
-      return `${op} on ${where} — this can't be undone.`
-  }
-}
-
-/**
- * The confirming button's own words.
- *
- * Echoing the trigger's full label gave "Yes, restart (wipe & re-run)" — the
- * parenthetical belongs on the button you are deciding about, not on the one
- * that commits. The consequence sentence beside it already carries the detail.
- */
-const confirmLabel = (op: string, label: string): string => {
-  switch (op) {
-    case 'restart':
-      return 'Yes, restart'
-    case 'purge':
-    case 'drop':
-      return 'Yes, delete'
-    case 'discard':
-      return 'Yes, discard'
-    default:
-      return `Yes, ${label.toLowerCase()}`
-  }
-}
-
-/** The single arm-then-confirm gate every destructive verb passes through. */
-const ConfirmDestructive = ({
-  verb,
-  entityId,
-  branch,
-  continueAvailable,
-  pending,
-  onConfirm,
-  onCancel,
-}: {
-  verb: AlertVerb
-  entityId: string
-  branch: string | null
-  continueAvailable: boolean
-  pending: string | null
-  onConfirm: () => void
-  onCancel: () => void
-}) => (
-  <span
-    className="flex w-full flex-wrap items-center gap-2 rounded border border-error/40 bg-error/5 px-2 py-1.5"
-    data-testid="triage-restart-confirm"
-    data-op={verb.op}
-  >
-    <span className="flex-1 text-micro leading-relaxed text-error">
-      {destructiveConsequence(verb.op, entityId, branch, continueAvailable)}
-    </span>
-    <ActionButton
-      variant="danger"
-      size="sm"
-      disabled={pending !== null}
-      pending={pending === verb.op}
-      onClick={onConfirm}
-      data-testid="triage-restart-confirm-yes"
-    >
-      {confirmLabel(verb.op, verb.label)}
-    </ActionButton>
-    <ActionButton
-      variant="ghost"
-      size="sm"
-      disabled={pending !== null}
-      onClick={onCancel}
-      data-testid="triage-restart-cancel"
-    >
-      Cancel
-    </ActionButton>
-  </span>
-)
+// ConfirmDestructive, destructiveConsequence and confirmLabel have been moved
+// to entities/actionQueue/ConfirmDestructive.tsx — imported above.
 
 const TriageRow = ({ item, extraBadges, groupContext, goalIsAmbiguous = false }: TriageRowProps) => {
   const qc = useQueryClient()
@@ -573,45 +462,15 @@ const TriageRow = ({ item, extraBadges, groupContext, goalIsAmbiguous = false }:
   const [error, setError] = useState<string | null>(null)
   const [resolved, setResolved] = useState(false)
   /**
- * Does this action destroy work?
- *
- * Two reasons the client has to decide this itself rather than trust the row:
- *
- *  - `zDecision` is only { label, endpoint, payload } — the daemon sends no
- *    style hint at all for decisions.
- *  - For verbs it sends one, and it is wrong where it matters most: the
- *    `restart` verb arrives as `style: 'primary'`, so "Restart task" rendered
- *    in the same filled flame chrome as "Copy gate command". In Mars, restart
- *    is not a benign retry — it wipes the worktree and branch and discards the
- *    worker's commits. A UI must never dress that as the safe default, so this
- *    check OVERRIDES the server's style rather than deferring to it.
- *
- * The list is short and matches whole words only. A false positive just makes
- * a safe button quieter; a false negative is the failure that costs work.
- */
-const isDestructiveAction = (label: string): boolean => {
-  // `restart` means two different things and only one of them destroys work.
-  // `restart-daemon` ("Restart engine") bounces the daemon process: in-flight
-  // tasks re-queue and nothing is lost, and on the daemon-drift card it is the
-  // RECOMMENDED action — the copy directly above the button says "you need to
-  // restart the engine". Painting that in the stop colour makes the button
-  // argue with the sentence. `restart` on a TASK is the destructive one.
-  if (/\brestart[-_]?daemon\b|restart engine/i.test(label)) return false
-  return /\b(restart|purge|drop|delete|retire|discard|wipe|remove|abort|reset)\b/i.test(label)
-}
-
-/**
  * Destructiveness of a server-sent decision.
  *
- * The daemon classifies verbs at source (`style: 'destructive'`). This ORs that
- * classification with the label heuristic rather than deferring to it, so the
- * two can only disagree in the safe direction: a decision either side flags as
- * destructive is painted as destructive. That preserves the bias documented
- * above — a false positive only makes a safe button quieter, while a false
- * negative dresses a work-destroying verb as the safe default.
+ * Decision objects only have a label and optional style (no op field), so
+ * isDestructiveVerb is called with the label only. The server's style hint
+ * is ORed with the label heuristic so the two can only disagree in the safe
+ * direction. See entities/actionQueue/destructiveVerb.ts for the full predicate.
  */
 const isDestructiveDecision = (d: Decision): boolean =>
-  d.style === 'destructive' || isDestructiveAction(d.label)
+  isDestructiveVerb({ label: d.label, style: d.style })
 
 /**
  * Index of the row's single primary action, or -1 when every decision is
@@ -862,8 +721,9 @@ const leadDecisionIndex = (decisions: Decision[]): number => {
   // position and was the only thing in red, while Continue, the documented
   // default, sat beside it as a quiet chip. Restart was already behind the
   // "⋯"; there is no reason deletion should be one click closer than a wipe.
-  const isDestructiveVerb = (v: AlertVerb): boolean =>
-    v.style === 'destructive' || isDestructiveAction(v.op) || isDestructiveAction(v.label)
+  // isDestructiveVerb is imported from entities/actionQueue/destructiveVerb —
+  // the single shared predicate replacing both the local array (ActionQueueRow)
+  // and this file's former isDestructiveAction.
   const mainVerbs = isTaskRecovery
     ? withGroupVerb.filter((v) => v.op !== 'copy' && !isDestructiveVerb(v))
     : withGroupVerb
@@ -1314,10 +1174,7 @@ const leadDecisionIndex = (decisions: Decision[]): number => {
             {mainVerbs
               .filter((v) => !item.decisions.some((d) => d.label === v.label))
               .map((verb, vi, shown) => {
-              const destructive =
-                verb.style === 'destructive' ||
-                isDestructiveAction(verb.op) ||
-                isDestructiveAction(verb.label)
+              const destructive = isDestructiveVerb(verb)
               // ONE filled primary per card (the ladder's own rule). The
               // daemon marks several verbs `primary` on the same row — a
               // gate-broken card arrived with "Copy gate command", "Add
@@ -1331,7 +1188,7 @@ const leadDecisionIndex = (decisions: Decision[]): number => {
               const eligible = (v: typeof verb) =>
                 v.style === 'primary' &&
                 v.op !== 'copy' &&
-                !(isDestructiveAction(v.op) || isDestructiveAction(v.label))
+                !isDestructiveVerb(v)
               const leadPrimary = shown.findIndex(eligible) === vi
               return (
               <ActionButton
@@ -1344,7 +1201,7 @@ const leadDecisionIndex = (decisions: Decision[]): number => {
                 size={verb.op === 'copy' ? 'sm' : 'md'}
                 variant={
                   // The destructive check comes FIRST and outranks the
-                  // server-sent style — see isDestructiveAction.
+                  // server-sent style — isDestructiveVerb is the shared predicate.
                   destructive
                     ? 'danger'
                     : verb.style === 'primary' && verb.op !== 'copy' && leadPrimary
@@ -1578,6 +1435,11 @@ export const TriageCauseGroupRow = ({
   const [pending, setPending] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null)
+  // Arm-then-confirm gate for destructive bulk verbs (e.g. a future purge-all).
+  // Today bulkResolveVerb resolves to `continue`, which is safe, so this is
+  // defensive — a recipe shipping a destructive bulk verb must not put a
+  // one-click N-way wipe on the loudest row on the page.
+  const [bulkConfirming, setBulkConfirming] = useState(false)
 
   const kindLabel =
     (KIND_LABEL as Record<string, string | undefined>)[group.kind] ??
@@ -1819,10 +1681,16 @@ export const TriageCauseGroupRow = ({
         >
           {groupAge}
         </span>
-        {bulkVerb && (
+        {bulkVerb && !bulkConfirming && (
           <button
             disabled={pending !== null}
-            onClick={() => void handleBulkAction()}
+            onClick={() => {
+              if (isDestructiveVerb(bulkVerb)) {
+                setBulkConfirming(true)
+              } else {
+                void handleBulkAction()
+              }
+            }}
             className="shrink-0 rounded border border-border bg-primary/10 px-2 py-1 text-micro font-medium text-muted-foreground transition-colors hover:bg-primary/20 disabled:opacity-50"
             data-testid="cause-group-bulk-action"
             data-primary="true"
@@ -1843,6 +1711,41 @@ export const TriageCauseGroupRow = ({
           </button>
         )}
       </div>
+
+      {/* Bulk destructive confirm panel — shown after the header when the
+          operator arms a destructive bulk verb. The copy names the count so
+          the operator knows the blast radius before confirming. */}
+      {bulkVerb && bulkConfirming && (
+        <div
+          className="mt-2 flex flex-wrap items-center gap-2 rounded border border-error/40 bg-error/5 px-2 py-1.5"
+          data-testid="cause-group-bulk-confirm"
+        >
+          <span className="flex-1 text-micro leading-relaxed text-error">
+            {bulkVerb.op === 'purge' || bulkVerb.op === 'drop'
+              ? `Purge ${group.count} task${group.count === 1 ? '' : 's'} — removes each task, its worktree, its branch and its blocker edges. This can't be undone.`
+              : `${bulkVerb.label} on ${group.count} item${group.count === 1 ? '' : 's'}. This can't be undone.`}
+          </span>
+          <ActionButton
+            variant="danger"
+            size="sm"
+            disabled={pending !== null}
+            pending={pending === bulkVerb.op}
+            onClick={() => { setBulkConfirming(false); void handleBulkAction() }}
+            data-testid="cause-group-bulk-confirm-yes"
+          >
+            Yes, {bulkVerb.label.toLowerCase()} all
+          </ActionButton>
+          <ActionButton
+            variant="ghost"
+            size="sm"
+            disabled={pending !== null}
+            onClick={() => setBulkConfirming(false)}
+            data-testid="cause-group-bulk-confirm-cancel"
+          >
+            Cancel
+          </ActionButton>
+        </div>
+      )}
 
       {error && (
         <p

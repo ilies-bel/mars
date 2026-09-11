@@ -16,7 +16,7 @@ import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { TriagePage } from './TriagePage'
-import type { ActionQueueItem } from '@/shared/schemas'
+import type { ActionQueueItem, ActionQueueGroupRow } from '@/shared/schemas'
 
 // ---------------------------------------------------------------------------
 // Module mocks — hoisted before imports resolve
@@ -71,13 +71,17 @@ vi.mock('@/shared/useFocusedProject', () => ({
 }))
 
 const mockItems = vi.fn<[], ActionQueueItem[]>().mockReturnValue([])
+const mockServerGroups = vi.fn<[], ActionQueueGroupRow[]>().mockReturnValue([])
 const mockQueueError = vi.fn<[], Error | null>().mockReturnValue(null)
 const mockQueuePending = vi.fn<[], boolean>().mockReturnValue(false)
 vi.mock('@/entities/actionQueue/useActionQueue', () => ({
   useActionQueue: () => ({
     items: mockItems(),
+    serverGroups: mockServerGroups(),
     error: mockQueueError(),
     isPending: mockQueuePending(),
+    projectsError: null,
+    projectsEmpty: false,
   }),
 }))
 
@@ -195,6 +199,7 @@ afterEach(() => {
   document.body.innerHTML = ''
   vi.clearAllMocks()
   mockItems.mockReturnValue([])
+  mockServerGroups.mockReturnValue([])
   mockQueueError.mockReturnValue(null)
   mockQueuePending.mockReturnValue(false)
   mockProposalsError.mockReturnValue(null)
@@ -2274,5 +2279,89 @@ describe('TriageCauseGroupRow – Snooze all', () => {
     expect(errorEl?.textContent).not.toContain('POST')
     expect(errorEl?.textContent).not.toContain('404')
     expect(errorEl?.textContent).not.toContain('/api/')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// TriageCauseGroupRow — destructive bulk verb requires arm-then-confirm
+// ---------------------------------------------------------------------------
+// A group row whose bulkResolveVerb is destructive (e.g. purge-all) must NOT
+// dispatch immediately on the first click. The user must see the confirm panel
+// and click a second time. This is the same arm-then-confirm contract that
+// individual rows obey.
+
+describe('TriageCauseGroupRow – destructive bulk verb requires confirmation', () => {
+  const makePurgeGroup = (): ActionQueueGroupRow => ({
+    type: 'group' as const,
+    kind: 'failed',
+    count: 3,
+    causeLabel: 'test failure',
+    signature: 'test-sig',
+    firstAt: '2026-01-01T00:00:00Z',
+    lastAt: '2026-01-01T00:00:00Z',
+    priority: 'normal' as const,
+    previewIds: [],
+    members: [
+      makeItem('failed', { id: 'grp-item-1', entityId: 'task-grp-1' }),
+      makeItem('failed', { id: 'grp-item-2', entityId: 'task-grp-2' }),
+      makeItem('failed', { id: 'grp-item-3', entityId: 'task-grp-3' }),
+    ],
+    bulkResolveVerb: { op: 'purge', label: 'Purge', style: 'destructive' as const },
+  })
+
+  beforeEach(() => {
+    mockServerGroups.mockReturnValue([makePurgeGroup()])
+  })
+
+  it('renders the bulk-action button in the initial render', () => {
+    const { container } = renderPage()
+    const btn = container.querySelector('[data-testid="cause-group-bulk-action"]')
+    expect(btn).not.toBeNull()
+    expect(btn?.textContent).toMatch(/purge/i)
+  })
+
+  it('does NOT dispatch invokeAction on first click — shows confirm panel instead', async () => {
+    // This is the parity gate: a destructive bulk op must be arm-then-confirm,
+    // not one-click N-way wipe. The confirm panel must appear, invokeAction
+    // must not fire.
+    const { container } = renderPage()
+    const btn = container.querySelector<HTMLButtonElement>('[data-testid="cause-group-bulk-action"]')!
+    await act(async () => { btn.click() })
+    expect(mockInvokeAction).not.toHaveBeenCalled()
+    expect(container.querySelector('[data-testid="cause-group-bulk-confirm"]')).not.toBeNull()
+  })
+
+  it('dispatches invokeAction for each member after clicking confirm-yes', async () => {
+    const { container } = renderPage()
+    const armBtn = container.querySelector<HTMLButtonElement>('[data-testid="cause-group-bulk-action"]')!
+    await act(async () => { armBtn.click() })
+    const confirmBtn = container.querySelector<HTMLButtonElement>('[data-testid="cause-group-bulk-confirm-yes"]')!
+    await act(async () => { confirmBtn.click() })
+    // All 3 members get dispatched (one invokeAction call per member).
+    expect(mockInvokeAction).toHaveBeenCalledTimes(3)
+  })
+
+  it('cancel hides the confirm panel without dispatching', async () => {
+    const { container } = renderPage()
+    const armBtn = container.querySelector<HTMLButtonElement>('[data-testid="cause-group-bulk-action"]')!
+    await act(async () => { armBtn.click() })
+    const cancelBtn = container.querySelector<HTMLButtonElement>('[data-testid="cause-group-bulk-confirm-cancel"]')!
+    await act(async () => { cancelBtn.click() })
+    expect(mockInvokeAction).not.toHaveBeenCalled()
+    expect(container.querySelector('[data-testid="cause-group-bulk-confirm"]')).toBeNull()
+  })
+
+  it('confirm copy names the blast radius (member count)', () => {
+    // The confirm copy must state how many tasks will be purged so the operator
+    // knows the blast radius before clicking Yes. "Purge 3 tasks" or similar.
+    mockServerGroups.mockReturnValue([
+      { ...makePurgeGroup(), count: 17, members: Array.from({ length: 17 }, (_, i) =>
+          makeItem('failed', { id: `grp-item-${i}`, entityId: `task-grp-${i}` })) },
+    ])
+    const { container } = renderPage()
+    const armBtn = container.querySelector<HTMLButtonElement>('[data-testid="cause-group-bulk-action"]')!
+    act(() => { armBtn.click() })
+    const panel = container.querySelector('[data-testid="cause-group-bulk-confirm"]')
+    expect(panel?.textContent).toMatch(/17/)
   })
 })

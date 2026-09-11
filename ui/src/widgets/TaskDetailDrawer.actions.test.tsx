@@ -178,3 +178,47 @@ describe('RecoveryCommands — restart confirm dialog', () => {
     expect(html).toContain('>Restart<')
   })
 })
+
+// ---------------------------------------------------------------------------
+// RecoveryCommands — server-sent destructive verb gating (parity with TriagePage)
+// ---------------------------------------------------------------------------
+// A server-sent verb that isDestructiveVerb() classifies as destructive must
+// NOT appear as a plain action button in the initial render. It is filtered out
+// of `serverVerbs` and only rendered after the user arms it (second-click
+// confirm). This test uses renderToStaticMarkup so it covers the initial state
+// (armedVerb === null) where the ConfirmDestructive panel is absent.
+//
+// The parity contract: if TriagePage gates a verb through confirm, the drawer
+// must too — the same predicate governs both surfaces.
+
+describe('RecoveryCommands — server-sent destructive verbs are gated', () => {
+  it('a destructive server verb is not rendered as a plain inline button', () => {
+    // A server-sent `purge` verb (destructive) must be filtered out of the
+    // plain verb list. If it appeared as a plain button, the user could wipe a
+    // task with one click — no arm, no confirm.
+    const html = renderToStaticMarkup(
+      <RecoveryCommands
+        taskId="mars-xyz"
+        verbs={[{ op: 'purge', label: 'Delete task', style: 'destructive' }]}
+      />,
+    )
+    // The verb should NOT render a button with data-testid="recovery-verb-purge"
+    // in the initial render — it is filtered out of serverVerbs.
+    expect(html).not.toContain('data-testid="recovery-verb-purge"')
+    // ConfirmDestructive is also absent in the initial render (armedVerb=null).
+    expect(html).not.toContain('data-testid="triage-restart-confirm"')
+  })
+
+  it('a safe server verb IS rendered as a plain inline button', () => {
+    // A safe verb does NOT match isDestructiveVerb so it flows through
+    // serverVerbs unchanged and appears as a recovery-verb-<op> button immediately.
+    const html = renderToStaticMarkup(
+      <RecoveryCommands
+        taskId="mars-xyz"
+        verbs={[{ op: 'view-logs', label: 'View logs', style: 'default' }]}
+      />,
+    )
+    // Safe verbs render directly — data-testid is recovery-verb-<op>.
+    expect(html).toContain('data-testid="recovery-verb-view-logs"')
+  })
+})
