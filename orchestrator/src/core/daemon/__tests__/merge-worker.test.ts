@@ -1937,3 +1937,251 @@ describe('reconcileMergeJobs — boot-order invariant (2026-09-04 regression)', 
     expect(logs.some((l) => l.includes('rebuilt') && l.includes('task-orphan'))).toBe(true)
   })
 })
+
+// ---------------------------------------------------------------------------
+// Regression: integration-tier gate failure marks job FAILED (mars-d267da9c)
+//
+// Production incident adr-c34a88df: integration gate timed out after 20 min.
+// mergeBranch returned { merged: false, integrationGateFailed: true }.
+// merge-worker.ts had NO intercept for this shape, so it fell through to:
+//
+//   result = { status: 'done', result: mergeResult }
+//
+// The task was marked done, cleanup deleted the branch, and the coder's
+// commit was orphaned (reachable only by SHA, no ref pointing at it).
+//
+// Fix 1: intercept `integrationGateFailed` and deliver { status: 'failed' }
+//   with a verify:gate/<slug> error so the merge primitive stamps
+//   failedPhase:'verify' — making `mars continue` rewind to the coder
+//   rather than triggering a destructive restart.
+//
+// Fix 2: require merged===true for the success path. Any { merged: false }
+//   shape not matched by a known-reason intercept fails closed. Keying the
+//   success path off string-reason matching is how this gap opened — a
+//   positive merged===true guard closes it for all future shapes too.
+// ---------------------------------------------------------------------------
+
+describe('startMergeWorker — integration-gate failure and fail-closed guard (regression mars-d267da9c)', () => {
+  beforeEach(() => {
+    _mockIntegrationGates = []
+    _mockVerifierRun.mockReset()
+  })
+
+  it('marks job failed with verify:gate/ prefix when integrationGateFailed is true', async () => {
+    /**
+     * REGRESSION TEST (mars-d267da9c): when mergeFn returns
+     * { merged: false, integrationGateFailed: true }, the worker must:
+     *   - call markFailed (NOT markDone)
+     *   - deliver { status: 'failed', error: 'verify:gate/<slug>:...' }
+     *
+     * The verify:gate/ prefix is what the merge primitive uses to stamp
+     * failedPhase:'verify', letting `mars continue` rewind to the coder
+     * rather than doing a destructive restart.
+     *
+     * On unfixed code, the shape falls through to `result = { status: 'done' }`
+     * and markDone is called — a false-green that orphans the coder's branch.
+     */
+    const mergeFnWithIntegrationGateFailure = async () => ({
+      merged: false as const,
+      integrationGateFailed: true,
+      integrationGateOutput:
+        '=== test (FAIL) [integration] 1200013ms ===\nsome tests timed out',
+      conflictResolved: false,
+      aborted: false,
+      output: '',
+      supervisorConversation: [],
+      vegaSessionId: null,
+      retriesAttempted: 0,
+    })
+
+    const { store, calls, jobs, enqueueJob } = makeFakeStore()
+    const job = enqueueJob({ id: 'j-int-gate-fail', worktreePath: '/tmp' })
+    const { startMergeWorker } = await import('../merge-worker.js')
+    const ac = new AbortController()
+    const handle = startMergeWorker({
+      store,
+      log: () => {},
+      bus: new EventEmitter(),
+      signal: ac.signal,
+      pollIntervalMs: 10,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mergeFn: mergeFnWithIntegrationGateFailure as any,
+    })
+
+    // Integration gate failed: markFailed must be called, not markDone.
+    await waitFor(() => calls.includes(`markFailed:${job.id}`))
+    ac.abort()
+    await handle.stop()
+
+    expect(calls).toContain(`markRunning:${job.id}`)
+    expect(calls).toContain(`markFailed:${job.id}`)
+    expect(calls).not.toContain(`markDone:${job.id}`)
+
+    // The error must have the verify:gate/ prefix so the merge primitive
+    // stamps failedPhase:'verify' — the detail that makes `mars continue`
+    // rewind to the coder (not destroy the worktree with a restart).
+    const failedJob = jobs.get(job.id)
+    expect(failedJob?.error).toMatch(/^verify:gate\/[a-z0-9-]+:/)
+    // The gate name must appear in the error for operator readability.
+    expect(failedJob?.error).toContain('test')
+  })
+
+  it('marks job failed and does NOT call markDone — branch commits stay on branch (Fix 1)', async () => {
+    /**
+     * Verifies that when integrationGateFailed is true, the worker delivers
+     * { status: 'failed' } via resolveMergeJob. The merge primitive receives
+     * this and must NOT clean up the branch — the coder's work is still on
+     * the branch and must remain reachable.
+     *
+     * In unit test terms: markDone is not called, which is the causal
+     * condition that prevents the merge primitive from triggering cleanup.
+     *
+     * The job is pre-inserted into the store BEFORE calling
+     * enqueueMergeJobAndAwait so the function adopts the existing row (no
+     * INSERT needed), sidestepping the fake store's "not used in worker
+     * tests" guard on enqueue.
+     */
+    const mergeFnWithIntegrationGateFailure = async () => ({
+      merged: false as const,
+      integrationGateFailed: true,
+      integrationGateOutput: '=== build (FAIL) [integration] ===\nbuild step failed',
+      conflictResolved: false,
+      aborted: false,
+      output: '',
+      supervisorConversation: [],
+      vegaSessionId: null,
+      retriesAttempted: 0,
+    })
+
+    const { EventEmitter: EE } = await import('node:events')
+    const { enqueueMergeJobAndAwait, startMergeWorker } = await import('../merge-worker.js')
+    const { store, enqueueJob } = makeFakeStore()
+    const bus = new EE()
+    const ac = new AbortController()
+
+    // Pre-insert the job so getActiveMergeJob finds it and enqueueMergeJobAndAwait
+    // skips the INSERT (adopts the existing row). Worker hasn't started yet so
+    // there is no race between insertion and claiming.
+    enqueueJob({ id: 'j-int-gate-branch', taskId: 'task-int-gate-branch', worktreePath: '/tmp' })
+
+    // Register the awaiter. The existing job is adopted; bus.emit wakes the
+    // worker when it starts.
+    const resultPromise = enqueueMergeJobAndAwait({
+      store,
+      bus,
+      taskId: 'task-int-gate-branch',
+      branch: 'task/task-int-gate-branch',
+      worktreePath: '/tmp',
+      integrationBranch: 'main',
+    })
+
+    const handle = startMergeWorker({
+      store,
+      log: () => {},
+      bus,
+      signal: ac.signal,
+      pollIntervalMs: 10,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mergeFn: mergeFnWithIntegrationGateFailure as any,
+    })
+
+    const resolvedResult = await resultPromise
+    ac.abort()
+    await handle.stop()
+
+    // The merge primitive must receive a failed result — NOT done.
+    // A done result would trigger cleanup (removeWorktree → branch deleted).
+    expect(resolvedResult.status).toBe('failed')
+    if (resolvedResult.status === 'failed') {
+      expect(resolvedResult.error).toMatch(/^verify:gate\//)
+    }
+  }, 5_000)
+
+  it('marks job failed when merged=false with unknown shape (fail-closed, Fix 2)', async () => {
+    /**
+     * FAIL-CLOSED GUARD (Fix 2): any { merged: false } shape not matched by a
+     * known-reason intercept must fail closed rather than falling through to the
+     * success path.
+     *
+     * Scenario: a future mergeFn returns a new non-merged shape (no reason, no
+     * integrationGateFailed). On unfixed code this falls through to
+     * `result = { status: 'done' }` — a false-green. On fixed code it is
+     * caught by the fail-closed guard and delivered as { status: 'failed' }.
+     */
+    const mergeFnUnknownNonMerged = async () => ({
+      merged: false as const,
+      conflictResolved: false,
+      aborted: false,
+      output: '',
+      supervisorConversation: [],
+      vegaSessionId: null,
+      retriesAttempted: 0,
+      // No reason, no integrationGateFailed — unknown non-merged shape.
+    })
+
+    const { store, calls, jobs, enqueueJob } = makeFakeStore()
+    const job = enqueueJob({ id: 'j-unknown-nonmerged', worktreePath: '/tmp' })
+    const { startMergeWorker } = await import('../merge-worker.js')
+    const ac = new AbortController()
+    const handle = startMergeWorker({
+      store,
+      log: () => {},
+      bus: new EventEmitter(),
+      signal: ac.signal,
+      pollIntervalMs: 10,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mergeFn: mergeFnUnknownNonMerged as any,
+    })
+
+    await waitFor(() => calls.includes(`markFailed:${job.id}`))
+    ac.abort()
+    await handle.stop()
+
+    expect(calls).toContain(`markFailed:${job.id}`)
+    expect(calls).not.toContain(`markDone:${job.id}`)
+
+    // The fail-closed error prefix identifies it as an unknown outcome —
+    // distinct from known gate failures so operators can tell them apart.
+    const failedJob = jobs.get(job.id)
+    expect(failedJob?.error).toMatch(/merge:unknown-outcome/)
+  })
+
+  it('marks job done when merged=true — positive control confirming the fix does not break success (Fix 2)', async () => {
+    /**
+     * Positive control: the fail-closed guard must NOT fire on a successful
+     * merge. merged===true is the confirmed success condition; the guard checks
+     * the opposite. This test fails if Fix 2 incorrectly fires on success.
+     */
+    const mergeFnSuccess = async () => ({
+      merged: true as const,
+      conflictResolved: false,
+      aborted: false,
+      output: '',
+      supervisorConversation: [],
+      vegaSessionId: null,
+      retriesAttempted: 0,
+    })
+
+    const { store, calls, enqueueJob } = makeFakeStore()
+    const job = enqueueJob({ id: 'j-success-pos-ctrl', worktreePath: '/tmp' })
+    const { startMergeWorker } = await import('../merge-worker.js')
+    const ac = new AbortController()
+    const handle = startMergeWorker({
+      store,
+      log: () => {},
+      bus: new EventEmitter(),
+      signal: ac.signal,
+      pollIntervalMs: 10,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mergeFn: mergeFnSuccess as any,
+    })
+
+    await waitFor(() => calls.includes(`markDone:${job.id}`))
+    ac.abort()
+    await handle.stop()
+
+    // Success path: markDone called, markFailed must NOT be called.
+    expect(calls).toContain(`markDone:${job.id}`)
+    expect(calls).not.toContain(`markFailed:${job.id}`)
+  })
+})

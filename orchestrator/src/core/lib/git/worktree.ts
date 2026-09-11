@@ -1455,7 +1455,21 @@ export const removeWorktree = async (
   if (force) args.push('--force')
   args.push(ref.path)
   await exec(resolveGitBin(), args, { cwd: repoRoot() }, traceCtx)
-  if (!keepBranch) {
+
+  // Gate branch deletion on the merge having actually landed.
+  //
+  // When a tombstone is provided with a null/absent `mergeCommitSha` the
+  // task's commits did NOT land on the integration branch (e.g. an
+  // integration-tier gate failure reverted the fast-forward). Deleting the
+  // branch would orphan those commits. Preserve the branch so the work
+  // remains reachable even though the worktree directory is gone.
+  //
+  // Callers that supply a tombstone with a confirmed SHA (the normal
+  // landed-merge path) OR callers that supply no tombstone at all (a
+  // non-merge removal such as diagnose or drop) are not affected — the
+  // branch is deleted as before.
+  const commitLanded = tombstone === undefined || tombstone.mergeCommitSha != null
+  if (!keepBranch && commitLanded) {
     await execProbe(
       resolveGitBin(),
       ['branch', '-D', ref.branch],

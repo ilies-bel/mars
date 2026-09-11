@@ -876,6 +876,72 @@ async function runMergeJob(
       return
     }
 
+    // Integration-tier gate failure: onAfterFastForward threw, mergeBranch
+    // reverted the fast-forward and returned
+    // { merged: false, integrationGateFailed: true, integrationGateOutput }.
+    //
+    // Deliver this as { status: 'failed' } with a 'verify:gate/<slug>:' prefix
+    // so the merge primitive stamps failedPhase:'verify' — letting
+    // `mars continue` rewind the coder with the gate output rather than
+    // triggering a destructive restart (which failedPhase:'setup' causes).
+    //
+    // Without this intercept the worker falls through to the success branch
+    // below, marks the task done, and cleanup deletes the branch — silently
+    // orphaning the coder's commit (the adr-c34a88df incident: integration
+    // gate timed out after 20 min → task marked done → branch deleted →
+    // commit reachable only by SHA, no ref pointing at it).
+    if (!mergeResult.merged && mergeResult.integrationGateFailed === true) {
+      const gateOutput = mergeResult.integrationGateOutput ?? ''
+      const gateNameRaw = gateOutput.match(/^=== ([^\s(]+) \(FAIL\)/m)?.[1] ?? null
+      const gateSlug = gateNameRaw !== null
+        ? gateNameRaw.replace(/[^a-z0-9]/gi, '-').toLowerCase().replace(/-{2,}/g, '-').replace(/^-|-$/g, '')
+        : 'unknown'
+      const firstViolation = gateOutput.split('\n').find(l => l.trim() !== '' && !l.startsWith('===')) ?? ''
+      const readableReason = gateNameRaw !== null
+        ? `Integration gate ${gateNameRaw} failed: ${firstViolation}`.slice(0, 400).trim()
+        : 'integration-tier gate rejected the merge'
+      const errorMsg = `verify:gate/${gateSlug}: ${readableReason}`
+
+      result = { status: 'failed', error: errorMsg, errorCode: 'crash' }
+      log(`[merge-worker] job ${job.id}: integration-tier gate failure → ${errorMsg}`)
+      await store
+        .markFailed(job.id, { message: errorMsg, code: 'crash' })
+        .catch((e: unknown) => {
+          log(
+            `[merge-worker] job ${job.id} markFailed failed (non-fatal): ${(e as Error).message}`,
+          )
+        })
+      resolveMergeJob(job.taskId, result)
+      return
+    }
+
+    // Fail-closed guard: the success path requires merged===true. Any
+    // { merged: false } shape not caught by the specific intercepts above is
+    // unexpected. Falling through to the success path would mark the task done
+    // and trigger cleanup that deletes the branch — silently discarding the
+    // coder's work for a merge that never actually landed.
+    //
+    // New non-merged shapes added in future must be handled above, BEFORE this
+    // guard, so the fail-closed property holds automatically.
+    if (!mergeResult.merged) {
+      const errorMsg =
+        `merge:unknown-outcome — task ${job.taskId}: mergeFn returned ` +
+        `{ merged: false } with no handled reason ` +
+        `(reason=${mergeResult.reason ?? '(none)'}, ` +
+        `integrationGateFailed=${mergeResult.integrationGateFailed ?? false})`
+      result = { status: 'failed', error: errorMsg, errorCode: 'crash' }
+      log(`[merge-worker] job ${job.id}: unknown non-merged outcome — failing closed: ${errorMsg}`)
+      await store
+        .markFailed(job.id, { message: errorMsg, code: 'crash' })
+        .catch((e: unknown) => {
+          log(
+            `[merge-worker] job ${job.id} markFailed failed (non-fatal): ${(e as Error).message}`,
+          )
+        })
+      resolveMergeJob(job.taskId, result)
+      return
+    }
+
     result = { status: 'done', result: mergeResult }
     // Where the integration branch now points. Recorded here rather than
     // inside the merge itself so the merge logic stays untouched: this is
