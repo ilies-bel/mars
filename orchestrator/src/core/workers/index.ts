@@ -39,6 +39,7 @@ import {
   RESCUE_OPERATOR_DENIED_TOOLS,
 } from './rescue-operator'
 import { registerWorker, workerRegistryView } from './worker-registry'
+import { readMcpConfig } from '../daemon/chat-mcp'
 
 // The bash pattern that invokes the ask-user path. Coder and Fixer workers
 // may call `mars task ask <taskId> "<question>"` to surface a question to the
@@ -692,36 +693,134 @@ const buildWorker = (config: WorkerConfig): Worker => {
             agent: config.agent,
             appendSystemPrompt: config.appendSystemPrompt,
           })
-        : provider.headless.run(
-            prompt,
-            {
-              cwd: options.cwd,
-              sessionId: options.sessionId,
-              model: options.model ?? config.model,
-              systemPrompt:
-                options.systemPrompt ?? config.systemPrompt ?? config.appendSystemPrompt,
-              effort: config.effort,
-              permissionMode: config.permissionMode,
-              bare: config.bare,
-              agent: config.agent,
-              disallowedTools: config.disallowedTools,
-              forceSandbox: config.forceSandbox,
-              maxContextTokens: meteredContextBudget,
-              mcpServers: config.mcpConfig,
-              // Passing a taskId is what injects the mars-worker (and, with
-              // it, codegraph) MCP servers. A Worker that denies the whole
-              // tool surface must not get them back through MCP — see
-              // deniesAllToolUse. workerClass stamps MARS_MCP_WORKER_CLASS so
-              // the MCP server advertises only the class-appropriate tool set.
-              taskId: deniesAllToolUse(config) ? undefined : options.taskId,
-              workerClass: deniesAllToolUse(config) ? undefined : config.name,
-            },
-            {
-              onEvent: options.onEvent,
-              externalAbort: options.externalAbort,
-              onPid: options.onPid,
-            },
-          )
+        : await (async () => {
+            // ---------------------------------------------------------------------------
+            // Operator MCP server resolution for the coder spawn.
+            //
+            // Read the repo's .mcp.json (the SAME discovery function used by the chat
+            // runner — one loader, two consumers) and pass the configured stdio servers
+            // to the provider via HeadlessRunOpts.mcpServers. Only providers whose CLI
+            // accepts --mcp-config receive them; providers that do not (Codex, Gemini)
+            // degrade to "coder runs without MCP" with a console.info signal rather
+            // than a failed dispatch.
+            //
+            // Default: every stdio server in .mcp.json is granted to the coder.
+            // Justification: an operator who adds a server to .mcp.json presumably
+            // wants their dispatched coders to have those tools too. The env-var
+            // allowlist (MARS_CODER_MCP_SERVERS) gives a per-machine escape hatch for
+            // servers that are interactive-only or cannot run headlessly.
+            //
+            // Opt-out: set MARS_CODER_MCP_SERVERS to a comma-separated list of
+            // server names to restrict the grant, or to an empty string to disable
+            // MCP for coders entirely. Absent → all servers pass.
+            // ---------------------------------------------------------------------------
+            let operatorServers: Record<string, unknown> = {}
+            let resolvedMcpNames: readonly string[] = []
+
+            // Workers that deny all tool use must not receive MCP servers:
+            // --disallowedTools cannot name mcp__* tools, so an injected server
+            // would hand back exactly the repo-browsing surface the deny-list removed.
+            if (!deniesAllToolUse(config)) {
+              try {
+                const rawConfigs = await readMcpConfig(options.cwd)
+                if (rawConfigs.length > 0) {
+                  // Apply the allowlist filter. null = no restriction (all pass).
+                  const allowlistEnv = process.env.MARS_CODER_MCP_SERVERS
+                  const allowlist =
+                    allowlistEnv !== undefined
+                      ? new Set(
+                          allowlistEnv
+                            .split(',')
+                            .map((s) => s.trim())
+                            .filter((s) => s.length > 0),
+                        )
+                      : null // null = all servers pass
+                  const selected =
+                    allowlist === null
+                      ? rawConfigs
+                      : rawConfigs.filter((c) => allowlist.has(c.name))
+
+                  if (!provider.headless.capabilities.mcpConfig) {
+                    // This provider's CLI does not accept --mcp-config.
+                    // Degrade cleanly: log once, run without MCP.
+                    if (selected.length > 0) {
+                      console.info(
+                        `[mars] coder MCP: provider '${config.provider}' does not support ` +
+                          `--mcp-config; skipping ${selected.length} configured server(s): ` +
+                          `${selected.map((c) => c.name).join(', ')}`,
+                      )
+                    }
+                  } else {
+                    // Claude-class provider: build the mcpServers map.
+                    for (const cfg of selected) {
+                      operatorServers[cfg.name] = {
+                        type: 'stdio',
+                        command: cfg.command,
+                        args: cfg.args,
+                        ...(Object.keys(cfg.env).length > 0 ? { env: cfg.env } : {}),
+                      }
+                    }
+                    resolvedMcpNames = selected.map((c) => c.name)
+                    if (resolvedMcpNames.length > 0) {
+                      console.info(
+                        `[mars] coder MCP (${config.name}): including server(s): ${resolvedMcpNames.join(', ')}`,
+                      )
+                    }
+                    if (allowlist !== null && selected.length < rawConfigs.length) {
+                      const skipped = rawConfigs.filter(
+                        (c) => !selected.some((s) => s.name === c.name),
+                      )
+                      console.info(
+                        `[mars] coder MCP: restricted by MARS_CODER_MCP_SERVERS; ` +
+                          `skipping: ${skipped.map((c) => c.name).join(', ')}`,
+                      )
+                    }
+                  }
+                }
+              } catch {
+                // readMcpConfig already swallows most errors (missing file,
+                // unparseable JSON). This outer catch covers unexpected throws so
+                // a corrupt config never blocks a coder dispatch.
+              }
+            }
+
+            const headlessResult = await provider.headless.run(
+              prompt,
+              {
+                cwd: options.cwd,
+                sessionId: options.sessionId,
+                model: options.model ?? config.model,
+                systemPrompt:
+                  options.systemPrompt ?? config.systemPrompt ?? config.appendSystemPrompt,
+                effort: config.effort,
+                permissionMode: config.permissionMode,
+                bare: config.bare,
+                agent: config.agent,
+                disallowedTools: config.disallowedTools,
+                forceSandbox: config.forceSandbox,
+                maxContextTokens: meteredContextBudget,
+                // Operator servers (from .mcp.json) merged with worker-pinned
+                // servers (config.mcpConfig). Worker-pinned entries take
+                // precedence (they are more specific than the operator default).
+                mcpServers: { ...operatorServers, ...(config.mcpConfig ?? {}) },
+                // Passing a taskId is what injects the mars-worker (and, with
+                // it, codegraph) MCP servers. A Worker that denies the whole
+                // tool surface must not get them back through MCP — see
+                // deniesAllToolUse. workerClass stamps MARS_MCP_WORKER_CLASS so
+                // the MCP server advertises only the class-appropriate tool set.
+                taskId: deniesAllToolUse(config) ? undefined : options.taskId,
+                workerClass: deniesAllToolUse(config) ? undefined : config.name,
+              },
+              {
+                onEvent: options.onEvent,
+                externalAbort: options.externalAbort,
+                onPid: options.onPid,
+              },
+            )
+            // Record the resolved MCP server set on the result so an operator
+            // reading the trace can see which servers a given coder actually had.
+            return { ...headlessResult, resolvedMcpServers: resolvedMcpNames }
+          })()
     },
   }
 }

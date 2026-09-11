@@ -238,6 +238,28 @@ describe("PROVIDERS.claude headless adapter", () => {
     expect(capabilities.quotaRejected).toBe(true)
     expect(capabilities.sessionId).toBe(true)
   })
+
+  it("capabilities.mcpConfig is true (claude CLI accepts --mcp-config)", () => {
+    expect(PROVIDERS.claude.headless.capabilities.mcpConfig).toBe(true)
+  })
+})
+
+describe("coder MCP capability — provider support declarations", () => {
+  it("codex and gemini do NOT declare mcpConfig: true (their CLIs lack --mcp-config)", () => {
+    // These providers must degrade cleanly when operator MCP servers are configured
+    // rather than failing the spawn. Verifying the capability is absent/falsy
+    // ensures buildWorker's 'if (!capabilities.mcpConfig)' skip path is taken.
+    expect(PROVIDERS.codex.headless.capabilities.mcpConfig).toBeFalsy()
+    expect(PROVIDERS.gemini.headless.capabilities.mcpConfig).toBeFalsy()
+  })
+
+  it("only claude declares mcpConfig: true among the three built-in providers", () => {
+    const supportingProviders = Object.values(PROVIDERS).filter(
+      (p) => p.headless.capabilities.mcpConfig === true,
+    )
+    expect(supportingProviders).toHaveLength(1)
+    expect(supportingProviders[0].name).toBe('claude')
+  })
 })
 
 describe('WORKER_CONFIGS provider field', () => {

@@ -171,6 +171,15 @@ export interface HeadlessAdapter {
     readonly windowMergeStrategy: WindowMergeStrategy
     readonly quotaRejected: boolean
     readonly sessionId: boolean
+    /**
+     * Whether this adapter can accept operator MCP server configuration via
+     * {@link HeadlessRunOpts.mcpServers}. The Claude adapter passes it through
+     * as `--mcp-config <json>`; Codex and Gemini do not expose an equivalent
+     * CLI flag and must degrade cleanly when `mcpServers` is non-empty — their
+     * spawns proceed without MCP rather than failing. Absent (undefined) means
+     * the same as `false`.
+     */
+    readonly mcpConfig?: boolean
   }
   /**
    * Extract the normalized stop reason from a completed provider event stream.

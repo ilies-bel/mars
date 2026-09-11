@@ -196,6 +196,10 @@ const CLAUDE_PROVIDER: ProviderDescriptor = {
         windowMergeStrategy: 'upsert-by-id',
         quotaRejected: true,
         sessionId: true,
+        // The claude CLI accepts `--mcp-config <json>` so operator servers from
+        // .mcp.json reach the spawned process. Codex and Gemini do not expose
+        // an equivalent flag (mcpConfig is absent on their capabilities).
+        mcpConfig: true,
       },
       run: (
         prompt: string,

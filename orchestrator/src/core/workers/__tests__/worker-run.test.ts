@@ -7,7 +7,7 @@
 // a tiny Node script is placed on PATH so resolveClaudeBin() picks it up
 // in place of the real `claude` CLI, making these tests hermetic.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { mkdtempSync, writeFileSync, chmodSync, rmSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, chmodSync, rmSync, readFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import type { WorkerConfig } from '..'
@@ -161,5 +161,123 @@ for (const l of lines) process.stdout.write(JSON.stringify(l) + '\\n');
       },
     })
     expect(fromHook).toEqual(r.conversation.map((e: AgentEvent) => e.type))
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Coder MCP resolution — operator MCP servers from .mcp.json reach the spawn.
+//
+// The three required assertions (task mars-641a041e):
+//   1. A configured server reaches the spawn arguments (--mcp-config in argv).
+//   2. Missing/malformed .mcp.json degrades to a spawn without MCP (no throw).
+//   3. The resolved server set is recorded on the result (resolvedMcpServers).
+// ---------------------------------------------------------------------------
+describe('buildWorker.run() — operator MCP resolution (coder-mcp)', () => {
+  let stubDir: string
+  let cwdWithMcp: string
+  let cwdWithoutMcp: string
+  let argvLogFile: string
+  let originalPath: string | undefined
+
+  beforeAll(() => {
+    stubDir = mkdtempSync(resolve(tmpdir(), 'mars-mcp-stub-'))
+    argvLogFile = resolve(stubDir, 'argv.json')
+
+    // Stub claude binary: writes its argv to argvLogFile then emits minimal output.
+    const stubPath = resolve(stubDir, 'claude')
+    const stubScript = `#!/usr/bin/env node
+const { writeFileSync } = require('fs');
+writeFileSync(${JSON.stringify(argvLogFile)}, JSON.stringify(process.argv));
+const lines = [
+  { type: 'system', subtype: 'init', session_id: 'mcp-stub-session' },
+  { type: 'result', subtype: 'success', session_id: 'mcp-stub-session' },
+];
+for (const l of lines) process.stdout.write(JSON.stringify(l) + '\\n');
+`
+    writeFileSync(stubPath, stubScript, 'utf8')
+    chmodSync(stubPath, 0o755)
+
+    // cwd WITH a valid .mcp.json containing one stdio server.
+    cwdWithMcp = mkdtempSync(resolve(tmpdir(), 'mars-mcp-cwd-'))
+    writeFileSync(
+      resolve(cwdWithMcp, '.mcp.json'),
+      JSON.stringify({
+        mcpServers: {
+          'test-server': { command: 'echo', args: ['hello'] },
+        },
+      }),
+    )
+
+    // cwd WITHOUT .mcp.json (or with a malformed one — absence is the simplest case).
+    cwdWithoutMcp = mkdtempSync(resolve(tmpdir(), 'mars-mcp-cwd-empty-'))
+
+    originalPath = process.env.PATH
+    process.env.PATH = `${stubDir}:${originalPath ?? ''}`
+  })
+
+  afterAll(() => {
+    if (originalPath !== undefined) process.env.PATH = originalPath
+    rmSync(stubDir, { recursive: true, force: true })
+    rmSync(cwdWithMcp, { recursive: true, force: true })
+    rmSync(cwdWithoutMcp, { recursive: true, force: true })
+  })
+
+  it('(1) a configured server reaches the spawn arguments via --mcp-config', async () => {
+    // Remove the argv log from any previous test run so we get a fresh read.
+    if (existsSync(argvLogFile)) rmSync(argvLogFile)
+
+    await Workers.Coder.run('noop', { cwd: cwdWithMcp })
+
+    const rawArgv = readFileSync(argvLogFile, 'utf8')
+    const argv: string[] = JSON.parse(rawArgv)
+
+    // The stub claude must have been invoked with --mcp-config, which is how
+    // the operator server from .mcp.json reaches the provider subprocess.
+    expect(argv).toContain('--mcp-config')
+
+    // The --mcp-config value must be a JSON string containing the test server.
+    const mcpConfigIdx = argv.indexOf('--mcp-config')
+    const mcpConfigValue = argv[mcpConfigIdx + 1]
+    expect(mcpConfigValue).toBeDefined()
+    const parsed: unknown = JSON.parse(mcpConfigValue)
+    expect(parsed).toMatchObject({
+      mcpServers: expect.objectContaining({
+        'test-server': expect.objectContaining({ command: 'echo' }),
+      }),
+    })
+  })
+
+  it('(2) missing .mcp.json degrades to a spawn without MCP — run completes without throwing', async () => {
+    if (existsSync(argvLogFile)) rmSync(argvLogFile)
+
+    // Must not throw even though no .mcp.json exists in cwdWithoutMcp.
+    const r = await Workers.Coder.run('noop', { cwd: cwdWithoutMcp })
+    expect(r.exitCode).toBe(0)
+
+    // resolvedMcpServers is [] when no servers were resolved.
+    expect(r.resolvedMcpServers).toEqual([])
+  })
+
+  it('(3) the resolved server set is recorded on the result', async () => {
+    if (existsSync(argvLogFile)) rmSync(argvLogFile)
+
+    const r = await Workers.Coder.run('noop', { cwd: cwdWithMcp })
+
+    // resolvedMcpServers must contain the name of the server from .mcp.json.
+    expect(r.resolvedMcpServers).toEqual(['test-server'])
+  })
+
+  it('MARS_CODER_MCP_SERVERS="" skips all servers — run completes and resolvedMcpServers is []', async () => {
+    const prev = process.env.MARS_CODER_MCP_SERVERS
+    process.env.MARS_CODER_MCP_SERVERS = ''
+    try {
+      if (existsSync(argvLogFile)) rmSync(argvLogFile)
+      const r = await Workers.Coder.run('noop', { cwd: cwdWithMcp })
+      expect(r.exitCode).toBe(0)
+      expect(r.resolvedMcpServers).toEqual([])
+    } finally {
+      if (prev === undefined) delete process.env.MARS_CODER_MCP_SERVERS
+      else process.env.MARS_CODER_MCP_SERVERS = prev
+    }
   })
 })

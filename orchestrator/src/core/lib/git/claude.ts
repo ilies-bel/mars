@@ -289,6 +289,18 @@ export interface RunAgentResult extends RunSubprocessResult {
    * must treat as `false`, never as "unknown, assume worst".
    */
   transportDropped?: boolean
+  /**
+   * Names of the operator MCP servers resolved for this dispatch. Set by the
+   * Worker dispatch layer ({@link buildWorker} in `core/workers/index.ts`),
+   * not the adapter, so it captures both what the operator configured and what
+   * the provider actually received. `undefined` when no resolution was
+   * attempted (e.g. a pty run or a call through {@link runHeadlessProvider}
+   * that bypasses the Worker layer). `[]` when resolution ran but no servers
+   * were included — either the provider does not support `--mcp-config`, or
+   * `.mcp.json` is absent/empty, or `MARS_CODER_MCP_SERVERS` filtered
+   * everything out.
+   */
+  resolvedMcpServers?: readonly string[]
 }
 
 /*
