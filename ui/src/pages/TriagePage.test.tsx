@@ -2122,6 +2122,89 @@ describe('TriageRow – signature-wave verb rules', () => {
 // TriageCauseGroupRow without needing serverGroups in the mock.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// TriageRow — blocking dependents (dag.blocking)
+//
+// A failed row that is blocking other tasks needs to surface that fact so
+// the operator can prioritise it over a failed row that blocks nothing.
+// ---------------------------------------------------------------------------
+
+describe('TriageRow – blocking dependents from dag.blocking', () => {
+  it('renders the blocking count and names the first dependent', () => {
+    mockItems.mockReturnValue([
+      makeItem('failed', {
+        dag: {
+          blockers: [],
+          blocking: [
+            { id: 'mars-322641a4', status: 'blocked', summary: 'Add tail-arc listing to p90 drift proposals' },
+          ],
+          descendants: [],
+          proposalId: null,
+          edges: [],
+        } as ActionQueueItem['dag'],
+      }),
+    ])
+    const { container } = renderPage()
+    const blockingEl = container.querySelector('[data-testid="triage-blocking"]')
+    expect(blockingEl).not.toBeNull()
+    // Renders the count
+    expect(blockingEl?.textContent).toContain('1 task')
+    // Names the dependent
+    const firstEl = container.querySelector('[data-testid="triage-blocking-first"]')
+    expect(firstEl).not.toBeNull()
+    expect(firstEl?.textContent).toContain('Add tail-arc listing to p90 drift proposals')
+  })
+
+  it('does NOT render the blocking line when dag.blocking is empty — but still renders verbs (positive control)', () => {
+    // dag.blocking = [] means this row blocks nothing. The line must be absent.
+    // The positive control (verbs still render) proves the row itself is not
+    // collapsed — absence of the blocking line is a specific omission, not a
+    // silent row collapse.
+    mockItems.mockReturnValue([
+      makeItem('failed', {
+        dag: { blockers: [], blocking: [], descendants: [], proposalId: null, edges: [] },
+        verbs: [{ op: 'continue', label: 'Resume on existing worktree', style: 'primary' }],
+      }),
+    ])
+    const { container } = renderPage()
+    expect(container.querySelector('[data-testid="triage-blocking"]')).toBeNull()
+    // Positive control: the row is still rendered with its verbs
+    expect(container.querySelector('[data-testid="triage-verb-continue"]')).not.toBeNull()
+  })
+
+  it('two dependents render as a count plus one name, not two full lines', () => {
+    // With two dependents, the count conveys the extra one — there must be
+    // exactly one [data-testid="triage-blocking"] element and one
+    // [data-testid="triage-blocking-first"] link, not two lines.
+    mockItems.mockReturnValue([
+      makeItem('failed', {
+        dag: {
+          blockers: [],
+          blocking: [
+            { id: 'mars-aaaa0001', status: 'blocked', summary: 'First dependent task' },
+            { id: 'mars-bbbb0002', status: 'blocked', summary: 'Second dependent task' },
+          ],
+          descendants: [],
+          proposalId: null,
+          edges: [],
+        } as ActionQueueItem['dag'],
+      }),
+    ])
+    const { container } = renderPage()
+    const blockingEl = container.querySelector('[data-testid="triage-blocking"]')
+    expect(blockingEl).not.toBeNull()
+    // Count: 2 tasks
+    expect(blockingEl?.textContent).toContain('2 tasks')
+    // Exactly one first-dependent link — not two
+    const firstLinks = container.querySelectorAll('[data-testid="triage-blocking-first"]')
+    expect(firstLinks.length).toBe(1)
+    // Names the first one
+    expect(firstLinks[0]?.textContent).toContain('First dependent task')
+    // Second name is not rendered as a separate link
+    expect(blockingEl?.textContent).not.toContain('Second dependent task')
+  })
+})
+
 describe('TriageCauseGroupRow – Snooze all', () => {
   /**
    * Two items that will be cause-grouped together. Caller supplies the verbs

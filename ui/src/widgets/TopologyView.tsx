@@ -280,9 +280,13 @@ const EDGE_LIT = 'var(--color-dag-proposal-text)'
 
 const edgeStyle = (kind: 'blocker' | 'recovery', emphasis: Emphasis): CSSProperties => ({
   stroke: emphasis === 'lit' ? EDGE_LIT : EDGE_REST,
-  strokeWidth: emphasis === 'lit' ? 2.25 : 1.25,
+  // Rest-state stroke was 1.25 — a thin light-grey line against cream cards,
+  // the lowest-contrast element on the expanded arc view and the only element
+  // that carries the entire meaning of the view. Raised to 2 so it reads as
+  // a deliberate connection, not a rendering artefact.
+  strokeWidth: emphasis === 'lit' ? 2.5 : 2,
   strokeDasharray: kind === 'recovery' ? '4 3' : undefined,
-  opacity: emphasis === 'dim' ? 0.06 : emphasis === 'lit' ? 1 : 0.55,
+  opacity: emphasis === 'dim' ? 0.06 : emphasis === 'lit' ? 1 : 0.7,
   transition: 'opacity 160ms ease-out, stroke 160ms ease-out',
 })
 
@@ -718,7 +722,7 @@ const TopologyViewInner = ({
            * so a snapshot where nothing blocks anything ACROSS arcs genuinely
            * has no line to draw. Say so rather than leaving it ambiguous. */
           <p className="ml-auto text-micro text-muted-foreground" data-testid="topo-no-edges">
-            No dependencies between active arcs.
+            No dependencies between arcs — open an arc to see dependencies inside it.
           </p>
         )}
       </div>

@@ -1234,6 +1234,38 @@ const leadDecisionIndex = (decisions: Decision[]): number => {
       )}
 
 
+      {/* Blocking dependents — shown when this row has tasks waiting on it.
+          "Blocking N tasks · First task title" surfaces the highest ordering
+          signal on the row: when a dependent is stuck, this failure has a
+          blast radius beyond itself. The operator needs to see this BEFORE
+          deciding whether to act on this row or move on.
+          Render nothing when dag.blocking is empty — "Blocking 0 tasks" is
+          worse than silence. */}
+      {!inGroup && (item.dag?.blocking?.length ?? 0) > 0 && (() => {
+        const blocking = item.dag!.blocking as Array<{ id: string; status: string; summary?: string }>
+        const count = blocking.length
+        const first = blocking[0]!
+        return (
+          <p
+            className="mb-1.5 text-micro text-muted-foreground"
+            data-testid="triage-blocking"
+          >
+            {'Blocking '}
+            <span className="font-medium text-foreground">
+              {count} {count === 1 ? 'task' : 'tasks'}
+            </span>
+            {' · '}
+            <a
+              href={taskHash(first.id, 'triage')}
+              className="text-foreground underline decoration-dotted underline-offset-2 hover:text-highlight"
+              data-testid="triage-blocking-first"
+            >
+              {first.summary || first.id}
+            </a>
+          </p>
+        )
+      })()}
+
       {/* Actions row */}
       <div className="flex flex-wrap items-center gap-2">
         {!isChatOnly && (
