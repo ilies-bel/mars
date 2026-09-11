@@ -28,6 +28,7 @@ import {
   type RecipeDecision,
 } from '../../lib/action-queue-recipes'
 import { isActionQueueKind, classifyKind, KIND_CLASS, DERIVED_KINDS, type ActionQueueKind, type ActionQueueClass } from '../../lib/action-queue-kinds'
+import { RECOVERY_EXHAUSTED_PREFIX, RECOVERY_DISABLED_PREFIX } from '../../lib/failure-signature'
 import type { DispatchPauseState } from '../pause-state'
 
 /**
@@ -706,6 +707,23 @@ export interface TaskForActionQueue {
   leasedAt?: string | null
   /** Optional human note attached to the lease. */
   leaseNote?: string | null
+  /**
+   * Raw `failure_reason` from the task row. Used by the `recovery-abandoned`
+   * enrichment pass to gate `continuable` on the same condition that
+   * `continue-task.ts` enforces at the command level: the prefix
+   * `recovery_exhausted:` (or `recovery_disabled:`) means `mars continue`
+   * would reject the task — suppress the verb.
+   * Optional: absent on legacy stored rows that pre-date this field; the
+   * enrichment treats absence as no-prefix-match (safe default).
+   */
+  failureReason?: string | null
+  /**
+   * Absolute path to this task's worktree. Used by the `recovery-abandoned`
+   * enrichment pass: a missing worktree means `mars continue` would have
+   * nothing to resume on, so `continuable` must be false.
+   * Optional for the same backwards-compat reason as `failureReason`.
+   */
+  worktreePath?: string | null
 }
 
 /**
@@ -1237,6 +1255,61 @@ export const buildActionQueueView = async ({
       arr.push(t.id)
       fixForTaskMap.set(t.fixForTaskId, arr)
     }
+  }
+
+  // ── recovery-abandoned payload enrichment ──────────────────────────────────
+  // Stored `recovery-abandoned` rows raised before the subscriber gained
+  // `continuable` and `commitsAhead` payload fields are missing those keys.
+  // Enrich from live task state on every read so the recipe renders the correct
+  // verbs regardless of when the row was stored.
+  //
+  // Pattern mirrors the `worktreeDirtyCount` probe in deriveFailedConditions:
+  // dynamic, change-over-time facts belong in a read-time probe, not in a stored
+  // payload that goes stale the moment the task is continued or the worktree moves.
+  //
+  // Gate: `continuable` mirrors the exact guard `continue-task.ts` applies at the
+  // command level.  `commitsAhead` is a `git rev-list --count main..<branch>` probe;
+  // null means the branch is absent or git failed — recipe falls back to plain "Restart".
+  for (const row of persistedRows) {
+    if (row.kind !== 'recovery-abandoned') continue
+    const originId =
+      typeof row.payload.originTaskId === 'string'
+        ? row.payload.originTaskId
+        : typeof row.payload.taskId === 'string'
+          ? row.payload.taskId
+          : null
+    if (originId === null) continue
+    const originTask = taskById.get(originId)
+    if (originTask === undefined) continue
+
+    const branch = originTask.branch
+    const failureReason = originTask.failureReason ?? ''
+    const worktreePath = originTask.worktreePath ?? null
+
+    const continuable =
+      !!branch &&
+      !!worktreePath &&
+      !failureReason.startsWith(RECOVERY_EXHAUSTED_PREFIX) &&
+      !failureReason.startsWith(RECOVERY_DISABLED_PREFIX)
+
+    let commitsAhead: number | null = null
+    if (branch) {
+      try {
+        const out = execFileSync(
+          'git',
+          ['-C', repoRoot, 'rev-list', '--count', `main..${branch}`],
+          { encoding: 'utf8', timeout: 3000, killSignal: 'SIGKILL' },
+        )
+        const n = parseInt(out.trim(), 10)
+        if (Number.isFinite(n)) commitsAhead = n
+      } catch {
+        // Branch absent, git unavailable, or probe timed out. Leave null so
+        // the recipe falls back to a plain "Restart" label with no commit count.
+      }
+    }
+
+    row.payload.continuable = continuable
+    row.payload.commitsAhead = commitsAhead
   }
 
   const toUiPriority = (p: string): 'high' | 'normal' | 'low' => {

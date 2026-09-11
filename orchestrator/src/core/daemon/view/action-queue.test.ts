@@ -2090,3 +2090,90 @@ describe('taskFailureKinds drift gate — orchestrator side', () => {
     ).toThrow('could not locate array literal')
   })
 })
+
+// ── recovery-abandoned live enrichment ───────────────────────────────────────
+//
+// Stored `recovery-abandoned` rows raised before the subscriber gained
+// `continuable` and `commitsAhead` were added to the payload lack those fields.
+// The view layer must enrich them from live state on every read.
+
+describe('buildActionQueueView — recovery-abandoned live enrichment', () => {
+  /** A `recovery-abandoned` row with the given payload extras. */
+  const makeAbandonedRow = (payloadOverrides: Record<string, unknown> = {}) =>
+    makeRow({
+      kind: 'recovery-abandoned',
+      payload: { originTaskId: 'task-1', fixTaskId: 'fix-1', ...payloadOverrides },
+    })
+
+  /** An origin task stub with branch + worktree set (normal continuable state). */
+  const makeOriginTask = (overrides: Partial<TaskForActionQueue> = {}) =>
+    makeTask({
+      id: 'task-1',
+      status: 'failed',
+      branch: 'task/mars-task-1',
+      // worktreePath is the new optional field; tests that need it set it here
+      worktreePath: '/mars/worktrees/task-1',
+      failureReason: null,
+      ...overrides,
+    })
+
+  it('a stored row with no continuable in payload renders continue when live state allows it', async () => {
+    // Simulate a row raised before `continuable` was added — payload has neither field.
+    const rows = await buildActionQueueView({
+      stateStore: makeStateStore([makeAbandonedRow()]),
+      taskStore: makeTaskStore([makeOriginTask()]),
+      ...BASE_PARAMS,
+    })
+    expect(rows).toHaveLength(1)
+    const row = rows[0]!
+    // Recipe must offer `continue` as the primary verb when live state says the
+    // origin is continuable (branch + worktree set, no exhaustion prefix).
+    const continueVerb = row.verbs.find((v) => v.op === 'continue')
+    expect(continueVerb).toBeDefined()
+    expect(continueVerb?.style).toBe('primary')
+  })
+
+  it('withholds continue when origin carries recovery_exhausted: prefix, regardless of stale payload', async () => {
+    // Stale payload says continuable:true, but live failure_reason carries the
+    // exhaustion prefix — continue-task.ts would reject this, so the verb must
+    // be suppressed to avoid offering an action that would 422.
+    const rows = await buildActionQueueView({
+      stateStore: makeStateStore([makeAbandonedRow({ continuable: true })]),
+      taskStore: makeTaskStore([
+        makeOriginTask({ failureReason: 'recovery_exhausted:code:vitest-failure' }),
+      ]),
+      ...BASE_PARAMS,
+    })
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.verbs.find((v) => v.op === 'continue')).toBeUndefined()
+  })
+
+  it('withholds continue when origin has no worktree, regardless of stale payload', async () => {
+    // A worktree-less origin has nothing to continue on; `mars continue` would
+    // degrade to a restart silently.
+    const rows = await buildActionQueueView({
+      stateStore: makeStateStore([makeAbandonedRow({ continuable: true })]),
+      taskStore: makeTaskStore([makeOriginTask({ worktreePath: null })]),
+      ...BASE_PARAMS,
+    })
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.verbs.find((v) => v.op === 'continue')).toBeUndefined()
+  })
+
+  it('commitsAhead from live probe wins over a stale payload value', async () => {
+    // Stale payload claims 99 commits ahead. Live task has branch:null, so the
+    // git probe is skipped and commitsAhead becomes null. The restart label must
+    // NOT say "discards 99 commits" — the live null wins over the stored 99.
+    const rows = await buildActionQueueView({
+      stateStore: makeStateStore([
+        makeAbandonedRow({ commitsAhead: 99, branch: 'task/stale-branch' }),
+      ]),
+      taskStore: makeTaskStore([makeOriginTask({ branch: null })]),
+      ...BASE_PARAMS,
+    })
+    expect(rows).toHaveLength(1)
+    const restartVerb = rows[0]!.verbs.find((v) => v.op === 'restart')
+    expect(restartVerb?.label).toBe('Restart')
+    expect(restartVerb?.label).not.toContain('discards')
+  })
+})
