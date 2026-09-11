@@ -641,6 +641,30 @@ export const composePrompt = (
     const items = lessons.map((l) => `  - ${l}`).join('\n')
     sections.push(`## Lessons\n\n<lessons>\n${items}\n</lessons>`)
   }
+  // Progress journal — injected after lessons so coders narrate progress via
+  // `mars task note`, giving the operator an observable signal during long-running
+  // tasks. Omitted when taskId is empty (backward-compatible callers, report
+  // pipeline, diagnose short-circuit already returns before this point).
+  if (taskId.length > 0) {
+    sections.push(
+      `## Progress journal\n\n` +
+        `Narrate your progress as you work by writing notes with:\n\n` +
+        `  mars task note ${taskId} "<short note>"\n\n` +
+        `Write a note only at meaningful transitions — not per file edit. Good moments:\n\n` +
+        `- After orienting in the codebase and before the first edit.\n` +
+        `- When starting a distinct sub-piece of the work.\n` +
+        `- When something unexpected changes your approach.\n` +
+        `- Before running verification.\n` +
+        `- When blocked and unable to continue.\n\n` +
+        `Aim for roughly 3–8 notes for a typical task. Each note is one line, present tense, ` +
+        `stating what is happening and why — "rewriting the adapter to forward every field" ` +
+        `beats "working on it". The reader is a human deciding whether to intervene.\n\n` +
+        `**Shell safety:** the inline \`"..."\` form is safe only for short, shell-neutral text. ` +
+        `Any note containing a backtick, \`$(\`, or a newline must be passed via stdin to avoid ` +
+        `shell expansion corrupting the stored text:\n\n` +
+        `  printf '%s' "your note here" | mars task note ${taskId} -`,
+    )
+  }
   // Resume banner — appended after the main prompt body so the stable prefix
   // is never disrupted by variable resume-specific content.
   if (resumeFromPriorAttempt) {

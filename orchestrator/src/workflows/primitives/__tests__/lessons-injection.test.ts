@@ -110,6 +110,96 @@ describe('composePrompt — non-empty lessons rendering', () => {
 })
 
 // ---------------------------------------------------------------------------
+// composePrompt — progress-journal section (pure, no DB)
+// ---------------------------------------------------------------------------
+
+describe('composePrompt — progress-journal section', () => {
+  it('includes a progress-journal section when taskId is provided', () => {
+    const out = composePrompt('Fix the bug', null, 'coder', null, 'mars-abc123', '/tmp/wt')
+    expect(out).toContain('## Progress journal')
+  })
+
+  it('embeds the real task id in the mars task note command', () => {
+    const out = composePrompt('Fix the bug', null, 'coder', null, 'mars-abc123', '/tmp/wt')
+    expect(out).toContain('mars task note mars-abc123')
+  })
+
+  it('names when to write notes (not just that they exist)', () => {
+    const out = composePrompt('Fix the bug', null, 'coder', null, 'mars-abc123', '/tmp/wt')
+    expect(out).toContain('before the first edit')
+    expect(out).toContain('distinct sub-piece')
+    expect(out).toContain('Before running verification')
+  })
+
+  it('warns that backticks and $( require the stdin form', () => {
+    const out = composePrompt('Fix the bug', null, 'coder', null, 'mars-abc123', '/tmp/wt')
+    expect(out).toContain('backtick')
+    expect(out).toContain('$(')
+    expect(out).toContain('stdin')
+    // The stdin form should include the task id
+    expect(out).toContain('mars task note mars-abc123 -')
+  })
+
+  it('is omitted when taskId is empty', () => {
+    const out = composePrompt('Fix the bug', null, 'coder', null, '', '/tmp/wt')
+    expect(out).not.toContain('## Progress journal')
+  })
+
+  it('is omitted when taskId is not passed', () => {
+    const out = composePrompt('Fix the bug', null)
+    expect(out).not.toContain('## Progress journal')
+  })
+
+  it('contains no reference to mars-framework paths or project-specific layout', () => {
+    const out = composePrompt('Fix the bug', null, 'coder', null, 'mars-abc123', '/tmp/wt')
+    const journalStart = out.indexOf('## Progress journal')
+    const journalEnd = out.indexOf('\n\n', journalStart + 1)
+    const journalSection = journalEnd > -1 ? out.slice(journalStart, journalEnd + 100) : out.slice(journalStart)
+    // No repo-specific paths, no tooling assumptions
+    expect(journalSection).not.toContain('orchestrator')
+    expect(journalSection).not.toContain('mars-framework')
+    expect(journalSection).not.toContain('npm run')
+    expect(journalSection).not.toContain('vitest')
+    expect(journalSection).not.toContain('node_modules')
+  })
+
+  it('places the progress-journal section AFTER the lessons block', () => {
+    const out = composePrompt(
+      'Fix the bug',
+      null,
+      'coder',
+      null,
+      'mars-abc123',
+      '/tmp/wt',
+      'task',
+      ['a lesson'],
+    )
+    const lessonsPos = out.indexOf('<lessons>')
+    const journalPos = out.indexOf('## Progress journal')
+    expect(lessonsPos).toBeGreaterThan(-1)
+    expect(journalPos).toBeGreaterThan(-1)
+    expect(journalPos).toBeGreaterThan(lessonsPos)
+  })
+
+  it('places the progress-journal section AFTER the structured-task spec block', () => {
+    const spec = {
+      mergeMode: 'auto' as const,
+      files: ['src/foo.ts'],
+      verifyCmd: 'npm test',
+      doneCriteria: ['tests pass'],
+      readFirst: [],
+      prescriptiveAction: null,
+    }
+    const out = composePrompt('Fix the bug', null, 'coder', spec, 'mars-abc123', '/tmp/wt')
+    const specPos = out.indexOf('<task_id>mars-abc123</task_id>')
+    const journalPos = out.indexOf('## Progress journal')
+    expect(specPos).toBeGreaterThan(-1)
+    expect(journalPos).toBeGreaterThan(-1)
+    expect(journalPos).toBeGreaterThan(specPos)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // resolveTaskDomains — pure helper
 // ---------------------------------------------------------------------------
 
