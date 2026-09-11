@@ -7,6 +7,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { NAV_SHORTCUTS } from '@/shared/useGlobalKeyboardShortcuts'
+import { TRIAGE_SHORTCUTS } from '@/shared/triageShortcuts'
 
 interface ShortcutsOverlayProps {
   /** Clears the `#/shortcuts` hash so the overlay closes. */
@@ -22,7 +23,7 @@ interface ShortcutsOverlayProps {
  * rows lie is worse than no panel, because the rows that work teach the reader
  * to trust it.
  */
-const SHORTCUTS: ReadonlyArray<{ key: string; desc: string }> = [
+const NAV_SECTION: ReadonlyArray<{ key: string; desc: string }> = [
   ...NAV_SHORTCUTS.map((s) => ({ key: s.key, desc: `Go to ${s.desc}` })),
   { key: '?', desc: 'Open this shortcuts overlay' },
   { key: 'Esc', desc: 'Close any open overlay or drawer' },
@@ -134,9 +135,26 @@ export const ShortcutsOverlay = ({ onClose }: ShortcutsOverlayProps) => {
           </header>
           <table className="w-full border-collapse" role="table">
             <tbody>
-              {SHORTCUTS.map(({ key, desc }) => (
+              {NAV_SECTION.map(({ key, desc }) => (
                 <tr key={key} className="border-b border-border last:border-b-0">
                   <td className="w-16 px-4 py-2.5">
+                    <kbd className="font-mono text-label font-semibold text-highlight">{key}</kbd>
+                  </td>
+                  <td className="px-4 py-2.5 text-title text-foreground">{desc}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="border-t border-border px-4 pb-1 pt-2.5">
+            <p className="text-micro font-semibold uppercase tracking-wider text-muted-foreground">
+              Needs You
+            </p>
+          </div>
+          <table className="w-full border-collapse" role="table" data-testid="shortcuts-triage-section">
+            <tbody>
+              {TRIAGE_SHORTCUTS.map(({ key, desc }) => (
+                <tr key={key} className="border-b border-border last:border-b-0">
+                  <td className="w-20 px-4 py-2.5">
                     <kbd className="font-mono text-label font-semibold text-highlight">{key}</kbd>
                   </td>
                   <td className="px-4 py-2.5 text-title text-foreground">{desc}</td>

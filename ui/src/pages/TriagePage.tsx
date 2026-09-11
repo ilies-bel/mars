@@ -34,7 +34,8 @@ import { PAGE_MEASURE, PageHeader } from '@/widgets/primitives/DensityPrimitives
  * the page says so instead (see UnreachableState).
  */
 
-import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
+import { useState, useCallback, useEffect, useRef, useMemo, type RefCallback } from 'react'
+import { isEditableTarget } from '@/shared/isEditableTarget'
 import { useQueryClient } from '@tanstack/react-query'
 import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
 import {
@@ -412,6 +413,26 @@ interface TriageRowProps {
  * it.
  */
 const looksLikeTaskId = (id: string): boolean => /^(mars|fix)-[0-9a-f]{8,}$/.test(id)
+
+/** Stable string key for a rendered row — used for selection tracking. */
+const rowKey = (row: RenderedRow): string => {
+  if (row.type === 'cluster') return `cluster:${row.kind}`
+  if (row.type === 'causeGroup') return row.id
+  if (row.type === 'entityGroup') return row.primary.id
+  return row.item.id
+}
+
+/**
+ * Returns the task-drawer hash for the row, or null when the row has no
+ * task behind it (condition slugs, cluster rows, etc.).
+ */
+const rowDrawerHash = (row: RenderedRow): string | null => {
+  let entityId: string | null = null
+  if (row.type === 'item') entityId = row.item.entityId
+  if (row.type === 'entityGroup') entityId = row.primary.entityId
+  if (!entityId || !looksLikeTaskId(entityId)) return null
+  return taskHash(entityId, 'triage')
+}
 
 /**
  * What a cause group is counting.
@@ -1225,6 +1246,7 @@ const leadDecisionIndex = (decisions: Decision[]): number => {
                   pending={pending === d.label}
                   onClick={() => void handleDecision(d)}
                   data-testid={`triage-decision-${d.label}`}
+                  data-primary={isLeadSafe ? 'true' : undefined}
                 >
                   {d.label}
                 </ActionButton>
@@ -1281,6 +1303,11 @@ const leadDecisionIndex = (decisions: Decision[]): number => {
                         : 'secondary'
                 }
                 data-testid={`triage-verb-${verb.op}`}
+                data-primary={
+                  !destructive && verb.style === 'primary' && verb.op !== 'copy' && leadPrimary
+                    ? 'true'
+                    : undefined
+                }
               >
                 {verb.label}
               </ActionButton>
@@ -1730,6 +1757,7 @@ export const TriageCauseGroupRow = ({
             onClick={() => void handleBulkAction()}
             className="shrink-0 rounded border border-border bg-primary/10 px-2 py-1 text-micro font-medium text-muted-foreground transition-colors hover:bg-primary/20 disabled:opacity-50"
             data-testid="cause-group-bulk-action"
+            data-primary="true"
           >
             {progress !== null
               ? `${progress.done} of ${progress.total}…`
@@ -2104,6 +2132,143 @@ export const TriagePage = () => {
   // clear queue, the same false-empty failure this page exists to avoid.
   const isLoading = queuePending === true && !hasContent && !isDown
 
+  // ── Row-level keyboard navigation ──────────────────────────────────────────
+  const searchInputRef = useRef<HTMLInputElement>(null)
+  const [selectedRowId, setSelectedRowId] = useState<string | null>(null)
+  const rowRefsMap = useRef<Map<string, HTMLElement>>(new Map())
+
+  // Ordered list of row ids — drives j/k navigation.
+  const rowIds = useMemo(() => renderedRows.map(rowKey), [renderedRows])
+
+  // Esc inside the search input: clear the query and move focus back to the
+  // list (not to <body> — leaving focus on the first rendered card would
+  // require a DOM query that can race, so we focus the scroll container).
+  const handleSearchKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        e.stopPropagation()
+        changeSearch('')
+        searchInputRef.current?.blur()
+      }
+    },
+    [changeSearch],
+  )
+
+  // Page-level bindings — active when no input has focus and no overlay is open.
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent): void => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return
+      if (e.isComposing) return
+      // Let the global overlay handler take Esc/? when an overlay is active.
+      if (window.location.hash === '#/shortcuts') return
+
+      // In a real browser, keyboard events fire on the focused element and bubble
+      // up. In tests, events are often dispatched directly on document, making
+      // e.target === document even when an input has focus. Checking both e.target
+      // AND document.activeElement covers both paths.
+      const activeEditable =
+        isEditableTarget(e.target) || isEditableTarget(document.activeElement)
+
+      // / → focus search (only when not already in an editable field)
+      if (e.key === '/' && !activeEditable) {
+        e.preventDefault()
+        searchInputRef.current?.focus()
+        return
+      }
+
+      // All remaining bindings are silenced inside inputs.
+      if (activeEditable) return
+
+      const currentIndex =
+        selectedRowId !== null ? rowIds.indexOf(selectedRowId) : -1
+
+      if (e.key === 'j' || e.key === 'ArrowDown') {
+        e.preventDefault()
+        if (rowIds.length === 0) return
+        const nextIndex =
+          currentIndex === -1 ? 0 : Math.min(currentIndex + 1, rowIds.length - 1)
+        const nextId = rowIds[nextIndex] ?? null
+        setSelectedRowId(nextId)
+        if (nextId) {
+          // Use rAF so the DOM has applied the updated selection class first.
+          requestAnimationFrame(() => {
+            rowRefsMap.current.get(nextId)?.scrollIntoView({ block: 'nearest' })
+          })
+        }
+        return
+      }
+
+      if (e.key === 'k' || e.key === 'ArrowUp') {
+        e.preventDefault()
+        if (rowIds.length === 0 || currentIndex <= 0) return
+        const prevIndex = Math.max(currentIndex - 1, 0)
+        const prevId = rowIds[prevIndex] ?? null
+        setSelectedRowId(prevId)
+        if (prevId) {
+          requestAnimationFrame(() => {
+            rowRefsMap.current.get(prevId)?.scrollIntoView({ block: 'nearest' })
+          })
+        }
+        return
+      }
+
+      if (e.key === 'Enter' && selectedRowId !== null) {
+        e.preventDefault()
+        const selectedRow = renderedRows.find((r) => rowKey(r) === selectedRowId)
+        if (selectedRow) {
+          const hash = rowDrawerHash(selectedRow)
+          if (hash) {
+            window.location.hash = hash
+          }
+        }
+        return
+      }
+
+      // Space → run the primary action on the selected row.
+      if (e.key === ' ' && selectedRowId !== null) {
+        e.preventDefault()
+        const el = rowRefsMap.current.get(selectedRowId)
+        const primaryBtn =
+          el?.querySelector<HTMLButtonElement>('[data-primary="true"]') ?? null
+        if (primaryBtn && !primaryBtn.disabled) {
+          primaryBtn.click()
+        }
+        return
+      }
+
+      // → expand a group row; ← collapse it.
+      if ((e.key === 'ArrowRight' || e.key === 'ArrowLeft') && selectedRowId !== null) {
+        e.preventDefault()
+        const el = rowRefsMap.current.get(selectedRowId)
+        const toggle =
+          el?.querySelector<HTMLButtonElement>('[data-testid="cause-group-toggle"]') ?? null
+        if (toggle) {
+          const expanded = toggle.getAttribute('aria-expanded') === 'true'
+          if (e.key === 'ArrowRight' && !expanded) toggle.click()
+          if (e.key === 'ArrowLeft' && expanded) toggle.click()
+        }
+        return
+      }
+    }
+
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [renderedRows, rowIds, selectedRowId, changeSearch])
+
+  // Build a stable ref-callback factory. Each row wrapper passes its element
+  // into rowRefsMap so the keyboard handler can find it by id.
+  const makeRowRef = useCallback(
+    (id: string): RefCallback<HTMLDivElement> =>
+      (el) => {
+        if (el) rowRefsMap.current.set(id, el)
+        else rowRefsMap.current.delete(id)
+      },
+    [],
+  )
+
   return (
     <div className="flex h-full flex-col overflow-hidden bg-background" data-testid="triage-page">
       <PageHeader
@@ -2145,6 +2310,7 @@ export const TriagePage = () => {
                 className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground"
               />
               <input
+                ref={searchInputRef}
                 type="search"
                 /* A placeholder is not an accessible name: it is announced as a
                    hint on some engines, not at all on others, and it vanishes
@@ -2155,6 +2321,7 @@ export const TriagePage = () => {
                 placeholder="Search the queue…"
                 value={searchQuery}
                 onChange={(e) => changeSearch(e.target.value)}
+                onKeyDown={handleSearchKeyDown}
                 className="h-7 w-full rounded-md border border-border bg-background pl-7.5 pr-2.5 text-label text-foreground shadow-[var(--shadow-e1)] transition-[border-color,box-shadow] duration-[var(--dur-fast)] placeholder:text-muted-foreground focus:border-highlight/50"
                 data-testid="triage-search"
               />
@@ -2229,40 +2396,72 @@ export const TriagePage = () => {
             {queueError && <FeedErrorCard label="action queue" error={queueError} />}
             {proposalsError && <FeedErrorCard label="proposals" error={proposalsError} />}
             {renderedRows.map((row) => {
+              const id = rowKey(row)
+              const isSelected = id === selectedRowId
+              const selectionClass = isSelected
+                ? 'rounded-lg ring-2 ring-highlight/50'
+                : undefined
               if (row.type === 'cluster') {
                 return (
-                  <TriageClusterRow
-                    key={`cluster:${row.kind}`}
-                    kind={row.kind}
-                    count={row.count}
-                    latestAt={row.latestAt}
-                  />
+                  <div
+                    key={id}
+                    ref={makeRowRef(id)}
+                    data-row-id={id}
+                    className={selectionClass}
+                  >
+                    <TriageClusterRow
+                      kind={row.kind}
+                      count={row.count}
+                      latestAt={row.latestAt}
+                    />
+                  </div>
                 )
               }
               // Cause group: many different tasks sharing the same failure cause.
               // Collapsed by default; bulk action applies to all members.
               if (row.type === 'causeGroup') {
-                return <TriageCauseGroupRow key={row.id} group={row} />
+                return (
+                  <div
+                    key={id}
+                    ref={makeRowRef(id)}
+                    data-row-id={id}
+                    className={selectionClass}
+                  >
+                    <TriageCauseGroupRow group={row} />
+                  </div>
+                )
               }
               // Entity group: several conditions derived for ONE task. Render
               // the precedence-chosen row and surface the rest as read-only
               // badges, so the card exposes exactly one verb set.
               if (row.type === 'entityGroup') {
                 return (
-                  <TriageRow
-                    key={row.primary.id}
-                    item={row.primary}
-                    extraBadges={row.badgeKinds}
-                    goalIsAmbiguous={ambiguousGoals.has(row.primary.operatorGoal ?? '')}
-                  />
+                  <div
+                    key={id}
+                    ref={makeRowRef(id)}
+                    data-row-id={id}
+                    className={selectionClass}
+                  >
+                    <TriageRow
+                      item={row.primary}
+                      extraBadges={row.badgeKinds}
+                      goalIsAmbiguous={ambiguousGoals.has(row.primary.operatorGoal ?? '')}
+                    />
+                  </div>
                 )
               }
               return (
-                <TriageRow
-                  key={row.item.id}
-                  item={row.item}
-                  goalIsAmbiguous={ambiguousGoals.has(row.item.operatorGoal ?? '')}
-                />
+                <div
+                  key={id}
+                  ref={makeRowRef(id)}
+                  data-row-id={id}
+                  className={selectionClass}
+                >
+                  <TriageRow
+                    item={row.item}
+                    goalIsAmbiguous={ambiguousGoals.has(row.item.operatorGoal ?? '')}
+                  />
+                </div>
               )
             })}
           </div>
