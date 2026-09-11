@@ -385,6 +385,17 @@ interface TriageRowProps {
      */
     sharedAge: boolean
   }
+  /**
+   * True when this row's `operatorGoal` appears on more than one row currently
+   * rendered on the page. When true the row's failure description (`title`)
+   * leads as the headline — the only field that differs across rows sharing one
+   * arc goal — and the arc goal is shown below as secondary context.
+   *
+   * The group renderer already applies this rule via its total-and-distinct
+   * `nameOf` candidate selection. This prop extends the same logic to individual
+   * (non-grouped) rows where the page can see all siblings but the row cannot.
+   */
+  goalIsAmbiguous?: boolean
 }
 
 /**
@@ -534,7 +545,7 @@ const ConfirmDestructive = ({
   </span>
 )
 
-const TriageRow = ({ item, extraBadges, groupContext }: TriageRowProps) => {
+const TriageRow = ({ item, extraBadges, groupContext, goalIsAmbiguous = false }: TriageRowProps) => {
   const qc = useQueryClient()
   const projectId = useFocusedProjectId() ?? undefined
   const [pending, setPending] = useState<string | null>(null)
@@ -689,7 +700,19 @@ const leadDecisionIndex = (decisions: Decision[]): number => {
   // (the daemon's plain-language cause phrase) is the subhead; the raw error
   // output moves behind an "Output" disclosure. When no goal is available the
   // humanSummary || title falls back to the sole headline.
-  const goal = item.operatorGoal ?? null
+  //
+  // Exception — goalIsAmbiguous: when the same operatorGoal appears on more
+  // than one row currently on the page (multiple rows from the same arc), the
+  // goal cannot distinguish them. In that case, item.title leads as headline
+  // (it names the specific failure phase and cause, which DOES differ) and the
+  // arc goal is shown below as secondary context. This mirrors the group
+  // renderer's total-and-distinct candidate selection (nameOf, below) which
+  // already applies the same rule to cause-group members.
+  const goal = goalIsAmbiguous
+    ? (item.title || item.operatorGoal || null)
+    : (item.operatorGoal ?? null)
+  // Preserved for secondary context when title leads (goalIsAmbiguous).
+  const ambiguousArcGoal = goalIsAmbiguous ? (item.operatorGoal ?? null) : null
 
   /** Prose, not a name: multiple sentences, or long enough to be one. */
   const readsAsAdvisory = (text: string | null | undefined): boolean =>
@@ -1016,8 +1039,13 @@ const leadDecisionIndex = (decisions: Decision[]): number => {
               spawned to rescue. The queue printed the goal as the row's
               headline, so the same id was headlined one way here and another
               in the drawer — and an operator arming Restart believed they were
-              restarting the work the goal describes. Label it. */}
-          {item.fixForTaskId != null && (
+              restarting the work the goal describes. Label it.
+              Guard: when goalIsAmbiguous the headline is item.title, not the
+              arc goal, so the label would be wrong — suppress it there.
+              Guard: goalIsInherited covers both fixForTaskId (fix tasks) AND
+              originId-linked tasks (rescue-operator), replacing the narrower
+              fixForTaskId-only check that missed the rescue-operator case. */}
+          {!goalIsAmbiguous && item.goalIsInherited === true && (
             <p className="mb-0.5 text-micro text-muted-foreground" data-testid="triage-goal-owner">
               Recovering an arc whose goal is:
             </p>
@@ -1053,7 +1081,23 @@ const leadDecisionIndex = (decisions: Decision[]): number => {
               {goal.split('\n')[0]?.trim()}
             </p>
           )}
-          {!inGroup && (
+          {/* When title leads (goalIsAmbiguous), show the original arc goal as
+              secondary context so the operator still sees what the task was
+              trying to accomplish, without it being the sole headline that
+              would make all four rows look identical. */}
+          {ambiguousArcGoal && !inGroup && (
+            <p
+              className="mb-0.5 text-micro text-muted-foreground line-clamp-1"
+              data-testid="triage-ambiguous-arc-goal"
+            >
+              Arc: {ambiguousArcGoal.split('\n')[0]?.trim()}
+            </p>
+          )}
+          {/* Suppress the subhead when it would duplicate the headline.
+              When goalIsAmbiguous, goal = item.title, so subhead (which
+              falls back to item.title when no failure signature is mapped)
+              would echo the headline verbatim. */}
+          {!inGroup && !(goalIsAmbiguous && subhead === goal) && (
             <p
               className="text-label text-muted-foreground"
               data-testid="triage-title-subhead"
@@ -2006,6 +2050,24 @@ export const TriagePage = () => {
   )
 
   const renderedRows = buildRenderedRows(filtered.items, filtered.groups)
+
+  // Compute which operatorGoal values are not unique among the rows being
+  // rendered as individual TriageRows (type='item' and type='entityGroup').
+  // When a goal appears more than once, the rows sharing it are indistinguishable
+  // by goal alone — the group renderer already applies a total-and-distinct rule
+  // for cause-group members; this extends the same logic to single rows.
+  const ambiguousGoals = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const row of renderedRows) {
+      const rowItem =
+        row.type === 'item' ? row.item : row.type === 'entityGroup' ? row.primary : null
+      if (!rowItem) continue
+      const g = rowItem.operatorGoal
+      if (g != null && g !== '') counts.set(g, (counts.get(g) ?? 0) + 1)
+    }
+    return new Set([...counts.entries()].filter(([, n]) => n > 1).map(([g]) => g))
+  }, [renderedRows])
+
   // Both ends of "Showing N of M" come from `countNeedsYou` — the same
   // definition behind the badge above them, the sidebar, the bell and the
   // chat greeting. The page used to compute its own totals, which is how one
@@ -2191,10 +2253,17 @@ export const TriagePage = () => {
                     key={row.primary.id}
                     item={row.primary}
                     extraBadges={row.badgeKinds}
+                    goalIsAmbiguous={ambiguousGoals.has(row.primary.operatorGoal ?? '')}
                   />
                 )
               }
-              return <TriageRow key={row.item.id} item={row.item} />
+              return (
+                <TriageRow
+                  key={row.item.id}
+                  item={row.item}
+                  goalIsAmbiguous={ambiguousGoals.has(row.item.operatorGoal ?? '')}
+                />
+              )
             })}
           </div>
         )}

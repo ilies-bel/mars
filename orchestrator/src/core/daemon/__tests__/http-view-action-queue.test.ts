@@ -779,6 +779,7 @@ describe('GET /view/action-queue via HTTP server', () => {
             verbs: [],
             arcGoal: null,
             operatorGoal: null,
+            goalIsInherited: false,
             entityTitle: null,
             class: 'decision',
             noticeKey: null,

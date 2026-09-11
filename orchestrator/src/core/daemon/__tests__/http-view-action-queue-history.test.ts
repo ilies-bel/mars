@@ -301,6 +301,7 @@ describe('GET /view/action-queue/history via HTTP server', () => {
       },
       arcGoal: null,
       operatorGoal: null,
+      goalIsInherited: false,
       entityTitle: null,
       class: 'decision',
       noticeKey: null,

@@ -157,6 +157,7 @@ const makeItem = (
     verbs: [],
     arcGoal: null,
     operatorGoal: null,
+    goalIsInherited: false,
     diagnosis: null,
     failureReasonCode: null,
     fixForTaskId: null,
@@ -1258,6 +1259,108 @@ describe('TriageRow – operatorGoal headline hierarchy', () => {
     expect(container.querySelector('[data-testid="triage-title-subhead"]')?.textContent)
       .toBe('A verification check did not pass')
     expect(container.textContent).toContain('Summary for failed')
+  })
+})
+
+describe('TriageRow – shared-goal disambiguation (goalIsAmbiguous)', () => {
+  it('two rows sharing one operatorGoal render two DIFFERENT headlines', () => {
+    // The live bug: 4 rows all showed "Make a vitest collection failure impossible
+    // to mistake for a green run" because operatorGoal was the sole headline and
+    // operatorGoal is the same on every row of one arc.
+    mockItems.mockReturnValue([
+      makeItem('failed', {
+        id: 'item-a',
+        entityId: 'task-a',
+        operatorGoal: 'Fix the vitest collection failure',
+        title: 'The changes could not be merged',
+      }),
+      makeItem('failed', {
+        id: 'item-b',
+        entityId: 'task-b',
+        operatorGoal: 'Fix the vitest collection failure',
+        title: 'The task setup step failed',
+      }),
+    ])
+    const { container } = renderPage()
+    const goals = container.querySelectorAll('[data-testid="triage-goal"]')
+    // Both rows must have a headline element.
+    expect(goals.length).toBe(2)
+    // The two headlines must be DIFFERENT — this is the positive assertion the
+    // spec requires. An absence assertion alone would pass if the element
+    // disappeared entirely.
+    expect(goals[0]?.textContent).not.toBe(goals[1]?.textContent)
+    // Each headline should be the row's TITLE (the discriminating phrase),
+    // not the shared operatorGoal.
+    expect(goals[0]?.textContent).toContain('The changes could not be merged')
+    expect(goals[1]?.textContent).toContain('The task setup step failed')
+    // The shared arc goal is shown as secondary context, not as the headline.
+    expect(container.textContent).toContain('Fix the vitest collection failure')
+    // But it should NOT appear as a triage-goal element.
+    const goalTexts = [...goals].map((el) => el.textContent ?? '')
+    expect(goalTexts.every((t) => !t.includes('Fix the vitest collection failure'))).toBe(true)
+  })
+
+  it('two rows with distinct operatorGoals still render the goal as the headline (positive control)', () => {
+    // When goals are unique, the goal IS the right headline and must not be replaced.
+    mockItems.mockReturnValue([
+      makeItem('failed', {
+        id: 'item-c',
+        entityId: 'task-c',
+        operatorGoal: 'Fix the login timeout bug',
+        title: 'Coding step failed',
+      }),
+      makeItem('failed', {
+        id: 'item-d',
+        entityId: 'task-d',
+        operatorGoal: 'Add dark mode support',
+        title: 'Coding step failed',
+      }),
+    ])
+    const { container } = renderPage()
+    const goals = container.querySelectorAll('[data-testid="triage-goal"]')
+    expect(goals.length).toBe(2)
+    // Both headlines show the operatorGoal (unique goals → goal is the right choice).
+    expect(goals[0]?.textContent).toContain('Fix the login timeout bug')
+    expect(goals[1]?.textContent).toContain('Add dark mode support')
+  })
+
+  it('goal-owner label fires when goalIsInherited=true and goal is unique on the page', () => {
+    // Fix 2: the label previously fired only for fixForTaskId != null, missing
+    // rescue-operator rows which link via originId. goalIsInherited covers both.
+    mockItems.mockReturnValue([
+      makeItem('failed', {
+        id: 'item-rescue',
+        entityId: 'task-rescue',
+        operatorGoal: 'Fix the vitest collection failure',
+        title: 'Arc has dead-ended',
+        goalIsInherited: true,
+        // fixForTaskId is null (rescue-operator, not fix task) — the old check missed this
+        fixForTaskId: null,
+      }),
+    ])
+    const { container } = renderPage()
+    // Single row, unique goal → goal is the headline
+    expect(container.querySelector('[data-testid="triage-goal"]')?.textContent)
+      .toContain('Fix the vitest collection failure')
+    // The label fires because goalIsInherited=true
+    const ownerLabel = container.querySelector('[data-testid="triage-goal-owner"]')
+    expect(ownerLabel).not.toBeNull()
+    expect(ownerLabel?.textContent).toContain('Recovering an arc whose goal is:')
+  })
+
+  it('goal-owner label is absent when goalIsInherited is false (origin task)', () => {
+    mockItems.mockReturnValue([
+      makeItem('failed', {
+        id: 'item-origin',
+        entityId: 'task-origin',
+        operatorGoal: 'Implement the billing feature',
+        title: 'Coding step failed',
+        goalIsInherited: false,
+        fixForTaskId: null,
+      }),
+    ])
+    const { container } = renderPage()
+    expect(container.querySelector('[data-testid="triage-goal-owner"]')).toBeNull()
   })
 })
 

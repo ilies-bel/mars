@@ -71,6 +71,7 @@ const makeRow = (
   fixForTaskId: null,
   arcGoal: null,
   operatorGoal: null,
+  goalIsInherited: false,
   humanSummary: `Summary for ${overrides.id}`,
   humanDetail: {},
   verbs: [],

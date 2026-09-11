@@ -45,6 +45,7 @@ const makeRow = (
     verbs: [],
     arcGoal: null,
     operatorGoal: null,
+    goalIsInherited: false,
     class: 'alert',
     noticeKey: null,
     ...overrides,

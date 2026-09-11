@@ -236,6 +236,13 @@ export interface ActionQueueRow {
    */
   operatorGoal: string | null
   /**
+   * True when this row's `operatorGoal` was inherited from the arc origin
+   * (fix/recovery tasks via `fixForTaskId`, rescue-operator tasks via
+   * `originId`). False for origin tasks whose goal is their own. Drives the
+   * UI label "Recovering an arc whose goal is:" for non-ambiguous rows.
+   */
+  goalIsInherited: boolean
+  /**
    * Human-readable title of the entity this row represents. For `slice-failed`
    * rows this is the PRD's real title (not the truncated slug id); for other
    * entity-backed rows it may be set by the kind's recipe `entityTitle`
@@ -1595,10 +1602,18 @@ export const buildActionQueueView = async ({
     // have a task for this entity?", not "is this row a failure kind?".
     let arcGoal: string | null = null
     let operatorGoal: string | null = null
+    // True when the goal was inherited from an arc origin, not the task's own.
+    // Covers fix/recovery tasks (fixForTaskId non-null) and rescue-operator
+    // tasks that follow originId to a different task. Drives the UI label
+    // "Recovering an arc whose goal is:" for non-ambiguous inherited-goal rows.
+    let goalIsInherited = false
     const taskForGoals = taskById.get(entityId)
     if (taskForGoals) {
       arcGoal = deriveArcGoal(taskForGoals, taskById)
       operatorGoal = deriveOperatorGoal(taskForGoals, taskById)
+      goalIsInherited =
+        (taskForGoals.fixForTaskId != null && taskForGoals.fixForTaskId !== '') ||
+        (taskForGoals.originId != null && taskForGoals.originId !== taskForGoals.id)
     }
     // Recipe-level fallback: for kinds whose entity is not a task (e.g.
     // `slice-failed` where the entity is a proposal), the recipe can supply
@@ -1841,6 +1856,7 @@ export const buildActionQueueView = async ({
       fixForTaskId,
       arcGoal,
       operatorGoal,
+      goalIsInherited,
       entityTitle,
       toolPromotionDetail,
       previewUrl,
@@ -1933,6 +1949,7 @@ export const buildActionQueueView = async ({
       // Synthetic aggregate row — no single arc goal or entity title applies.
       arcGoal: null,
       operatorGoal: null,
+      goalIsInherited: false,
       entityTitle: null,
       class: 'alert',
       noticeKey: null,
@@ -2195,19 +2212,16 @@ export const buildActionQueueHistoryView = async ({
 
     // Derive the arc goal via the shared deriveArcGoal helper (same logic as the live view).
     let arcGoal: string | null = null
+    let operatorGoal: string | null = null
+    let goalIsInherited = false
     if (isTaskFailure) {
       const task = taskById.get(entityId)
       if (task) {
         arcGoal = deriveArcGoal(task, taskById)
-      }
-    }
-
-    // Derive the operator-facing goal (same resolution chain, richer normaliser).
-    let operatorGoal: string | null = null
-    if (isTaskFailure) {
-      const task = taskById.get(entityId)
-      if (task) {
         operatorGoal = deriveOperatorGoal(task, taskById)
+        goalIsInherited =
+          (task.fixForTaskId != null && task.fixForTaskId !== '') ||
+          (task.originId != null && task.originId !== task.id)
       }
     }
     // Recipe-level fallback for kinds whose entity is not a task (same rule as
@@ -2307,6 +2321,7 @@ export const buildActionQueueHistoryView = async ({
       fixForTaskId,
       arcGoal,
       operatorGoal,
+      goalIsInherited,
       entityTitle,
       resolution,
       class: historyItemClass,

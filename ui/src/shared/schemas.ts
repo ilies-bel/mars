@@ -442,6 +442,14 @@ const actionQueueBaseSchema = z.object({
    */
   operatorGoal: z.string().nullable().optional(),
   /**
+   * True when this row's `operatorGoal` was inherited from the arc origin
+   * rather than being the task's own goal. Set for fix/recovery tasks
+   * (`fixForTaskId` non-null) and for rescue-operator tasks that follow
+   * `originId` to a different task. False/absent for origin tasks whose goal
+   * is their own. Drives the "Recovering an arc whose goal is:" label.
+   */
+  goalIsInherited: z.boolean().optional(),
+  /**
    * Human-readable title of the entity this row represents. For `slice-failed`
    * rows this is the PRD's real title (not the truncated slug id). Used by the
    * UI to name cause-group members without parsing the body prose. Absent on

@@ -282,6 +282,7 @@ const makeToolPromotionRow = (
   toolPromotionDetail: detail,
   arcGoal: null,
   operatorGoal: null,
+  goalIsInherited: false,
   entityTitle: null,
   class: 'decision',
   noticeKey: null,
