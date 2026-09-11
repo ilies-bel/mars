@@ -391,9 +391,9 @@ const SignatureStormLane = ({ data }: { data: StewardView['signatureStorm'] }) =
             State disagreement detected
           </p>
           <p className="mt-0.5 font-mono text-micro text-warn/80">
-            Breaker is {tripped ? 'tripped' : 'clear'} in Postgres, but dispatch is{' '}
-            {isPaused ? 'paused' : 'running'} in memory. The daemon was likely restarted while the
-            breaker was {tripped ? 'tripped' : 'clear'}. Run{' '}
+            Breaker is {tripped ? 'tripped' : 'clear'} but dispatch is{' '}
+            {isPaused ? 'paused' : 'running'}. The daemon was likely restarted while the breaker was{' '}
+            {tripped ? 'tripped' : 'clear'}. Run{' '}
             <code className="rounded bg-warn/20 px-1">mars operator</code> to re-align.
           </p>
         </div>
@@ -402,7 +402,7 @@ const SignatureStormLane = ({ data }: { data: StewardView['signatureStorm'] }) =
       <div className="grid grid-cols-2 gap-3">
         <div className="rounded border border-border/50 bg-muted/20 p-3">
           <div className="font-mono text-micro uppercase tracking-wide text-muted-foreground/70">
-            Breaker (Postgres)
+            Breaker
           </div>
           <div
             className={`mt-1 font-mono text-body font-semibold ${tripped ? 'text-error' : 'text-success'}`}
@@ -415,10 +415,11 @@ const SignatureStormLane = ({ data }: { data: StewardView['signatureStorm'] }) =
               {formatAbsoluteDateTime(updated_at)}
             </time>
           )}
+          <p className="font-mono text-micro text-muted-foreground">survives a restart</p>
         </div>
         <div className="rounded border border-border/50 bg-muted/20 p-3">
           <div className="font-mono text-micro uppercase tracking-wide text-muted-foreground/70">
-            Dispatch (in-memory)
+            Dispatch
           </div>
           <div
             className={`mt-1 font-mono text-body font-semibold ${isPaused ? 'text-error' : 'text-success'}`}
@@ -426,7 +427,7 @@ const SignatureStormLane = ({ data }: { data: StewardView['signatureStorm'] }) =
           >
             {isPaused ? 'Paused' : 'Running'}
           </div>
-          <p className="font-mono text-micro text-muted-foreground">resets on daemon restart</p>
+          <p className="font-mono text-micro text-muted-foreground">resets on a restart</p>
         </div>
       </div>
 
