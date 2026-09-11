@@ -217,12 +217,16 @@ describe('TriageClusterRow – draft-proposal link target', () => {
 
 describe('TriageRow – failed kind shows Continue + Restart', () => {
   beforeEach(() => {
-    mockItems.mockReturnValue([makeItem('failed')])
+    mockItems.mockReturnValue([
+      makeItem('failed', {
+        verbs: [{ op: 'continue', label: 'Resume on existing worktree', style: 'primary' }],
+      }),
+    ])
   })
 
-  it('renders a Continue button', () => {
+  it('renders a Continue button via the server verb loop', () => {
     const { container } = renderPage()
-    expect(container.querySelector('[data-testid="triage-continue"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="triage-verb-continue"]')).not.toBeNull()
   })
 
   it('renders no Restart button when the server sent no restart verb', () => {
@@ -304,7 +308,7 @@ describe('TriageRow – daemon-code-drift does NOT show Continue/Restart', () =>
 
   it('has no Continue button', () => {
     const { container } = renderPage()
-    expect(container.querySelector('[data-testid="triage-continue"]')).toBeNull()
+    expect(container.querySelector('[data-testid="triage-verb-continue"]')).toBeNull()
   })
 
   it('has no Restart button', () => {
@@ -325,7 +329,7 @@ describe('TriageRow – reflect-recommended shows no action buttons', () => {
 
   it('has no Continue button', () => {
     const { container } = renderPage()
-    expect(container.querySelector('[data-testid="triage-continue"]')).toBeNull()
+    expect(container.querySelector('[data-testid="triage-verb-continue"]')).toBeNull()
   })
 
   it('has no Restart button', () => {
@@ -362,7 +366,7 @@ describe('TriageRow – gate-enrichment shows decisions, no Continue/Restart', (
 
   it('has no Continue button', () => {
     const { container } = renderPage()
-    expect(container.querySelector('[data-testid="triage-continue"]')).toBeNull()
+    expect(container.querySelector('[data-testid="triage-verb-continue"]')).toBeNull()
   })
 
   it('has no Restart button', () => {
@@ -492,17 +496,20 @@ describe('TriageRow – decision button style field', () => {
 
 describe('TriageRow – Continue/Restart buttons fire invokeAction', () => {
   beforeEach(() => {
-    // Restart reaches the row as a server verb now, not a hardcoded control.
+    // Both continue and restart reach the row as server verbs.
     mockItems.mockReturnValue([
       makeItem('failed', {
-        verbs: [{ op: 'restart', label: 'Restart', style: 'destructive' }],
+        verbs: [
+          { op: 'continue', label: 'Resume on existing worktree', style: 'primary' },
+          { op: 'restart', label: 'Restart', style: 'destructive' },
+        ],
       }),
     ])
   })
 
   it('clicking Continue calls invokeAction("continue", entityId)', async () => {
     const { container } = renderPage()
-    const btn = container.querySelector('[data-testid="triage-continue"]') as HTMLButtonElement
+    const btn = container.querySelector('[data-testid="triage-verb-continue"]') as HTMLButtonElement
     expect(btn).not.toBeNull()
     await act(async () => {
       btn.click()
@@ -676,7 +683,7 @@ describe('TriageRow – recovery-exhausted rows render only server-sent verbs', 
       makeItem('failed', { entityId: 'mars-abc123', recoveryExhausted: true }),
     ])
     const { container } = renderPage()
-    expect(container.querySelector('[data-testid="triage-continue"]')).toBeNull()
+    expect(container.querySelector('[data-testid="triage-verb-continue"]')).toBeNull()
   })
 
   it('has no Restart button in the primary row when exhausted', () => {
@@ -739,17 +746,20 @@ describe('TriageRow – recovery-exhausted rows render only server-sent verbs', 
 
   it('ignores a recovery_exhausted-looking failureReasonCode — the daemon decides', () => {
     // Guards against re-deriving the verdict client-side from the wrong column.
+    // The server sends a continue verb, so the button should render despite the
+    // misleading failureReasonCode.
     mockItems.mockReturnValue([
       makeItem('failed', {
         entityId: 'mars-abc123',
         failureReasonCode: 'recovery_exhausted:verify/unclassified',
         recoveryExhausted: false,
+        verbs: [{ op: 'continue', label: 'Resume on existing worktree', style: 'primary' }],
       }),
     ])
     const { container } = renderPage()
-    // No panel (it is deleted). Continue is still shown since recoveryExhausted=false.
+    // No panel (it is deleted). Continue renders via server verb loop.
     expect(container.querySelector('[data-testid="triage-recovery-exhausted"]')).toBeNull()
-    expect(container.querySelector('[data-testid="triage-continue"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="triage-verb-continue"]')).not.toBeNull()
   })
 })
 
@@ -782,7 +792,7 @@ describe('TriagePage – several conditions for one task collapse to one card', 
 
   it('offers no Continue button anywhere on the page', () => {
     const { container } = renderPage()
-    expect(container.querySelector('[data-testid="triage-continue"]')).toBeNull()
+    expect(container.querySelector('[data-testid="triage-verb-continue"]')).toBeNull()
   })
 
   it('has no client-inferred carry-forward panel (server verbs are the source of truth)', () => {
@@ -884,13 +894,17 @@ describe('TriageRow – decision button fires postDecision', () => {
 
 describe('TriageRow – error feedback shown when mutation fails', () => {
   beforeEach(() => {
-    mockItems.mockReturnValue([makeItem('failed')])
+    mockItems.mockReturnValue([
+      makeItem('failed', {
+        verbs: [{ op: 'continue', label: 'Resume on existing worktree', style: 'primary' }],
+      }),
+    ])
   })
 
   it('shows error text when invokeAction rejects', async () => {
     mockInvokeAction.mockRejectedValueOnce(new Error('Daemon unreachable'))
     const { container } = renderPage()
-    const btn = container.querySelector('[data-testid="triage-continue"]') as HTMLButtonElement
+    const btn = container.querySelector('[data-testid="triage-verb-continue"]') as HTMLButtonElement
     await act(async () => {
       btn.click()
     })
@@ -902,12 +916,12 @@ describe('TriageRow – error feedback shown when mutation fails', () => {
   it('row stays visible after a failed action (not resolved)', async () => {
     mockInvokeAction.mockRejectedValueOnce(new Error('Daemon unreachable'))
     const { container } = renderPage()
-    const btn = container.querySelector('[data-testid="triage-continue"]') as HTMLButtonElement
+    const btn = container.querySelector('[data-testid="triage-verb-continue"]') as HTMLButtonElement
     await act(async () => {
       btn.click()
     })
     // Continue button still present — row was not resolved on failure
-    expect(container.querySelector('[data-testid="triage-continue"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="triage-verb-continue"]')).not.toBeNull()
   })
 
   it('shows error when decision response is non-2xx', async () => {
@@ -967,7 +981,7 @@ describe('TriageRow – Chat link hrefs are scoped to each alert', () => {
     expect(link.getAttribute('href')).toContain('project=proj-1')
   })
 
-  it('failed (task-recovery) row renders the chat icon link, not a text link', () => {
+  it('failed (task-recovery) row renders a chat link', () => {
     mockItems.mockReturnValue([makeItem('failed', { id: 'item-fail' })])
     const { container } = renderPage()
     const link = container.querySelector('[data-testid="triage-chat"]') as HTMLAnchorElement
@@ -1020,7 +1034,8 @@ describe('TriagePage – first fetch still pending', () => {
     mockItems.mockReturnValue([makeItem('failed')])
     const { container } = renderPage()
     expect(container.querySelector('[data-testid="triage-loading"]')).toBeNull()
-    expect(container.querySelector('[data-testid="triage-continue"]')).not.toBeNull()
+    // Verify rows are rendered (chat link is present on every row)
+    expect(container.querySelector('[data-testid="triage-chat"]')).not.toBeNull()
   })
 })
 
@@ -1038,7 +1053,8 @@ describe('TriagePage – proposals feed rejects but action-queue items still ren
 
   it('renders the action-queue item when proposals fetch errors', () => {
     const { container } = renderPage()
-    expect(container.querySelector('[data-testid="triage-continue"]')).not.toBeNull()
+    // Chat link is present on every rendered row
+    expect(container.querySelector('[data-testid="triage-chat"]')).not.toBeNull()
   })
 
   it('shows an inline proposals feed error card', () => {
@@ -1110,15 +1126,19 @@ describe('TriageRow – condition-kind verb success: row stays rendered', () => 
     // 'failed' is also a condition kind. Continue already had this property
     // (invokeAction resolved but the row stayed) — this test makes the
     // condition-kind contract explicit and guards it against regression.
-    mockItems.mockReturnValue([makeItem('failed')])
+    mockItems.mockReturnValue([
+      makeItem('failed', {
+        verbs: [{ op: 'continue', label: 'Resume on existing worktree', style: 'primary' }],
+      }),
+    ])
     const { container } = renderPage()
-    const btn = container.querySelector('[data-testid="triage-continue"]') as HTMLButtonElement
+    const btn = container.querySelector('[data-testid="triage-verb-continue"]') as HTMLButtonElement
     expect(btn).not.toBeNull()
     await act(async () => {
       btn.click()
     })
     // Row still present — 'failed' is a condition kind.
-    expect(container.querySelector('[data-testid="triage-continue"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="triage-verb-continue"]')).not.toBeNull()
   })
 })
 
@@ -1375,7 +1395,7 @@ describe('TriageRow – phantom-merge renders server-sent verbs (no client panel
   it('phantom-merge has no Continue button', () => {
     mockItems.mockReturnValue([makeItem('phantom-merge', { verbs: phantomMergeVerbs })])
     const { container } = renderPage()
-    expect(container.querySelector('[data-testid="triage-continue"]')).toBeNull()
+    expect(container.querySelector('[data-testid="triage-verb-continue"]')).toBeNull()
   })
 
   it('phantom-merge has no Restart button (not a task-recovery kind)', () => {
@@ -1412,7 +1432,7 @@ describe('TriageRow – phantom-merge-unknown renders server-sent verbs (no clie
   it('phantom-merge-unknown has no Continue button', () => {
     mockItems.mockReturnValue([makeItem('phantom-merge-unknown', { verbs: phantomUnknownVerbs })])
     const { container } = renderPage()
-    expect(container.querySelector('[data-testid="triage-continue"]')).toBeNull()
+    expect(container.querySelector('[data-testid="triage-verb-continue"]')).toBeNull()
   })
 
   it('phantom-merge-unknown has no Restart button', () => {
@@ -1448,7 +1468,7 @@ describe('TriageRow – done-with-unmerged-commits does NOT offer Continue (task
     const { container } = renderPage()
     // mars continue is refused for non-failed tasks. The recipe's restart verb
     // (Re-attempt merge) is the correct CTA and is rendered via mainVerbs.
-    expect(container.querySelector('[data-testid="triage-continue"]')).toBeNull()
+    expect(container.querySelector('[data-testid="triage-verb-continue"]')).toBeNull()
   })
 
   it('done-with-unmerged-commits has no guarded Restart control (recipe provides one)', () => {
@@ -1495,5 +1515,66 @@ describe('TriagePage – the toolbar controls are named', () => {
     mockItems.mockReturnValue([makeItem('failed')])
     const html = renderToStaticMarkup(<TriagePage />)
     expect(html).toContain('aria-label="Filter by kind"')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// TriageRow — exactly ONE continue control when server sends the verb
+//
+// Regression guard for the dual-button bug: a hardcoded Continue button
+// co-existed with the server verb loop, so a `continue` verb in item.verbs
+// produced two buttons with identical op and no visual distinction. Assert
+// count (not just presence) so this exact bug fails the test.
+// ---------------------------------------------------------------------------
+
+describe('TriageRow – continue control count', () => {
+  /**
+   * Collect every DOM element that would dispatch a "continue" action.
+   * Covers both `[data-testid="triage-verb-continue"]` (the verb loop) and
+   * any stale `[data-testid="triage-continue"]` (the removed hardcoded button)
+   * so a regression reintroducing the hardcoded variant is caught.
+   */
+  function continueControls(container: HTMLElement): Element[] {
+    return Array.from(
+      container.querySelectorAll('[data-testid="triage-verb-continue"], [data-testid="triage-continue"]'),
+    )
+  }
+
+  it('renders exactly ONE continue control when the server verb is present', () => {
+    mockItems.mockReturnValue([
+      makeItem('failed', {
+        verbs: [
+          { op: 'continue', label: 'Resume on existing worktree', style: 'primary' },
+          { op: 'restart', label: 'Restart', style: 'destructive' },
+        ],
+      }),
+    ])
+    const { container } = renderPage()
+    expect(continueControls(container)).toHaveLength(1)
+  })
+
+  it('renders NO continue control when the server sends no continue verb', () => {
+    mockItems.mockReturnValue([
+      makeItem('failed', {
+        verbs: [
+          { op: 'restart', label: 'Restart', style: 'destructive' },
+          { op: 'purge', label: 'Discard task', style: 'destructive' },
+        ],
+      }),
+    ])
+    const { container } = renderPage()
+    expect(continueControls(container)).toHaveLength(0)
+  })
+
+  it('renders exactly ONE continue control even when the group bulk verb is also continue', () => {
+    // A grouped member receives its group's bulk verb as its own action. If the
+    // server ALSO sends a continue verb, there must still be only one button.
+    mockItems.mockReturnValue([
+      makeItem('failed', {
+        verbs: [{ op: 'continue', label: 'Resume on existing worktree', style: 'primary' }],
+      }),
+    ])
+    const { container } = renderPage()
+    expect(continueControls(container)).toHaveLength(1)
   })
 })

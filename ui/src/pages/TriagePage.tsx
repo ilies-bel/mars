@@ -2,7 +2,7 @@ import { useCounts } from '@/entities/counts/useCounts'
 import { EmptyState } from '@/components/EmptyState'
 import { SelectField } from '@/components/SelectField'
 import { Chip, type ChipTone } from '@/components/Chip'
-import { AlertTriangle, Archive, ArrowRight, ChevronDown, ChevronRight, Circle, CircleDashed, Clock, FileText, Gauge, GitBranch, HelpCircle, MessageSquare, MoreHorizontal, PowerOff, RefreshCw, Search, SearchX, ShieldAlert, ShieldX, Sparkles, Undo2, UserCheck, XCircle, Zap } from 'lucide-react'
+import { AlertTriangle, Archive, ArrowRight, ChevronDown, ChevronRight, Circle, CircleDashed, Clock, FileText, Gauge, GitBranch, HelpCircle, MoreHorizontal, PowerOff, RefreshCw, Search, SearchX, ShieldAlert, ShieldX, Sparkles, Undo2, UserCheck, XCircle, Zap } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { ActionButton, ActionLink } from '@/components/ActionButton'
 import { PAGE_MEASURE, PageHeader } from '@/widgets/primitives/DensityPrimitives'
@@ -772,11 +772,6 @@ const leadDecisionIndex = (decisions: Decision[]): number => {
   const kindTone = KIND_TONE[item.kind] ?? 'neutral'
   const isChatOnly = CHAT_ONLY_KINDS.has(item.kind)
   const isTaskRecovery = TASK_RECOVERY_KINDS.has(item.kind)
-  const isRecoveryExhausted = isTaskRecovery && item.recoveryExhausted
-  // The single source of truth for "does this row offer Continue" — the button
-  // below, the restart confirmation's alternative clause, and the sentence
-  // that explains the absence all read it, so they cannot disagree.
-  const continueAvailable = !isChatOnly && isTaskRecovery && !isRecoveryExhausted
   // Phantom-merge: done task with no merge SHA on record. Neither Continue
   // (refused for non-failed tasks) nor Restart (destructive) is the right CTA.
   // A dedicated carry-forward panel offers Remerge (branch still has commits)
@@ -803,16 +798,10 @@ const leadDecisionIndex = (decisions: Decision[]): number => {
   // action, unless the daemon already sent it one by that op.
   const groupVerb = groupContext?.memberVerb ?? null
   // A member does not inherit a verb it is already about to render itself.
-  //
-  // The group's bulk verb is now derived as `continue` for a continuable
-  // failed group, and every one of its members ALSO renders its own Continue
-  // below — so each row drew two buttons reading "Continue", side by side,
-  // one outlined and one filled, with nothing to tell them apart. The daemon's
-  // own verb list is checked for the same collision; the row's own affordances
-  // were not.
-  const rendersOwnVerb = (op: string): boolean => op === 'continue' && continueAvailable
+  // The group's bulk verb is skipped when the server already sent the same op
+  // in this row's own verbs list, so each row draws at most one button per op.
   const withGroupVerb =
-    groupVerb !== null && !rendersOwnVerb(groupVerb.op) && !verbs.some((v) => v.op === groupVerb.op)
+    groupVerb !== null && !verbs.some((v) => v.op === groupVerb.op)
       ? // Deliberately NOT primary. The recipe marks it primary because it is
         // the group's recommended bulk action; on a member it is the exception
         // to that ("retry just this one"), and seventeen filled buttons in a
@@ -1253,49 +1242,15 @@ const leadDecisionIndex = (decisions: Decision[]): number => {
         )}
 
         {/* ── Task-recovery primary actions ────────────────────────────────────
-            Continue is the sole visible primary CTA. Restart is hidden behind
-            a "⋯" disclosure (two-click path) to prevent misclicks during
-            failure storms. The disclosure dropdown is always rendered in the
-            DOM (visibility:hidden, pointer-events:none when closed) so its
-            buttons stay queryable in tests — jsdom does not honour CSS
-            pointer-events, so .click() still fires.
-            Chat is repositioned as an icon button immediately after Continue
-            so it is discoverable without dominating the row. */}
+            Server-sent verbs (Continue, Restart, …) render through the verb
+            loop above. Restart is hidden behind a "⋯" disclosure (two-click
+            path) to prevent misclicks during failure storms. The disclosure
+            dropdown is always rendered in the DOM (visibility:hidden,
+            pointer-events:none when closed) so its buttons stay queryable in
+            tests — jsdom does not honour CSS pointer-events, so .click()
+            still fires. */}
         {!isChatOnly && isTaskRecovery && (
           <>
-            {/* Continue and its chat shortcut only when continue is actually
-                available. The "⋯" disclosure below is NOT gated on that: an
-                exhausted row still needs Restart and Delete to be reachable.
-                They used to hang off this same condition, which was harmless
-                only while a carry-forward panel rendered in the exhausted
-                case. That panel is gone (the server sends the verbs now), so
-                gating the disclosure too left an exhausted row with no actions
-                at all. */}
-            {continueAvailable && (
-              <>
-            {/* Continue — sole visible primary CTA */}
-            <button
-              disabled={pending !== null}
-              onClick={() => void handleVerb('continue')}
-              className="rounded-md border border-highlight/20 bg-highlight/10 px-3 py-1.5 text-label font-medium text-highlight transition-colors hover:bg-highlight/20 disabled:opacity-50"
-              data-testid="triage-continue"
-            >
-              {pending === 'continue' ? '…' : 'Continue'}
-            </button>
-
-            {/* Chat — icon link, positioned after Continue */}
-            <a
-              href={chatHref}
-              title="Open chat thread"
-              aria-label="Open chat thread"
-              className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground"
-              data-testid="triage-chat"
-            >
-              <MessageSquare size={13} strokeWidth={2} aria-hidden="true" />
-            </a>
-              </>
-            )}
-
             {/* More ⋯ — disclosure that hides Restart (and copy verbs) */}
             <div ref={moreRef} className="relative">
               <button
@@ -1353,21 +1308,20 @@ const leadDecisionIndex = (decisions: Decision[]): number => {
           </>
         )}
 
-        {/* Chat → for chat-only rows, non-task-recovery rows, and recovery-
-            exhausted rows. Stays at ml-auto (right-aligned) in these cases
-            where there is no Continue button to anchor it after. */}
-        {(isChatOnly || !isTaskRecovery || isRecoveryExhausted) && (
-          <ActionLink
-            href={chatHref}
-            variant="ghost"
-            size="sm"
-            className="ml-auto"
-            data-testid="triage-chat"
-          >
-            Chat
-            <ArrowRight size={12} strokeWidth={2} aria-hidden="true" />
-          </ActionLink>
-        )}
+        {/* Chat → right-aligned on every row. Previously hidden behind the
+            inline icon-chat when Continue was hardcoded; now that Continue
+            renders through the verb loop, the text link is the only chat
+            affordance on all row types. */}
+        <ActionLink
+          href={chatHref}
+          variant="ghost"
+          size="sm"
+          className="ml-auto"
+          data-testid="triage-chat"
+        >
+          Chat
+          <ArrowRight size={12} strokeWidth={2} aria-hidden="true" />
+        </ActionLink>
       </div>
 
       {/* Confirm panel — BELOW the actions row, not inside it.
@@ -1384,7 +1338,7 @@ const leadDecisionIndex = (decisions: Decision[]): number => {
             verb={armedVerb}
             entityId={item.entityId}
             branch={item.humanDetail?.branch ?? null}
-            continueAvailable={continueAvailable}
+            continueAvailable={verbs.some((v) => v.op === 'continue')}
             pending={pending}
             onConfirm={() => void handleVerb(armedVerb.op, armedVerb.hint)}
             onCancel={() => setArmedVerb(null)}
