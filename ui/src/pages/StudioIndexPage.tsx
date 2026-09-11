@@ -2,18 +2,18 @@ import { SelectField } from '@/components/SelectField'
 import { EmptyState } from '@/components/EmptyState'
 import { ScoreBar } from '@/components/ScoreBar'
 /**
- * StudioIndexPage — the Studio landing at `#/studio` (bare, no task id).
+ * StudioIndexPage — the Scores landing at `#/scores` (bare, no task id).
  *
  * Lists recent scored runs for the selected scorer workflow, showing the
  * task's human title (via `taskTitle`, per DEC-18), when it was scored,
- * and its score. Each row links to `#/studio/<taskId>` so the operator
+ * and its score. Each row links to `#/scores/<taskId>` so the operator
  * can drill into the full step-execution tree.
  *
  * Data source: GET /api/loop-ledger — the same endpoint used by the Loop
  * Ledger panel on `#/kpi` (removed — the scored runs live here now).
  * pattern; the first known workflow is selected by default.
  *
- * `#/studio/` (trailing slash, no id) remains an unknown route and is
+ * `#/scores/` (trailing slash, no id) remains an unknown route and is
  * redirected by the App before this component is ever rendered.
  */
 
@@ -25,7 +25,7 @@ import { useLoopLedger } from '@/entities/watchtower/useLoopLedger'
 import { useTasks } from '@/hooks/useTasks'
 import { SkeletonList } from '@/components/Skeleton'
 import { PageHeader } from '@/widgets/primitives/DensityPrimitives'
-import { studioHash } from '@/shared/routing'
+import { scoresHash } from '@/shared/routing'
 import { relativeTime, formatAbsoluteDateTime } from '@/shared/time'
 
 type SortKey = 'task' | 'scored' | 'score'
@@ -318,7 +318,7 @@ export const StudioIndexPage = () => {
                       >
                         <td className="py-2 pr-4">
                           <a
-                            href={studioHash(entry.runId)}
+                            href={scoresHash(entry.runId)}
                             className="text-foreground decoration-muted-foreground decoration-1 underline-offset-2 transition-colors hover:underline"
                           >
                             {title}

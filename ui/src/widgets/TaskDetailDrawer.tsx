@@ -29,7 +29,7 @@ import { useFocusedProject } from '@/shared/useFocusedProject'
 import { focusSubgraph } from '@/shared/focusSubgraph'
 import { dagClusterStyle } from '@/shared/dagColors'
 import { relativeTime, formatDuration } from '@/shared/time'
-import { studioHash, taskHash } from '@/shared/routing'
+import { scoresHash, taskHash } from '@/shared/routing'
 import { humanizeFailureCode } from '@/shared/actionQueueDetail'
 import { formatTokensLabel } from '@/shared/displayStrings'
 import { isDestructiveVerb } from '@/entities/actionQueue/destructiveVerb'
@@ -2033,9 +2033,9 @@ const StepCardList = ({
   activeStepName?: string
   /**
    * When set, an "Open in Scores →" link renders beside the section header,
-   * navigating to the full-page execution tree (`#/studio/<taskId>`) for the
+   * navigating to the full-page execution tree (`#/scores/<taskId>`) for the
    * task these steps belong to. Omitted for proposal subjects, which have no
-   * single-instance Studio view.
+   * single-instance Scores view.
    */
   studioHref?: string
 }) => (
@@ -2754,7 +2754,7 @@ export const TaskDetailDrawer = ({
           toolEvents={resolvedToolEvents}
           agentToolCallsBySession={resolvedAgentToolCallsBySession}
           activeStepName={activeStepName}
-          studioHref={isProposal ? undefined : studioHash(currentId)}
+          studioHref={isProposal ? undefined : scoresHash(currentId)}
           blamedPhase={blamedPhaseOf(state.kind === 'ready' ? state.task.failureSignature : null)}
         />
       ) : resolvedSpans !== null ? (
@@ -2766,7 +2766,7 @@ export const TaskDetailDrawer = ({
             toolEvents={resolvedToolEvents}
             agentToolCallsBySession={resolvedAgentToolCallsBySession}
             activeStepName={activeStepName}
-            studioHref={studioHash(currentId)}
+            studioHref={scoresHash(currentId)}
           />
         )
       ) : null}

@@ -37,7 +37,7 @@ import type {
   PrimitiveWorkerProfile,
 } from '@/entities/primitive/types'
 import { PRIMITIVE_NAMES } from '@/entities/primitive/types'
-import { primitiveHash, studioHash, taskHash } from '@/shared/routing'
+import { primitiveHash, scoresHash, taskHash } from '@/shared/routing'
 import { relativeTime } from '@/shared/time'
 import { SkeletonList } from '@/components/Skeleton'
 import { StewardLedgerPanel } from './StewardLedgerPanel'
@@ -193,7 +193,7 @@ const RunRow = ({ run, idx }: { run: PrimitiveRun; idx: number }) => {
             task →
           </a>
           <a
-            href={studioHash(run.taskId)}
+            href={scoresHash(run.taskId)}
             data-testid="primitive-run-studio-link"
             className="rounded border border-border px-1.5 py-0.5 font-mono text-micro text-muted-foreground hover:bg-foreground/5"
           >

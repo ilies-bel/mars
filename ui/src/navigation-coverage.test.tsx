@@ -3,7 +3,7 @@
  *
  * Asserts:
  *   1. Steward (#/steward) has a sidebar entry in the Insight group.
- *   2. Scores (#/studio/<id>) has a sidebar entry in the Insight group.
+ *   2. Scores (#/scores/<id>) has a sidebar entry in the Insight group.
  *   3. Every full-page RouteName is represented in SHELL_NAV_GROUPS.
  *   4. The reflections RunStateBanner does not concatenate two sentences
  *      without a space (the ".Run manually" defect pattern).
@@ -90,7 +90,7 @@ describe('Navigation coverage — sidebar entries', () => {
   })
 
   it('Scores is in the sidebar', () => {
-    expect(allRoutes).toContain('studio')
+    expect(allRoutes).toContain('scores')
     expect(allLabels).toContain('Scores')
   })
 
@@ -109,7 +109,7 @@ describe('Navigation coverage — sidebar entries', () => {
       'events',
       'reflections',
       'steward',
-      'studio',
+      'scores',
     ]
     for (const route of expectedRoutes) {
       if (!SIDEBAR_EXEMPT.includes(route)) {
@@ -132,7 +132,7 @@ describe('Navigation coverage — sidebar entries', () => {
   it('Insight holds the read-only analysis surfaces, and only those', () => {
     const insight = SHELL_NAV_GROUPS.find((g) => g.label === 'Insight')
     expect(insight).toBeDefined()
-    expect(insight!.entries.map((e) => e.route)).toEqual(['kpi', 'studio', 'reflections'])
+    expect(insight!.entries.map((e) => e.route)).toEqual(['kpi', 'scores', 'reflections'])
   })
 
   it('Steward sits with Control, because it is a control surface', () => {

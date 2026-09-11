@@ -24,12 +24,13 @@ import {
   parseProposalNodeRoute,
   parseReleaseNotesRoute,
   parseShortcutsRoute,
-  parseStudioRoute,
+  parseScoresRoute,
   parseTaskKpiKey,
   parseTaskOrigin,
   parseTaskRoute,
   parseTaskStep,
   resolvePageRoute,
+  routeBase,
 } from '@/shared/routing'
 import type { RouteName } from '@/shared/routing'
 import { useCounts } from '@/entities/counts/useCounts'
@@ -57,21 +58,6 @@ import { FrameworkUpdateBanner } from '@/components/FrameworkUpdateBanner'
 import { FallbackBoundary } from '@/components/FallbackBoundary'
 import { AlertNotifier } from '@/shared/notifications/alertNotifier'
 import { Toaster } from '@/components/ui/sonner'
-
-/** Hash bases the drawer returns to, keyed by the origin recorded in the hash. */
-const ROUTE_BASE: Record<RouteName, string> = {
-  triage: '#/triage',
-  chat: '#/chat',
-  progress: '#/progress',
-  events: '#/events',
-  kpi: '#/events',
-  studio: '#/progress',
-  steward: '#/steward',
-  reflections: '#/reflections',
-  control: '#/control',
-  proposals: '#/proposals',
-  'arc-qa': '#/progress',
-}
 
 /**
  * Navigate to a hash via replaceState so overlay closes never push a phantom
@@ -109,7 +95,7 @@ const clearTaskHash = (closeHash: string): void => {
     navigateReplace(progressParams ? `#/progress${progressParams}` : '#/progress')
     return
   }
-  navigateReplace(origin ? ROUTE_BASE[origin] : '#/progress')
+  navigateReplace(origin ? routeBase(origin) : '#/progress')
 }
 
 
@@ -119,7 +105,8 @@ const AppInner = () => {
   useGlobalKeyboardShortcuts()
 
   // Redirect root / bare hashes to #/triage (the default landing page) and
-  // truly unknown hashes to #/progress.
+  // legacy action-queue deep links to #/chat.
+  // Unknown hashes are NOT redirected — they render a visible not-found state.
   // navigateReplace (replaceState + synthetic hashchange) is used here so
   // useHashRoute's state updates atomically with the URL change.  A bare
   // history.replaceState would NOT fire hashchange, leaving rawHash stale at
@@ -134,15 +121,25 @@ const AppInner = () => {
       // queue, so map the old ?item=/kind=/q= state onto the chat hash.
       const qIdx = rawHash.indexOf('?')
       navigateReplace(qIdx === -1 ? '#/chat' : `#/chat${rawHash.slice(qIdx)}`)
-    } else if (!isKnownRoute(rawHash)) {
-      navigateReplace('#/progress')
+    } else if (rawHash === '#/studio' || rawHash.startsWith('#/studio/')) {
+      // Legacy: #/studio was renamed to #/scores. Redirect bookmarks and shared
+      // links so a stale URL lands on the right page rather than the not-found state.
+      const rest = rawHash.slice('#/studio'.length) // '' or '/<taskId>'
+      navigateReplace(`#/scores${rest}`)
     }
+    // Unknown hashes are intentionally left in the URL — the render path
+    // shows a not-found page so the operator sees what they asked for rather
+    // than landing silently on a different page.
   }, [rawHash])
 
-  // For rendering, treat unknown hashes as #/triage (the default) so the nav
-  // highlight and page selection are correct even on the first render before
-  // the redirect effect fires.
-  const hash = isKnownRoute(rawHash) ? rawHash : '#/triage'
+  // True when the hash is unrecognised and not a root/legacy redirect.
+  // Root hashes redirect immediately (above) so during the brief pre-redirect
+  // render we show triage as a fallback. Unrecognised hashes stay in the URL
+  // and render the not-found page.
+  const isRoot = rawHash === '' || rawHash === '#' || rawHash === '#/'
+  const isLegacy = rawHash.startsWith('#/action-queue') || rawHash.startsWith('#/todo') || rawHash === '#/studio' || rawHash.startsWith('#/studio/')
+  const isUnknownRoute = !isRoot && !isLegacy && !isKnownRoute(rawHash)
+  const hash = isUnknownRoute ? rawHash : (isKnownRoute(rawHash) ? rawHash : '#/triage')
 
   const taskId = parseTaskRoute(hash)
   const proposalId = parseProposalRoute(hash)
@@ -154,7 +151,7 @@ const AppInner = () => {
   // null (the hash is #/task/…, not #/kpi/…), so we fall back to the kpiKey
   // encoded in the task hash query params to keep the detail page mounted behind.
   const kpiKey = parseKpiRoute(hash) ?? parseTaskKpiKey(hash)
-  const studioTaskId = parseStudioRoute(hash)
+  const studioTaskId = parseScoresRoute(hash)
   const arcQaOriginId = parseArcQaRoute(hash)
   const activeStepName = parseTaskStep(hash) ?? undefined
 
@@ -220,9 +217,9 @@ const AppInner = () => {
             <ProgressPage />
           ) : route === 'triage' ? (
             <TriagePage />
-          ) : route === 'studio' && studioTaskId !== null ? (
+          ) : route === 'scores' && studioTaskId !== null ? (
             <StudioPage taskId={studioTaskId} />
-          ) : route === 'studio' ? (
+          ) : route === 'scores' ? (
             <StudioIndexPage />
           ) : route === 'kpi' && kpiKey !== null ? (
             <KpiDetailPage kpiKey={kpiKey} />
@@ -270,7 +267,7 @@ const AppInner = () => {
             proposal={proposal}
             onClose={() => {
               const origin = parseProposalOrigin(hash)
-              navigateReplace(origin ? ROUTE_BASE[origin] : '#/progress')
+              navigateReplace(origin ? routeBase(origin) : '#/progress')
             }}
             tasks={tasks ?? []}
           />
@@ -282,7 +279,7 @@ const AppInner = () => {
             className="fixed inset-0 z-40 bg-foreground/40"
             onClick={() => {
               const origin = parseProposalOrigin(hash)
-              navigateReplace(origin ? ROUTE_BASE[origin] : '#/progress')
+              navigateReplace(origin ? routeBase(origin) : '#/progress')
             }}
           />
           <aside
@@ -300,7 +297,7 @@ const AppInner = () => {
                 type="button"
                 onClick={() => {
                   const origin = parseProposalOrigin(hash)
-                  navigateReplace(origin ? ROUTE_BASE[origin] : '#/progress')
+                  navigateReplace(origin ? routeBase(origin) : '#/progress')
                 }}
                 aria-label="Close"
                 className="shrink-0 rounded border border-border px-2 py-0.5 font-mono text-body text-muted-foreground hover:bg-foreground/5"
@@ -325,7 +322,7 @@ const AppInner = () => {
             proposal={proposalNodeDraft}
             onClose={() => {
               const origin = parseOverlayOrigin(hash)
-              navigateReplace(origin ? ROUTE_BASE[origin] : '#/progress')
+              navigateReplace(origin ? routeBase(origin) : '#/progress')
             }}
           />
         </FallbackBoundary>
@@ -336,7 +333,7 @@ const AppInner = () => {
             className="fixed inset-0 z-40 bg-foreground/40"
             onClick={() => {
               const origin = parseOverlayOrigin(hash)
-              navigateReplace(origin ? ROUTE_BASE[origin] : '#/progress')
+              navigateReplace(origin ? routeBase(origin) : '#/progress')
             }}
           />
           <aside
@@ -354,7 +351,7 @@ const AppInner = () => {
                 type="button"
                 onClick={() => {
                   const origin = parseOverlayOrigin(hash)
-                  navigateReplace(origin ? ROUTE_BASE[origin] : '#/progress')
+                  navigateReplace(origin ? routeBase(origin) : '#/progress')
                 }}
                 aria-label="Close"
                 className="shrink-0 rounded border border-border px-2 py-0.5 font-mono text-body text-muted-foreground hover:bg-foreground/5"
@@ -376,7 +373,7 @@ const AppInner = () => {
             name={primitiveName}
             onClose={() => {
               const origin = parseOverlayOrigin(hash)
-              navigateReplace(origin ? ROUTE_BASE[origin] : '#/progress')
+              navigateReplace(origin ? routeBase(origin) : '#/progress')
             }}
           />
         </FallbackBoundary>

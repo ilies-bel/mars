@@ -1,7 +1,7 @@
 /**
  * useTaskScore — the scorer verdict for one task, as the Scores table sees it.
  *
- * The detail page at `#/studio/<taskId>` is reached by clicking a score, so it
+ * The detail page at `#/scores/<taskId>` is reached by clicking a score, so it
  * has to be able to show that score. The run timeline the page already fetches
  * cannot supply one: the scorer's own step span records a duration and token
  * counts, and its `resultJson` is null on every scored run in this repo, so

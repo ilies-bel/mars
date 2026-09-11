@@ -19,7 +19,7 @@ export const safeDecode = (value: string): string | null => {
   }
 }
 
-export type RouteName = 'progress' | 'events' | 'kpi' | 'studio' | 'chat' | 'steward' | 'reflections' | 'control' | 'triage' | 'proposals' | 'arc-qa'
+export type RouteName = 'progress' | 'events' | 'kpi' | 'scores' | 'chat' | 'steward' | 'reflections' | 'control' | 'triage' | 'proposals' | 'arc-qa'
 
 /**
  * Derives the current route from the URL hash.
@@ -30,8 +30,8 @@ export type RouteName = 'progress' | 'events' | 'kpi' | 'studio' | 'chat' | 'ste
  * #/progress[/…]        → progress
  * #/events[/…]          → events
  * #/kpi or #/kpi/<key>  → kpi
- * #/studio              → studio (index listing recent scored runs)
- * #/studio/<taskId>     → studio (per-task execution tree)
+ * #/scores              → scores (index listing recent scored runs)
+ * #/scores/<taskId>     → scores (per-task execution tree)
  * everything else       → chat  (also covers the legacy #/action-queue and
  *                                #/todo hashes — the chat page absorbed the
  *                                action queue as projection Threads)
@@ -43,8 +43,8 @@ export const detectRoute = (hash: string): RouteName => {
   if (hash.startsWith('#/progress')) return 'progress'
   if (hash.startsWith('#/events')) return 'events'
   if (hash === '#/kpi' || hash.startsWith('#/kpi/')) return 'kpi'
-  if (hash === '#/studio') return 'studio'
-  if (parseStudioRoute(hash) !== null) return 'studio'
+  if (hash === '#/scores') return 'scores'
+  if (parseScoresRoute(hash) !== null) return 'scores'
   if (parseArcQaRoute(hash) !== null) return 'arc-qa'
   if (hash === '#/steward') return 'steward'
   if (hash.startsWith('#/reflections')) return 'reflections'
@@ -73,10 +73,15 @@ export const isKnownRoute = (hash: string): boolean => {
   if (hash.startsWith('#/progress')) return true
   if (hash.startsWith('#/events')) return true
   if (hash === '#/kpi' || hash.startsWith('#/kpi/')) return true
-  // Studio: bare #/studio is the index page; #/studio/<taskId> is the per-task view.
-  // #/studio/ (trailing slash, no id) is still unknown — parseStudioRoute returns null for it.
+  // Scores: bare #/scores is the index page; #/scores/<taskId> is the per-task view.
+  // #/scores/ (trailing slash, no id) is still unknown — parseScoresRoute returns null for it.
+  if (hash === '#/scores') return true
+  if (parseScoresRoute(hash) !== null) return true
+  // Legacy: #/studio was the old URL for the Scores page. Keep it as a known
+  // route so the App can redirect it to #/scores without the not-found state
+  // briefly flashing during the replaceState+hashchange cycle.
   if (hash === '#/studio') return true
-  if (parseStudioRoute(hash) !== null) return true
+  if (hash.startsWith('#/studio/') && hash.length > '#/studio/'.length) return true
   // Arc QA requires a non-empty origin id — a bare `#/arc//qa` redirects.
   if (parseArcQaRoute(hash) !== null) return true
   if (hash === '#/steward') return true
@@ -123,15 +128,15 @@ export const parseKpiRoute = (hash: string): KpiKey | null => {
 export const kpiHash = (key: KpiKey): string => `#/kpi/${encodeURIComponent(key)}`
 
 /**
- * Parses the `#/studio/<taskId>` full-page route — Studio, the live
+ * Parses the `#/scores/<taskId>` full-page route — Scores, the live
  * per-instance step execution tree for one task's workflow runs.
  *
- * Returns the decoded task id, or `null` when the hash is not a Studio route.
+ * Returns the decoded task id, or `null` when the hash is not a Scores route.
  * Mirrors `parseTaskRoute`: trailing slashes and empty ids normalise to
- * `null` so a stray `#/studio/` never opens an empty page.
+ * `null` so a stray `#/scores/` never opens an empty page.
  */
-export const parseStudioRoute = (hash: string): string | null => {
-  const m = /^#\/studio\/([^/?#]+)/.exec(hash)
+export const parseScoresRoute = (hash: string): string | null => {
+  const m = /^#\/scores\/([^/?#]+)/.exec(hash)
   if (!m) return null
   const id = safeDecode(m[1])
   if (id === null) return null
@@ -139,10 +144,10 @@ export const parseStudioRoute = (hash: string): string | null => {
 }
 
 /**
- * Builds a `#/studio/<taskId>` hash for navigating to the Studio page.
+ * Builds a `#/scores/<taskId>` hash for navigating to the Scores page.
  */
-export const studioHash = (taskId: string): string =>
-  `#/studio/${encodeURIComponent(taskId)}`
+export const scoresHash = (taskId: string): string =>
+  `#/scores/${encodeURIComponent(taskId)}`
 
 /**
  * Parses an optional `#/arc/<originId>/qa` full-page route — the per-arc
@@ -182,11 +187,11 @@ export const parseTaskRoute = (hash: string): string | null => {
   return id.length > 0 ? id : null
 }
 
-const ROUTE_NAMES: readonly RouteName[] = [
+export const ROUTE_NAMES: readonly RouteName[] = [
   'progress',
   'events',
   'kpi',
-  'studio',
+  'scores',
   'chat',
   'steward',
   'reflections',
@@ -195,6 +200,22 @@ const ROUTE_NAMES: readonly RouteName[] = [
   'proposals',
   'arc-qa',
 ]
+
+/**
+ * Returns the base hash for a route — the page to return to when an overlay
+ * opened from that route is closed.
+ *
+ * For all page routes this is simply `#/<routeName>`. The one exception is
+ * `arc-qa`: its URL always embeds an origin id (`#/arc/<id>/qa`) so there is
+ * no stable index hash to return to. Progress is the closest sensible
+ * fallback.
+ *
+ * Exported so App.tsx and tests can use the same derivation.
+ */
+export const routeBase = (route: RouteName): string => {
+  if (route === 'arc-qa') return '#/progress'
+  return `#/${route}`
+}
 
 const isRouteName = (value: string): value is RouteName =>
   (ROUTE_NAMES as readonly string[]).includes(value)
@@ -568,12 +589,7 @@ export const pageTitle = (route: RouteName): string => {
       return 'Events — mars'
     case 'kpi':
       return 'KPIs — mars'
-    case 'studio':
-      // `studio` is the ROUTE id; every visible label — nav, breadcrumb, page
-      // header, the drawer's "Open in Scores →" — says Scores. The browser tab
-      // was the last place still showing the internal name, so the one label a
-      // reader uses to find the page among twenty tabs was the one that did not
-      // match the page.
+    case 'scores':
       return 'Scores — mars'
     case 'steward':
       return 'Steward — mars'

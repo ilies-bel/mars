@@ -14,12 +14,12 @@ import {
   parseProposalOrigin,
   parsePrimitiveRoute,
   parseReleaseNotesRoute,
-  parseStudioRoute,
+  parseScoresRoute,
   primitiveHash,
   proposalNodeHash,
   releaseNotesHash,
   resolvePageRoute,
-  studioHash,
+  scoresHash,
   taskHash,
   proposalHash,
   safeDecode,
@@ -549,84 +549,98 @@ describe('parseProposalNodeRoute', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Studio route — parseStudioRoute / studioHash
+// Scores route — parseScoresRoute / scoresHash
 // ---------------------------------------------------------------------------
 
-describe('parseStudioRoute', () => {
-  it('returns null when the hash has no studio fragment', () => {
-    expect(parseStudioRoute('')).toBeNull()
-    expect(parseStudioRoute('#/progress')).toBeNull()
-    expect(parseStudioRoute('#/task/abc-123')).toBeNull()
-    expect(parseStudioRoute('#/studio')).toBeNull()
+describe('parseScoresRoute', () => {
+  it('returns null when the hash has no scores fragment', () => {
+    expect(parseScoresRoute('')).toBeNull()
+    expect(parseScoresRoute('#/progress')).toBeNull()
+    expect(parseScoresRoute('#/task/abc-123')).toBeNull()
+    expect(parseScoresRoute('#/scores')).toBeNull()
   })
 
-  it('returns the task id from #/studio/<taskId>', () => {
-    expect(parseStudioRoute('#/studio/mars-abc123')).toBe('mars-abc123')
+  it('returns the task id from #/scores/<taskId>', () => {
+    expect(parseScoresRoute('#/scores/mars-abc123')).toBe('mars-abc123')
   })
 
   it('strips trailing slash and treats empty id as null', () => {
-    expect(parseStudioRoute('#/studio/')).toBeNull()
-    expect(parseStudioRoute('#/studio/abc/extra')).toBe('abc')
+    expect(parseScoresRoute('#/scores/')).toBeNull()
+    expect(parseScoresRoute('#/scores/abc/extra')).toBe('abc')
   })
 
   it('decodes percent-encoded ids', () => {
-    expect(parseStudioRoute('#/studio/mars%2D123')).toBe('mars-123')
+    expect(parseScoresRoute('#/scores/mars%2D123')).toBe('mars-123')
   })
 })
 
-describe('studioHash', () => {
-  it('builds the #/studio/<taskId> hash', () => {
-    expect(studioHash('mars-abc123')).toBe('#/studio/mars-abc123')
+describe('scoresHash', () => {
+  it('builds the #/scores/<taskId> hash', () => {
+    expect(scoresHash('mars-abc123')).toBe('#/scores/mars-abc123')
   })
 
   it('encodes ids that need escaping', () => {
-    expect(studioHash('a b')).toBe('#/studio/a%20b')
+    expect(scoresHash('a b')).toBe('#/scores/a%20b')
   })
 
-  it('round-trips through parseStudioRoute', () => {
-    expect(parseStudioRoute(studioHash('mars-xyz'))).toBe('mars-xyz')
+  it('round-trips through parseScoresRoute', () => {
+    expect(parseScoresRoute(scoresHash('mars-xyz'))).toBe('mars-xyz')
   })
 })
 
-describe('studio route integration', () => {
-  it('detectRoute resolves #/studio/<id> to studio', () => {
-    expect(detectRoute('#/studio/mars-abc')).toBe('studio')
+describe('scores route integration', () => {
+  it('detectRoute resolves #/scores/<id> to scores', () => {
+    expect(detectRoute('#/scores/mars-abc')).toBe('scores')
   })
 
-  it('detectRoute falls back to chat for a bare #/studio/', () => {
-    expect(detectRoute('#/studio/')).toBe('chat')
+  it('detectRoute falls back to chat for a bare #/scores/', () => {
+    expect(detectRoute('#/scores/')).toBe('chat')
   })
 
-  it('isKnownRoute accepts #/studio/<id>', () => {
-    expect(isKnownRoute('#/studio/mars-abc')).toBe(true)
+  it('isKnownRoute accepts #/scores/<id>', () => {
+    expect(isKnownRoute('#/scores/mars-abc')).toBe(true)
   })
 
-  it('isKnownRoute accepts bare #/studio (Studio index)', () => {
+  it('isKnownRoute accepts bare #/scores (Scores index)', () => {
+    expect(isKnownRoute('#/scores')).toBe(true)
+  })
+
+  it('isKnownRoute rejects #/scores/ (trailing slash, no id)', () => {
+    expect(isKnownRoute('#/scores/')).toBe(false)
+  })
+
+  it('detectRoute resolves bare #/scores to scores (index)', () => {
+    expect(detectRoute('#/scores')).toBe('scores')
+  })
+
+  it('resolvePageRoute resolves bare #/scores to scores (index)', () => {
+    expect(resolvePageRoute('#/scores')).toBe('scores')
+  })
+
+  it('detectRoute still falls back to chat for #/scores/ (trailing slash, no id)', () => {
+    expect(detectRoute('#/scores/')).toBe('chat')
+  })
+
+  it('resolvePageRoute resolves #/scores/<id> to scores', () => {
+    expect(resolvePageRoute('#/scores/mars-abc')).toBe('scores')
+  })
+
+  it('pageTitle returns "Scores — mars" for the scores route', () => {
+    expect(pageTitle('scores')).toBe('Scores — mars')
+  })
+})
+
+describe('legacy #/studio redirect (isKnownRoute)', () => {
+  it('isKnownRoute accepts bare #/studio so the App can redirect without flashing not-found', () => {
     expect(isKnownRoute('#/studio')).toBe(true)
   })
 
-  it('isKnownRoute rejects #/studio/ (trailing slash, no id)', () => {
+  it('isKnownRoute accepts #/studio/<id> for the same reason', () => {
+    expect(isKnownRoute('#/studio/mars-abc')).toBe(true)
+  })
+
+  it('isKnownRoute still rejects #/studio/ (trailing slash, no id) — same as #/scores/', () => {
     expect(isKnownRoute('#/studio/')).toBe(false)
-  })
-
-  it('detectRoute resolves bare #/studio to studio (index)', () => {
-    expect(detectRoute('#/studio')).toBe('studio')
-  })
-
-  it('resolvePageRoute resolves bare #/studio to studio (index)', () => {
-    expect(resolvePageRoute('#/studio')).toBe('studio')
-  })
-
-  it('detectRoute still falls back to chat for #/studio/ (trailing slash, no id)', () => {
-    expect(detectRoute('#/studio/')).toBe('chat')
-  })
-
-  it('resolvePageRoute resolves #/studio/<id> to studio', () => {
-    expect(resolvePageRoute('#/studio/mars-abc')).toBe('studio')
-  })
-
-  it('pageTitle returns "Scores — mars" for the studio route', () => {
-    expect(pageTitle('studio')).toBe('Scores — mars')
   })
 })
 

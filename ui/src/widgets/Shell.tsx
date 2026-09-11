@@ -101,7 +101,7 @@ export const SHELL_NAV_GROUPS: NavGroup[] = [
     label: 'Insight',
     entries: [
       { route: 'kpi', label: 'KPI', href: '#/kpi', icon: TrendingUp },
-      { route: 'studio', label: 'Scores', href: '#/studio', icon: FlaskConical },
+      { route: 'scores', label: 'Scores', href: '#/scores', icon: FlaskConical },
       { route: 'reflections', label: 'Reflections', href: '#/reflections', icon: Sparkles },
     ],
   },
