@@ -233,7 +233,12 @@ describe('TriageCauseGroupRow', () => {
 
   function makeGroup(
     memberCount: number,
-    opts: { bulkResolveVerb?: { op: string; label: string; style: 'primary' | 'default' | 'destructive' | 'snooze' } } = {},
+    opts: {
+      bulkResolveVerb?: { op: string; label: string; style: 'primary' | 'default' | 'destructive' | 'snooze' }
+      /** Verbs every member carries. Snooze all is derived from these, so a
+          test that expects it must say so rather than inherit a default. */
+      memberVerbs?: Array<{ op: string; label: string; style: 'primary' | 'default' | 'destructive' | 'snooze' }>
+    } = {},
   ) {
     const SIG = 'slice-failed/slicer-timeout'
     const members = Array.from({ length: memberCount }, (_, i) =>
@@ -241,7 +246,7 @@ describe('TriageCauseGroupRow', () => {
         id: `sf-${i}`,
         entityId: `prd-${i}`,
         failureReasonCode: SIG,
-        verbs: [{ op: 'retry', label: 'Retry', style: 'primary' as const }],
+        verbs: opts.memberVerbs ?? [{ op: 'retry', label: 'Retry', style: 'primary' as const }],
       }),
     )
     return {
@@ -252,7 +257,7 @@ describe('TriageCauseGroupRow', () => {
       count: members.length,
       priority: 'normal' as const,
       members,
-      ...opts,
+      ...(opts.bulkResolveVerb !== undefined ? { bulkResolveVerb: opts.bulkResolveVerb } : {}),
     }
   }
 
@@ -275,9 +280,12 @@ describe('TriageCauseGroupRow', () => {
     expect(memberContainer).toBeNull()
   })
 
-  it('shows only Snooze all when kind declares no bulkResolveVerb', () => {
-    // Group without bulkResolveVerb → no primary button, only Snooze all.
-    const group = makeGroup(5)
+  it('shows only Snooze all when the kind declares no bulkResolveVerb and every member can snooze', () => {
+    // Group without bulkResolveVerb → no primary button. Snooze all is offered
+    // because every member carries the server's snooze verb.
+    const group = makeGroup(5, {
+      memberVerbs: [{ op: 'snooze', label: 'Snooze', style: 'snooze' as const }],
+    })
     act(() => {
       root.render(<TriageCauseGroupRow group={group} />)
     })
@@ -287,6 +295,25 @@ describe('TriageCauseGroupRow', () => {
 
     const snoozeButton = container.querySelector('[data-testid="cause-group-snooze-all"]')
     expect(snoozeButton).not.toBeNull()
+  })
+
+  it('withholds Snooze all when the members carry no snooze verb', () => {
+    // The negative control for the test above. Snoozing writes to a stored
+    // action_queue_items row; a derived row has none, so the server sends no
+    // snooze verb for it and the header must not invent one. Measured live:
+    // "Snooze all" over three derived members snoozed zero of them and
+    // surfaced a single raw 404 naming one hidden member id.
+    const group = makeGroup(5, {
+      memberVerbs: [{ op: 'retry', label: 'Retry', style: 'primary' as const }],
+    })
+    act(() => {
+      root.render(<TriageCauseGroupRow group={group} />)
+    })
+
+    expect(container.querySelector('[data-testid="cause-group-snooze-all"]')).toBeNull()
+    // Positive control: the row itself still rendered, so this cannot pass by
+    // the whole header disappearing.
+    expect(container.querySelector('[data-testid="cause-group-row"]')).not.toBeNull()
   })
 
   it('offers the group bulk verb on each member too, so one task can be retried alone', () => {
