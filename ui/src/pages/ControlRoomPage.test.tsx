@@ -274,6 +274,13 @@ describe('ControlRoomPage — Gates section', () => {
 })
 
 describe('ControlRoomPage — Gates section run status', () => {
+  // Use recent timestamps so gates are not classified as stale (stale threshold = 24 h).
+  // Tests that explicitly exercise the stale path use old epoch-era timestamps.
+  const NOW = Date.now()
+  const RECENT_PASS = NOW - 60_000          // 1 min ago
+  const RECENT_FAIL = NOW - 30_000          // 30 s ago
+  const OLD_TIMESTAMP = 5000                // epoch-era → always stale
+
   beforeEach(() => {
     mockUseDispatchState.mockReturnValue({
       paused: false,
@@ -306,10 +313,15 @@ describe('ControlRoomPage — Gates section run status', () => {
 
   it('renders passing status badge when lastPassAt is more recent than lastFailureAt', () => {
     const gate = makeGate({
-      lastFailureAt: 1000,
-      lastPassAt: 2000, // more recent than last failure → currently passing
+      lastFailureAt: RECENT_PASS,
+      lastPassAt: RECENT_FAIL, // lastPassAt > lastFailureAt (recent values swapped intentionally: pass is older var name but we want pass more recent)
     })
-    const html = renderControlRoom([gate])
+    // Ensure pass is more recent than failure for this test
+    const passingGate = makeGate({
+      lastFailureAt: RECENT_PASS,   // older
+      lastPassAt: RECENT_FAIL,      // more recent (30 s ago vs 60 s ago)
+    })
+    const html = renderControlRoom([passingGate])
     expect(html).toContain('data-testid="gate-status-passing"')
     expect(html).not.toContain('data-testid="gate-status-failing"')
     // Last pass is shown as primary detail
@@ -320,18 +332,18 @@ describe('ControlRoomPage — Gates section run status', () => {
 
   it('renders failing status badge when lastFailureAt is more recent than lastPassAt', () => {
     const gate = makeGate({
-      lastPassAt: 1000,
-      lastFailureAt: 2000, // more recent than last pass → currently failing
+      lastPassAt: RECENT_PASS,      // 60 s ago
+      lastFailureAt: RECENT_FAIL,   // 30 s ago — more recent → currently failing (fresh)
     })
     const html = renderControlRoom([gate])
     expect(html).toContain('data-testid="gate-status-failing"')
     expect(html).not.toContain('data-testid="gate-status-passing"')
   })
 
-  it('renders failing status badge when lastFailureAt is set but lastPassAt is null', () => {
+  it('renders failing status badge when lastFailureAt is set but lastPassAt is null (recent failure)', () => {
     const gate = makeGate({
       lastPassAt: null,
-      lastFailureAt: 5000,
+      lastFailureAt: RECENT_FAIL,   // recent — not stale
     })
     const html = renderControlRoom([gate])
     expect(html).toContain('data-testid="gate-status-failing"')
@@ -393,15 +405,15 @@ describe('ControlRoomPage — Gates section run status', () => {
   })
 
   it('shows "passing" badge text for a currently-passing gate', () => {
-    const gate = makeGate({ lastFailureAt: 1000, lastPassAt: 2000 })
+    const gate = makeGate({ lastFailureAt: RECENT_PASS, lastPassAt: RECENT_FAIL })
     const html = renderControlRoom([gate])
     // The badge inner text must say "passing" (not "failing")
     expect(html).toContain('>passing<')
     expect(html).not.toContain('>failing<')
   })
 
-  it('shows "failing" badge text for a currently-failing gate', () => {
-    const gate = makeGate({ lastPassAt: 1000, lastFailureAt: 2000 })
+  it('shows "failing" badge text for a currently-failing gate (recent failure)', () => {
+    const gate = makeGate({ lastPassAt: RECENT_PASS, lastFailureAt: RECENT_FAIL })
     const html = renderControlRoom([gate])
     expect(html).toContain('>failing<')
     expect(html).not.toContain('>passing<')
@@ -426,6 +438,54 @@ describe('ControlRoomPage — Gates section run status', () => {
     expect(html).not.toContain('>failing<')
     expect(html).not.toContain('passed')
     expect(html).not.toContain('failed')
+  })
+
+  it('renders stale status when the gate failed but the last run was over 24 h ago', () => {
+    const gate = makeGate({
+      lastPassAt: null,
+      lastFailureAt: OLD_TIMESTAMP, // epoch-era → definitely stale
+    })
+    const html = renderControlRoom([gate])
+    expect(html).toContain('data-testid="gate-status-stale"')
+    expect(html).not.toContain('data-testid="gate-status-failing"')
+    expect(html).not.toContain('data-testid="gate-status-passing"')
+  })
+
+  it('renders stale badge text "stale" for an old-failure gate', () => {
+    const gate = makeGate({ lastPassAt: null, lastFailureAt: OLD_TIMESTAMP })
+    const html = renderControlRoom([gate])
+    expect(html).toContain('>stale<')
+    expect(html).not.toContain('>failing<')
+  })
+
+  it('does NOT render stale for a gate that failed recently (within 24 h)', () => {
+    const gate = makeGate({ lastPassAt: null, lastFailureAt: RECENT_FAIL })
+    const html = renderControlRoom([gate])
+    expect(html).not.toContain('data-testid="gate-status-stale"')
+    expect(html).toContain('data-testid="gate-status-failing"')
+  })
+
+  it('shows the last-checked line when at least one gate has run', () => {
+    const gate = makeGate({ lastPassAt: RECENT_PASS, lastFailureAt: null })
+    const html = renderControlRoom([gate])
+    expect(html).toContain('data-testid="gates-last-checked"')
+    expect(html).toContain('Last checked')
+  })
+
+  it('does not show the last-checked line when no gate has ever run', () => {
+    const gate = makeGate({ lastPassAt: null, lastFailureAt: null })
+    const html = renderControlRoom([gate])
+    expect(html).not.toContain('data-testid="gates-last-checked"')
+  })
+
+  it('a gate whose lastPassAt is newer than lastFailureAt is not reported as stale', () => {
+    // positive control: the recovery comparison must be reachable
+    const gate = makeGate({ lastPassAt: RECENT_FAIL, lastFailureAt: RECENT_PASS })
+    // RECENT_FAIL (30 s ago) > RECENT_PASS (60 s ago) → lastPassAt is more recent → not failing at all
+    const html = renderControlRoom([gate])
+    expect(html).not.toContain('data-testid="gate-status-stale"')
+    expect(html).not.toContain('data-testid="gate-status-failing"')
+    expect(html).toContain('data-testid="gate-status-passing"')
   })
 })
 

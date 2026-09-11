@@ -428,12 +428,26 @@ const GatesSection = () => {
     return gate.lastFailureAt > gate.lastPassAt
   }
 
+  // A failing gate is "stale" when the most recent run (pass OR fail) happened
+  // more than 24 hours ago. "Failed 6d ago" is ambiguous — it could mean the
+  // gate is still broken, or just that nothing has run it since. Stale gates
+  // are distinguished from fresh failures so the reader knows whether the
+  // signal is current.
+  const STALE_CUTOFF_MS = 24 * 60 * 60 * 1000
+  const isStale = (gate: VerifyGate): boolean => {
+    if (!isCurrentlyFailing(gate)) return false
+    const lastRunAt = Math.max(gate.lastPassAt ?? 0, gate.lastFailureAt ?? 0)
+    return lastRunAt > 0 && Date.now() - lastRunAt > STALE_CUTOFF_MS
+  }
+
   // Required gates that are quarantined — merges are proceeding without them.
   const quarantinedRequired = gatesData.filter(
     (g) => g.state === 'quarantined' && g.required,
   )
 
   const failingGates = gatesData.filter(isCurrentlyFailing)
+  const staleGates = failingGates.filter(isStale)
+  const freshFailingGates = failingGates.filter((g) => !isStale(g))
   const neverRunGates = gatesData.filter(
     (g) => g.lastPassAt === null && g.lastFailureAt === null,
   )
@@ -456,12 +470,26 @@ const GatesSection = () => {
     (g) => g.required && g.state !== 'quarantined',
   )
   const passingGateCount = gatesData.length - failingGates.length - neverRunGates.length
-  const failingVerdict =
-    neverRunGates.length > 0
-      ? `${failingGates.length} failing · ${neverRunGates.length} never run · ${passingGateCount} passing`
-      : `${failingGates.length} of ${gatesData.length} failing`
+  // Distinguish failing (fresh) · stale (old failure, no recent check) · never run · passing.
+  const failingVerdict = (() => {
+    const parts: string[] = []
+    if (freshFailingGates.length > 0) parts.push(`${freshFailingGates.length} failing`)
+    if (staleGates.length > 0) parts.push(`${staleGates.length} stale`)
+    if (neverRunGates.length > 0) parts.push(`${neverRunGates.length} never run`)
+    parts.push(`${passingGateCount} passing`)
+    return parts.join(' · ')
+  })()
 
   const copy = pending ? GATE_ACTION_COPY[pending.kind] : null
+
+  // Most recent run across all gates. Null when no gate has ever run.
+  // Shown in the header so the reader knows whether the current panel state
+  // is fresh or stale at a glance.
+  const mostRecentRunAt = gatesData.reduce<number | null>((acc, g) => {
+    const ts = Math.max(g.lastPassAt ?? 0, g.lastFailureAt ?? 0)
+    if (ts === 0) return acc
+    return acc === null ? ts : Math.max(acc, ts)
+  }, null)
 
   return (
     <>
@@ -491,6 +519,17 @@ const GatesSection = () => {
         >
           Gates
         </SectionHeading>
+        {mostRecentRunAt !== null && (
+          <p
+            className="mb-2 text-micro text-muted-foreground"
+            data-testid="gates-last-checked"
+          >
+            Last checked{' '}
+            <span title={formatAbsoluteDateTime(mostRecentRunAt)}>
+              {relativeTime(mostRecentRunAt)}
+            </span>
+          </p>
+        )}
 
         {quarantinedRequired.length > 0 && (
           <div
@@ -521,6 +560,7 @@ const GatesSection = () => {
           >
             {gatesData.map((gate) => {
               const failing = isCurrentlyFailing(gate)
+              const stale = isStale(gate)
               const gateDisplayName = gate.scope !== '.' ? `${gate.scope}: ${gate.name}` : gate.name
               return (
                 <li
@@ -533,30 +573,26 @@ const GatesSection = () => {
                       scan, not easier. The column aligns so a failing gate is
                       findable in one vertical sweep.
 
-                      It was a dot until the round-7 review: two 6px circles
-                      identical in size and shape, separated only by red vs
-                      green. That is WCAG 1.4.1 — the sr-only label served a
-                      screen-reader user (1.1.1) but gave a sighted reader with
-                      a colour deficiency nothing, and the title tooltip is not
-                      an answer when the question is "which of these twelve
-                      broke". Check / X / hollow-ring differ in shape first and
-                      colour second, so the sweep survives greyscale. Same
-                      vocabulary as the KPI bands (entities/kpi/bands.ts). */}
+                      Three states: passing (green check), failing (red X),
+                      stale (amber X — failed, but nothing has run recently so
+                      the signal may be outdated). "Stale" sits between failing
+                      and never-run: we know it failed once, but we don't know
+                      whether it's still broken. */}
                   {gate.lastPassAt !== null || gate.lastFailureAt !== null ? (
                     <span
                       className={[
                         'flex size-3.5 shrink-0 items-center justify-center',
-                        failing ? 'text-error' : 'text-success',
+                        failing ? (stale ? 'text-warn' : 'text-error') : 'text-success',
                       ].join(' ')}
-                      title={failing ? 'failing' : 'passing'}
-                      data-testid={failing ? 'gate-status-failing' : 'gate-status-passing'}
+                      title={failing ? (stale ? 'stale — last run over 24 h ago' : 'failing') : 'passing'}
+                      data-testid={failing ? (stale ? 'gate-status-stale' : 'gate-status-failing') : 'gate-status-passing'}
                     >
                       {failing ? (
                         <X size={12} strokeWidth={3} aria-hidden="true" />
                       ) : (
                         <Check size={12} strokeWidth={3} aria-hidden="true" />
                       )}
-                      <span className="sr-only">{failing ? 'failing' : 'passing'}</span>
+                      <span className="sr-only">{failing ? (stale ? 'stale' : 'failing') : 'passing'}</span>
                     </span>
                   ) : (
                     /* Never run. This branch previously rendered a bare grey dot
@@ -622,9 +658,21 @@ const GatesSection = () => {
                         </span>
                       </span>
                     )}
+                    {stale && (
+                      <span className="text-warn" data-testid="gate-status-stale-label">
+                        stale — last run{' '}
+                        <span
+                          title={formatAbsoluteDateTime(
+                            Math.max(gate.lastPassAt ?? 0, gate.lastFailureAt ?? 0),
+                          )}
+                        >
+                          {relativeTime(Math.max(gate.lastPassAt ?? 0, gate.lastFailureAt ?? 0))}
+                        </span>
+                      </span>
+                    )}
                     {gate.lastFailureAt !== null && (
                       <span
-                        className={failing ? 'text-error/80' : 'text-muted-foreground'}
+                        className={failing ? (stale ? 'text-warn/80' : 'text-error/80') : 'text-muted-foreground'}
                         data-testid="gate-last-failure"
                       >
                         failed{' '}

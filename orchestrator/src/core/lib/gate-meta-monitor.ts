@@ -72,3 +72,25 @@ export const observeVerifyGateFailure = async (
   }
 }
 
+export interface ObserveVerifyGatePassInput {
+  gateId: string
+  passedAt: number
+}
+
+/**
+ * Record a registry-gate pass. Stamps `last_pass_at` on the gate row so the
+ * Control Room panel can compare it against `last_failure_at` and show whether
+ * the gate is currently healthy.
+ *
+ * Best-effort: if the gate is unknown the update silently affects 0 rows.
+ */
+export const observeVerifyGatePass = async (
+  client: MonitorDb,
+  { gateId, passedAt }: ObserveVerifyGatePassInput,
+): Promise<void> => {
+  await client.execute({
+    sql: `UPDATE verify_gates SET last_pass_at = ? WHERE id = ?`,
+    args: [passedAt, gateId],
+  })
+}
+

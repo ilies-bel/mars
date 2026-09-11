@@ -560,6 +560,87 @@ describe('baseline-broken derived row lifecycle (regression guard)', () => {
   })
 })
 
+// ─── recordGatePasses: baseline-health stamps last_pass_at ───────────────────
+
+describe('recordGatePasses integration', () => {
+  it('stamps last_pass_at for required gates when all required gates pass', async () => {
+    const gate = makeGate({ id: 'gate-req', required: true })
+    const recordGatePasses = vi.fn().mockResolvedValue(undefined)
+    const { deps, mocks } = makeDeps({ recordGatePasses })
+    mocks.loadGates.mockResolvedValue([gate])
+    mocks.runGate.mockResolvedValue(passingResult(gate))
+
+    const checker = createBaselineHealthChecker(deps)
+    await checker.check()
+    // Drain the fire-and-forget promise
+    await Promise.resolve()
+
+    expect(recordGatePasses).toHaveBeenCalledWith(['gate-req'])
+  })
+
+  it('stamps last_pass_at only for required gates (not advisory)', async () => {
+    const required = makeGate({ id: 'gate-req', required: true })
+    const advisory = makeGate({ id: 'gate-adv', name: 'advisory', required: false })
+    const recordGatePasses = vi.fn().mockResolvedValue(undefined)
+    const { deps, mocks } = makeDeps({ recordGatePasses })
+    mocks.loadGates.mockResolvedValue([required, advisory])
+    mocks.runGate.mockResolvedValue(passingResult(required))
+
+    const checker = createBaselineHealthChecker(deps)
+    await checker.check()
+    await Promise.resolve()
+
+    expect(recordGatePasses).toHaveBeenCalledWith(['gate-req'])
+    expect(recordGatePasses).not.toHaveBeenCalledWith(expect.arrayContaining(['gate-adv']))
+  })
+
+  it('does NOT stamp last_pass_at when a required gate fails', async () => {
+    const gate = makeGate({ id: 'gate-req', required: true })
+    const recordGatePasses = vi.fn().mockResolvedValue(undefined)
+    const { deps, mocks } = makeDeps({ recordGatePasses })
+    mocks.loadGates.mockResolvedValue([gate])
+    mocks.runGate.mockResolvedValue(failingResult(gate))
+
+    const checker = createBaselineHealthChecker(deps)
+    await checker.check()
+    await Promise.resolve()
+
+    expect(recordGatePasses).not.toHaveBeenCalled()
+  })
+
+  it('does not throw when recordGatePasses is omitted', async () => {
+    const gate = makeGate({ id: 'gate-req', required: true })
+    const { deps, mocks } = makeDeps()
+    // No recordGatePasses — optional field absent
+    mocks.loadGates.mockResolvedValue([gate])
+    mocks.runGate.mockResolvedValue(passingResult(gate))
+
+    const checker = createBaselineHealthChecker(deps)
+    await expect(checker.check()).resolves.toEqual({ poisoned: false })
+  })
+
+  it('stamps last_pass_at on recovery (baseline was previously poisoned)', async () => {
+    const gate = makeGate({ id: 'gate-req', required: true })
+    const recordGatePasses = vi.fn().mockResolvedValue(undefined)
+    const { deps, mocks } = makeDeps({ recordGatePasses })
+    mocks.loadGates.mockResolvedValue([gate])
+
+    const checker = createBaselineHealthChecker(deps)
+
+    // Phase 1: poison
+    mocks.runGate.mockResolvedValue(failingResult(gate))
+    await checker.check()
+    await Promise.resolve()
+    expect(recordGatePasses).not.toHaveBeenCalled()
+
+    // Phase 2: recovery
+    mocks.runGate.mockResolvedValue(passingResult(gate))
+    await checker.check()
+    await Promise.resolve()
+    expect(recordGatePasses).toHaveBeenCalledWith(['gate-req'])
+  })
+})
+
 describe('overrideFailingStep callback pattern', () => {
   it('returns verify:poisoned-baseline for a verify: failing step when baseline is poisoned', async () => {
     const gate = makeGate()

@@ -89,3 +89,41 @@ describe('observeVerifyGateFailure', () => {
     })).resolves.toMatchObject({ thresholdCrossed: false })
   })
 })
+
+describe('observeVerifyGatePass', () => {
+  it('stamps last_pass_at on the gate row', async () => {
+    const { observeVerifyGatePass } = await import('./gate-meta-monitor.js')
+    await addGate('gate-a')
+    const passedAt = Date.now()
+    await observeVerifyGatePass(client, { gateId: 'gate-a', passedAt })
+    const r = await client.execute({
+      sql: `SELECT last_pass_at FROM verify_gates WHERE id = ?`, args: ['gate-a'],
+    })
+    expect((r.rows[0] as Record<string, unknown>)['last_pass_at']).toBe(passedAt)
+  })
+
+  it('a gate whose last_pass_at is newer than last_failure_at is NOT currently failing', async () => {
+    const { observeVerifyGateFailure, observeVerifyGatePass } = await import('./gate-meta-monitor.js')
+    await addGate('gate-a')
+
+    // Fail first
+    await observeVerifyGateFailure(client, {
+      gateId: 'gate-a', originId: 'origin-1', failureSignature: 'sig', failedAt: 1000,
+    })
+    // Then pass at a more recent timestamp
+    await observeVerifyGatePass(client, { gateId: 'gate-a', passedAt: 2000 })
+
+    const r = await client.execute({
+      sql: `SELECT last_failure_at, last_pass_at FROM verify_gates WHERE id = ?`, args: ['gate-a'],
+    })
+    const row = r.rows[0] as Record<string, unknown>
+    // The recovery branch: lastPassAt > lastFailureAt → gate is currently passing
+    expect(Number(row['last_pass_at'])).toBeGreaterThan(Number(row['last_failure_at']))
+  })
+
+  it('silently ignores an unknown gate id', async () => {
+    const { observeVerifyGatePass } = await import('./gate-meta-monitor.js')
+    // No gate inserted — update should affect 0 rows without throwing
+    await expect(observeVerifyGatePass(client, { gateId: 'unknown-gate', passedAt: 1000 })).resolves.toBeUndefined()
+  })
+})

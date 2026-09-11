@@ -192,6 +192,15 @@ export interface BaselineHealthDeps {
   runInstallProbe: (
     repoRoot: string,
   ) => Promise<{ exitCode: number; stdout: string; stderr: string }>
+  /**
+   * Stamp `last_pass_at` for the supplied gate ids. Called when all required
+   * gates pass so the Control Room panel reflects the healthy baseline rather
+   * than showing old failures as current state.
+   *
+   * Optional: omit in tests that do not exercise the pass-recording path.
+   * Best-effort: errors are swallowed (mirrors `recordVerifyGatePasses`).
+   */
+  recordGatePasses?: (gateIds: string[]) => Promise<void>
 }
 
 /** Public surface exposed to the rest of the daemon. */
@@ -225,7 +234,7 @@ export interface BaselineHealthChecker {
 export const createBaselineHealthChecker = (
   deps: BaselineHealthDeps,
 ): BaselineHealthChecker => {
-  const { repoRoot, loadGates, runGate, pause, log, computeDepFingerprint, runInstallProbe } = deps
+  const { repoRoot, loadGates, runGate, pause, log, computeDepFingerprint, runInstallProbe, recordGatePasses } = deps
 
   let _poisoned = false
   let _lastDetection: BaselineDetection | null = null
@@ -322,6 +331,25 @@ export const createBaselineHealthChecker = (
           } else {
             log?.('[baseline-health] all required gates pass')
           }
+
+          // Stamp last_pass_at so Control Room shows the gates as currently
+          // passing rather than rendering old failures as current state.
+          // Best-effort: a load or update error must never block the healthy return.
+          if (recordGatePasses) {
+            void loadGates()
+              .then((gates) => {
+                const ids = gates.filter((g) => g.required).map((g) => g.id)
+                return recordGatePasses(ids)
+              })
+              .catch((err) => {
+                log?.(
+                  `[baseline-health] could not stamp last_pass_at (non-fatal): ${
+                    err instanceof Error ? err.message : String(err)
+                  }`,
+                )
+              })
+          }
+
           return { poisoned: false }
         }
 
