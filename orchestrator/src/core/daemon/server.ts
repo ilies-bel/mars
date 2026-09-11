@@ -6962,7 +6962,7 @@ export const startDaemon = async (
     process.exit(0)
   }
 
-  for (const sig of ['SIGINT', 'SIGTERM'] as const) {
+  for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
     process.once(sig, () => {
       // writeLog is synchronous (appendFileSync), so this line is guaranteed to
       // land on disk before the async shutdown() begins — even if the process
@@ -6972,6 +6972,23 @@ export const startDaemon = async (
       void shutdown(false)
     })
   }
+
+  // ── Exit-code accounting ──────────────────────────────────────────────────
+  // process.on('exit') fires synchronously for every exit Node.js handles:
+  // process.exit(), unhandled-signal default action, event-loop drain. It
+  // does NOT fire for SIGKILL. The callback MUST be synchronous — any async
+  // operation here is silently dropped. This "last word" line records the
+  // exit code and uptime so the log always explains why the daemon is gone,
+  // even after a crash that lands an exit-code-1 from uncaughtException.
+  const daemonBootMs = Date.now()
+  process.on('exit', (code: number) => {
+    const uptimeSec = Math.round((Date.now() - daemonBootMs) / 1000)
+    try {
+      writeLog(logFile, `[daemon] exiting: code=${code} pid=${process.pid} uptime=${uptimeSec}s`)
+    } catch {
+      // truly best-effort: if even writeLog throws, nothing to do
+    }
+  })
 
   // ── Fatal error handlers ──────────────────────────────────────────────────
   // Log fatal errors synchronously to watch.log and exit immediately.
