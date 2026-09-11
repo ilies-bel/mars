@@ -103,6 +103,31 @@ describe('execute (pglite backend)', () => {
     })).rejects.toThrow('workflow_step_runs.finished_at expects epoch milliseconds')
   })
 
+  it('delegates NOT NULL enforcement to the schema, not the encoding guard', async () => {
+    // Criterion 3: nullability comes from the schema, not a second hand-maintained
+    // list. The encoding guard only catches mis-encoded values — it accepts null
+    // for every encoded column and lets the database schema reject null where the
+    // column is NOT NULL. This test proves the invariant: inserting null into the
+    // NOT NULL column `workflow_step_runs.started_at` throws a database-level
+    // error (not our custom guard message), while a genuinely nullable column
+    // (`workflow_step_runs.finished_at`) silently succeeds.
+    const c = openDb(freshKey())
+
+    // finished_at is nullable — null passes both the guard AND the schema.
+    await expect(c.execute({
+      sql: `INSERT INTO workflow_step_runs (run_id, step_name, status, started_at, finished_at, attempt, seq)
+            VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      args: ['run-null-nullable', 'code', 'running', Date.now(), null, 1, 1],
+    })).resolves.toBeDefined()
+
+    // started_at is NOT NULL — null passes the guard but the schema rejects it.
+    await expect(c.execute({
+      sql: `INSERT INTO workflow_step_runs (run_id, step_name, status, started_at, finished_at, attempt, seq)
+            VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      args: ['run-null-notnull', 'code', 'running', null, null, 1, 1],
+    })).rejects.toThrow() // DB-level NOT NULL violation, not a guard message
+  })
+
   it('names the timestamp column when a fixture uses an ISO string for epoch milliseconds', async () => {
     const c = openDb(freshKey())
     const createdAt = new Date().toISOString()
