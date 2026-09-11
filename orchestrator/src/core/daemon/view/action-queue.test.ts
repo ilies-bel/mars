@@ -12,7 +12,8 @@
  * the ActionQueueRow[] returned by buildActionQueueView.
  */
 
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
+import { execSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -2059,10 +2060,19 @@ describe('taskFailureKinds drift gate — orchestrator side', () => {
     // taskFailureKinds is generated in action-queue-kinds.generated.ts and
     // re-exported from schemas.ts. Read the generated file directly where the
     // array literal lives.
-    const uiSource = readFileSync(
-      path.resolve(here, '../../../../../ui/src/shared/action-queue-kinds.generated.ts'),
-      'utf8',
+    //
+    // The file is gitignored — it exists only after the UI codegen runs
+    // (ui/scripts/gen-action-queue-kinds.mjs). In a bare task worktree the UI
+    // build may not have run, so regenerate on demand before reading.
+    const generatedPath = path.resolve(
+      here,
+      '../../../../../ui/src/shared/action-queue-kinds.generated.ts',
     )
+    if (!existsSync(generatedPath)) {
+      const genScript = path.resolve(here, '../../../../../ui/scripts/gen-action-queue-kinds.mjs')
+      execSync(`node ${genScript}`, { cwd: path.resolve(here, '../../../../..') })
+    }
+    const uiSource = readFileSync(generatedPath, 'utf8')
     const uiKinds = extractQuotedList(
       uiSource,
       /export const taskFailureKinds = \[([\s\S]*?)\] as const/,
