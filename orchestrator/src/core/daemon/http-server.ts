@@ -105,18 +105,29 @@ export interface RunTimeline {
  * Wire shape returned by GET /view/step-prompt — the composed prompt sent to
  * one step's worker, identified by (workflowInstanceId, stepName).
  *
- * `source` records provenance: 'persisted' when the prompt was written to the
- * step_started payload at emit time (all runs after prompt persistence
- * landed); 'recovered' when it was best-effort extracted from a stored or
- * on-disk transcript for a pre-persistence run; null (with prompt null) when
- * neither path produced anything — the UI must label recovered prompts and
- * render an explicit empty state for null, never invent data.
+ * `source` records provenance:
+ *   - 'persisted'    — promptText was written to the step_started payload at
+ *                      emit time (all runs after prompt persistence landed).
+ *   - 'recovered'    — best-effort extracted from a stored or on-disk
+ *                      transcript (pre-persistence run).
+ *   - 'none'         — this step kind never carries a prompt (setup/verify/
+ *                      merge — non-LLM steps). `prompt` is null by definition.
+ *   - 'not-captured' — the step is LLM-backed (workerName present on
+ *                      step_started) but no prompt data is queryable; the run
+ *                      predates persistence and no transcript survived.
+ *                      `prompt` is null. The UI must render this as a visible
+ *                      gap, never as empty space.
+ *   - null           — the (workflowInstanceId, stepName) pair was not found
+ *                      in the trace store at all. Both fields are null.
+ *
+ * The UI must never conflate 'none', 'not-captured', and null — each has a
+ * distinct meaning and requires its own label.
  */
 export interface StepPromptView {
   workflowInstanceId: string
   stepName: string
   prompt: string | null
-  source: 'persisted' | 'recovered' | null
+  source: 'persisted' | 'recovered' | 'none' | 'not-captured' | null
 }
 
 /**

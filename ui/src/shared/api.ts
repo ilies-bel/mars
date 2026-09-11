@@ -283,7 +283,7 @@ const stepPromptResponseSchema = z.object({
   workflowInstanceId: z.string(),
   stepName: z.string(),
   prompt: z.string().nullable(),
-  source: z.enum(['persisted', 'recovered']).nullable(),
+  source: z.enum(['persisted', 'recovered', 'none', 'not-captured']).nullable(),
 })
 
 export type StepSpanResponse = z.infer<typeof stepSpanSchema>

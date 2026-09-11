@@ -11,15 +11,21 @@
  * Wire shape of `GET /api/step-prompt` — the composed prompt sent to one
  * step's worker.
  *
- * `source` is provenance: 'persisted' when written at emit time on the
- * step_started event; 'recovered' when best-effort extracted from a stored
- * or on-disk transcript (the UI must label it 'recovered from transcript');
- * null (with `prompt` null) when nothing is queryable — rendered as an
- * explicit empty state, never invented data.
+ * `source` is provenance:
+ *   - 'persisted'    — written at emit time on the step_started event.
+ *   - 'recovered'    — best-effort extracted from a stored/on-disk transcript
+ *                      (label as 'recovered from transcript' in the UI).
+ *   - 'none'         — non-LLM step (setup/verify/merge); no prompt exists for
+ *                      this step kind by design.
+ *   - 'not-captured' — LLM-backed step but no prompt data survived; the run
+ *                      predates persistence. Render as an explicit visible gap.
+ *   - null           — the step was not found in the trace store at all.
+ *
+ * Never conflate 'none', 'not-captured', and null — each requires its own label.
  */
 export interface StepPrompt {
   workflowInstanceId: string
   stepName: string
   prompt: string | null
-  source: 'persisted' | 'recovered' | null
+  source: 'persisted' | 'recovered' | 'none' | 'not-captured' | null
 }

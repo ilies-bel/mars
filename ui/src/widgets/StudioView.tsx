@@ -181,10 +181,15 @@ const PromptBody = ({
     )
   }
   if (prompt === undefined || prompt.prompt === null) {
+    const msg =
+      prompt?.source === 'none'
+        ? 'No prompt for this step type — setup, verify, and merge steps are not LLM-backed.'
+        : prompt?.source === 'not-captured'
+          ? 'Prompt not captured — this run predates prompt persistence and no transcript survived.'
+          : 'No prompt recorded for this step — the run predates prompt persistence and no transcript could be recovered.'
     return (
       <p data-testid="studio-prompt-empty" className="text-label text-muted-foreground">
-        No prompt recorded for this step — the run predates prompt persistence
-        and no transcript could be recovered.
+        {msg}
       </p>
     )
   }

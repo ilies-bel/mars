@@ -55,12 +55,16 @@ const insertStarted = async (
     stepName: string
     timestamp: string
     promptText?: string
+    /** Omit workerName to simulate a non-LLM step (setup/verify/merge). */
+    workerName?: string
   },
 ): Promise<void> => {
   const payload: Record<string, unknown> = {
     stepName: opts.stepName,
     workflowInstanceId: opts.workflowInstanceId,
-    workerName: 'Coder',
+    // Only include workerName when explicitly provided (simulates LLM step).
+    // Non-LLM steps (setup/verify/merge) omit this field.
+    ...(opts.workerName !== undefined ? { workerName: opts.workerName } : {}),
   }
   if (opts.promptText !== undefined) payload.promptText = opts.promptText
   await client.execute({
@@ -124,6 +128,7 @@ describe('viewStepPrompt — resolution outcomes', () => {
       workflowInstanceId: 'wf-1',
       stepName: 'run-claude-code',
       timestamp: '2025-01-01T10:00:00.000Z',
+      workerName: 'Coder',
       promptText: 'You are the Coder. <files>a.ts</files> Save your work.',
     })
 
@@ -146,6 +151,7 @@ describe('viewStepPrompt — resolution outcomes', () => {
       workflowInstanceId: 'wf-1',
       stepName: 'run-claude-code',
       timestamp: '2025-01-01T10:00:00.000Z',
+      workerName: 'Coder',
       promptText: 'coder prompt',
     })
     await insertStarted(client, {
@@ -153,6 +159,7 @@ describe('viewStepPrompt — resolution outcomes', () => {
       workflowInstanceId: 'wf-1',
       stepName: 'verify',
       timestamp: '2025-01-01T10:01:00.000Z',
+      workerName: 'Coder',
       promptText: 'verify prompt',
     })
 
@@ -173,6 +180,7 @@ describe('viewStepPrompt — resolution outcomes', () => {
       workflowInstanceId: 'wf-rec',
       stepName: 'run-claude-code',
       timestamp: '2025-01-01T10:00:00.000Z',
+      workerName: 'Coder',
       // no promptText — pre-persistence run
     })
     await insertEnded(client, {
@@ -204,6 +212,7 @@ describe('viewStepPrompt — resolution outcomes', () => {
       workflowInstanceId: 'wf-dur',
       stepName: 'run-claude-code',
       timestamp: '2025-01-01T10:00:00.000Z',
+      workerName: 'Coder',
     })
     // No step_ended (no sessionId) — chunk and disk tiers are skipped.
     await store.appendDurableTranscript!(
@@ -222,12 +231,16 @@ describe('viewStepPrompt — resolution outcomes', () => {
     expect(result.source).toBe('recovered')
   })
 
-  it('returns null/null when the step exists but nothing is recoverable', async () => {
+  it('returns source=not-captured for an LLM step with no recoverable prompt', async () => {
+    // An LLM step (workerName present) that predates prompt persistence and has
+    // no surviving transcript — the prompt was lost. Should return 'not-captured'
+    // so the UI can render a visible gap rather than collapsing it with 'none'.
     await insertStarted(client, {
       taskId: 'task-nul',
       workflowInstanceId: 'wf-nul',
       stepName: 'run-claude-code',
       timestamp: '2025-01-01T10:00:00.000Z',
+      workerName: 'Coder',
     })
 
     const result = await svc.viewStepPrompt({
@@ -239,11 +252,36 @@ describe('viewStepPrompt — resolution outcomes', () => {
       workflowInstanceId: 'wf-nul',
       stepName: 'run-claude-code',
       prompt: null,
-      source: null,
+      source: 'not-captured',
+    })
+  })
+
+  it('returns source=none for a non-LLM step (setup/verify/merge)', async () => {
+    // A non-LLM step emits step_started without workerName — no prompt exists
+    // for this step kind by design. Should return 'none', not 'not-captured'.
+    await insertStarted(client, {
+      taskId: 'task-setup',
+      workflowInstanceId: 'wf-setup',
+      stepName: 'setup',
+      timestamp: '2025-01-01T09:00:00.000Z',
+      // No workerName — simulates setup/verify/merge step.
+    })
+
+    const result = await svc.viewStepPrompt({
+      workflowInstanceId: 'wf-setup',
+      stepName: 'setup',
+    })
+
+    expect(result).toEqual({
+      workflowInstanceId: 'wf-setup',
+      stepName: 'setup',
+      prompt: null,
+      source: 'none',
     })
   })
 
   it('returns null/null for an unknown (workflowInstanceId, stepName)', async () => {
+    // No step_started event at all — the pair simply does not exist in the store.
     const result = await svc.viewStepPrompt({
       workflowInstanceId: 'wf-ghost',
       stepName: 'no-such-step',

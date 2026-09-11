@@ -962,7 +962,17 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
       }
     }
 
-    // Pre-persistence run — recover best-effort from stored transcripts.
+    // Distinguish step kind from the step_started payload: LLM-backed steps
+    // carry `workerName`; non-LLM steps (setup/verify/merge) do not.
+    const isLlmStep = typeof startEvent.payload.workerName === 'string'
+
+    if (!isLlmStep) {
+      // Non-LLM step — no prompt exists for this kind by design.
+      return { workflowInstanceId, stepName, prompt: null, source: 'none' }
+    }
+
+    // LLM-backed step but no promptText — pre-persistence run. Attempt
+    // best-effort recovery from stored transcripts.
     const recovered = (prompt: string): StepPromptView => ({
       workflowInstanceId,
       stepName,
@@ -1019,7 +1029,10 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
       }
     }
 
-    return miss
+    // LLM step with no recoverable prompt — prompt was lost (pre-persistence
+    // run with no surviving transcript). The UI must render this as an
+    // explicit visible gap labelled 'not captured', never as empty space.
+    return { workflowInstanceId, stepName, prompt: null, source: 'not-captured' }
   }
 
   const viewAgentToolCalls: AppServices['viewAgentToolCalls'] = async (taskId, sessionId) => {
