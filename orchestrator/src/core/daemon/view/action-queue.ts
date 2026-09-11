@@ -540,28 +540,13 @@ export const OPERATIONAL_ALERT_COPY: Record<
       humanSummary: `Mars detected ${streak} tasks failing with \`${signature}\` — Mars has since resumed starting new tasks, no action needed from you.`,
     }
   },
-  'signature-wave': (row, _pauseState) => {
-    const count =
-      typeof row.payload.caughtTaskCount === 'number' ? row.payload.caughtTaskCount : 'multiple'
-    const sig =
-      typeof row.payload.signature === 'string' ? row.payload.signature : 'an unknown pattern'
-    const ids =
-      Array.isArray(row.payload.caughtTaskIds)
-        ? (row.payload.caughtTaskIds as string[]).join(', ')
-        : ''
-    return {
-      title: `${count} tasks failed for the same reason — one fix likely unblocks all`,
-      body: [
-        `${count} tasks all failed with the same failure pattern. This is the shape of an`,
-        `environmental or systemic failure, not a per-task regression.`,
-        ``,
-        `Shared failure pattern: ${sig}`,
-        ...(ids ? [`Affected tasks (${count}): ${ids}`] : []),
-        ``,
-        `Fix the root cause, then \`mars continue\` or \`mars restart\` each affected task.`,
-      ].join('\n'),
-    }
-  },
+  // null: keep the raiser's copy. The raiser (deriveSignatureWaveConditions) now
+  // names the cause in the title (failure-kind warmTitle for sig-keyed waves,
+  // first error line for error-keyed waves) and keeps the raw signature out of
+  // operator prose (DEC-18). Re-deriving copy here would lose that cause text —
+  // the view layer sees only row.payload.signature, not the cause-resolution the
+  // raiser performed.
+  'signature-wave': null,
   'gate-enrichment-stale': null,
   'env-incident': null,
   'stale-queued': (row, _pauseState) => {

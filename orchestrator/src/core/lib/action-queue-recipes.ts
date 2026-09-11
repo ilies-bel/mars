@@ -1058,10 +1058,13 @@ const RECIPE_DEFINITIONS = {
   },
 
   'signature-wave': {
-    humanSummary: (ctx) => {
-      const count = typeof ctx.payload['caughtTaskCount'] === 'number' ? ctx.payload['caughtTaskCount'] : 'multiple'
-      return `${count} tasks all failed the same way — this points to a shared environmental cause, not individual task bugs. Fix the root cause to unblock all of them.`
-    },
+    // Use ctx.title — the raiser (deriveSignatureWaveConditions) already writes a
+    // cause-named title ("N tasks failed the same way: <warmTitle/errorHead> — one
+    // fix likely unblocks all"). The HR-3 normalization in buildActionQueueView
+    // promotes humanSummary to title when operationalCopy is null; returning ctx.title
+    // here makes that promotion a no-op so the raiser's cause-named prose survives
+    // to both the UI (`title`) and the CLI (`humanSummary || title`) surfaces.
+    humanSummary: (ctx) => ctx.title,
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
       entityId: ctx.entityId,

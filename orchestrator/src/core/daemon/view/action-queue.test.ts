@@ -2187,3 +2187,113 @@ describe('buildActionQueueView — recovery-abandoned live enrichment', () => {
     expect(restartVerb?.label).not.toContain('discards')
   })
 })
+
+// ── signature-wave: raiser copy passes through the view layer unchanged ────────
+//
+// 293cf519e fixed deriveSignatureWaveConditions to name the cause in the title
+// (warmTitle for sig-keyed waves; first error line for error-keyed waves) and
+// to keep the raw machine signature out of operator prose (DEC-18). The view-
+// layer override in OPERATIONAL_ALERT_COPY was the only thing shadowing that
+// fix — it was re-reading row.payload.signature (raw) and regenerating copy
+// that the raiser no longer produces. Setting the entry to null lets the
+// raiser's copy win, as gate-enrichment-stale and env-incident already do.
+
+describe('buildActionQueueView — signature-wave raiser copy preserved', () => {
+  const makeWaveRow = (
+    overrides: Partial<PersistedActionQueueRow> = {},
+  ): PersistedActionQueueRow => ({
+    id: 'derived:sig-wave:verify:typecheck/typecheck-error',
+    kind: 'signature-wave',
+    priority: 'high',
+    // Title from the raiser (deriveSignatureWaveConditions): names the cause via
+    // warmTitle, not the raw signature. This is the exact format the raiser now
+    // writes — the test verifies this copy survives the view layer unchanged.
+    title: '6 tasks failed the same way: The project did not type-check — one fix likely unblocks all',
+    body: [
+      '6 tasks all failed the same way. This is the shape of an',
+      'environmental or systemic failure, not a per-task regression.',
+      '',
+      'Affected tasks (6): mars-a, mars-b, mars-c, mars-d, mars-e, mars-f',
+      '',
+      'Fix the root cause, then `mars continue` each affected task.',
+    ].join('\n'),
+    payload: {
+      // Raw signature lives in payload for diagnostics only — must not appear
+      // in the rendered title or body (DEC-18 invariant).
+      signature: 'verify:typecheck/typecheck-error',
+      caughtTaskCount: 6,
+      caughtTaskIds: ['mars-a', 'mars-b', 'mars-c', 'mars-d', 'mars-e', 'mars-f'],
+    },
+    context: {},
+    raisedAt: Date.parse('2026-09-10T12:00:00.000Z'),
+    lastSeenAt: Date.parse('2026-09-10T12:00:05.000Z'),
+    signature: 'signature-wave:verify:typecheck/typecheck-error',
+    ...overrides,
+  })
+
+  it('keeps the raiser title — cause-named, not generic "for the same reason"', async () => {
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([makeWaveRow()]),
+      taskStore: makeTaskStore([]),
+    })
+    const row = rows.find((r) => r.kind === 'signature-wave')
+    expect(row).toBeDefined()
+    // The view layer must not replace the raiser's cause-named title with the
+    // old generic form the removed override was producing.
+    expect(row!.title).toBe(
+      '6 tasks failed the same way: The project did not type-check — one fix likely unblocks all',
+    )
+    expect(row!.title).not.toContain('for the same reason')
+  })
+
+  it('title does not contain the raw machine signature (no slash-bearing pattern)', async () => {
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([makeWaveRow()]),
+      taskStore: makeTaskStore([]),
+    })
+    const row = rows.find((r) => r.kind === 'signature-wave')
+    expect(row).toBeDefined()
+    // DEC-18 invariant: raw step ids (foo:bar/baz) must not reach operator-facing fields.
+    expect(row!.title).not.toContain('verify:typecheck/typecheck-error')
+    // The title must not contain any slash-separated signature segment.
+    expect(row!.title).not.toMatch(/\b\w+:\w+\/\w+/)
+  })
+
+  it('body does not contain the raw machine signature', async () => {
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([makeWaveRow()]),
+      taskStore: makeTaskStore([]),
+    })
+    const row = rows.find((r) => r.kind === 'signature-wave')
+    expect(row).toBeDefined()
+    // Old override wrote "Shared failure pattern: verify:typecheck/typecheck-error"
+    // into the body. The raiser's body does not include the raw signature.
+    expect(row!.body).not.toContain('Shared failure pattern:')
+    expect(row!.body).not.toContain('verify:typecheck/typecheck-error')
+  })
+
+  it('existing signature-storm override is unaffected (still derives from payload)', async () => {
+    // Regression guard: setting signature-wave to null must not accidentally
+    // remove or break the signature-storm renderer, which legitimately includes
+    // the signature in its title (the storm pattern IS the signal for the operator).
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([
+        makeRow({
+          kind: 'signature-storm',
+          payload: { signature: 'verify:typecheck/typecheck-error', streak: 4 },
+          signature: 'signature-storm:verify:typecheck/typecheck-error',
+        }),
+      ]),
+      taskStore: makeTaskStore([]),
+    })
+    const stormRow = rows.find((r) => r.kind === 'signature-storm')
+    expect(stormRow).toBeDefined()
+    // signature-storm intentionally shows the signature — that is its signal.
+    expect(stormRow!.title).toContain('verify:typecheck/typecheck-error')
+    expect(stormRow!.title).toContain('4 tasks failed with')
+  })
+})
