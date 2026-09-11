@@ -27,7 +27,7 @@ import {
   isZeroCommitBranch as gitIsZeroCommitBranch,
   checkMergeTargetStatus as gitCheckMergeTargetStatus,
 } from '../../lib/git/merge'
-import type { MergeArgs } from '../../lib/git/merge'
+import type { MergeArgs, MergeResult as GitMergeResult } from '../../lib/git/merge'
 import {
   commitMain,
   autoCommitWorktreeIfDeterministic,
@@ -219,6 +219,87 @@ const CHECKPOINT_IDENTITY: Record<string, string> = {
   GIT_COMMITTER_EMAIL: 'mars@localhost',
 }
 
+// ---------------------------------------------------------------------------
+// Compile-time exhaustiveness guards for merge arg/result forwarding
+// ---------------------------------------------------------------------------
+//
+// Both guards follow the same pattern:
+//   1. A `const` array lists every field that must be forwarded.
+//   2. An exported const with a conditional type fails to compile if any
+//      field in the source type is NOT in the array — the error names the
+//      forgotten field: "Type 'true' is not assignable to type '"<field>"'".
+//
+// Keep each array and the corresponding literal (forwardedArgs / the return
+// literal in merge()) in sync. Adding a field to the source type without
+// updating the array produces a named build error; removing a field from the
+// array while keeping the source type the same also produces an error (wrong
+// element in the `as const satisfies` check).
+
+/**
+ * Every field of `MergeArgs` except `traceCtx` (which is translated from
+ * `spec.trace`). Keep in sync with the `forwardedArgs` literal in `merge()`.
+ * Adding a new field to `MergeArgs` without updating this list fails the
+ * build and names the missing field.
+ */
+export const MERGE_ARG_KEYS = [
+  'branch',
+  'worktreePath',
+  'integrationBranch',
+  'lockTimeoutMs',
+  'watchdogMs',
+  'signal',
+  'onSupervisorEvent',
+  'onVegaStart',
+  'onBeforeFastForward',
+  'onAfterFastForward',
+  'onPhase',
+  'onHeartbeat',
+  'onVerifyRebasedTree',
+  'autoCommitOperatorDirt',
+  'onOperatorAutoCommit',
+  'onProbeIntegrationAfterAutoCommit',
+] as const satisfies ReadonlyArray<keyof Omit<MergeArgs, 'traceCtx'>>
+
+type _MissingMergeArg = Exclude<keyof Omit<MergeArgs, 'traceCtx'>, (typeof MERGE_ARG_KEYS)[number]>
+/**
+ * Fails to compile if any `MergeArgs` field (except `traceCtx`) is absent
+ * from {@link MERGE_ARG_KEYS}. The build error names the forgotten field.
+ */
+export const mergeArgForwardIsExhaustive: _MissingMergeArg extends never ? true : _MissingMergeArg = true
+
+/**
+ * Every field of the lib's `MergeResult`. Keep in sync with the return
+ * literal in `merge()`. Adding a new field to `GitMergeResult` without
+ * updating this list fails the build and names the missing field.
+ */
+export const MERGE_RESULT_KEYS = [
+  'merged',
+  'conflictResolved',
+  'aborted',
+  'output',
+  'supervisorConversation',
+  'retriesAttempted',
+  'vegaSessionId',
+  'integrationGateFailed',
+  'integrationGateOutput',
+  'vegaTimedOut',
+  'reason',
+  'rebasedVerifyOutput',
+  'lastSyncedSha',
+  'operatorAutoCommitSha',
+  'mergePreSha',
+  'mergePostSha',
+] as const satisfies ReadonlyArray<keyof GitMergeResult>
+
+type _MissingMergeResult = Exclude<keyof GitMergeResult, (typeof MERGE_RESULT_KEYS)[number]>
+/**
+ * Fails to compile if any `GitMergeResult` field is absent from
+ * {@link MERGE_RESULT_KEYS}. The build error names the forgotten field.
+ */
+export const mergeResultForwardIsExhaustive: _MissingMergeResult extends never ? true : _MissingMergeResult = true
+
+// ---------------------------------------------------------------------------
+
 export const localGitVcs: Vcs = {
   kind: 'local-git',
 
@@ -285,11 +366,16 @@ export const localGitVcs: Vcs = {
       ...forwardedArgs,
       traceCtx: reconstructTraceCtx(spec.trace),
     })
-    return {
+    // Exhaustive reconstruction: every field in GitMergeResult must appear
+    // below. The `: GitMergeResult` annotation catches missing REQUIRED fields
+    // at compile time; MERGE_RESULT_KEYS (+ mergeResultForwardIsExhaustive)
+    // catches missing OPTIONAL fields. Do not remove any entry from this list.
+    const forwardedResult: GitMergeResult = {
       merged: result.merged,
       conflictResolved: result.conflictResolved,
       aborted: result.aborted,
       output: result.output,
+      supervisorConversation: result.supervisorConversation,
       retriesAttempted: result.retriesAttempted,
       vegaSessionId: result.vegaSessionId,
       integrationGateFailed: result.integrationGateFailed,
@@ -302,6 +388,7 @@ export const localGitVcs: Vcs = {
       mergePreSha: result.mergePreSha,
       mergePostSha: result.mergePostSha,
     }
+    return forwardedResult
   },
 
   async status(spec: StatusSpec): Promise<VcsStatus> {

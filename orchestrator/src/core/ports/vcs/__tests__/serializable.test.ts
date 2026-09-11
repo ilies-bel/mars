@@ -7,8 +7,27 @@
  * Plus the registry contract mirrored from `../../code-index/__tests__` /
  * `../../verifier/__tests__`: built-in registration, require-throws-naming-
  * known-kinds, and env-driven resolution through the shared Port catalog.
+ *
+ * Plus exhaustive spy tests for merge arg/result forwarding (mars-98dbffe1):
+ * - Every MergeSpec field is asserted to arrive at mergeBranch, per field.
+ * - The onVerifyRebasedTree gate is proven to be invoked when the spy calls it.
  */
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi, beforeEach } from 'vitest'
+
+// ── Module-level mock (hoisted before all imports by vitest) ─────────────────
+//
+// Intercepts mergeBranch inside local-git.ts so spy tests can verify
+// forwarding without invoking real git. Existing serializable round-trip tests
+// are unaffected — they never call localGitVcs.merge().
+
+const _mergeBranchSpy = vi.fn()
+
+vi.mock('../../../lib/git/merge.js', () => ({
+  mergeBranch: (...args: unknown[]) => _mergeBranchSpy(...args),
+  isBranchMergedIntoMain: vi.fn().mockResolvedValue(false),
+  isZeroCommitBranch: vi.fn().mockResolvedValue(false),
+  checkMergeTargetStatus: vi.fn().mockResolvedValue({ kind: 'clean' }),
+}))
 import { getVcs, listVcses, registerVcs, requireVcs, resolveVcs } from '../registry'
 import { localGitVcs } from '../local-git'
 import type {
@@ -284,5 +303,180 @@ describe('resolveVcs()', () => {
 
   it('throws when the env var names a kind the shared Port registry does not declare', () => {
     expect(() => resolveVcs({ MARS_VCS_KIND: 'bogus' })).toThrow(/not a registered implementation/)
+  })
+})
+
+// ── Merge field forwarding — exhaustive per-field spy test (mars-98dbffe1) ──
+//
+// These tests guard the `local-git` adapter's `merge()` implementation against
+// the class of bug that caused mars-82a0b56f (164 merges, no verify gate):
+// a callback silently dropped at the local-git → mergeBranch boundary.
+//
+// DESIGN: assertions are per-field, NOT `toMatchObject` on a subset.
+// A `toMatchObject` check on a subset of fields is exactly how this passed
+// review the first time — it proved the fields that were already forwarded
+// and could not catch the ones that were missing.
+//
+// See also: merge-callback-forwarding.test.ts (same directory) for targeted
+// callback-subset regression tests, and merge-worker.test.ts for the full
+// integration path that proves the gate runs end-to-end.
+
+describe('merge() — exhaustive per-field forwarding to mergeBranch', () => {
+  const FAKE_MERGE_RESULT = {
+    merged: true,
+    conflictResolved: false,
+    aborted: false,
+    output: 'fast-forwarded',
+    supervisorConversation: [],
+    retriesAttempted: 0,
+    vegaSessionId: null,
+  }
+
+  beforeEach(() => {
+    _mergeBranchSpy.mockReset()
+    _mergeBranchSpy.mockResolvedValue(FAKE_MERGE_RESULT)
+  })
+
+  it('forwards all 16 MergeSpec fields to mergeBranch, each asserted individually', async () => {
+    /**
+     * This test catches any forward omission immediately and names the
+     * missing field. It checks all 16 fields in MERGE_ARG_KEYS — the same
+     * list the compile-time exhaustiveness guard tracks. Adding a new field
+     * to MergeArgs → compile error from the guard → developer updates
+     * MERGE_ARG_KEYS → this test must also cover the new field.
+     */
+    const ac = new AbortController()
+    const onVerifyRebasedTree = vi.fn().mockResolvedValue({ passed: true })
+    const onAfterFastForward = vi.fn().mockResolvedValue(undefined)
+    const onSupervisorEvent = vi.fn()
+    const onOperatorAutoCommit = vi.fn()
+    const onProbeIntegrationAfterAutoCommit = vi.fn().mockResolvedValue({ passed: true })
+    const onVegaStart = vi.fn()
+    const onBeforeFastForward = vi.fn()
+    const onPhase = vi.fn()
+    const onHeartbeat = vi.fn()
+
+    await localGitVcs.merge({
+      branch: 'task/spy-all-fields',
+      worktreePath: '/tmp/spy-worktree',
+      integrationBranch: 'main',
+      lockTimeoutMs: 30_000,
+      watchdogMs: 45_000,
+      signal: ac.signal,
+      onVerifyRebasedTree,
+      onAfterFastForward,
+      onSupervisorEvent,
+      autoCommitOperatorDirt: true,
+      onOperatorAutoCommit,
+      onProbeIntegrationAfterAutoCommit,
+      onVegaStart,
+      onBeforeFastForward,
+      onPhase,
+      onHeartbeat,
+    })
+
+    expect(_mergeBranchSpy).toHaveBeenCalledOnce()
+    const args = _mergeBranchSpy.mock.calls[0]![0] as Record<string, unknown>
+
+    // Required scalar fields
+    expect(args['branch'], 'branch').toBe('task/spy-all-fields')
+    expect(args['worktreePath'], 'worktreePath').toBe('/tmp/spy-worktree')
+    expect(args['integrationBranch'], 'integrationBranch').toBe('main')
+    expect(args['lockTimeoutMs'], 'lockTimeoutMs').toBe(30_000)
+
+    // Optional scalar fields
+    expect(args['watchdogMs'], 'watchdogMs').toBe(45_000)
+    expect(args['autoCommitOperatorDirt'], 'autoCommitOperatorDirt').toBe(true)
+
+    // Non-serializable fields — identity (reference equality)
+    expect(args['signal'], 'signal').toBe(ac.signal)
+    expect(args['onVerifyRebasedTree'], 'onVerifyRebasedTree').toBe(onVerifyRebasedTree)
+    expect(args['onAfterFastForward'], 'onAfterFastForward').toBe(onAfterFastForward)
+    expect(args['onSupervisorEvent'], 'onSupervisorEvent').toBe(onSupervisorEvent)
+    expect(args['onOperatorAutoCommit'], 'onOperatorAutoCommit').toBe(onOperatorAutoCommit)
+    expect(args['onProbeIntegrationAfterAutoCommit'], 'onProbeIntegrationAfterAutoCommit').toBe(
+      onProbeIntegrationAfterAutoCommit,
+    )
+    expect(args['onVegaStart'], 'onVegaStart').toBe(onVegaStart)
+    expect(args['onBeforeFastForward'], 'onBeforeFastForward').toBe(onBeforeFastForward)
+    expect(args['onPhase'], 'onPhase').toBe(onPhase)
+    expect(args['onHeartbeat'], 'onHeartbeat').toBe(onHeartbeat)
+  })
+
+  it('invokes onVerifyRebasedTree when the spy calls it — the gate runs end-to-end', async () => {
+    /**
+     * Behavioural regression test for mars-82a0b56f.
+     *
+     * Proves that the gate callback reaches mergeBranch AND is actually
+     * invoked when mergeBranch calls it. The spy simulates what the real
+     * mergeBranch does: if onVerifyRebasedTree is present, call it. On
+     * unfixed code the callback arrived as undefined and the gate was silently
+     * skipped — this test would have caught that.
+     *
+     * The full integration path (merge-worker constructs the gate → passes to
+     * resolveVcs().merge() → localGitVcs.merge() → mergeBranch → gate runs)
+     * is covered by the "task-tier gate must run" test in merge-worker.test.ts.
+     */
+    const gate = vi.fn().mockResolvedValue({ passed: true })
+
+    _mergeBranchSpy.mockImplementationOnce(
+      async (args: {
+        onVerifyRebasedTree?: (info: {
+          baseSha: string
+          taskSha: string
+          attempt: number
+        }) => Promise<{ passed: boolean }>
+      }) => {
+        if (args.onVerifyRebasedTree) {
+          await args.onVerifyRebasedTree({
+            baseSha: 'b'.repeat(40),
+            taskSha: 'a'.repeat(40),
+            attempt: 1,
+          })
+        }
+        return { ...FAKE_MERGE_RESULT }
+      },
+    )
+
+    await localGitVcs.merge({
+      branch: 'task/gate-test',
+      worktreePath: '/tmp/gate-worktree',
+      integrationBranch: 'main',
+      lockTimeoutMs: 30_000,
+      onVerifyRebasedTree: gate,
+    })
+
+    expect(
+      gate,
+      'onVerifyRebasedTree gate must be invoked when mergeBranch calls it',
+    ).toHaveBeenCalledOnce()
+    expect(gate).toHaveBeenCalledWith({
+      baseSha: 'b'.repeat(40),
+      taskSha: 'a'.repeat(40),
+      attempt: 1,
+    })
+  })
+
+  it('MergeResult.supervisorConversation is forwarded from the lib result', async () => {
+    /**
+     * Regression guard: supervisorConversation was previously missing from
+     * the return literal in local-git.ts merge(). The forwardedResult:
+     * GitMergeResult annotation now catches this at compile time (it is a
+     * required field in GitMergeResult). This test is the runtime complement.
+     */
+    const conversation = [{ type: 'text', text: 'rebase done' }]
+    _mergeBranchSpy.mockResolvedValueOnce({ ...FAKE_MERGE_RESULT, supervisorConversation: conversation })
+
+    const result = await localGitVcs.merge({
+      branch: 'task/conv-test',
+      worktreePath: '/tmp/conv-worktree',
+      integrationBranch: 'main',
+      lockTimeoutMs: 30_000,
+    })
+
+    expect(
+      (result as { supervisorConversation?: unknown }).supervisorConversation,
+      'supervisorConversation must be forwarded from the lib result',
+    ).toBe(conversation)
   })
 })
