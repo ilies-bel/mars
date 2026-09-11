@@ -20,7 +20,7 @@
  * any prior installation that registered `.claude/.claude-plugin/` directly.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
 const PLUGIN_NAME = 'mars'

@@ -329,6 +329,16 @@ describe('StewardPage', () => {
     expect(html).toContain('Clear')
   })
 
+  it('labels storm tiles with plain durability language, never storage-layer names', () => {
+    const html = renderToStaticMarkup(<StewardPage />)
+    // The two tile labels must use plain state names, not storage-layer qualifiers
+    expect(html).toContain('survives a restart')
+    expect(html).toContain('resets on a restart')
+    // Negative: storage-layer names must not appear in operator-facing copy
+    expect(html).not.toContain('Postgres')
+    expect(html).not.toContain('in-memory')
+  })
+
   it('shows a disagreement banner when tripped disagrees with isPaused', () => {
     vi.mocked(useStewardView).mockReturnValue({
       data: makeStewardView({
@@ -629,9 +639,6 @@ describe('StewardPage — acknowledgment log', () => {
 // to say which gate each belongs to (WCAG 2.4.6 / 4.1.2). Visually each is
 // anchored by the gate above it, which is why a purely visual audit misses it.
 // ---------------------------------------------------------------------------
-
-describe('StewardPage — gate disclosures are individually named', () => {
-  })
 
 // ---------------------------------------------------------------------------
 // Verify gates — summarised, not restated

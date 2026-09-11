@@ -97,7 +97,7 @@ describe('config knobs', () => {
 
 describe('a failing remote verify fails identically to a local failure', () => {
   it('propagates a remote FAIL verdict unchanged', async () => {
-    const url = await startServer((req, res) => {
+    const url = await startServer((_req, res) => {
       res.writeHead(200, { 'content-type': 'application/json' })
       res.end(
         JSON.stringify({
@@ -140,7 +140,7 @@ describe('a network error surfaces as a verify failure, not a crash', () => {
   })
 
   it('resolves with a distinguishable reason on a non-2xx response', async () => {
-    const url = await startServer((req, res) => {
+    const url = await startServer((_req, res) => {
       res.writeHead(500, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ error: 'boom' }))
     })
@@ -155,7 +155,7 @@ describe('a network error surfaces as a verify failure, not a crash', () => {
   })
 
   it('resolves with a distinguishable reason when the response body is not valid JSON', async () => {
-    const url = await startServer((req, res) => {
+    const url = await startServer((_req, res) => {
       res.writeHead(200, { 'content-type': 'text/plain' })
       res.end('not json')
     })
@@ -168,7 +168,7 @@ describe('a network error surfaces as a verify failure, not a crash', () => {
   })
 
   it('resolves with a distinguishable reason when the response body does not match VerifierRunResult', async () => {
-    const url = await startServer((req, res) => {
+    const url = await startServer((_req, res) => {
       res.writeHead(200, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ ok: true }))
     })

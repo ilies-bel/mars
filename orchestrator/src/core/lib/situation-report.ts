@@ -21,7 +21,7 @@ export interface SituationDispatchState {
 export interface SituationReportSources {
   listTasks: () => Promise<readonly SituationTask[]>
   getSemaphoreSnapshot: () => SituationSemaphoreSnapshot
-  listActionQueue: () => Promise<readonly { kind?: string; entityId?: string }[]>
+  listActionQueue: () => Promise<readonly { kind?: string; entityId?: string; class?: string }[]>
   /**
    * Dispatch pause state. Optional so existing callers keep working; when
    * absent the report simply omits the pause clause.
@@ -97,24 +97,34 @@ const GROUPABLE_DERIVED_KINDS: ReadonlySet<string> = new Set([
 
 /**
  * The single canonical "needs you" count: distinct open subjects excluding
- * draft-proposal rows (a backlog of shaped ideas, not an operational alert
- * needing immediate action). Every UI surface that renders this concept
- * (the triage badge, the sidebar badge, the chat greeting, the situation
- * card) must derive from this same definition — see the fix for the
- * "four different counts" bug for the full rationale.
+ * two classes of row the operator does not need to act on:
+ *
+ *  1. `draft-proposal` rows — a backlog of shaped ideas, not operational alerts.
+ *  2. Any row whose `class === 'notice'` — informational by construction;
+ *     Mars handles these itself and their copy says so ("no action needed").
+ *     A notice CAN be promoted to `class: 'alert'` by `action-queue.ts` under
+ *     certain conditions (e.g. a signature-storm that trips the breaker), in
+ *     which case it IS counted — we use the row's own `class`, not a kind list,
+ *     so a promoted notice is counted and a demoted alert is skipped correctly.
+ *
+ * Every UI surface that renders this concept (the triage badge, the sidebar
+ * badge, the chat greeting, the situation card) must derive from this same
+ * definition — see the fix for the "four different counts" bug for the full
+ * rationale. Mirrored client-side by `countNeedsYou` in
+ * ui/src/entities/actionQueue/clusterRows.ts; both exclusions must match.
  *
  * Several condition kinds (failed, recovery-abandoned, gate-broken, …) can
  * derive independently for the SAME task, so a naive item count would report
- * one failed task as several items. This dedups those onto one, mirroring
- * `countNeedsYou` in ui/src/entities/actionQueue/clusterRows.ts.
+ * one failed task as several items. This dedups those onto one.
  */
 export const countNeedsYou = (
-  actionQueue: readonly { kind?: string; entityId?: string }[],
+  actionQueue: readonly { kind?: string; entityId?: string; class?: string }[],
 ): number => {
   const seenEntities = new Set<string>()
   let count = 0
   for (const item of actionQueue) {
     if (item.kind === 'draft-proposal') continue
+    if (item.class === 'notice') continue
     if (item.entityId && item.kind && GROUPABLE_DERIVED_KINDS.has(item.kind)) {
       if (seenEntities.has(item.entityId)) continue
       seenEntities.add(item.entityId)

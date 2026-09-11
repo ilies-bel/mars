@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { openDb, type DbClient } from '../../core/lib/db.js';
 import { ensureSchema } from '../../core/lib/pg-schema.js';
 import { publishWithRetry } from '../../bus/publisher.js';
-import { registerSubscriber, getCursor } from '../../bus/subscribers.js';
+import { getCursor } from '../../bus/subscribers.js';
 import {
   INVALIDATOR_SUBSCRIBER,
   ensureInvalidator,

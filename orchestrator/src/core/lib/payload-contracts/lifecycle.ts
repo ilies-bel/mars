@@ -49,6 +49,30 @@ export interface RecoveryAbandonedPayload {
   fixTaskId: string
   /** The origin task that the fix was created for. */
   originTaskId: string
+  /** Git branch the origin task was on at raise time. */
+  branch: string | null
+  /** Worktree path of the origin task at raise time. */
+  worktreePath: string | null
+  /**
+   * Number of commits on the origin branch ahead of the integration branch
+   * at the time the row was raised. `null` when the git probe failed or the
+   * branch was not set.
+   */
+  commitsAhead: number | null
+  /**
+   * True when `mars continue` would accept the origin task: the origin has a
+   * branch, a worktree path, and its `failure_reason` does not carry the
+   * `recovery_exhausted:` or `recovery_disabled:` prefix.
+   */
+  continuable: boolean
+  /**
+   * Cause key for action-queue grouping. Set to `'recovery-abandoned:no-commits'`
+   * when the branch has no commits ahead (all such rows describe the same
+   * situation: wipe and restart). Set to `null` when there are commits ahead so
+   * each such row stays separate — the branch name and commit count differ and
+   * the operator must evaluate each one individually.
+   */
+  failureReasonCode: string | null
 }
 
 /**
@@ -135,6 +159,11 @@ export const REPRESENTATIVE_PAYLOADS: Record<keyof LifecycleContracts, Record<st
   'recovery-abandoned': {
     fixTaskId: 'fix-5',
     originTaskId: 'mars-6',
+    branch: 'task/mars-6',
+    worktreePath: '/path/to/worktree',
+    commitsAhead: 0,
+    continuable: true,
+    failureReasonCode: 'recovery-abandoned:no-commits',
   },
   'arc-superseded-on-main': {
     originId: 'mars-7',

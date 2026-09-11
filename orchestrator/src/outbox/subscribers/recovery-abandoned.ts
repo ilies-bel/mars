@@ -9,6 +9,12 @@ import { integrationBranchName } from '../../core/lib/blocker-resolution-primiti
 import { getRepoRoot } from '../../core/context.js'
 import { listUniqueCommitsAhead, type OrphanCommit } from '../../core/lib/sweep.js'
 import { SALVAGE_CHECKPOINT_SUBJECT_PREFIX } from '../../core/lib/git/checkpoint.js'
+import { parseMainCommiterPayload, MAIN_COMMITER_RECIPE } from '../../core/lib/main-commiter-payload.js'
+import { raiseOrphanedCheckpointRow } from '../../core/daemon/main-dirty-action-queue.js'
+import {
+  RECOVERY_EXHAUSTED_PREFIX,
+  RECOVERY_DISABLED_PREFIX,
+} from '../../core/lib/failure-signature.js'
 
 /**
  * Durable outbox subscriber that raises an action-queue row when a fix
@@ -90,6 +96,28 @@ export async function drainRecoveryAbandoned(
       if (!fixTask) return false
       if (fixTask.fixForTaskId === null) return false
 
+      // Special case — `main-commiter` recoveries: their role is to commit the
+      // integration branch's dirty state, not to deliver the origin task's work.
+      // When a committer is dropped, the origin is in `blocked` status (not
+      // `failed`), so the generic origin-status guard below would silently skip
+      // this event.  But the committer may have already captured the operator's
+      // uncommitted edits into `refs/mars/checkpoint/<committerTaskId>` before
+      // being dropped — those edits are invisible on the integration branch and
+      // there is no other notification path.  Surface the checkpoint ref here so
+      // the operator knows where their work went.
+      const committerPayload = parseMainCommiterPayload(fixTask.recoveryPayload ?? null)
+      if (committerPayload?.recipe === MAIN_COMMITER_RECIPE) {
+        const itemId = await raiseOrphanedCheckpointRow(fixTask.id, (msg) => log?.(msg))
+        if (itemId !== null) {
+          log?.(
+            `[recovery-abandoned] main-committer ${fixTask.id} dropped; raised orphaned-checkpoint row ${itemId}`,
+          )
+        }
+        // Return true whether or not a checkpoint existed: the event was a
+        // valid main-committer drop and we handled it (even if silently).
+        return true
+      }
+
       const originId = fixTask.fixForTaskId
 
       // Suppress when the origin is not in `failed` status. The resolution
@@ -142,13 +170,41 @@ export async function drainRecoveryAbandoned(
         `Run \`mars continue ${originId}\` to resume on the existing worktree.` +
         escapeTail
 
+      // Compute enrichment fields for the action-queue row.
+      //
+      // `continuable` gates the `continue` verb in the recipe: true only when
+      // the origin has both a branch and a worktree path, and its failure_reason
+      // does not carry the `recovery_exhausted:` or `recovery_disabled:` prefix
+      // (the same conditions `continue-task.ts` enforces at the command level).
+      const commitsAhead = commits.length
+      const continuable =
+        !!originTask.branch &&
+        !!originTask.worktreePath &&
+        !(originTask.failureReason ?? '').startsWith(RECOVERY_EXHAUSTED_PREFIX) &&
+        !(originTask.failureReason ?? '').startsWith(RECOVERY_DISABLED_PREFIX)
+
+      // `failureReasonCode` drives action-queue grouping via `causeKeyOf`.  Rows
+      // with no commits ahead share the same situation (safe to restart) and
+      // should collapse into a single group card.  Rows with commits ahead each
+      // warrant individual attention (the branch name and commit count differ),
+      // so they carry `null` and fall through to per-row presentation.
+      const failureReasonCode = commitsAhead > 0 ? null : 'recovery-abandoned:no-commits'
+
       await raiseActionQueueItem({
         kind: 'recovery-abandoned',
         category: 'orchestrator',
         priority: 'high',
         title: 'Recovery task dropped',
         body,
-        payload: { fixTaskId: fixTask.id, originTaskId: originId },
+        payload: {
+          fixTaskId: fixTask.id,
+          originTaskId: originId,
+          branch: originTask.branch,
+          worktreePath: originTask.worktreePath,
+          commitsAhead,
+          continuable,
+          failureReasonCode,
+        },
         context: {},
         raisedBy: `outbox:${RECOVERY_ABANDONED_SUBSCRIBER}`,
         signature: `recovery-abandoned:${originId}`,

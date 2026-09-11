@@ -240,4 +240,4 @@ export const startStewardPromptOptimization = (
 
 // This export makes the intended default inspectable without re-spelling its
 // value. mars-8b5c09ce may rename the autonomous member; config owns it.
-const DEFAULT_PROMPT_OPTIMIZER_AUTONOMY: AutonomyLevel = AUTONOMOUS_AUTONOMY_LEVEL
+export const DEFAULT_PROMPT_OPTIMIZER_AUTONOMY: AutonomyLevel = AUTONOMOUS_AUTONOMY_LEVEL

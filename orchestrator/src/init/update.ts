@@ -14,7 +14,7 @@
  */
 
 import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
+import { dirname } from 'node:path'
 import { planWorkflowCopies } from './scaffold-workflows'
 import { readInitManifest, readOwnedWorkflowPaths, writeInitManifest } from './init-manifest'
 import { unifiedDiff } from './unified-diff'
@@ -189,6 +189,4 @@ export const realLineReader: LineReader = async (question) => {
   }
 }
 
-/** Resolve a repo-relative workflow dest to its absolute path (helper for tests). */
-const workflowDestPath = (repoRoot: string, rel: string): string =>
-  resolve(repoRoot, rel)
+

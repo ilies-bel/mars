@@ -278,7 +278,7 @@ describe('blocker-resolution (task_blockers)', () => {
       // A is the prerequisite (queued, then fails). B is queued with
       // --blocked-by A. A's failure must move B to blocked and raise one
       // actionQueue item naming the failed prerequisite.
-      const { q, br } = await loadModules(repo)
+      const { q } = await loadModules(repo)
       const a = await q.enqueueTask('prerequisite-a', undefined, { skipTriage: true })
       const b = await q.enqueueTask('downstream-b', undefined, { skipTriage: true })
       await q.addBlockers(b.id, [a.id])

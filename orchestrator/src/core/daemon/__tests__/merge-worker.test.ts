@@ -1656,7 +1656,7 @@ describe('runMergeJob — dynamic watchdog scales with gate timeoutMin', () => {
     // The watchdog must be strictly larger than just the gates alone — the
     // base DEFAULT_WATCHDOG_MS overhead (vcs-supervisor + git work) is always
     // added on top.
-    const _ = job // suppress unused-var lint; job was enqueued to drive the worker
+    void job // job was enqueued to drive the worker
   })
 
   it('falls back to static constant when no gates are registered', async () => {
@@ -1709,7 +1709,7 @@ describe('runMergeJob — dynamic watchdog scales with gate timeoutMin', () => {
     // total is base + fallback. Assert it is at least 15 min.
     const FIFTEEN_MIN_MS = 15 * 60_000
     expect(capturedWatchdogMs!).toBeGreaterThan(FIFTEEN_MIN_MS)
-    const _job2 = job2 // suppress lint
+    void job2 // job2 was enqueued to drive the worker
   })
 })
 

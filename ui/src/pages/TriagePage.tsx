@@ -2122,7 +2122,7 @@ export const TriagePage = () => {
   const isLoading = queuePending === true && !hasContent && !isDown
 
   return (
-    <div className="flex h-full flex-col overflow-hidden bg-background">
+    <div className="flex h-full flex-col overflow-hidden bg-background" data-testid="triage-page">
       <PageHeader
         title="Needs You"
         count={needsYouCount}

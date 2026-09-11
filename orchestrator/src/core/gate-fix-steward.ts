@@ -15,8 +15,6 @@ const GateFixStewardResultSchema = GateDefinitionSchema.extend({
   rationale: z.string().trim().min(1),
 }).strict()
 
-type GateFixStewardResult = z.infer<typeof GateFixStewardResultSchema>
-
 export interface GateFixProposal {
   id: string
   gateId: string

@@ -169,7 +169,7 @@ describe('buildWorkspaceDepsForSite — bin-existence check', () => {
     const { worktreeRoot, site, depDir } = await setupFixture({ createBinFile: false })
 
     let installCount = 0
-    const runner: InstallRunner = async (cmd, args, cwd) => {
+    const runner: InstallRunner = async (_cmd, args, _cwd) => {
       if (args[0] === 'install') {
         installCount++
         // On the second install (re-install), create the binary so subsequent

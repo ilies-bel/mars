@@ -24,7 +24,6 @@ import {
   readLiveWorktreeLease,
   worktreeLeasePath,
   WorktreeLeaseHeldError,
-  type WorktreeLeaseHandle,
 } from '../worktree-lease'
 
 let root: string

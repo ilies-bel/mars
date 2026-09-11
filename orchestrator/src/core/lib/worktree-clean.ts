@@ -408,15 +408,3 @@ export const runWorktreeClean = async (
   return summary
 }
 
-const isDaemonRunning = async (socketPath: string): Promise<boolean> => {
-  if (!existsSync(socketPath)) return false
-  const { createConnection } = await import('node:net')
-  return new Promise((resolveFn) => {
-    const sock = createConnection(socketPath)
-    sock.once('connect', () => {
-      sock.end()
-      resolveFn(true)
-    })
-    sock.once('error', () => resolveFn(false))
-  })
-}

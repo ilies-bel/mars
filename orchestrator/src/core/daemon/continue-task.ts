@@ -29,8 +29,15 @@ interface CommitClassification {
  * pre-setup branch-ahead guard. A branch whose commits are exclusively
  * checkpoints is not "reviewed work ready for `mars remerge`", but it is
  * still salvageable via `mars task add --supersede`.
+ *
+ * Exported so the derived-conditions view layer can probe commits-ahead on
+ * the same classification logic as the CLI, avoiding a second implementation
+ * that could drift (the bug we already fixed once — re-deriving recovery-
+ * exhausted from the wrong column). Import via a dynamic `import()` in the
+ * probe loop to avoid module-level cycles between the view layer and the
+ * daemon action layer.
  */
-const classifyCommitsAheadForBranch = async (
+export const classifyCommitsAheadForBranch = async (
   branch: string,
   integrationBranch: string,
   repoRoot: string,

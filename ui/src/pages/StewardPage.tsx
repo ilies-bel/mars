@@ -570,7 +570,7 @@ const SignatureStormLane = ({ data }: { data: StewardView['signatureStorm'] }) =
       <div className="grid grid-cols-2 gap-3">
         <div className="rounded border border-border/50 bg-muted/20 p-3">
           <div className="eyebrow text-muted-foreground">
-            Breaker (Postgres)
+            Breaker
           </div>
           <div
             className={`mt-1 font-mono text-body font-semibold ${tripped ? 'text-error' : 'text-success'}`}
@@ -583,10 +583,11 @@ const SignatureStormLane = ({ data }: { data: StewardView['signatureStorm'] }) =
               {formatAbsoluteDateTime(updated_at)}
             </time>
           )}
+          <p className="text-micro text-muted-foreground">survives a restart</p>
         </div>
         <div className="rounded border border-border/50 bg-muted/20 p-3">
           <div className="eyebrow text-muted-foreground">
-            Dispatch (in-memory)
+            Dispatch
           </div>
           <div
             className={`mt-1 font-mono text-body font-semibold ${isPaused ? 'text-error' : 'text-success'}`}
@@ -594,7 +595,7 @@ const SignatureStormLane = ({ data }: { data: StewardView['signatureStorm'] }) =
           >
             {isPaused ? 'Paused' : 'Running'}
           </div>
-          <p className="text-micro text-muted-foreground">resets on daemon restart</p>
+          <p className="text-micro text-muted-foreground">resets on a restart</p>
         </div>
       </div>
 

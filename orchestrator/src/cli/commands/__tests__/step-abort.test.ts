@@ -13,7 +13,7 @@
  * on observable state rather than implementation details.
  */
 
-import { afterEach, beforeAll, afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeAll, afterAll, describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'

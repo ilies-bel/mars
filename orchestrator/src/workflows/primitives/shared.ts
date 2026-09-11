@@ -74,10 +74,6 @@ export const BLOCKERS_ABORT_MESSAGE = (taskId: string): string =>
 export const MAIN_DIRTY_VERIFY_MESSAGE =
   'integration branch dirty before verify; parked behind main-commiter recovery'
 
-// Thrown by the merge step's dirty-main check.
-const MAIN_DIRTY_MERGE_MESSAGE =
-  'integration branch dirty before merge; parked behind main-commiter recovery'
-
 // Thrown by the code step when the context token budget fires.
 export const CONTEXT_EXHAUSTED_ABORT_MESSAGE = (taskId: string): string =>
   `task ${taskId} aborted by context-budget ceiling: coder hit the context token limit`

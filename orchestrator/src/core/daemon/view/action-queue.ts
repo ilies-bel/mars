@@ -28,6 +28,7 @@ import {
   type RecipeDecision,
 } from '../../lib/action-queue-recipes'
 import { isActionQueueKind, classifyKind, KIND_CLASS, DERIVED_KINDS, type ActionQueueKind, type ActionQueueClass } from '../../lib/action-queue-kinds'
+import { RECOVERY_EXHAUSTED_PREFIX, RECOVERY_DISABLED_PREFIX } from '../../lib/failure-signature'
 import type { DispatchPauseState } from '../pause-state'
 
 /**
@@ -92,6 +93,15 @@ export interface ActionQueueRow {
   title: string
   body: string
   at: string
+  /**
+   * ISO timestamp of when this item was last seen by the raiser. Distinct from
+   * `at` (which answers "when did this become true?") — `lastSeenAt` answers
+   * "when was this last refreshed?". A surface that wants "first seen 6d ago,
+   * last seen 2m ago" can use both fields independently.
+   *
+   * Do NOT render this as the row's age; that role belongs to `at`.
+   */
+  lastSeenAt: string
   dag: {
     blockers: { id: string; status: string; summary: string }[]
     blocking: { id: string; status: string; summary: string }[]
@@ -539,28 +549,13 @@ export const OPERATIONAL_ALERT_COPY: Record<
       humanSummary: `Mars detected ${streak} tasks failing with \`${signature}\` — Mars has since resumed starting new tasks, no action needed from you.`,
     }
   },
-  'signature-wave': (row, _pauseState) => {
-    const count =
-      typeof row.payload.caughtTaskCount === 'number' ? row.payload.caughtTaskCount : 'multiple'
-    const sig =
-      typeof row.payload.signature === 'string' ? row.payload.signature : 'an unknown pattern'
-    const ids =
-      Array.isArray(row.payload.caughtTaskIds)
-        ? (row.payload.caughtTaskIds as string[]).join(', ')
-        : ''
-    return {
-      title: `${count} tasks failed for the same reason — one fix likely unblocks all`,
-      body: [
-        `${count} tasks all failed with the same failure pattern. This is the shape of an`,
-        `environmental or systemic failure, not a per-task regression.`,
-        ``,
-        `Shared failure pattern: ${sig}`,
-        ...(ids ? [`Affected tasks (${count}): ${ids}`] : []),
-        ``,
-        `Fix the root cause, then \`mars continue\` or \`mars restart\` each affected task.`,
-      ].join('\n'),
-    }
-  },
+  // null: keep the raiser's copy. The raiser (deriveSignatureWaveConditions) now
+  // names the cause in the title (failure-kind warmTitle for sig-keyed waves,
+  // first error line for error-keyed waves) and keeps the raw signature out of
+  // operator prose (DEC-18). Re-deriving copy here would lose that cause text —
+  // the view layer sees only row.payload.signature, not the cause-resolution the
+  // raiser performed.
+  'signature-wave': null,
   'gate-enrichment-stale': null,
   'env-incident': null,
   'stale-queued': (row, _pauseState) => {
@@ -706,6 +701,23 @@ export interface TaskForActionQueue {
   leasedAt?: string | null
   /** Optional human note attached to the lease. */
   leaseNote?: string | null
+  /**
+   * Raw `failure_reason` from the task row. Used by the `recovery-abandoned`
+   * enrichment pass to gate `continuable` on the same condition that
+   * `continue-task.ts` enforces at the command level: the prefix
+   * `recovery_exhausted:` (or `recovery_disabled:`) means `mars continue`
+   * would reject the task — suppress the verb.
+   * Optional: absent on legacy stored rows that pre-date this field; the
+   * enrichment treats absence as no-prefix-match (safe default).
+   */
+  failureReason?: string | null
+  /**
+   * Absolute path to this task's worktree. Used by the `recovery-abandoned`
+   * enrichment pass: a missing worktree means `mars continue` would have
+   * nothing to resume on, so `continuable` must be false.
+   * Optional for the same backwards-compat reason as `failureReason`.
+   */
+  worktreePath?: string | null
 }
 
 /**
@@ -914,19 +926,28 @@ const failedRowCopy = (
   // reason, captured error) are available via the task graph; they no longer
   // occupy the primary card face.
   const taskPart = task?.id ? `Task ${shortId(task.id)} ` : 'Task '
-  const DECISION_BODY =
-    'Continue on the existing worktree, restart from scratch, or drop'
+
+  // The body used to be a constant — "Continue on the existing worktree,
+  // restart from scratch, or drop" — printed on every failed row regardless of
+  // which verbs the row actually carried. A setup failure has no worktree, so
+  // its action menu is restart/drop, and the card was naming Continue as the
+  // first option while offering no way to run it. Read the menu instead of
+  // asserting one.
+  const decisionBody = (actions: readonly { label: string }[]): string => {
+    const labels = actions.map((a) => a.label.toLowerCase())
+    if (labels.length === 0) return 'No automatic recovery is available — inspect the transcript'
+    if (labels.length === 1) return `Your one option: ${labels[0]}`
+    const head = labels.slice(0, -1).join(', ')
+    return `Your options: ${head} or ${labels[labels.length - 1]}`
+  }
 
   if (signature !== null) {
     const kind = lookupFailureKind(signature)
     const phase = failingStepFromSignature(signature)
-    const warmTitle =
-      kind !== null
-        ? kind.warmTitle
-        : unknownFailureKind(phase, capturedError).warmTitle
+    const resolved = kind ?? unknownFailureKind(phase, capturedError)
     return {
-      title: `${taskPart}failed at ${phase}: ${warmTitle}`,
-      body: DECISION_BODY,
+      title: `${taskPart}failed at ${phase}: ${resolved.warmTitle}`,
+      body: decisionBody(resolved.actions),
     }
   }
 
@@ -950,7 +971,7 @@ const failedRowCopy = (
   const summary = failedTaskTitle({ signature: null, capturedError })
   return {
     title: `${taskPart}failed: ${summary}`,
-    body: DECISION_BODY,
+    body: decisionBody(unknownFailureKind('', capturedError).actions),
   }
 }
 
@@ -1228,6 +1249,61 @@ export const buildActionQueueView = async ({
       arr.push(t.id)
       fixForTaskMap.set(t.fixForTaskId, arr)
     }
+  }
+
+  // ── recovery-abandoned payload enrichment ──────────────────────────────────
+  // Stored `recovery-abandoned` rows raised before the subscriber gained
+  // `continuable` and `commitsAhead` payload fields are missing those keys.
+  // Enrich from live task state on every read so the recipe renders the correct
+  // verbs regardless of when the row was stored.
+  //
+  // Pattern mirrors the `worktreeDirtyCount` probe in deriveFailedConditions:
+  // dynamic, change-over-time facts belong in a read-time probe, not in a stored
+  // payload that goes stale the moment the task is continued or the worktree moves.
+  //
+  // Gate: `continuable` mirrors the exact guard `continue-task.ts` applies at the
+  // command level.  `commitsAhead` is a `git rev-list --count main..<branch>` probe;
+  // null means the branch is absent or git failed — recipe falls back to plain "Restart".
+  for (const row of persistedRows) {
+    if (row.kind !== 'recovery-abandoned') continue
+    const originId =
+      typeof row.payload.originTaskId === 'string'
+        ? row.payload.originTaskId
+        : typeof row.payload.taskId === 'string'
+          ? row.payload.taskId
+          : null
+    if (originId === null) continue
+    const originTask = taskById.get(originId)
+    if (originTask === undefined) continue
+
+    const branch = originTask.branch
+    const failureReason = originTask.failureReason ?? ''
+    const worktreePath = originTask.worktreePath ?? null
+
+    const continuable =
+      !!branch &&
+      !!worktreePath &&
+      !failureReason.startsWith(RECOVERY_EXHAUSTED_PREFIX) &&
+      !failureReason.startsWith(RECOVERY_DISABLED_PREFIX)
+
+    let commitsAhead: number | null = null
+    if (branch) {
+      try {
+        const out = execFileSync(
+          'git',
+          ['-C', repoRoot, 'rev-list', '--count', `main..${branch}`],
+          { encoding: 'utf8', timeout: 3000, killSignal: 'SIGKILL' },
+        )
+        const n = parseInt(out.trim(), 10)
+        if (Number.isFinite(n)) commitsAhead = n
+      } catch {
+        // Branch absent, git unavailable, or probe timed out. Leave null so
+        // the recipe falls back to a plain "Restart" label with no commit count.
+      }
+    }
+
+    row.payload.continuable = continuable
+    row.payload.commitsAhead = commitsAhead
   }
 
   const toUiPriority = (p: string): 'high' | 'normal' | 'low' => {
@@ -1513,27 +1589,16 @@ export const buildActionQueueView = async ({
         ? (taskById.get(entityId)?.fixForTaskId ?? null)
         : null
 
-    // Derive the arc goal via the shared deriveArcGoal helper. For recovery/fix
-    // tasks it follows fixForTaskId; for superseding tasks it follows originId.
-    // Prefers the origin's intent over its raw prompt, and strips markdown heading
-    // markers from intent strings that are actually prompt dumps.
+    // Derive the arc/operator goals for any row whose entity is a task in our
+    // graph. Previously gated on isTaskFailure, which excluded awaiting-human
+    // and other non-failure task-backed kinds. The correct question is "do we
+    // have a task for this entity?", not "is this row a failure kind?".
     let arcGoal: string | null = null
-    if (isTaskFailure) {
-      const task = taskById.get(entityId)
-      if (task) {
-        arcGoal = deriveArcGoal(task, taskById)
-      }
-    }
-
-    // Derive the operator-facing goal via the same resolution chain as arcGoal
-    // but with a richer normaliser: markdown, backticks, bold markers stripped;
-    // second-person rewritten to imperative; capped at 100 chars.
     let operatorGoal: string | null = null
-    if (isTaskFailure) {
-      const task = taskById.get(entityId)
-      if (task) {
-        operatorGoal = deriveOperatorGoal(task, taskById)
-      }
+    const taskForGoals = taskById.get(entityId)
+    if (taskForGoals) {
+      arcGoal = deriveArcGoal(taskForGoals, taskById)
+      operatorGoal = deriveOperatorGoal(taskForGoals, taskById)
     }
     // Recipe-level fallback: for kinds whose entity is not a task (e.g.
     // `slice-failed` where the entity is a proposal), the recipe can supply
@@ -1736,34 +1801,24 @@ export const buildActionQueueView = async ({
           : (isActionQueueKind(row.kind) && KIND_CLASS[row.kind as ActionQueueKind] === 'notice' ? row.kind : null))
       : null
 
-    // Derived items are regenerated on every read, so their `lastSeenAt` is the
-    // query time — rendering it makes every derived item claim it happened "0s
-    // ago" no matter how old the underlying evidence is. Their `raisedAt` is
-    // the real evidence time (a gate's `last_failure_at`, a crash's
-    // `crashDetectedAt`, a worktree's mtime), so read that instead.
+    // `at` answers one question for every row: "when did this become true?"
+    // That is `raisedAt` unconditionally. Previous versions maintained a
+    // per-kind allowlist ("which kinds have a lying lastSeenAt?") that had to
+    // be extended three separate times as new raisers started bumping
+    // lastSeenAt on recompute — derived kinds, then `reflect-recommended`,
+    // then stored kinds whose raisers silently joined the same pattern. An
+    // allowlist in the render layer tracking a raiser-side property is
+    // structurally unsound: any raiser can bump lastSeenAt without touching
+    // this file, and the next bug is silent by construction. The fix inverts
+    // the invariant: use raisedAt everywhere. lastSeenAt is preserved as its
+    // own labelled field so surfaces that need both can have both.
     //
-    // This was previously patched per-kind for `failed` and `daemon-died`,
-    // which left the other derived kinds lying: five quarantined gates all
-    // rendered "0s ago" on a live queue. It is a structural property of
-    // DERIVED_KINDS, not tied to any single class, so check membership once
-    // and apply it.
-    //
-    // `failed` keeps its sharper source: the task's own updatedAt is the exact
-    // failure time, where raisedAt is only the derive-time fallback.
-    //
-    // `reflect-recommended` is a stored (non-derived) row, but its raiser
-    // bumps `lastSeenAt` on every detector recompute — so `lastSeenAt` tracks
-    // when evidence was last evaluated, NOT when the advisory was first raised.
-    // Using it would make the row always appear brand-new to the operator.
-    // `raisedAt` is the stable origin timestamp; use it here too.
-    //
-    // All other stored rows have a meaningful lastSeenAt.
+    // `failed` keeps its sharper source: the task's own updatedAt is the
+    // exact failure time; raisedAt is only the derive-time fallback.
     const rowAt =
       row.kind === 'failed'
         ? (taskById.get(entityId)?.updatedAt ?? new Date(row.raisedAt).toISOString())
-        : DERIVED_KINDS.has(row.kind as ActionQueueKind) || row.kind === 'reflect-recommended'
-          ? new Date(row.raisedAt).toISOString()
-          : new Date(row.lastSeenAt).toISOString()
+        : new Date(row.raisedAt).toISOString()
 
     rows.push({
       id: row.id,
@@ -1773,6 +1828,7 @@ export const buildActionQueueView = async ({
       title,
       body,
       at: rowAt,
+      lastSeenAt: new Date(row.lastSeenAt).toISOString(),
       dag,
       errorKind,
       actions,
@@ -1864,6 +1920,7 @@ export const buildActionQueueView = async ({
       title: batchTitle,
       body: batchBody,
       at: newest.at,
+      lastSeenAt: newest.lastSeenAt,
       dag: null,
       errorKind: 'daemon-killed-batch',
       actions: batchActions,
@@ -2234,6 +2291,7 @@ export const buildActionQueueHistoryView = async ({
       title,
       body,
       at: new Date(row.lastSeenAt).toISOString(),
+      lastSeenAt: new Date(row.lastSeenAt).toISOString(),
       dag,
       errorKind,
       actions: [], // Resolved rows are read-only; no actions.

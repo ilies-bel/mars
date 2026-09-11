@@ -33,7 +33,7 @@ const makeCtx = (overrides: Partial<RecipeContext> = {}): RecipeContext => ({
   entityId: 'test-entity',
   payload: {},
   context: {},
-  title: 'Test title',
+  title: 'Test alert title',
   body: 'Test body',
   raisedAt: '2026-01-01T00:00:00.000Z',
   ...overrides,
@@ -286,9 +286,10 @@ describe('compound verb mapping', () => {
   it('every gate-broken verb op is one the daemon actually handles', () => {
     // gate-restore POSTs to /actions/gate-restore/:id — the handler runs the
     // gate's command asynchronously via restoreVerifyGate (app-service).
+    // copy hands the operator a pre-filled `mars verify-gate restore <id>` command.
     const recipe = lookupRecipe('gate-broken')
     const ctx = makeCtx({ kind: 'gate-broken', payload: { gate: 'gate-abc123' } })
-    const handled = new Set(['gate-restore', 'dismiss', 'snooze'])
+    const handled = new Set(['gate-restore', 'copy', 'dismiss', 'snooze'])
     for (const verb of getRecipeVerbs(recipe, ctx)) {
       expect(handled).toContain(verb.op)
     }
@@ -322,7 +323,7 @@ describe('compound verb mapping', () => {
     })
     const verbs = getRecipeVerbs(recipe, ctx)
     const copyVerb = verbs.find((v) => v.op === 'copy')
-    expect(copyVerb).toMatchObject({ label: 'Add gate check', style: 'primary' })
+    expect(copyVerb).toMatchObject({ label: 'Copy gate command', style: 'primary' })
     expect(copyVerb?.hint).toBe(
       'mars verify-gate add --scope orchestrator --name typecheck --cmd npx -- tsc --noEmit',
     )
@@ -441,6 +442,163 @@ describe('compound verb mapping', () => {
       payload: { workflow: 'implement' },
     })
     expect(recipe.humanSummary(ctx)).toContain('implement')
+  })
+})
+
+// ── Suite 5: failed recipe decision table ─────────────────────────────────────
+//
+// One test per row of the decision table described in action-queue-recipes.ts.
+// Each test asserts the expected primary verb (or absence) AND verifies that
+// restart + purge are always appended.
+
+describe('failed recipe — verb decision table', () => {
+  const recipe = lookupRecipe('failed')
+
+  // Helper: resolve verbs (the failed recipe's verbs field is a function)
+  const verbs = (payload: Record<string, unknown>) =>
+    getRecipeVerbs(recipe, makeCtx({ kind: 'failed', entityId: 'mars-abc123', payload }))
+
+  it('recoveryExhausted=false → primary verb is "continue" (Resume on existing worktree)', () => {
+    const v = verbs({ recoveryExhausted: false })
+    const primary = v.find((x) => x.style === 'primary')
+    expect(primary).toMatchObject({ op: 'continue', style: 'primary' })
+    expect(primary?.label).toContain('Resume')
+  })
+
+  it('recoveryExhausted=false → does NOT emit remerge', () => {
+    const v = verbs({ recoveryExhausted: false, realCommitsAhead: 5 })
+    expect(v.find((x) => x.op === 'remerge')).toBeUndefined()
+  })
+
+  it('recoveryExhausted=true, realCommitsAhead=1 → primary verb is "remerge" (NOT continue)', () => {
+    const v = verbs({ recoveryExhausted: true, realCommitsAhead: 1, checkpointCommitsAhead: 0 })
+    const primary = v.find((x) => x.style === 'primary')
+    expect(primary).toMatchObject({ op: 'remerge', style: 'primary' })
+    // Must NOT emit continue when recovery is exhausted
+    expect(v.find((x) => x.op === 'continue')).toBeUndefined()
+  })
+
+  it('recoveryExhausted=true, realCommitsAhead=3 → remerge label names commit count', () => {
+    const v = verbs({ recoveryExhausted: true, realCommitsAhead: 3, checkpointCommitsAhead: 0 })
+    const remerge = v.find((x) => x.op === 'remerge')
+    expect(remerge?.label).toContain('3')
+    expect(remerge?.label).toContain('commits')
+  })
+
+  it('recoveryExhausted=true, realCommitsAhead=0, checkpointCommitsAhead=2 → copy verb (supersede hint)', () => {
+    const v = verbs({
+      recoveryExhausted: true,
+      realCommitsAhead: 0,
+      checkpointCommitsAhead: 2,
+      taskId: 'mars-abc123',
+    })
+    const copy = v.find((x) => x.op === 'copy')
+    expect(copy).toBeDefined()
+    expect(copy?.hint).toContain('--supersede')
+    expect(copy?.hint).toContain('mars-abc123')
+    // No remerge (no real commits)
+    expect(v.find((x) => x.op === 'remerge')).toBeUndefined()
+    // No continue (recovery exhausted)
+    expect(v.find((x) => x.op === 'continue')).toBeUndefined()
+  })
+
+  it('recoveryExhausted=true, realCommitsAhead=0, checkpointCommitsAhead=0 → no primary safe verb (restart is the only forward path)', () => {
+    const v = verbs({ recoveryExhausted: true, realCommitsAhead: 0, checkpointCommitsAhead: 0 })
+    expect(v.find((x) => x.op === 'continue')).toBeUndefined()
+    expect(v.find((x) => x.op === 'remerge')).toBeUndefined()
+    expect(v.find((x) => x.op === 'copy')).toBeUndefined()
+    // restart should be present as the only forward path
+    expect(v.find((x) => x.op === 'restart')).toBeDefined()
+  })
+
+  it('realCommitsAhead=null (not probed) → no safe-verb claim emitted', () => {
+    const v = verbs({ recoveryExhausted: true, realCommitsAhead: null })
+    expect(v.find((x) => x.op === 'continue')).toBeUndefined()
+    expect(v.find((x) => x.op === 'remerge')).toBeUndefined()
+    expect(v.find((x) => x.op === 'copy')).toBeUndefined()
+  })
+
+  it('restart always appended (all decision table rows)', () => {
+    const cases = [
+      { recoveryExhausted: false },
+      { recoveryExhausted: true, realCommitsAhead: 1 },
+      { recoveryExhausted: true, realCommitsAhead: 0, checkpointCommitsAhead: 1 },
+      { recoveryExhausted: true, realCommitsAhead: 0, checkpointCommitsAhead: 0 },
+      { recoveryExhausted: true, realCommitsAhead: null },
+    ] as Record<string, unknown>[]
+
+    for (const payload of cases) {
+      const v = verbs(payload)
+      expect(v.find((x) => x.op === 'restart'), `restart missing for ${JSON.stringify(payload)}`).toBeDefined()
+    }
+  })
+
+  it('purge always appended (all decision table rows)', () => {
+    const cases = [
+      { recoveryExhausted: false },
+      { recoveryExhausted: true, realCommitsAhead: 1 },
+      { recoveryExhausted: true, realCommitsAhead: 0, checkpointCommitsAhead: 0 },
+    ] as Record<string, unknown>[]
+
+    for (const payload of cases) {
+      const v = verbs(payload)
+      expect(v.find((x) => x.op === 'purge'), `purge missing for ${JSON.stringify(payload)}`).toBeDefined()
+    }
+  })
+
+  it('restart has needsConfirm:true (never fires without user confirmation)', () => {
+    const v = verbs({ recoveryExhausted: false })
+    const restart = v.find((x) => x.op === 'restart')
+    expect(restart?.needsConfirm).toBe(true)
+  })
+
+  it('purge has needsConfirm:true', () => {
+    const v = verbs({ recoveryExhausted: false })
+    const purge = v.find((x) => x.op === 'purge')
+    expect(purge?.needsConfirm).toBe(true)
+  })
+
+  it('restart label names commit count when realCommitsAhead > 0 and branch is set', () => {
+    const v = verbs({
+      recoveryExhausted: true,
+      realCommitsAhead: 2,
+      branch: 'task/mars-abc123',
+    })
+    const restart = v.find((x) => x.op === 'restart')
+    expect(restart?.label).toContain('2')
+    expect(restart?.label).toContain('task/mars-abc123')
+  })
+
+  it('restart has plain "Restart" label when realCommitsAhead=0', () => {
+    const v = verbs({ recoveryExhausted: true, realCommitsAhead: 0, checkpointCommitsAhead: 0 })
+    const restart = v.find((x) => x.op === 'restart')
+    expect(restart?.label).toBe('Restart')
+  })
+
+  it('humanDetail includes realCommitsAhead when probed', () => {
+    const detail = recipe.humanDetail(
+      makeCtx({ kind: 'failed', payload: { realCommitsAhead: 3, branch: 'task/mars-abc123' } }),
+    )
+    expect(detail.realCommitsAhead).toBe(3)
+  })
+
+  it('humanDetail includes restartConsequence when realCommitsAhead > 0 and branch set', () => {
+    const detail = recipe.humanDetail(
+      makeCtx({
+        kind: 'failed',
+        payload: { realCommitsAhead: 2, branch: 'task/mars-abc123' },
+      }),
+    )
+    expect(typeof detail.restartConsequence).toBe('string')
+    expect(detail.restartConsequence).toContain('2')
+    expect(detail.restartConsequence).toContain('task/mars-abc123')
+  })
+
+  it('humanDetail omits restartConsequence when realCommitsAhead=0', () => {
+    const detail = recipe.humanDetail(
+      makeCtx({ kind: 'failed', payload: { realCommitsAhead: 0, branch: 'task/mars-abc123' } }),
+    )
+    expect(detail.restartConsequence).toBeUndefined()
   })
 })
 

@@ -116,7 +116,7 @@ export const buildToolForgePrompt = (
     motivatingArcIds.join(', '),
   )
 
-const toolForgeWorkflow = defineWorkflow<
+export const toolForgeWorkflow = defineWorkflow<
   ToolForgeInput,
   ToolForgeOutput,
   MarsServices

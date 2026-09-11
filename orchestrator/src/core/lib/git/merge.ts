@@ -1,7 +1,7 @@
 import { resolve } from 'node:path'
 import { readFile, stat, unlink, writeFile } from 'node:fs/promises'
 import { getStateDir } from '../../context'
-import { type AgentEvent } from '../claude-stream'
+import { type AgentEvent, parseClaudeStreamLine } from '../claude-stream'
 import {
   exec,
   execProbe,
@@ -16,7 +16,18 @@ import { attributeIntegrationDirt } from './stale-tree-attribution'
 import { autoCommitOperatorDirt as autoCommitOperatorDirtGit } from './operator-auto-commit'
 import { extractSessionIdFromConversation } from '../../ports/executor/executor-helpers'
 import type { RunSubprocessResult } from '../../ports/executor/types'
-import { runHeadlessProvider } from '../../workers/providers'
+import {
+  runSubprocessStreaming,
+  resolveClaudeBin,
+  claudeStreamArgs,
+  buildWorkerEnv,
+} from './claude'
+// Import locally so the class is in scope for `new MergeAbortedError(...)` at
+// the throw site inside mergeBranch, AND re-export it so callers that import
+// MergeAbortedError from this module get the canonical identity from
+// ports/vcs/types — eliminating the two-class-definition instanceof split.
+import { MergeAbortedError } from '../../ports/vcs/types'
+export { MergeAbortedError }
 
 export type MergeTargetStatus =
   | { kind: 'clean' }
@@ -591,33 +602,59 @@ A \`git rebase ${integrationBranch}\` of ${branch} just conflicted in this workt
 Resolve every conflict per your protocol — read both sides, reconcile intent, never blindly pick ours/theirs. After staging each step, use \`git rebase --continue\` (NOT \`git commit\`). Repeat until the rebase finishes.
 
 End with the Completion Report block exactly as specified above.`
-  // Wall-clock timeout is delegated to runHeadlessProvider, which wires its
-  // own AbortController and kills the provider subprocess when timeoutMs
-  // elapses. No local AbortController or setTimeout needed here.
-  //
-  // NOTE: `agent` is intentionally absent. The Vega conflict-resolution
-  // protocol is the system prompt (see above) — all providers receive it
-  // via `systemPrompt`, so no per-repo `.claude/agents/vcs-supervisor.md`
-  // file is needed. Passing `agent: 'vcs-supervisor'` would emit a
-  // `--agent` CLI flag that the `claude` binary resolves against the
-  // CONSUMER repo's own `.claude/agents/` directory — a file that `mars
-  // init` never ships — breaking every Claude-provider run in consumer
-  // repos while working fine in the framework's own checkout. Span naming
-  // for this call is set independently by the merge step's own tracing
-  // (workerName: 'Vega') and does not depend on this option.
-  const result = await runHeadlessProvider(userPrompt, {
+
+  // NOTE: `agent` is intentionally absent — see the note in the JSDoc above.
+  // Wire an AbortController so that when the wall-clock timer fires we KILL
+  // the subprocess (via runSubprocessStreaming's SIGKILL onAbort path) and
+  // return the conventional timeout sentinel exit code 124, matching the
+  // same pattern as runClaudeCode in ./claude.ts.
+  const abort = new AbortController()
+  let timedOut = false
+  const timeoutHandle =
+    timeoutMs > 0
+      ? setTimeout(() => {
+          timedOut = true
+          abort.abort()
+        }, timeoutMs)
+      : undefined
+
+  const conversation: AgentEvent[] = []
+  const result = await runSubprocessStreaming(
+    resolveClaudeBin(),
+    claudeStreamArgs(userPrompt, {
+      systemPrompt,
+      permissionMode: 'acceptEdits',
+    }),
     cwd,
-    modelTier: 'flagship',
-    systemPrompt,
-    timeoutMs,
-    onEvent,
-    permissionMode: 'acceptEdits',
-  })
+    onEvent
+      ? async ({ stream, line }) => {
+          if (stream !== 'stdout') return
+          const event = parseClaudeStreamLine(line)
+          if (!event) return
+          conversation.push(event)
+          await onEvent(event)
+        }
+      : undefined,
+    abort.signal,
+    buildWorkerEnv(),
+  )
+
+  clearTimeout(timeoutHandle)
+
+  if (timedOut) {
+    return {
+      exitCode: 124,
+      stdout: result.stdout,
+      stderr: `vcs-supervisor timed out after ${timeoutMs}ms`,
+      conversation,
+    }
+  }
+
   return {
     exitCode: result.exitCode,
     stdout: result.stdout,
     stderr: result.stderr,
-    conversation: result.conversation,
+    conversation,
   }
 }
 
@@ -732,45 +769,10 @@ export class MergeHardTimeoutError extends Error {
  */
 const ABORT_CLEANUP_TIMEOUT_MS = 10_000
 
-/**
- * Formats a millisecond duration into a human-readable string.
- * Tiers: <1s → "Nms", <60s → "N.Ns", <60m → "Nm Ns" (drops "Ns" when s===0),
- * else "Nh Nm" (drops "Nm" when m===0).
- */
-function formatMsDuration(ms: number): string {
-  if (ms < 1000) return `${Math.round(ms)}ms`
-  const totalSec = Math.floor(ms / 1000)
-  if (totalSec < 60) return `${(ms / 1000).toFixed(1)}s`
-  const m = Math.floor(totalSec / 60)
-  const s = totalSec % 60
-  if (m < 60) return s > 0 ? `${m}m ${s}s` : `${m}m`
-  const h = Math.floor(m / 60)
-  const rm = m % 60
-  return rm > 0 ? `${h}h ${rm}m` : `${h}h`
-}
-
-/**
- * Thrown by {@link mergeBranch} when the merge is cancelled — either by the
- * internal watchdog timer (`reason: 'watchdog'`) or by the caller's
- * `AbortSignal` (`reason: 'external'`). `elapsedMs` is the wall-clock time from
- * lock-acquisition attempt to abort; `lastStep` names the merge phase in flight
- * when the abort landed.
- */
-export class MergeAbortedError extends Error {
-  readonly reason: 'watchdog' | 'external'
-  readonly elapsedMs: number
-  readonly lastStep: string
-
-  constructor(reason: 'watchdog' | 'external', elapsedMs: number, lastStep: string) {
-    super(
-      `mergeBranch aborted (${reason}) after ${formatMsDuration(elapsedMs)} during step '${lastStep}'`,
-    )
-    this.name = 'MergeAbortedError'
-    this.reason = reason
-    this.elapsedMs = elapsedMs
-    this.lastStep = lastStep
-  }
-}
+// MergeAbortedError is the canonical class from ports/vcs/types; re-exported
+// at the top of this file so every importer (tests, merge primitive, daemon
+// worker) shares a single class identity and instanceof checks cross module
+// boundaries correctly.
 
 /**
  * Path of the rebase-in-progress marker file written beside a task worktree

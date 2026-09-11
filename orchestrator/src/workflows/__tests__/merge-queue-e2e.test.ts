@@ -211,8 +211,8 @@ function makeFakeJobStore() {
 /** Minimal MarsServices-compatible ctx for calling merge() directly. */
 function makeCtx(
   taskId: string,
-  worktreePath: string,
-  branch: string,
+  _worktreePath: string,
+  _branch: string,
   enqueueFn: (args: { taskId: string; branch: string; worktreePath: string; integrationBranch: string }) => Promise<unknown>,
 ) {
   return {

@@ -16,7 +16,6 @@ import {
   probeProvider,
   formatProviderProbe,
   realProviderProbeDeps,
-  type ProviderProbeDeps,
 } from './provider-probe'
 import type { ProviderName } from '../../core/workers/provider-types'
 // Side-effect import: registers the built-in claude/gemini/codex providers.

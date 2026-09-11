@@ -86,24 +86,17 @@ export const CHECKPOINT_REF_PREFIX = 'refs/mars/checkpoint'
  * domain code can import it without crossing the vcs-port-only boundary
  * (ADR-0097). Re-exported here for callers already importing from checkpoint.ts.
  */
-import { SALVAGE_CHECKPOINT_SUBJECT_PREFIX } from '../salvage-checkpoint-subjects'
-export { SALVAGE_CHECKPOINT_SUBJECT_PREFIX }
+import {
+  SALVAGE_CHECKPOINT_SUBJECT_PREFIX,
+  SALVAGE_CHECKPOINT_TRAILER_KEY,
+  SALVAGE_CHECKPOINT_TRAILER_VALUE,
+} from '../salvage-checkpoint-subjects'
+export {
+  SALVAGE_CHECKPOINT_SUBJECT_PREFIX,
+  SALVAGE_CHECKPOINT_TRAILER_KEY,
+  SALVAGE_CHECKPOINT_TRAILER_VALUE,
+}
 
-/**
- * Git trailer key/value written in the BODY of every salvage checkpoint
- * commit (see `coder-exit.ts`), alongside {@link SALVAGE_CHECKPOINT_SUBJECT_PREFIX}.
- *
- * The subject prefix is a human-legible label; this trailer is the
- * STRUCTURAL marker. Merge-time gating (`isSalvageCheckpointCommit` below)
- * reads the trailer back with `git log --format=%(trailers:...)`, a git
- * primitive that parses the commit body's trailer block, rather than
- * substring-matching the subject text. That distinction matters: a human
- * commit whose subject happens to start with `wip(checkpoint):` has no
- * `Mars-Checkpoint` trailer and must NOT be treated as an orchestrator
- * salvage snapshot.
- */
-export const SALVAGE_CHECKPOINT_TRAILER_KEY = 'Mars-Checkpoint'
-export const SALVAGE_CHECKPOINT_TRAILER_VALUE = 'salvage'
 
 /**
  * True when `sha` (typically a branch tip, checked at merge time) carries

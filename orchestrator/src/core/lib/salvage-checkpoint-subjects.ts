@@ -19,3 +19,21 @@
  * cannot drift apart.
  */
 export const SALVAGE_CHECKPOINT_SUBJECT_PREFIX = 'wip(checkpoint):'
+
+/**
+ * Trailer identifying an orchestrator-authored salvage checkpoint commit,
+ * written as `Mars-Checkpoint: salvage`.
+ *
+ * Structural, not a subject grep: a human commit whose subject happens to
+ * start with `wip(checkpoint):` carries no trailer and must NOT be treated as
+ * an orchestrator salvage snapshot.
+ *
+ * These live here rather than in `lib/git/checkpoint.ts` so the `local-git`
+ * Vcs implementation can read them without importing `checkpoint.ts` — that
+ * import was the `local-git → checkpoint → vcs/registry → local-git` cycle
+ * which forced `registerVcs(localGitVcs)` out of the registry and made
+ * built-in registration depend on who imported what first. `checkpoint.ts`
+ * re-exports both, so existing import paths are unchanged.
+ */
+export const SALVAGE_CHECKPOINT_TRAILER_KEY = 'Mars-Checkpoint'
+export const SALVAGE_CHECKPOINT_TRAILER_VALUE = 'salvage'

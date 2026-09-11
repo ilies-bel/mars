@@ -79,7 +79,7 @@ describe('git-guard: task/* branch must not be checked out at the repo root', ()
   })
 
   it('allows checkout of a non-task branch at the repo root', async () => {
-    const { exec, resolveGitBin, TaskBranchAtRootError } = await import('../internal')
+    const { exec, resolveGitBin } = await import('../internal')
     const gitBin = resolveGitBin()
 
     // Create a feature branch to switch to (otherwise git errors "already on main")
@@ -137,7 +137,7 @@ describe('git-guard: task/* branch must not be checked out at the repo root', ()
     // This is NOT a `git checkout` invocation, so `assertNotTaskBranchAtRoot`
     // never fires. This test confirms that the guard does not accidentally
     // intercept unrelated sub-commands.
-    const { exec, resolveGitBin, TaskBranchAtRootError } = await import('../internal')
+    const { exec, resolveGitBin } = await import('../internal')
     const gitBin = resolveGitBin()
 
     const worktreePath = resolve(repoRoot, '.mars', 'worktrees', 'mars-newbranch')

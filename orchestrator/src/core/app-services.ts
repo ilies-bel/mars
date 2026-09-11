@@ -1464,6 +1464,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
             SELECT t.id, t.status, t.prompt, t.intent, t.failure_signature, t.branch,
                    t.updated_at, t.parent_proposal_id, t.fix_for_task_id, t.origin_id,
                    t.lease_owner, t.leased_at, t.lease_note,
+                   t.failure_reason, t.worktree_path,
                    COALESCE(array_agg(b.blocker_task_id)
                      FILTER (WHERE b.blocker_task_id IS NOT NULL), '{}') AS blocked_by
               FROM tasks t
@@ -1471,7 +1472,8 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
               LEFT JOIN task_blockers b ON b.task_id = t.id
              GROUP BY t.id, t.status, t.prompt, t.intent, t.failure_signature, t.branch,
                       t.updated_at, t.parent_proposal_id, t.fix_for_task_id, t.origin_id,
-                      t.lease_owner, t.leased_at, t.lease_note`,
+                      t.lease_owner, t.leased_at, t.lease_note,
+                      t.failure_reason, t.worktree_path`,
       args: [entityIds],
     })
     return result.rows.map((row) => {
@@ -1491,6 +1493,8 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
         leaseOwner: (task.lease_owner as string | null) ?? null,
         leasedAt: (task.leased_at as string | null) ?? null,
         leaseNote: (task.lease_note as string | null) ?? null,
+        failureReason: (task.failure_reason as string | null) ?? null,
+        worktreePath: (task.worktree_path as string | null) ?? null,
       }
     })
   }

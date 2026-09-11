@@ -2,19 +2,26 @@
  * Signature-based grouping for action-queue rows — shared by the daemon's
  * HTTP view layer and all callers that read from it.
  *
- * Groups action-queue rows that share the same `(kind, failureReasonCode)`
- * into a single summary row so a queue with 18 identical "typecheck error"
- * failures reads as ONE thing to deal with, not eighteen. Singletons —
- * rows that are the only representative of their `(kind, signature)` bucket
- * — are passed through unchanged.
+ * Groups action-queue rows that share the same `(kind, causeKey)` into a
+ * single summary row so a queue with 18 identical "typecheck error" failures
+ * reads as ONE thing to deal with, not eighteen. Singletons — rows that are
+ * the only representative of their `(kind, causeKey)` bucket — are passed
+ * through unchanged.
  *
- * **Cause-key fallback.** When a row carries no `failureReasonCode` (e.g.
- * rows raised by the proposal slicer), the grouping falls back to a *cause
- * key* derived by normalising `humanDetail.errorExcerpt`: UUIDs, hex ids,
- * file paths, standalone numbers, and punctuation runs are stripped and the
- * result is lowercased. Two rows whose excerpts normalise to the same string
- * are assumed to share a cause and are grouped together. Rows with neither a
- * `failureReasonCode` nor a normalizable excerpt are never grouped.
+ * **Cause key** is derived via `causeKeyOf`: prefer
+ * `humanDetail.failureSignature` (the normalised signature the failure-kinds
+ * registry is keyed by), then fall back to `failureReasonCode` (the raw code
+ * the raiser passed). This ensures two tasks that share a raw reason code but
+ * carry DIFFERENT failure signatures are placed in separate buckets rather
+ * than falsely grouped together.
+ *
+ * **Excerpt-key fallback.** When a row carries neither a `failureSignature`
+ * nor a `failureReasonCode` (e.g. rows raised by the proposal slicer), the
+ * grouping falls back to a *cause key* derived by normalising
+ * `humanDetail.errorExcerpt`: UUIDs, hex ids, file paths, standalone numbers,
+ * and punctuation runs are stripped and the result is lowercased. Two rows
+ * whose excerpts normalise to the same string are assumed to share a cause
+ * and are grouped together. Rows with none of the above are never grouped.
  *
  * The grouping rule lives HERE, not in any individual caller. Both the CLI
  * and the UI read the already-grouped output from `/view/action-queue`
@@ -22,9 +29,14 @@
  */
 
 import type { ActionQueueRow } from './action-queue'
-import { resolveFailureKind } from '../../lib/failure-kinds'
+import {
+  resolveFailureKind,
+  GENERIC_FAILURE_LABEL,
+  isGenericFailureLabel,
+} from '../../lib/failure-kinds'
 import { getGroupBulkVerb, type RecipeVerb } from '../../lib/action-queue-recipes'
 import { isActionQueueKind } from '../../lib/action-queue-kinds'
+import { normaliseExcerptKey } from '../../lib/failure-signature'
 
 /** How many entity ids to show inline before "…and N more". */
 const PREVIEW_COUNT = 3
@@ -39,10 +51,11 @@ export type ActionQueueGroupedRow =
       id: string
       kind: string
       /**
-       * The key that defines this group. For `failureReasonCode`-based groups
-       * this is the code itself (e.g. `code/typecheck-error`). For cause-key
-       * groups (rows with no `failureReasonCode` but a normalizable
-       * `errorExcerpt`) this is a synthetic `__cause__:<normKey>` string.
+       * The key that defines this group. For signature-based groups this is
+       * the failure signature (e.g. `code/typecheck-error`), with
+       * `failureReasonCode` as fallback when no `humanDetail.failureSignature`
+       * is present. For excerpt-based groups (rows with neither) this is a
+       * synthetic `__cause__:<normKey>` string.
        */
       signature: string
       /** Total number of member rows. */
@@ -83,58 +96,61 @@ function highestPriority(rows: ActionQueueRow[]): 'high' | 'normal' | 'low' {
  *
  * Resolution order (most-informative first):
  * 1. Registered FailureKind.warmTitle for the exact signature.
- * 2. Step-family fallback phrase from `resolveFailureKind` — raw step ids and
- *    error-class slugs (`unclassified`, `done-with-unverifiable-merge`) must
- *    never appear on the face of a grouped row.
- * 3. Signatures ending in `/unclassified` append "— cause not identified" so
- *    operators can distinguish "Mars diagnosed this" from "no pattern matched".
+ * 2. Registered FailureKind.warmTitle for the step part of the signature
+ *    (resolveFailureKind's Fix 1 — e.g. `done-with-unverifiable-merge/unclassified`
+ *    resolves to the registered `done-with-unverifiable-merge` kind).
+ * 3. Step-family fallback phrase from `resolveFailureKind` — raw step ids and
+ *    error-class slugs must never appear on the face of a grouped row.
+ * 4. Signatures ending in `/unclassified` that resolved to a step-family
+ *    fallback append " — cause not identified" so operators can distinguish
+ *    "Mars diagnosed this" from "no pattern matched". A registered kind names
+ *    the cause even when the error class within it matched no pattern — the
+ *    suffix is only correct for the step-family fallback.
  *
  * The group ROW ID (`group:failed:code/unclassified`) intentionally keeps the
  * slug — that is an address operators paste, not prose they read.
  */
 function causeLabel(signature: string): string {
   const label = resolveFailureKind(signature, '').warmTitle
-  if (signature.endsWith('/unclassified')) return `${label} — cause not identified`
+  // Already says it; do not say it twice.
+  if (label === GENERIC_FAILURE_LABEL) return label
+  // Only a step-family fallback leaves the cause genuinely unnamed. A
+  // registered kind names the cause even when the error class within it
+  // matched no pattern.
+  if (signature.endsWith('/unclassified') && isGenericFailureLabel(label)) {
+    return `${label} — cause not identified`
+  }
   return label
 }
 
+/**
+ * Derive the cause key for a row: prefer `humanDetail.failureSignature` (the
+ * normalised signature the failure-kinds registry is keyed by), then fall back
+ * to `failureReasonCode` (the raw raiser-supplied code). Using the signature
+ * ensures two tasks that share a raw reason code but carry different failure
+ * signatures land in separate buckets.
+ */
+const causeKeyOf = (row: ActionQueueRow): string | undefined =>
+  row.humanDetail.failureSignature?.trim() || row.failureReasonCode?.trim() || undefined
+
 // ── Grouping ──────────────────────────────────────────────────────────────────
 
-/** Max chars of the normalized excerpt key kept in the synthetic group id. */
-const NORM_KEY_MAX = 64
+// normaliseExcerptKey (and its NORM_KEY_MAX cap) live in failure-signature.ts
+// above — they were moved there so derived-conditions.ts can reuse the same
+// rule without a second copy.
 
 /**
- * Strip variable tokens from a raw error excerpt to produce a stable cause
- * key. UUIDs, long hex ids, file paths, standalone numbers (port numbers,
- * exit codes, line numbers), and punctuation/whitespace runs are removed and
- * the result is lowercased. Two excerpts that differ only in such variable
- * tokens normalise to the same key and are placed in the same bucket.
- */
-function normaliseExcerptKey(excerpt: string): string {
-  return excerpt
-    // Strip UUIDs before the generic hex strip so the boundary anchors fire.
-    .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '')
-    // Strip hex runs of 8+ chars (short ids, SHAs, …).
-    .replace(/\b[0-9a-f]{8,}\b/gi, '')
-    // Strip file-system paths (absolute or relative starting with /).
-    .replace(/\/[^\s,;)'"]+/g, '')
-    // Strip standalone numbers (exit codes, ports, line numbers, timestamps).
-    .replace(/\b\d+\b/g, '')
-    .toLowerCase()
-    // Collapse any remaining non-alpha characters to a single space.
-    .replace(/[^a-z]+/g, ' ')
-    .trim()
-    .slice(0, NORM_KEY_MAX)
-}
-
-/**
- * Group action-queue rows by `(kind, failureReasonCode)`, with a fallback to
- * `(kind, normalised errorExcerpt)` for rows that carry no `failureReasonCode`.
+ * Group action-queue rows by `(kind, causeKey)`, with a fallback to
+ * `(kind, normalised errorExcerpt)` for rows that carry neither a
+ * `humanDetail.failureSignature` nor a `failureReasonCode`.
  *
- * - Rows with a `failureReasonCode` are bucketed by that code.
- * - Rows without a code but with a non-empty normalizable `errorExcerpt` are
+ * - Rows with a `humanDetail.failureSignature` or a `failureReasonCode` are
+ *   bucketed by `causeKeyOf(row)` — signature takes precedence so two tasks
+ *   sharing a raw reason code but carrying DIFFERENT signatures end up in
+ *   separate buckets.
+ * - Rows without either but with a non-empty normalizable `errorExcerpt` are
  *   bucketed by the normalised excerpt key (cause-key fallback).
- * - Rows with neither are always emitted as plain items (ungrouped).
+ * - Rows with none of the above are always emitted as plain items (ungrouped).
  * - A bucket of exactly one row becomes a plain item (no group wrapper).
  * - A bucket of two or more rows becomes one `group` row carrying the member
  *   list so callers can expand it or apply bulk actions.
@@ -153,16 +169,16 @@ export function groupActionQueueRows(rows: ActionQueueRow[]): ActionQueueGrouped
   const ungrouped: ActionQueueRow[] = []
 
   for (const row of rows) {
-    const frc = row.failureReasonCode?.trim()
-    if (frc) {
-      // Primary path: failureReasonCode-based bucket.
-      const key = `sig\0${row.kind}\0${frc}`
+    const causeKey = causeKeyOf(row)
+    if (causeKey) {
+      // Primary path: failure-signature-based bucket (with reason code fallback).
+      const key = `sig\0${row.kind}\0${causeKey}`
       const bucket = buckets.get(key)
       if (bucket) {
         bucket.push(row)
       } else {
         buckets.set(key, [row])
-        meta.set(key, { sig: frc, label: causeLabel(frc) })
+        meta.set(key, { sig: causeKey, label: causeLabel(causeKey) })
       }
     } else {
       // Fallback path: normalise errorExcerpt → cause key.
@@ -193,10 +209,10 @@ export function groupActionQueueRows(rows: ActionQueueRow[]): ActionQueueGrouped
   const result: ActionQueueGroupedRow[] = []
 
   for (const row of rows) {
-    const frc = row.failureReasonCode?.trim()
+    const causeKey = causeKeyOf(row)
     let key: string
-    if (frc) {
-      key = `sig\0${row.kind}\0${frc}`
+    if (causeKey) {
+      key = `sig\0${row.kind}\0${causeKey}`
     } else {
       const excerpt = row.humanDetail.errorExcerpt?.trim() ?? ''
       const normKey = excerpt ? normaliseExcerptKey(excerpt) : ''

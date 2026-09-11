@@ -11,7 +11,6 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { __resetDbRegistryForTests } from '../db.js'
-import { ensureSchema } from '../pg-schema.js'
 
 beforeAll(() => {
   process.env.MARS_DB_BACKEND = 'pglite'

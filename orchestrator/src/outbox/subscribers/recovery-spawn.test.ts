@@ -29,13 +29,6 @@ interface ActionQueueModule {
   listActionQueueItems: typeof import('../../core/lib/action-queue').listActionQueueItems
 }
 
-interface ActionQueueItem {
-  id: string
-  originTaskId: string | null
-  payload: unknown
-  state: string
-}
-
 interface FixTasksModule {
   upsertFixTask: typeof import('../../core/queue-fix-tasks').upsertFixTask
 }
@@ -187,7 +180,7 @@ describe('recovery-spawn outbox subscriber', () => {
   })
 
   it('spawns exactly one recovery task for a single task.failed event', async () => {
-    const { q, ft, rc, rs, pub, client } = await loadModules(repo)
+    const { q, rc, rs, pub, client } = await loadModules(repo)
 
     // A durable task.failed event is only recoverable while its origin is
     // still terminal. Give the failed task a usable worktree, as production
@@ -547,7 +540,7 @@ describe('recovery-spawn outbox subscriber', () => {
   })
 
   it('spawns zero additional recovery tasks when the same event is replayed (cursor already advanced)', async () => {
-    const { q, ft, rc, rs, pub, client } = await loadModules(repo)
+    const { q, rc, rs, pub, client } = await loadModules(repo)
 
     const t1 = await q.enqueueTask('implement feature Y', undefined, {
       skipTriage: true,
@@ -587,7 +580,7 @@ describe('recovery-spawn outbox subscriber', () => {
   })
 
   it('does not spawn a second recovery when the recovery task itself fails, and raises one action-queue item', async () => {
-    const { q, ft, rc, rs, pub, client, aq } = await loadModules(repo)
+    const { q, ft, rc, rs, pub, client } = await loadModules(repo)
 
     // Create origin task T1.
     const t1 = await q.enqueueTask('implement feature Z', undefined, {
@@ -778,7 +771,7 @@ describe('recovery-spawn outbox subscriber', () => {
   })
 
   it('skips recovery and raises a failed action-queue item when spend-control suppressRecovery is true', async () => {
-    const { q, aq, rs, pub, client, sc } = await loadModules(repo)
+    const { q, rs, pub, client, sc } = await loadModules(repo)
 
     // Enable the operator suppress-recovery lever.
     await sc.upsertSpendControl(client, { suppressRecovery: true })

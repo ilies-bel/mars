@@ -19,6 +19,13 @@
  *    open `structured-write:dirty-main:*` rows and resolve any whose integration
  *    branch is now clean — level-triggered: the condition cleared, so the row
  *    must disappear.
+ *
+ * 4. `raiseOrphanedCheckpointRow`: on committer DROP, surface the operator's
+ *    uncommitted work that was captured into the checkpoint ref before the
+ *    committer worktree was provisioned.  Without this, a dropped committer
+ *    silently loses the captured edits — they remain accessible via
+ *    `refs/mars/checkpoint/<taskId>` but nothing tells the operator where to
+ *    look.
  */
 import {
   findOpenActionQueueItemIdBySignature,
@@ -32,6 +39,8 @@ import type { DomainTaskStore as TaskStore } from '../store/task-store-default'
 import { MAIN_COMMITER_RECIPE, checkIntegrationBranchDirty } from '../lib/main-dirty'
 import { nullTraceStore } from '../lib/run-tool'
 import { updateTask } from '../queue'
+import { checkpointRefFor } from '../lib/git/checkpoint'
+import { resolveGitBin, execProbe, repoRoot } from '../lib/git/internal'
 
 /**
  * SQL fragment that matches open actionQueue rows for failed `main-commiter`
@@ -486,4 +495,126 @@ export const resolveStaleStructuredWriteDirtyMainRows = async (
   }
 
   return resolved
+}
+
+/**
+ * Surface an operator's uncommitted work that was captured into a checkpoint
+ * ref when a `main-commiter` recovery task is DROPPED rather than reaching a
+ * normal terminal verdict.
+ *
+ * When `provisionCommitterWorktree` runs, it captures the integration
+ * branch's dirty state into `refs/mars/checkpoint/<committerTaskId>` and
+ * migrates those changes into the committer worktree.  If the committer task
+ * is then dropped (e.g. `mars drop <id>`), the worktree is removed and the
+ * integration branch appears clean — the operator's edits look gone.  In
+ * reality they are preserved in the checkpoint ref, but nothing tells the
+ * operator where.  This function raises a `failed`-kind action-queue row that
+ * names the ref and lists the captured paths so the operator can recover.
+ *
+ * When no checkpoint ref is found (the committer was dropped before capture
+ * ran, or the ref has been GC'd) the function returns `null` silently — there
+ * is nothing to surface.
+ *
+ * Idempotent on `committerTaskId` (signature-keyed): a repeated call after the
+ * row was already raised bumps `seen_count` rather than inserting a duplicate.
+ *
+ * @param committerTaskId  The id of the dropped `main-commiter` fix task.
+ * @param log              Logger for debug output.
+ * @returns                The action-queue item id, or `null` when no
+ *                         checkpoint exists or the raise was suppressed.
+ */
+export const raiseOrphanedCheckpointRow = async (
+  committerTaskId: string,
+  log: (msg: string) => void,
+): Promise<string | null> => {
+  const git = resolveGitBin()
+  const cwd = repoRoot()
+  const ref = checkpointRefFor(committerTaskId)
+
+  // Probe whether the checkpoint ref exists. `rev-parse` exits 0 with the
+  // SHA on success, non-zero when the ref is absent or the repo is inaccessible.
+  const revParse = await execProbe(git, ['rev-parse', ref], { cwd }, undefined).catch(
+    () => null,
+  )
+  if (!revParse || revParse.exitCode !== 0) {
+    log(
+      `[main-dirty] orphaned-checkpoint: no checkpoint ref for dropped committer ${committerTaskId} — skipping`,
+    )
+    return null
+  }
+
+  const sha = revParse.stdout.trim()
+
+  // Derive the list of files the checkpoint captured: diff the checkpoint
+  // commit against its parent.  Best-effort: a failed diff still produces a
+  // useful row that names the ref even without a file list.
+  let files: string[] = []
+  const diffResult = await execProbe(
+    git,
+    ['diff', '--name-only', `${sha}^`, sha],
+    { cwd },
+    undefined,
+  ).catch(() => null)
+  if (diffResult && diffResult.exitCode === 0) {
+    files = diffResult.stdout
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0)
+  }
+
+  const fileLines =
+    files.length > 0
+      ? files.map((f) => `- \`${f}\``).join('\n')
+      : '(file list unavailable — probe the ref directly)'
+
+  const body = [
+    `The main-committer task \`${committerTaskId}\` was dropped before it could commit`,
+    `the integration branch's uncommitted changes.`,
+    ``,
+    `Your work is NOT lost — it was captured into a checkpoint ref before the`,
+    `committer worktree was provisioned:`,
+    ``,
+    '```',
+    `git show ${ref}`,
+    `git diff ${ref}^ ${ref}`,
+    '```',
+    ``,
+    `Captured paths (${files.length > 0 ? files.length : '?'}):`,
+    ``,
+    fileLines,
+    ``,
+    `To recover, either apply the checkpoint back to your working tree:`,
+    ``,
+    '```',
+    `git cherry-pick -n ${ref}`,
+    `git cherry-pick --quit`,
+    '```',
+    ``,
+    `Or inspect and manually restore the files listed above.`,
+    `Once the integration branch is clean (or the relevant work committed),`,
+    `dispatch will resume automatically.`,
+  ].join('\n')
+
+  const actionQueueItemId = await raiseActionQueueItem({
+    kind: 'failed',
+    category: 'orchestrator',
+    priority: 'high',
+    title: `orphaned checkpoint — uncommitted work captured in ${ref}`,
+    body,
+    payload: {
+      committerTaskId,
+      checkpointRef: ref,
+      checkpointSha: sha,
+      capturedFiles: files,
+    },
+    context: { repoRoot: cwd },
+    raisedBy: 'daemon:main-commiter-dropped',
+    signature: `orphaned-checkpoint:${committerTaskId}`,
+    originTaskId: committerTaskId,
+  })
+
+  log(
+    `[main-dirty] orphaned-checkpoint: raised actionQueue ${actionQueueItemId} for dropped committer ${committerTaskId} (checkpoint ${ref}, ${files.length} file(s))`,
+  )
+  return actionQueueItemId
 }

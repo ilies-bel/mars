@@ -56,7 +56,6 @@ vi.mock('../../store/memory-packet-store', () => ({
 // ─── Import after mocks ────────────────────────────────────────────────────────
 
 import { parseAndValidateOutcome, persistSuggestions } from '../reflector'
-import { loadLeverRegistry } from '../lever-registry'
 import { createProposal } from '../../proposals'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

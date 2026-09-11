@@ -89,7 +89,7 @@ describe('done-implies-merged guard (ADR-0052)', () => {
   })
 
   it('redirects a done transition to failed when the branch has commits ahead of integration', async () => {
-    const { q, aq } = await loadMods(repo)
+    const { q } = await loadMods(repo)
     const task = await q.enqueueTask('test task', undefined, { skipTriage: true })
 
     // Set the task's branch to a branch that has unmerged commits.

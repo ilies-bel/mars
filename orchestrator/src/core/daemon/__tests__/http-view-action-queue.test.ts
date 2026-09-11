@@ -765,6 +765,7 @@ describe('GET /view/action-queue via HTTP server', () => {
             title: `Test row (filter=${filter})`,
             body: 'body',
             at: '2024-01-01T00:00:00.000Z',
+            lastSeenAt: '2024-01-01T00:00:00.000Z',
             dag: null,
             errorKind: 'failed-task',
             actions: [],

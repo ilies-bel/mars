@@ -5,14 +5,18 @@
  * registered kind instead of returning `undefined`; `changes` lets a future
  * consumer react to a registration without polling).
  *
- * `local-git` self-registers at the bottom of `./local-git.ts` so the
- * module-level initialization order is deterministic. This file deliberately
- * does NOT import `./local-git` directly: `local-git.ts` imports
- * `../../lib/git/checkpoint`, which imports this registry, which would create
- * a circular dependency that leaves `localGitVcs` undefined at register time.
- * Moving the registration call into `local-git.ts` (at the end, after
- * `localGitVcs` is fully constructed) avoids the cycle while preserving the
- * "built-ins self-register at import time" semantics.
+ * The built-in `local-git` is registered by this file, at the bottom of the
+ * module body. It used to self-register inside `./local-git.ts` instead, which
+ * made registration a side effect of somebody importing that module — and only
+ * `app-services.ts` did. Every other entry point that reached `resolveVcs()`
+ * first, the setup step included, got
+ * `Unknown Vcs implementation 'local-git' — known: (none registered)`, so no
+ * task could get past `setup`.
+ *
+ * Importing `./local-git` from here is only possible because it is now a leaf:
+ * it no longer imports `../../lib/git/checkpoint` (which imports this
+ * registry). That cycle is what made a direct import impossible before — the
+ * replayed module found `registerVcs` in its temporal dead zone.
  *
  * The active implementation is selected via `resolvePortKind('vcs', env)`
  * (`../../config/registry.ts`'s shared Port catalog, `MARS_VCS_KIND`, default
@@ -20,6 +24,7 @@
  */
 import { createServiceRegistry, type Disposer } from '@mars/workflow'
 import { resolvePortKind } from '../../config/registry'
+import { localGitVcs } from './local-git'
 import type { Vcs } from './types'
 
 type VcsMap = Record<string, Vcs>
@@ -56,3 +61,7 @@ export const listVcses = (): readonly Vcs[] => registry.keys().map((kind) => reg
  */
 export const resolveVcs = (env: Record<string, string | undefined> = process.env): Vcs =>
   requireVcs(resolvePortKind('vcs', env))
+
+// Built-ins. Registered here, unconditionally, as the last thing this module
+// does — so importing the registry is enough to make `resolveVcs()` answer.
+registerVcs(localGitVcs)

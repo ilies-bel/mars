@@ -457,7 +457,6 @@ export const review = async (
     opts.integrationBranch ?? input(ctx).integrationBranch ?? 'main'
   const recoveryPayload =
     opts.recoveryPayload ?? input(ctx).recoveryPayload ?? null
-  const spec = opts.spec ?? input(ctx).spec ?? null
   const store: TaskStore = ctx.services.store
   const worktree = await resolveWorktree(ctx, taskId, store, opts.worktree)
   const trace = await resolveTrace(ctx, taskId)

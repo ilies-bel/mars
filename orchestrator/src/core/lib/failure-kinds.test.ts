@@ -8,6 +8,7 @@ import {
   isEnvironmentalSignature,
   isSignatureStormExempt,
   lookupFailureKind,
+  resolveFailureKind,
   unknownFailureKind,
 } from './failure-kinds'
 import { DAEMON_KILLED_SIGNATURE } from './retry-budget'
@@ -261,6 +262,30 @@ describe('lookupFailureKind', () => {
 
   it('is case-sensitive (upper-case variant misses)', () => {
     expect(lookupFailureKind('SETUP:INSTALL/INSTALL-FROZEN-LOCKFILE')).toBeNull()
+  })
+})
+
+describe('resolveFailureKind — registered-parent-kind resolution (Fix 1)', () => {
+  it('resolves done-with-unverifiable-merge/unclassified to the registered parent kind', () => {
+    // The registered key is `done-with-unverifiable-merge` (no step/class shape).
+    // When a suffix is appended (e.g. `/unclassified`), the exact lookup misses.
+    // Fix 1: fall through to looking up the step part — `done-with-unverifiable-merge`
+    // — and return its registered kind rather than collapsing to the generic bucket.
+    const kind = resolveFailureKind('done-with-unverifiable-merge/unclassified', '')
+    expect(kind.warmTitle).toBe('Merged, but the merge could not be verified')
+    // Must never produce the generic fallback for a signature whose parent is registered.
+    expect(kind.warmTitle).not.toBe(GENERIC_FAILURE_LABEL)
+  })
+
+  it('still resolves exact registered signatures directly', () => {
+    const kind = resolveFailureKind('setup/unclassified', '')
+    expect(kind.warmTitle).toBe('The task setup step failed with an internal error')
+  })
+
+  it('still returns the generic bucket for a fully unregistered signature', () => {
+    const kind = resolveFailureKind('made-up:step/made-up-class', '')
+    // step family 'made-up' is not in STEP_FAMILY_LABELS → GENERIC_FAILURE_LABEL
+    expect(isGenericFailureLabel(kind.warmTitle)).toBe(true)
   })
 })
 

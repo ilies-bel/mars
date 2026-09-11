@@ -29,13 +29,6 @@ export const SAFE_CATEGORIES = new Set<ReclaimCategory>([
   'terminal-clean',
 ])
 
-interface WorktreeClassification {
-  id: string
-  category: ReclaimCategory
-  reason: string
-  bytes: number
-}
-
 export interface WorktreeGitState {
   dirty: boolean
   ahead: number

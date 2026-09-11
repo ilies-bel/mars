@@ -498,24 +498,6 @@ const streamHangingUntilAbort = (onStart?: (opts: StreamCodexResponseOpts) => vo
     })
   }
 
-/** Codex CLI JSONL events — item.completed with agent_message. */
-const cliMessageEvent = (text: string): unknown => ({
-  type: 'item.completed',
-  item: { type: 'agent_message', text },
-})
-
-/** Codex CLI JSONL events — turn.completed with usage. */
-const cliTurnCompletedEvent = (input = 5, output = 3, cached = 0): unknown => ({
-  type: 'turn.completed',
-  usage: { input_tokens: input, output_tokens: output, cached_input_tokens: cached },
-})
-
-/** Codex CLI JSONL events — thread.started with session id. */
-const cliThreadStartedEvent = (threadId: string): unknown => ({
-  type: 'thread.started',
-  thread_id: threadId,
-})
-
 describe('ChatRunner UIMessage-chunk streaming', () => {
   beforeEach(() => {
     vi.clearAllMocks()

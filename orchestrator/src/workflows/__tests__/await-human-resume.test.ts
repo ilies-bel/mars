@@ -100,7 +100,7 @@ function makeServices(parks: ParkArgs[]): MarsServices {
 
 function makeLiveWorkflow(
   taskId: string,
-  services: MarsServices,
+  _services: MarsServices,
   phases: { verifyRan: boolean; mergeRan: boolean },
 ) {
   return async (ctx: WorkflowCtx<MarsServices, object>): Promise<void> => {

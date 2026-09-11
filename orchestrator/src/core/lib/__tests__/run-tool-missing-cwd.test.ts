@@ -10,7 +10,7 @@
  * apart so a post-mortem can immediately distinguish "deleted worktree" from
  * "git missing from PATH".
  */
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { mkdtempSync, rmdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'

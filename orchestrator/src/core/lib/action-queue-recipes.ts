@@ -21,6 +21,7 @@ import {
   type PayloadFor,
 } from './action-queue-payloads'
 import { classifyMarsVerb } from './chat-mars-verbs'
+import { resolveFailureKind } from './failure-kinds'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -44,6 +45,19 @@ export type RecipeHumanDetail = {
    * verbs on this card must not read a failed probe as nothing to lose.
    */
   worktreeDirtyCount?: number | null
+  /**
+   * Real (human/coder-authored) commits the task's branch holds ahead of the
+   * integration branch, or `null` when not probed (beyond MAX_DIRTY_PROBES or
+   * repoRoot absent). `null` means "unknown", NOT "zero" — never treat null as
+   * "nothing to lose" (same ADR-0057 rule as worktreeDirtyCount).
+   */
+  realCommitsAhead?: number | null
+  /**
+   * Human-readable consequence string for the Restart action when commits are
+   * at risk — e.g. "Restart discards 2 commits on task/mars-3176234e."
+   * Absent when `realCommitsAhead` is 0 or null.
+   */
+  restartConsequence?: string
   /** Additional kind-specific structured fields. */
   [key: string]: unknown
 }
@@ -76,6 +90,13 @@ export type RecipeVerb = {
    * which already accepted this field before any recipe emitted it.
    */
   hint?: string
+  /**
+   * When true, the client must present a confirmation dialog before executing
+   * the operation. Intended for destructive, irreversible ops (restart, purge)
+   * where accidental clicks would discard work without warning.
+   * Matches `alertVerbSchema.needsConfirm` (`ui/src/shared/schemas.ts`).
+   */
+  needsConfirm?: boolean
 }
 
 /**
@@ -293,22 +314,111 @@ const RECIPE_DEFINITIONS = {
         ? `${base} Its working copy holds ${dirty} uncommitted path(s) — Restart and Discard would destroy them; use Continue to keep them.`
         : base
     },
-    humanDetail: (ctx) => ({
-      raisedAt: ctx.raisedAt,
-      entityId: ctx.entityId,
-      failureSignature: str(ctx.payload['failureSignature']),
-      errorExcerpt: str(ctx.payload['errorExcerpt']),
-      branch: str(ctx.payload['branch']),
-      worktree: str(ctx.payload['worktree']),
-      worktreeDirtyCount:
-        typeof ctx.payload['worktreeDirtyCount'] === 'number'
-          ? ctx.payload['worktreeDirtyCount']
-          : null,
-    }),
-    verbs: [
-      { op: 'restart', label: 'Restart', style: 'destructive' },
-      { op: 'purge', label: 'Discard task', style: 'destructive' },
-    ],
+    humanDetail: (ctx) => {
+      const realCommitsAhead =
+        typeof ctx.payload['realCommitsAhead'] === 'number'
+          ? (ctx.payload['realCommitsAhead'] as number)
+          : null
+      const branch =
+        typeof ctx.payload['branch'] === 'string'
+          ? (ctx.payload['branch'] as string)
+          : null
+      const detail: RecipeHumanDetail = {
+        raisedAt: ctx.raisedAt,
+        entityId: ctx.entityId,
+        failureSignature: str(ctx.payload['failureSignature']),
+        errorExcerpt: str(ctx.payload['errorExcerpt']),
+        ...(branch !== null ? { branch } : {}),
+        worktree: str(ctx.payload['worktree']),
+        worktreeDirtyCount:
+          typeof ctx.payload['worktreeDirtyCount'] === 'number'
+            ? (ctx.payload['worktreeDirtyCount'] as number)
+            : null,
+        ...(realCommitsAhead !== null ? { realCommitsAhead } : {}),
+      }
+      if (realCommitsAhead !== null && realCommitsAhead > 0 && branch !== null) {
+        detail['restartConsequence'] =
+          `Restart discards ${realCommitsAhead} commit${realCommitsAhead === 1 ? '' : 's'} on ${branch}.`
+      }
+      return detail
+    },
+    /**
+     * Decision table — mirrors continue-task.ts, does NOT re-derive:
+     *
+     *  recoveryExhausted=false  → continue (primary)
+     *  exhausted + realCommitsAhead > 0  → remerge (primary)
+     *  exhausted + realCommitsAhead=0, checkpoints > 0  → copy supersede command (no one-click primary)
+     *  exhausted + realCommitsAhead=0, checkpoints=0  → restart is the only forward path
+     *  realCommitsAhead=null (not probed)  → no safe-verb claim
+     *
+     * Restart is ALWAYS appended as destructive + needsConfirm. Its label
+     * names the commit count it would discard when commits are at risk, the
+     * same way `recovery-abandoned` does (the correct pattern).
+     */
+    verbs: (ctx) => {
+      const recoveryExhausted = ctx.payload['recoveryExhausted'] === true
+      const realCommitsAhead =
+        typeof ctx.payload['realCommitsAhead'] === 'number'
+          ? (ctx.payload['realCommitsAhead'] as number)
+          : null
+      const checkpointCommitsAhead =
+        typeof ctx.payload['checkpointCommitsAhead'] === 'number'
+          ? (ctx.payload['checkpointCommitsAhead'] as number)
+          : null
+      const branch =
+        typeof ctx.payload['branch'] === 'string'
+          ? (ctx.payload['branch'] as string)
+          : null
+      const taskId =
+        typeof ctx.payload['taskId'] === 'string'
+          ? (ctx.payload['taskId'] as string)
+          : ctx.entityId
+
+      const verbs: RecipeVerb[] = []
+
+      if (!recoveryExhausted) {
+        // Not exhausted: continue is always the safe default — it resumes the
+        // coder on the existing worktree without discarding any commits.
+        verbs.push({ op: 'continue', label: 'Resume on existing worktree', style: 'primary' })
+      } else if (realCommitsAhead === null) {
+        // Not probed (beyond cap or repoRoot absent) — cannot claim any safe
+        // verb. The destructive pair below still requires confirmation.
+      } else if (realCommitsAhead > 0) {
+        // Recovery exhausted, real (human/coder) commits ahead: remerge
+        // re-verifies and merges them without re-running the coder.
+        const n = realCommitsAhead
+        verbs.push({
+          op: 'remerge',
+          label: `Re-verify and merge ${n} commit${n === 1 ? '' : 's'}`,
+          style: 'primary',
+        })
+      } else if (checkpointCommitsAhead !== null && checkpointCommitsAhead > 0) {
+        // Recovery exhausted, checkpoint-only ahead: mars remerge would send
+        // an auto-generated salvage snapshot straight to verify — use supersede
+        // instead so a fresh coder can finish the salvaged work. Supersede needs
+        // a prompt, so it cannot be a one-click op; copy the runnable command.
+        verbs.push({
+          op: 'copy',
+          label: 'Copy supersede command',
+          style: 'default',
+          hint: `mars task add --supersede ${taskId} --prompt-file <path>`,
+        })
+      }
+      // else: exhausted + 0 real + 0 checkpoint → restart is the only forward
+      // path; the destructive pair below communicates this.
+
+      // Restart label names the commit count it would discard when commits are
+      // at risk — an operator reading the label cannot miss what Restart deletes.
+      const restartLabel =
+        realCommitsAhead !== null && realCommitsAhead > 0 && branch !== null
+          ? `Restart — discards ${realCommitsAhead} commit${realCommitsAhead === 1 ? '' : 's'} on ${branch}`
+          : 'Restart'
+
+      verbs.push({ op: 'restart', label: restartLabel, style: 'destructive', needsConfirm: true })
+      verbs.push({ op: 'purge', label: 'Delete task', style: 'destructive', needsConfirm: true })
+
+      return verbs
+    },
   },
 
   'steward-repeat': {
@@ -333,7 +443,7 @@ const RECIPE_DEFINITIONS = {
       dependentTaskId: str(ctx.payload['dependentTaskId']),
       cancelledBlockerTaskId: str(ctx.payload['cancelledBlockerTaskId']),
     }),
-    verbs: [{ op: 'restart', label: 'Restart chain', style: 'primary' }],
+    verbs: [{ op: 'restart', label: 'Restart chain', style: 'destructive' }],
   },
 
   'diagnose-inconclusive': {
@@ -440,7 +550,7 @@ const RECIPE_DEFINITIONS = {
       const status = str(ctx.payload['status'])
       const ageText = typeof ageHours === 'number' ? `${ageHours}h` : 'a while'
       const statusText = status ? ` (status: ${status})` : ''
-      return `Mars is cleaning up a task workspace that has been inactive for ${ageText}${statusText} — no action needed from you (${taskId}).`
+      return `No activity in this task's workspace for ${ageText}${statusText} (${taskId}).`
     },
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
@@ -484,7 +594,7 @@ const RECIPE_DEFINITIONS = {
       dependentTaskId: str(ctx.payload['dependentTaskId']),
       failedBlockerTaskId: str(ctx.payload['failedBlockerTaskId']),
     }),
-    verbs: [{ op: 'restart', label: 'Retry', style: 'primary' }],
+    verbs: [{ op: 'restart', label: 'Restart', style: 'destructive' }],
   },
 
   'done-with-unmerged-commits': {
@@ -497,7 +607,7 @@ const RECIPE_DEFINITIONS = {
       integration: str(ctx.payload['integration']),
     }),
     verbs: [
-      { op: 'restart', label: 'Re-attempt merge', style: 'primary' },
+      { op: 'restart', label: 'Restart', style: 'destructive' },
     ],
   },
 
@@ -631,16 +741,17 @@ const RECIPE_DEFINITIONS = {
           // `Partial<…>` rather than a plain narrow: rows raised before the
           // `situation` discriminator existed carry the lease keys without it,
           // and must still render this sentence. Key names stay checked.
+          // The lease owner (a machine identifier) is kept in humanDetail where
+          // readers who care about it can find it — the summary addresses the
+          // operator directly instead.
           const p = ctx.payload as Partial<LeaseParkPayload>
-          const owner = str(p.leaseOwner) || 'someone'
           const step = str(p.stepName)
-          return `${owner} is working interactively on this task${step ? ` (step '${step}')` : ''} — signal done when the step is finished.`
+          return `Parked for you${step ? ` at step '${step}'` : ''} — signal done when you have finished.`
         }
         case 'lease-expired': {
           const p = ctx.payload as Partial<LeaseExpiredPayload>
-          const owner = str(p.leaseOwner) || 'someone'
           const age = typeof p.ageMinutes === 'number' ? ` ${p.ageMinutes} min` : ''
-          return `${owner}'s session has been idle${age} — nobody is working on this task. Continue in the worktree or release it.`
+          return `The lease has been idle${age} — nobody is working on this task. Continue in the worktree or release it.`
         }
         case 'escalation': {
           // The escalating agent's own words are the only accurate summary
@@ -808,7 +919,7 @@ const RECIPE_DEFINITIONS = {
       missingOriginId: str(ctx.payload['missingOriginId']),
     }),
     verbs: [
-      { op: 'purge', label: 'Discard task', style: 'destructive' },
+      { op: 'purge', label: 'Delete task', style: 'destructive' },
     ],
   },
 
@@ -821,7 +932,7 @@ const RECIPE_DEFINITIONS = {
       recordedPid: ctx.payload['recordedPid'],
       detectedAt: str(ctx.payload['detectedAt']),
     }),
-    verbs: [{ op: 'restart', label: 'Restart', style: 'primary' }],
+    verbs: [{ op: 'restart', label: 'Restart', style: 'destructive' }],
   },
 
   'outbox-lag': {
@@ -1049,10 +1160,13 @@ const RECIPE_DEFINITIONS = {
   },
 
   'signature-wave': {
-    humanSummary: (ctx) => {
-      const count = typeof ctx.payload['caughtTaskCount'] === 'number' ? ctx.payload['caughtTaskCount'] : 'multiple'
-      return `${count} tasks all failed the same way — this points to a shared environmental cause, not individual task bugs. Fix the root cause to unblock all of them.`
-    },
+    // Use ctx.title — the raiser (deriveSignatureWaveConditions) already writes a
+    // cause-named title ("N tasks failed the same way: <warmTitle/errorHead> — one
+    // fix likely unblocks all"). The HR-3 normalization in buildActionQueueView
+    // promotes humanSummary to title when operationalCopy is null; returning ctx.title
+    // here makes that promotion a no-op so the raiser's cause-named prose survives
+    // to both the UI (`title`) and the CLI (`humanSummary || title`) surfaces.
+    humanSummary: (ctx) => ctx.title,
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
       entityId: ctx.entityId,
@@ -1105,9 +1219,11 @@ const RECIPE_DEFINITIONS = {
     humanSummary: (ctx) => {
       const sig = str(ctx.payload['signature'])
       const count = ctx.payload['passCount']
-      return sig
-        ? `Decide whether to retire the auto-added check for "${sig}" — it has passed ${count} consecutive runs and the issue may be resolved.`
-        : `Decide whether to retire an auto-added check that has passed many consecutive runs — the issue it was tracking may be resolved.`
+      if (sig) {
+        const checkLabel = resolveFailureKind(sig, '').warmTitle
+        return `Decide whether to retire the auto-added check for "${checkLabel}" — it has passed ${count} consecutive runs and the issue may be resolved.`
+      }
+      return `Decide whether to retire an auto-added check that has passed many consecutive runs — the issue it was tracking may be resolved.`
     },
     humanDetail: (ctx) => {
       const spec = ctx.payload['stepSpec']
@@ -1237,11 +1353,8 @@ const RECIPE_DEFINITIONS = {
 
   'env-incident': {
     humanSummary: (ctx) => {
-      const sig = str(ctx.payload['signature'])
       const taskId = str(ctx.payload['taskId']) || ctx.entityId
-      return sig
-        ? `Environmental failure on task ${taskId} (${sig}) — queue NOT paused; restart once environment is healthy.`
-        : `Environmental failure on task ${taskId} — infrastructure condition, not a code regression.`
+      return `Environmental failure on task ${taskId} — an infrastructure condition, not a code regression.`
     },
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
@@ -1251,7 +1364,7 @@ const RECIPE_DEFINITIONS = {
       envRestartCount: ctx.payload['envRestartCount'],
     }),
     verbs: [
-      { op: 'restart', label: 'Restart task', style: 'primary' },
+      { op: 'restart', label: 'Restart', style: 'destructive' },
     ],
   },
 
@@ -1292,7 +1405,7 @@ const RECIPE_DEFINITIONS = {
       dispatchDecisionSummary: ctx.payload['dispatchDecisionSummary'],
     }),
     verbs: [
-      { op: 'restart', label: 'Restart task', style: 'primary' },
+      { op: 'restart', label: 'Restart', style: 'destructive' },
     ],
   },
 
@@ -1430,7 +1543,7 @@ const RECIPE_DEFINITIONS = {
         caughtTaskCount > 0
           ? ` — caught ${caughtTaskCount} task failure${caughtTaskCount === 1 ? '' : 's'} that would otherwise look unrelated`
           : ''
-      return `A check is failing on the main branch (${gateName})${caughtSuffix} — nothing is fixing this automatically, you need to look at it.`
+      return `A check is failing on the main branch (${gateName})${caughtSuffix} — nothing is fixing this automatically, you need to look at it. Dispatch resumes on its own within about a minute of a commit landing that makes the check pass.`
     },
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
@@ -1443,13 +1556,19 @@ const RECIPE_DEFINITIONS = {
       // triage card.  Full output is behind `mars action-queue show` (body).
       gateOutput: ctx.payload['gateOutput'],
     }),
-    verbs: [
-      {
-        op: 'resume-dispatch',
-        label: 'Resume dispatch',
-        style: 'primary',
-      },
-    ],
+    // No resume verb, and certainly not a PRIMARY one.
+    //
+    // `set dispatch on` clears the latch but does not fix the branch, so the
+    // baseline health checker re-asserts the pause on its next run — and in
+    // the window between, queued work is dispatched into a red integration
+    // branch. This row made that the filled, recommended button, while the
+    // Progress banner for the same condition said "Fix the gate to resume".
+    // The queue was recommending the one action the docs single out as
+    // harmful.
+    //
+    // There is nothing to click here: repair the gate and the daemon detects
+    // the SHA advance and resumes by itself.
+    verbs: [],
   },
 
   'dirty-integration': {
@@ -1466,7 +1585,7 @@ const RECIPE_DEFINITIONS = {
       dirtyPaths: ctx.payload['dirtyPaths'],
     }),
     verbs: [
-      { op: 'restart', label: 'Restart task', style: 'primary' },
+      { op: 'restart', label: 'Restart', style: 'destructive' },
     ],
   },
 
@@ -1514,16 +1633,59 @@ const RECIPE_DEFINITIONS = {
       const fixTaskId = str(ctx.payload['fixTaskId']) || 'unknown'
       return `Recovery task ${fixTaskId} was manually dropped before it could run — the origin task needs manual resolution.`
     },
-    humanDetail: (ctx) => ({
-      raisedAt: ctx.raisedAt,
-      entityId: ctx.entityId,
-      fixTaskId: str(ctx.payload['fixTaskId']),
-      originTaskId: str(ctx.payload['originTaskId']),
-    }),
-    verbs: [
-      { op: 'restart', label: 'Restart (wipe & re-run)', style: 'primary' },
-      { op: 'purge', label: 'Discard task', style: 'destructive' },
-    ],
+    humanDetail: (ctx) => {
+      const commitsAhead =
+        typeof ctx.payload['commitsAhead'] === 'number'
+          ? (ctx.payload['commitsAhead'] as number)
+          : null
+      const branch =
+        typeof ctx.payload['branch'] === 'string' ? (ctx.payload['branch'] as string) : null
+      const detail: RecipeHumanDetail = {
+        raisedAt: ctx.raisedAt,
+        entityId: ctx.entityId,
+        fixTaskId: str(ctx.payload['fixTaskId']),
+        originTaskId: str(ctx.payload['originTaskId']),
+        ...(branch !== null ? { branch } : {}),
+        ...(commitsAhead !== null ? { commitsAhead } : {}),
+      }
+      if (commitsAhead !== null && commitsAhead > 0 && branch !== null) {
+        detail['restartConsequence'] = `Restart discards ${commitsAhead} commit${commitsAhead === 1 ? '' : 's'} on ${branch}.`
+      }
+      return detail
+    },
+    verbs: (ctx) => {
+      const continuable = ctx.payload['continuable'] === true
+      const commitsAhead =
+        typeof ctx.payload['commitsAhead'] === 'number'
+          ? (ctx.payload['commitsAhead'] as number)
+          : null
+      const branch =
+        typeof ctx.payload['branch'] === 'string' ? (ctx.payload['branch'] as string) : null
+
+      const verbs: RecipeVerb[] = []
+
+      // `continue` is the safe default whenever the origin is continuable: it
+      // resumes the coder on the existing worktree without discarding any commits.
+      // Only suppress it when the origin is known to be non-continuable (exhausted
+      // recovery slot, missing branch/worktree), in which case restart is the only
+      // forward path and must be named explicitly.
+      if (continuable) {
+        verbs.push({ op: 'continue', label: 'Resume on existing worktree', style: 'primary' })
+      }
+
+      // Restart is always destructive and always requires confirmation.  When the
+      // branch has commits ahead, say so in the label so the operator cannot miss
+      // what they are about to lose.
+      const restartLabel =
+        commitsAhead !== null && commitsAhead > 0 && branch !== null
+          ? `Restart — discards ${commitsAhead} commit${commitsAhead === 1 ? '' : 's'} on ${branch}`
+          : 'Restart'
+
+      verbs.push({ op: 'restart', label: restartLabel, style: 'destructive', needsConfirm: true })
+      verbs.push({ op: 'purge', label: 'Delete task', style: 'destructive' })
+
+      return verbs
+    },
   },
 
   'mockup-ready': {

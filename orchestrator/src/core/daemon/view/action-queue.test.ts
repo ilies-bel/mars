@@ -12,7 +12,8 @@
  * the ActionQueueRow[] returned by buildActionQueueView.
  */
 
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
+import { execSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -28,6 +29,19 @@ import {
 import { lookupFailureKind } from '../../lib/failure-kinds.js'
 import { DAEMON_KILLED_SIGNATURE } from '../../lib/retry-budget.js'
 import { ACTION_QUEUE_KINDS } from '../../lib/action-queue-kinds.js'
+
+/**
+ * The body must name exactly the verbs the row actually carries — that is the
+ * invariant, not any particular sentence. It used to be a constant naming
+ * Continue first, printed even on setup failures whose menu is restart/delete
+ * because there is no worktree to continue on.
+ */
+const expectBodyNamesItsOwnActions = (row: { body: string; actions?: { label: string }[] }): void => {
+  const labels = (row.actions ?? []).map((a) => a.label.toLowerCase())
+  expect(labels.length).toBeGreaterThan(0)
+  for (const label of labels) expect(row.body.toLowerCase()).toContain(label)
+  expect(row.body).toMatch(/^Your options?: |^Your one option: /)
+}
 
 // ── Test helpers ──────────────────────────────────────────────────────────────
 
@@ -121,7 +135,10 @@ describe('buildActionQueueView — condition rows report evidence time, not deri
     expect(rows[0]!.at).toBe(EVIDENCE)
   })
 
-  it('keeps lastSeenAt for stored decision rows', async () => {
+  it('uses raisedAt for stored decision rows; lastSeenAt is a separate field', async () => {
+    // Stored rows whose raisers bump lastSeenAt on recompute (e.g. gate-enrichment)
+    // previously made the row always appear brand-new to the operator. The fix:
+    // at = raisedAt unconditionally, lastSeenAt emitted as its own labelled field.
     const rows = await buildActionQueueView({
       stateStore: makeStateStore([
         makeRow({
@@ -135,8 +152,35 @@ describe('buildActionQueueView — condition rows report evidence time, not deri
       taskStore: makeTaskStore([]),
       ...BASE_PARAMS,
     })
-    expect(rows[0]!.at).toBe(DERIVED)
+    expect(rows[0]!.at).toBe(EVIDENCE)
+    expect(rows[0]!.lastSeenAt).toBe(DERIVED)
   })
+
+  // Exhaustive guard: loops over every registered kind so that a new raiser
+  // bumping lastSeenAt fails loudly here rather than silently shipping.
+  // Excludes 'failed' which has its own sharper source (task.updatedAt).
+  it.each(ACTION_QUEUE_KINDS.filter((k) => k !== 'failed'))(
+    'at equals raisedAt for kind "%s" even when lastSeenAt is far later',
+    async (kind) => {
+      const rows = await buildActionQueueView({
+        stateStore: makeStateStore([
+          makeRow({
+            id: `row-${kind}`,
+            kind: kind as PersistedActionQueueRow['kind'],
+            payload: {},
+            raisedAt: Date.parse(EVIDENCE),
+            lastSeenAt: Date.parse(DERIVED),
+          }),
+        ]),
+        taskStore: makeTaskStore([]),
+        ...BASE_PARAMS,
+      })
+      // Some kinds may require specific payloads to emit a row; skip those rather
+      // than masking them — the key invariant is "if emitted, at === raisedAt".
+      if (rows.length === 0) return
+      expect(rows[0]!.at).toBe(EVIDENCE)
+    },
+  )
 })
 
 // ── title/body derivation from Failure kind registry (slice 2) ───────────────
@@ -170,9 +214,7 @@ describe('buildActionQueueView — failure-kind title/body derivation', () => {
     })
 
     // §9 beat 3: body names the decision, not the verbose reason.
-    expect(rows[0]!.body).toBe(
-      'Continue on the existing worktree, restart from scratch, or drop',
-    )
+    expectBodyNamesItsOwnActions(rows[0]!)
   })
 
   it('gives the re-queue time ceiling an operational explanation and recovery actions', async () => {
@@ -192,9 +234,7 @@ describe('buildActionQueueView — failure-kind title/body derivation', () => {
     )
     expect(rows[0]!.title).not.toContain('no recipe')
     // §9 beat 3: body is the decision, not the verbose reason.
-    expect(rows[0]!.body).toBe(
-      'Continue on the existing worktree, restart from scratch, or drop',
-    )
+    expectBodyNamesItsOwnActions(rows[0]!)
     expect(rows[0]!.actions.map((action) => action.op)).toEqual([
       'diagnose-failure',
       'restart',
@@ -219,9 +259,7 @@ describe('buildActionQueueView — failure-kind title/body derivation', () => {
       'Task task-1 failed at verify:test: A verification check did not pass',
     )
     // Body is the decision, not the signature or verbose reason.
-    expect(rows[0]!.body).toBe(
-      'Continue on the existing worktree, restart from scratch, or drop',
-    )
+    expectBodyNamesItsOwnActions(rows[0]!)
   })
 
   it('unregistered signature: merge failures keep their key in detail too', async () => {
@@ -237,9 +275,7 @@ describe('buildActionQueueView — failure-kind title/body derivation', () => {
     expect(rows[0]!.title).toContain('The changes could not be merged')
     expect(rows[0]!.title).not.toContain('merge:unknown/unclassified')
     // §9 beat 3: body is the decision; signature is no longer on the card face.
-    expect(rows[0]!.body).toBe(
-      'Continue on the existing worktree, restart from scratch, or drop',
-    )
+    expectBodyNamesItsOwnActions(rows[0]!)
     // No raw machine id on the card face.
     expect(rows[0]!.title).not.toContain('[task')
   })
@@ -305,7 +341,11 @@ describe('buildActionQueueView — failure-kind title/body derivation', () => {
     })
 
     // §9 beat 3: "Task [id] failed: [reason]" when no phase or error head.
-    expect(rows[0]!.title).toBe('Task task-1 failed: Mars could not determine why this task failed')
+    // The implementation deliberately says "no diagnostic recorded" when a failure
+    // is stored without any structured reason or captured output — this is itself
+    // a bug signal, and naming it directly helps the operator investigate why
+    // the failure arrived with no reason (see 2026-09-07 incident, mars-87b7c958).
+    expect(rows[0]!.title).toBe('Task task-1 failed: no diagnostic recorded')
   })
 
   it('keeps a purpose-built persisted title on a failed row with no signature', async () => {
@@ -334,14 +374,18 @@ describe('buildActionQueueView — non-failure kinds keep their raiser copy', ()
   // are alerts, not task failures: their raisers already write specific
   // operator copy, which derived failure copy must never overwrite.
 
-  it('daemon-code-drift keeps the running-vs-head SHA title', async () => {
+  it('daemon-code-drift title is derived from the recipe humanSummary (includes SHA)', async () => {
+    // HR-3 normalisation promotes humanSummary to title for non-REGISTRY_TITLED_KINDS
+    // when no operational-copy renderer overrides it. For daemon-code-drift the
+    // recipe reads runningCommit/headCommit from the payload and constructs a
+    // human-readable summary that includes the SHA comparison.
     const rows = await buildActionQueueView({
       stateStore: makeStateStore([
         makeRow({
           kind: 'daemon-code-drift',
           title: 'Daemon running stale code — a1b2c3d → e4f5g6h',
           body: 'daemon running a1b2c3d, main is at e4f5g6h — run `mars daemon restart`',
-          payload: { sourceSha: 'a1b2c3d', currentSha: 'e4f5g6h' },
+          payload: { runningCommit: 'a1b2c3d', headCommit: 'e4f5g6h' },
           signature: 'daemon-code-drift',
         }),
       ]),
@@ -350,7 +394,9 @@ describe('buildActionQueueView — non-failure kinds keep their raiser copy', ()
       filter: 'open',
     })
 
-    expect(rows[0]!.title).toBe('Daemon running stale code — a1b2c3d → e4f5g6h')
+    // The title now comes from the recipe humanSummary (HR-3), which includes
+    // the SHA comparison when runningCommit/headCommit are in the payload.
+    expect(rows[0]!.title).toContain('a1b2c3d → e4f5g6h')
     expect(rows[0]!.title).not.toContain('A pipeline step did not complete')
     expect(rows[0]!.body).toContain('mars daemon restart')
   })
@@ -399,7 +445,10 @@ describe('buildActionQueueView — non-failure kinds keep their raiser copy', ()
     expect(rows[0]!.title).toBe('Re-queue ceiling exceeded')
   })
 
-  it('non-failed-task rows (stale-worktree) still use the persisted title/body', async () => {
+  it('non-failed-task rows (stale-worktree) derive title from recipe humanSummary', async () => {
+    // HR-3 normalisation promotes humanSummary to title for non-REGISTRY_TITLED_KINDS
+    // when no operational-copy renderer overrides. For stale-worktree the recipe
+    // produces a notice-class sentence; body stays as the raiser's persisted copy.
     const rows = await buildActionQueueView({
       stateStore: makeStateStore([
         makeRow({ kind: 'stale-worktree', payload: { taskId: 'task-1' } }),
@@ -409,7 +458,10 @@ describe('buildActionQueueView — non-failure kinds keep their raiser copy', ()
       filter: 'open',
     })
 
-    expect(rows[0]!.title).toBe('Legacy persisted title')
+    // Title comes from recipe humanSummary (HR-3); body stays persisted.
+    expect(rows[0]!.title).toBe(
+      "No activity in this task's workspace for a while (task-1).",
+    )
     expect(rows[0]!.body).toBe('Legacy persisted body')
   })
 })
@@ -567,7 +619,12 @@ describe('buildActionQueueView — diagnose-failure is suppressed on task-less c
     expect(rows[0]!.actions.some((a) => a.op === 'diagnose-failure')).toBe(false)
   })
 
-  it('keeps diagnose-failure on a gate-broken row that carries a real task id and dag', async () => {
+  it('gate-broken row with taskId in payload: dag is null, actions come from derivedRowActions', async () => {
+    // gate-broken is in NON_TASK_FAILURE_KINDS (added to prevent the origin
+    // task's intent from showing as the card headline — the gate is the subject,
+    // not the task). The entityId resolves to the gate name (not the taskId),
+    // so dag is always null and actions come from derivedRowActions (which
+    // returns [] for gate-broken, using recipe verbs instead).
     const rows = await buildActionQueueView({
       ...BASE_PARAMS,
       stateStore: makeStateStore([
@@ -576,7 +633,7 @@ describe('buildActionQueueView — diagnose-failure is suppressed on task-less c
           kind: 'gate-broken',
           title: 'Gate test is consistently failing (1 tasks)',
           body: 'The test check has repeatedly produced verify:test/test-assertion-error.',
-          // Payload carries a taskId so entityId resolves to the real task.
+          // Payload carries a taskId but entityId still resolves to the gate name.
           payload: {
             gate: 'test',
             verdict: 'verify:test/test-assertion-error',
@@ -592,9 +649,12 @@ describe('buildActionQueueView — diagnose-failure is suppressed on task-less c
     })
 
     expect(rows).toHaveLength(1)
-    // dag is non-null when a real task backs the row.
-    expect(rows[0]!.dag).not.toBeNull()
-    expect(rows[0]!.actions.some((a) => a.op === 'diagnose-failure')).toBe(true)
+    // dag is null because gate-broken is in NON_TASK_FAILURE_KINDS.
+    expect(rows[0]!.dag).toBeNull()
+    // diagnose-failure is not in derivedRowActions for gate-broken; the recipe
+    // verbs (gate-restore, copy) are the operator's action surface instead.
+    expect(rows[0]!.actions.some((a) => a.op === 'diagnose-failure')).toBe(false)
+    expect(rows[0]!.verbs.some((v) => v.op === 'gate-restore')).toBe(true)
   })
 })
 
@@ -1021,7 +1081,10 @@ describe('buildActionQueueView — hitl-slice-needs-operator row', () => {
     signature: 'prop-hitl-abc:hitl:2',
   })
 
-  it('uses the persisted title instead of the failure-registry warmTitle', async () => {
+  it('derives title from the recipe humanSummary (not the persisted raiser title)', async () => {
+    // HR-3 normalisation promotes the recipe humanSummary to title for
+    // non-REGISTRY_TITLED_KINDS when no operational-copy renderer overrides it.
+    // hitl-slice-needs-operator has neither, so its recipe humanSummary wins.
     const rows = await buildActionQueueView({
       ...BASE_PARAMS,
       stateStore: makeStateStore([hitlRow]),
@@ -1029,7 +1092,9 @@ describe('buildActionQueueView — hitl-slice-needs-operator row', () => {
     })
 
     expect(rows).toHaveLength(1)
-    expect(rows[0]!.title).toBe('HITL: End-to-end smoke against a real OpenShift cluster')
+    expect(rows[0]!.title).toBe(
+      'You need to take over a task in this plan — pick it up and complete the work manually.',
+    )
   })
 
   it('uses the persisted body instead of the failure-registry verboseReason', async () => {
@@ -1157,7 +1222,7 @@ describe('buildActionQueueView — operational alert copy', () => {
     // With no pauseState supplied (defaults to unpaused), dispatch is NOT claimed to be paused.
     expect(byId.get('storm')!.title).not.toContain('dispatch is paused')
     expect(byId.get('storm')!.body).toContain('.mars/watch.log')
-    expect(byId.get('gate')!.title).toContain('Gate test')
+    expect(byId.get('gate')!.title).toContain('test check keeps failing')
     expect(byId.get('gate')!.body).toContain('verify:test/test-assertion-error')
     expect(byId.get('daemon')!.title).toContain('pid 4242')
     expect(byId.get('daemon')!.body).toContain('.mars/watch.log')
@@ -1618,6 +1683,91 @@ describe('deriveOperatorGoal — normalisation', () => {
   })
 })
 
+// ── awaiting-human: goal derivation and summary copy ─────────────────────────
+//
+// awaiting-human is not a failure kind (isTaskFailure is false for these rows).
+// Before the fix, arcGoal and operatorGoal were gated on isTaskFailure and were
+// always null even though taskById already held the task. The correct gate is
+// "do we have a task for this entity?", not "is this a failure kind?".
+
+describe('buildActionQueueView — awaiting-human row goal and summary', () => {
+  const makeAwaitingHumanRow = (
+    payloadOverrides: Record<string, unknown> = {},
+  ): PersistedActionQueueRow =>
+    makeRow({
+      kind: 'awaiting-human',
+      payload: {
+        taskId: 'task-1',
+        situation: 'lease-park',
+        leaseOwner: 'workflow:await-human',
+        stepName: 'code',
+        leasedAt: '2024-01-01T00:00:00.000Z',
+        ...payloadOverrides,
+      },
+      context: {},
+    })
+
+  it('operatorGoal is non-null when the entity resolves to a task', async () => {
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([makeAwaitingHumanRow()]),
+      taskStore: makeTaskStore([
+        makeTask({
+          id: 'task-1',
+          status: 'running',
+          prompt: '# Elevate the Mars UI to Cursor / Stripe / Linear tier',
+        }),
+      ]),
+    })
+    expect(rows[0]!.operatorGoal).not.toBeNull()
+    expect(rows[0]!.operatorGoal).toContain('Elevate the Mars UI')
+  })
+
+  it('arcGoal is non-null when the entity resolves to a task', async () => {
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([makeAwaitingHumanRow()]),
+      taskStore: makeTaskStore([
+        makeTask({ id: 'task-1', status: 'running', prompt: 'Add unit tests for the auth module' }),
+      ]),
+    })
+    expect(rows[0]!.arcGoal).not.toBeNull()
+    expect(rows[0]!.arcGoal).toBe('Add unit tests for the auth module')
+  })
+
+  it('operatorGoal and arcGoal are null when the entity is not in the task graph', async () => {
+    // Row points at a task id that is not in the task store — simulates a
+    // row whose entity cannot be resolved (no crash, just null).
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([makeAwaitingHumanRow({ taskId: 'unknown-task' })]),
+      taskStore: makeTaskStore([]),
+    })
+    expect(rows[0]!.operatorGoal).toBeNull()
+    expect(rows[0]!.arcGoal).toBeNull()
+  })
+
+  it('humanSummary for lease-park does not name the workflow identifier as the actor', async () => {
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([makeAwaitingHumanRow()]),
+      taskStore: makeTaskStore([makeTask({ id: 'task-1', status: 'running' })]),
+    })
+    expect(rows[0]!.humanSummary).not.toContain('workflow:await-human')
+    expect(rows[0]!.humanSummary).toContain("step 'code'")
+  })
+
+  it('existing failure-kind operatorGoal derivation is unaffected', async () => {
+    // Confirm the widened gate does not break the original failed-task case.
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([makeRow()]),
+      taskStore: makeTaskStore([makeTask({ prompt: '## Deploy the new service' })]),
+    })
+    expect(rows[0]!.operatorGoal).toBe('Deploy the new service')
+  })
+})
+
 // ── reflect-recommended: age from raisedAt, evidence consistency ──────────────
 
 describe('buildActionQueueView — reflect-recommended row age and evidence', () => {
@@ -1937,17 +2087,29 @@ describe('taskFailureKinds drift gate — orchestrator side', () => {
       'NON_TASK_FAILURE_KINDS extraction returned empty — check regex against action-queue.ts',
     ).toBeGreaterThan(0)
 
-    const uiSource = readFileSync(
-      path.resolve(here, '../../../../../ui/src/shared/schemas.ts'),
-      'utf8',
+    // taskFailureKinds is generated in action-queue-kinds.generated.ts and
+    // re-exported from schemas.ts. Read the generated file directly where the
+    // array literal lives.
+    //
+    // The file is gitignored — it exists only after the UI codegen runs
+    // (ui/scripts/gen-action-queue-kinds.mjs). In a bare task worktree the UI
+    // build may not have run, so regenerate on demand before reading.
+    const generatedPath = path.resolve(
+      here,
+      '../../../../../ui/src/shared/action-queue-kinds.generated.ts',
     )
+    if (!existsSync(generatedPath)) {
+      const genScript = path.resolve(here, '../../../../../ui/scripts/gen-action-queue-kinds.mjs')
+      execSync(`node ${genScript}`, { cwd: path.resolve(here, '../../../../..') })
+    }
+    const uiSource = readFileSync(generatedPath, 'utf8')
     const uiKinds = extractQuotedList(
       uiSource,
       /export const taskFailureKinds = \[([\s\S]*?)\] as const/,
     )
     expect(
       uiKinds.length,
-      'taskFailureKinds extraction returned empty — check regex against ui/src/shared/schemas.ts',
+      'taskFailureKinds extraction returned empty — check regex against ui/src/shared/action-queue-kinds.generated.ts',
     ).toBeGreaterThan(0)
 
     const nonTaskSet = new Set(nonTaskKinds)
@@ -1966,5 +2128,202 @@ describe('taskFailureKinds drift gate — orchestrator side', () => {
         /const NON_TASK_FAILURE_KINDS = new Set\(\[([\s\S]*?)\]\)/,
       ),
     ).toThrow('could not locate array literal')
+  })
+})
+
+// ── recovery-abandoned live enrichment ───────────────────────────────────────
+//
+// Stored `recovery-abandoned` rows raised before the subscriber gained
+// `continuable` and `commitsAhead` were added to the payload lack those fields.
+// The view layer must enrich them from live state on every read.
+
+describe('buildActionQueueView — recovery-abandoned live enrichment', () => {
+  /** A `recovery-abandoned` row with the given payload extras. */
+  const makeAbandonedRow = (payloadOverrides: Record<string, unknown> = {}) =>
+    makeRow({
+      kind: 'recovery-abandoned',
+      payload: { originTaskId: 'task-1', fixTaskId: 'fix-1', ...payloadOverrides },
+    })
+
+  /** An origin task stub with branch + worktree set (normal continuable state). */
+  const makeOriginTask = (overrides: Partial<TaskForActionQueue> = {}) =>
+    makeTask({
+      id: 'task-1',
+      status: 'failed',
+      branch: 'task/mars-task-1',
+      // worktreePath is the new optional field; tests that need it set it here
+      worktreePath: '/mars/worktrees/task-1',
+      failureReason: null,
+      ...overrides,
+    })
+
+  it('a stored row with no continuable in payload renders continue when live state allows it', async () => {
+    // Simulate a row raised before `continuable` was added — payload has neither field.
+    const rows = await buildActionQueueView({
+      stateStore: makeStateStore([makeAbandonedRow()]),
+      taskStore: makeTaskStore([makeOriginTask()]),
+      ...BASE_PARAMS,
+    })
+    expect(rows).toHaveLength(1)
+    const row = rows[0]!
+    // Recipe must offer `continue` as the primary verb when live state says the
+    // origin is continuable (branch + worktree set, no exhaustion prefix).
+    const continueVerb = row.verbs.find((v) => v.op === 'continue')
+    expect(continueVerb).toBeDefined()
+    expect(continueVerb?.style).toBe('primary')
+  })
+
+  it('withholds continue when origin carries recovery_exhausted: prefix, regardless of stale payload', async () => {
+    // Stale payload says continuable:true, but live failure_reason carries the
+    // exhaustion prefix — continue-task.ts would reject this, so the verb must
+    // be suppressed to avoid offering an action that would 422.
+    const rows = await buildActionQueueView({
+      stateStore: makeStateStore([makeAbandonedRow({ continuable: true })]),
+      taskStore: makeTaskStore([
+        makeOriginTask({ failureReason: 'recovery_exhausted:code:vitest-failure' }),
+      ]),
+      ...BASE_PARAMS,
+    })
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.verbs.find((v) => v.op === 'continue')).toBeUndefined()
+  })
+
+  it('withholds continue when origin has no worktree, regardless of stale payload', async () => {
+    // A worktree-less origin has nothing to continue on; `mars continue` would
+    // degrade to a restart silently.
+    const rows = await buildActionQueueView({
+      stateStore: makeStateStore([makeAbandonedRow({ continuable: true })]),
+      taskStore: makeTaskStore([makeOriginTask({ worktreePath: null })]),
+      ...BASE_PARAMS,
+    })
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.verbs.find((v) => v.op === 'continue')).toBeUndefined()
+  })
+
+  it('commitsAhead from live probe wins over a stale payload value', async () => {
+    // Stale payload claims 99 commits ahead. Live task has branch:null, so the
+    // git probe is skipped and commitsAhead becomes null. The restart label must
+    // NOT say "discards 99 commits" — the live null wins over the stored 99.
+    const rows = await buildActionQueueView({
+      stateStore: makeStateStore([
+        makeAbandonedRow({ commitsAhead: 99, branch: 'task/stale-branch' }),
+      ]),
+      taskStore: makeTaskStore([makeOriginTask({ branch: null })]),
+      ...BASE_PARAMS,
+    })
+    expect(rows).toHaveLength(1)
+    const restartVerb = rows[0]!.verbs.find((v) => v.op === 'restart')
+    expect(restartVerb?.label).toBe('Restart')
+    expect(restartVerb?.label).not.toContain('discards')
+  })
+})
+
+// ── signature-wave: raiser copy passes through the view layer unchanged ────────
+//
+// 293cf519e fixed deriveSignatureWaveConditions to name the cause in the title
+// (warmTitle for sig-keyed waves; first error line for error-keyed waves) and
+// to keep the raw machine signature out of operator prose (DEC-18). The view-
+// layer override in OPERATIONAL_ALERT_COPY was the only thing shadowing that
+// fix — it was re-reading row.payload.signature (raw) and regenerating copy
+// that the raiser no longer produces. Setting the entry to null lets the
+// raiser's copy win, as gate-enrichment-stale and env-incident already do.
+
+describe('buildActionQueueView — signature-wave raiser copy preserved', () => {
+  const makeWaveRow = (
+    overrides: Partial<PersistedActionQueueRow> = {},
+  ): PersistedActionQueueRow => ({
+    id: 'derived:sig-wave:verify:typecheck/typecheck-error',
+    kind: 'signature-wave',
+    priority: 'high',
+    // Title from the raiser (deriveSignatureWaveConditions): names the cause via
+    // warmTitle, not the raw signature. This is the exact format the raiser now
+    // writes — the test verifies this copy survives the view layer unchanged.
+    title: '6 tasks failed the same way: The project did not type-check — one fix likely unblocks all',
+    body: [
+      '6 tasks all failed the same way. This is the shape of an',
+      'environmental or systemic failure, not a per-task regression.',
+      '',
+      'Affected tasks (6): mars-a, mars-b, mars-c, mars-d, mars-e, mars-f',
+      '',
+      'Fix the root cause, then `mars continue` each affected task.',
+    ].join('\n'),
+    payload: {
+      // Raw signature lives in payload for diagnostics only — must not appear
+      // in the rendered title or body (DEC-18 invariant).
+      signature: 'verify:typecheck/typecheck-error',
+      caughtTaskCount: 6,
+      caughtTaskIds: ['mars-a', 'mars-b', 'mars-c', 'mars-d', 'mars-e', 'mars-f'],
+    },
+    context: {},
+    raisedAt: Date.parse('2026-09-10T12:00:00.000Z'),
+    lastSeenAt: Date.parse('2026-09-10T12:00:05.000Z'),
+    signature: 'signature-wave:verify:typecheck/typecheck-error',
+    ...overrides,
+  })
+
+  it('keeps the raiser title — cause-named, not generic "for the same reason"', async () => {
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([makeWaveRow()]),
+      taskStore: makeTaskStore([]),
+    })
+    const row = rows.find((r) => r.kind === 'signature-wave')
+    expect(row).toBeDefined()
+    // The view layer must not replace the raiser's cause-named title with the
+    // old generic form the removed override was producing.
+    expect(row!.title).toBe(
+      '6 tasks failed the same way: The project did not type-check — one fix likely unblocks all',
+    )
+    expect(row!.title).not.toContain('for the same reason')
+  })
+
+  it('title does not contain the raw machine signature (no slash-bearing pattern)', async () => {
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([makeWaveRow()]),
+      taskStore: makeTaskStore([]),
+    })
+    const row = rows.find((r) => r.kind === 'signature-wave')
+    expect(row).toBeDefined()
+    // DEC-18 invariant: raw step ids (foo:bar/baz) must not reach operator-facing fields.
+    expect(row!.title).not.toContain('verify:typecheck/typecheck-error')
+    // The title must not contain any slash-separated signature segment.
+    expect(row!.title).not.toMatch(/\b\w+:\w+\/\w+/)
+  })
+
+  it('body does not contain the raw machine signature', async () => {
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([makeWaveRow()]),
+      taskStore: makeTaskStore([]),
+    })
+    const row = rows.find((r) => r.kind === 'signature-wave')
+    expect(row).toBeDefined()
+    // Old override wrote "Shared failure pattern: verify:typecheck/typecheck-error"
+    // into the body. The raiser's body does not include the raw signature.
+    expect(row!.body).not.toContain('Shared failure pattern:')
+    expect(row!.body).not.toContain('verify:typecheck/typecheck-error')
+  })
+
+  it('existing signature-storm override is unaffected (still derives from payload)', async () => {
+    // Regression guard: setting signature-wave to null must not accidentally
+    // remove or break the signature-storm renderer, which legitimately includes
+    // the signature in its title (the storm pattern IS the signal for the operator).
+    const rows = await buildActionQueueView({
+      ...BASE_PARAMS,
+      stateStore: makeStateStore([
+        makeRow({
+          kind: 'signature-storm',
+          payload: { signature: 'verify:typecheck/typecheck-error', streak: 4 },
+          signature: 'signature-storm:verify:typecheck/typecheck-error',
+        }),
+      ]),
+      taskStore: makeTaskStore([]),
+    })
+    const stormRow = rows.find((r) => r.kind === 'signature-storm')
+    expect(stormRow).toBeDefined()
+    // signature-storm intentionally shows the signature — that is its signal.
+    expect(stormRow!.title).toContain('verify:typecheck/typecheck-error')
+    expect(stormRow!.title).toContain('4 tasks failed with')
   })
 })

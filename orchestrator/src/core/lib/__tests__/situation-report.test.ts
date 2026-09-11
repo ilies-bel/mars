@@ -110,4 +110,30 @@ describe('countNeedsYou', () => {
 
     expect(countNeedsYou(groupedFixture)).toBe(1)
   })
+
+  it('excludes notice-class rows and counts only the alert-class row', () => {
+    const queue = [
+      { kind: 'failed', class: 'alert' },
+      { kind: 'stale-worktree', class: 'notice' },
+    ]
+    expect(countNeedsYou(queue)).toBe(1)
+  })
+
+  it('counts a notice that has been promoted to class alert', () => {
+    // e.g. signature-storm promoted from notice to alert
+    const queue = [
+      { kind: 'signature-storm', class: 'alert' },
+    ]
+    expect(countNeedsYou(queue)).toBe(1)
+  })
+
+  it('skips a row whose class is notice even when it is not a notice-native kind', () => {
+    // Any row can be demoted to notice; the class field governs, not the kind
+    const queue = [
+      { kind: 'failed', class: 'notice' },
+      { kind: 'stale-queued', class: 'notice' },
+      { kind: 'awaiting-human' }, // no class field — counts
+    ]
+    expect(countNeedsYou(queue)).toBe(1)
+  })
 })

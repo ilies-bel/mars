@@ -267,6 +267,7 @@ const makeToolPromotionRow = (
   title: `Helper ready for promotion: ${detail.helperKey}`,
   body: `Benchmark evidence is available for helper \`${detail.helperKey}\`.`,
   at: '2026-07-19T00:00:00.000Z',
+  lastSeenAt: '2026-07-19T00:00:00.000Z',
   dag: null,
   errorKind: 'tool-promotion',
   actions: [],

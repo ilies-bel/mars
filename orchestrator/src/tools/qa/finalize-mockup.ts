@@ -17,7 +17,6 @@ import {
   resolveTrace,
   resolveWorktree,
   resolveTaskId,
-  buildPhaseCtx,
 } from '../context'
 import { validationRecorder } from '../validate-recorder'
 

@@ -41,7 +41,7 @@ describe('main thread sentinel', () => {
   })
 
   it('is seeded by the schema with the well-known shape', async () => {
-    const { chat, db } = await loadStore(repo)
+    const { db } = await loadStore(repo)
 
     const rows = await db.execute(
       `SELECT id, title, origin, status, closed_at, archived_at FROM chat_threads WHERE id = 'main'`,

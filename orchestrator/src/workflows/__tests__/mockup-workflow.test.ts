@@ -62,7 +62,7 @@ vi.mock('../../core/lib/action-queue', async (importOriginal) => {
 /** Minimal MarsCtx that finalizeMockup pulls its task id from. */
 const makeCtx = (
   taskId: string,
-  store: Record<string, unknown>,
+  _store: Record<string, unknown>,
   worktreePath: string,
   branch: string,
 ) => ({

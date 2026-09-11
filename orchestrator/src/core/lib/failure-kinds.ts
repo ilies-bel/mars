@@ -209,23 +209,29 @@ export interface FailureKind {
 
 /**
  * Default action menu for a failed task: investigate (one-shot diagnosis),
- * restart from scratch, or drop permanently.
+ * restart, or delete.
+ *
+ * One name per op, matching `action-queue-recipes.ts`'s verbs. These two
+ * sources reach the same card through different fields (`actions` and
+ * `verbs`), and they used to name `restart` "Restart from scratch" here,
+ * "Restart (wipe & re-run)" there, and `purge` "Drop permanently" here,
+ * "Discard task" there — four words for two operations on one row.
  */
 const DEFAULT_ACTIONS: ActionDescriptor[] = [
   { id: 'diagnose-failure', label: 'Investigate', op: 'diagnose-failure' },
-  { id: 'restart', label: 'Restart from scratch', op: 'restart' },
-  { id: 'purge', label: 'Drop permanently', op: 'purge', needsConfirm: true },
+  { id: 'restart', label: 'Restart', op: 'restart' },
+  { id: 'purge', label: 'Delete task', op: 'purge', needsConfirm: true },
 ]
 
 /**
  * Recovery menu for worktree-missing failures: the worktree is gone so there
- * is nothing to diagnose — only restart (re-provision from scratch) or purge
- * are meaningful. Used by every FailureKind whose root cause is a missing or
+ * is nothing to diagnose and nothing to continue — only restart (re-provision
+ * from scratch) or purge are meaningful. Used by every FailureKind whose root cause is a missing or
  * irrecoverable worktree/branch/origin state.
  */
 export const WORKTREE_MISSING_ACTIONS: ActionDescriptor[] = [
-  { id: 'restart', label: 'Restart from scratch', op: 'restart' },
-  { id: 'purge', label: 'Drop permanently', op: 'purge', needsConfirm: true },
+  { id: 'restart', label: 'Restart', op: 'restart' },
+  { id: 'purge', label: 'Delete task', op: 'purge', needsConfirm: true },
 ]
 
 /**
@@ -345,8 +351,8 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
         verboseReason:
           "The code step failed because the coder process could not connect to Claude's API (network or DNS error) — the task code was not at fault. The task has been re-queued and will retry once connectivity is restored.",
         actions: [
-          { id: 'restart', label: 'Restart from scratch', op: 'restart' },
-          { id: 'purge', label: 'Drop permanently', op: 'purge', needsConfirm: true },
+          { id: 'restart', label: 'Restart', op: 'restart' },
+          { id: 'purge', label: 'Delete task', op: 'purge', needsConfirm: true },
         ],
       },
 
@@ -363,8 +369,8 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
         verboseReason:
           "The code step failed because the provider's connection was severed mid-response (a dropped socket, not a code defect) — the task's code was not at fault. The orchestrator already retried automatically once before failing; if the connectivity issue has cleared, `mars continue` will pick up right where it left off.",
         actions: [
-          { id: 'restart', label: 'Restart from scratch', op: 'restart' },
-          { id: 'purge', label: 'Drop permanently', op: 'purge', needsConfirm: true },
+          { id: 'restart', label: 'Restart', op: 'restart' },
+          { id: 'purge', label: 'Delete task', op: 'purge', needsConfirm: true },
         ],
       },
 
@@ -384,8 +390,8 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
             op: 'restart-daemon',
             needsConfirm: true,
           },
-          { id: 'restart', label: 'Restart from scratch', op: 'restart' },
-          { id: 'purge', label: 'Drop permanently', op: 'purge', needsConfirm: true },
+          { id: 'restart', label: 'Restart', op: 'restart' },
+          { id: 'purge', label: 'Delete task', op: 'purge', needsConfirm: true },
         ],
       },
       {
@@ -405,8 +411,8 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
             op: 'restart-daemon',
             needsConfirm: true,
           },
-          { id: 'restart', label: 'Restart from scratch', op: 'restart' },
-          { id: 'purge', label: 'Drop permanently', op: 'purge', needsConfirm: true },
+          { id: 'restart', label: 'Restart', op: 'restart' },
+          { id: 'purge', label: 'Delete task', op: 'purge', needsConfirm: true },
         ],
       },
 
@@ -733,11 +739,11 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
           { id: 'diagnose-failure', label: 'Investigate', op: 'diagnose-failure' },
           {
             id: 'restart',
-            label: 'Restart from scratch',
+            label: 'Restart',
             op: 'restart',
             needsConfirm: true,
           },
-          { id: 'purge', label: 'Drop permanently', op: 'purge', needsConfirm: true },
+          { id: 'purge', label: 'Delete task', op: 'purge', needsConfirm: true },
         ],
       },
 
@@ -863,8 +869,8 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
         recipe: null,
         actions: [
           { id: 'diagnose-failure', label: 'Investigate', op: 'diagnose-failure' },
-          { id: 'restart', label: 'Restart from scratch', op: 'restart' },
-          { id: 'purge', label: 'Drop permanently', op: 'purge', needsConfirm: true },
+          { id: 'restart', label: 'Restart', op: 'restart' },
+          { id: 'purge', label: 'Delete task', op: 'purge', needsConfirm: true },
         ],
       },
       // ── daemon-killed ──────────────────────────────────────────────────────
@@ -924,7 +930,7 @@ export const FAILURE_KINDS: readonly FailureKind[] = Object.freeze(
         recipe: null,
         actions: [
           { id: 'diagnose-failure', label: 'Investigate', op: 'diagnose-failure' },
-          { id: 'purge', label: 'Drop permanently', op: 'purge', needsConfirm: true },
+          { id: 'purge', label: 'Delete task', op: 'purge', needsConfirm: true },
         ],
       },
     ]),
@@ -1098,8 +1104,8 @@ export const unknownFailureKind = (
     recipe: null,
     actions: [
       { id: 'diagnose-failure', label: 'Investigate', op: 'diagnose-failure' },
-      { id: 'restart', label: 'Restart from scratch', op: 'restart' },
-      { id: 'purge', label: 'Drop permanently', op: 'purge', needsConfirm: true },
+      { id: 'restart', label: 'Restart', op: 'restart' },
+      { id: 'purge', label: 'Delete task', op: 'purge', needsConfirm: true },
     ],
     // Not in the registry — explicitly unclassified so the gate-enrichment
     // coverage gap stays enumerable (the runtime classifier in
@@ -1144,7 +1150,16 @@ export const resolveFailureKind = (
         warmTitle,
       }
     }
-    return unknownFailureKind(failingStepFromSignature(signature), capturedError)
+    // Before falling back to the generic step-family label, look up the step
+    // part of the signature in the registry. A registered kind whose name is
+    // not step-shaped (e.g. `done-with-unverifiable-merge`) loses its identity
+    // when an error-class suffix is appended (`…/unclassified`). Returning the
+    // registered parent kind can only add information — it is never less
+    // specific than the generic bucket.
+    const parentStep = failingStepFromSignature(signature)
+    const parentHit = lookupFailureKind(parentStep)
+    if (parentHit) return parentHit
+    return unknownFailureKind(parentStep, capturedError)
   }
   return unknownFailureKind('unknown', capturedError)
 }

@@ -519,7 +519,7 @@ export const runScorersForTask = async (
 }
 
 /** Zod schema export for callers that validate external verdict input. */
-const ScorerRunOutcomeSchema = z.object({
+export const ScorerRunOutcomeSchema = z.object({
   taskId: z.string(),
   outcome: z.enum(['disabled', 'no-task', 'not-done', 'no-scorers', 'ran']),
   workflow: z.string().nullable(),

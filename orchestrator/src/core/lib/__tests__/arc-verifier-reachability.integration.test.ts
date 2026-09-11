@@ -95,7 +95,7 @@ const makeSliceTask = (id: string) => ({
 })
 
 /** Build a minimal store that reports arc-done with one landed commit. */
-const makeArcStore = (originId: string, sliceIds: string[]) => ({
+const makeArcStore = (_originId: string, sliceIds: string[]) => ({
   arcStatus: vi.fn(async () => ({
     status: 'arc-done',
     tasks: sliceIds.map((id) => ({ id, status: 'done' })),

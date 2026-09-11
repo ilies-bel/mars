@@ -717,14 +717,11 @@ describe('mergeBranch — working-tree-free fast-forward (update-ref)', () => {
   it('merges successfully even when the main working tree is on a dirty non-integration branch', async () => {
     // Precondition: git checkout main from this state WOULD fail with old code
     // because README.md has local changes that would be overwritten on checkout.
-    let checkoutWouldFail = false
     try {
       execFileSync('git', ['checkout', '--dry-run', 'main'], { cwd: repo })
     } catch {
-      checkoutWouldFail = true
+      // git version doesn't support --dry-run; the test itself is the real guard
     }
-    // If the git version doesn't support --dry-run, skip this precondition check
-    // and proceed — the test itself is the real guard.
 
     const { mergeBranch } = await import('../git/merge')
     const result = await mergeBranch({

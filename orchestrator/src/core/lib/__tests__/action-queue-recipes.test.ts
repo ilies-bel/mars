@@ -15,7 +15,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { getRecipeVerbs, humanSummary, lookupRecipe } from '../action-queue-recipes'
+import { getRecipeVerbs, humanSummary, lookupRecipe, registeredKinds } from '../action-queue-recipes'
 
 // ---------------------------------------------------------------------------
 // humanSummary — provenance branching
@@ -405,5 +405,227 @@ describe('slice-failed entityTitle', () => {
     // A row raised before proposalTitle was stored must not crash and must fall
     // back to null so the UI can degrade gracefully.
     expect(recipe.entityTitle!(ctx as Parameters<NonNullable<typeof recipe.entityTitle>>[0])).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// env-incident humanSummary — no false dispatch-state claims, no raw sigs
+// ---------------------------------------------------------------------------
+
+describe('env-incident humanSummary', () => {
+  it('describes an infrastructure condition rather than claiming the queue is not paused', () => {
+    const result = humanSummary('env-incident', { taskId: 'mars-abc123', signature: 'setup/unclassified' })
+    expect(result).toContain('infrastructure condition')
+    // Must NOT assert anything about global dispatch state — this row has no
+    // way to know whether the queue is paused.
+    expect(result).not.toContain('NOT paused')
+    expect(result).not.toContain('queue')
+  })
+
+  it('does not render the raw failure signature in the summary', () => {
+    const result = humanSummary('env-incident', { taskId: 'mars-abc123', signature: 'setup/unclassified' })
+    // Raw signatures like "setup/unclassified" must stay in humanDetail only.
+    expect(result).not.toContain('setup/unclassified')
+  })
+
+  it('works the same when no signature is in the payload', () => {
+    const result = humanSummary('env-incident', { taskId: 'mars-abc123' })
+    expect(result).toContain('infrastructure condition')
+    expect(result).not.toContain('NOT paused')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// gate-enrichment-stale humanSummary — plain-English label, no raw sig
+// ---------------------------------------------------------------------------
+
+describe('gate-enrichment-stale humanSummary', () => {
+  it('does not render the raw failure signature in the summary', () => {
+    const result = humanSummary('gate-enrichment-stale', {
+      signature: 'verify:build/typecheck-error',
+      passCount: 5,
+    })
+    // Raw signatures like "verify:build/typecheck-error" must stay in
+    // humanDetail (the signature field there) — never in the prose headline.
+    expect(result).not.toContain('verify:build/typecheck-error')
+  })
+
+  it('names a plain-English condition when a signature is present', () => {
+    const result = humanSummary('gate-enrichment-stale', {
+      signature: 'verify:build/typecheck-error',
+      passCount: 5,
+    })
+    // Should describe what the check watches for in human terms.
+    // It must NOT contain a bare slash-separated machine string.
+    expect(result).not.toMatch(/"\w+\/\w+/)
+  })
+
+  it('falls back gracefully when no signature is present', () => {
+    const result = humanSummary('gate-enrichment-stale', { passCount: 3 })
+    expect(result).toContain('auto-added check')
+    expect(result).not.toContain('undefined')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Breadth: no registered recipe renders a raw failure signature in its summary
+// ---------------------------------------------------------------------------
+// A raw failure signature looks like "verify:build/typecheck-error" or
+// "setup/unclassified". We inject a known signature into every recipe's
+// payload and assert none of the summaries passes it through verbatim.
+// Recipes that do not read ctx.payload['signature'] are unaffected and pass
+// trivially; the interesting ones are those that previously rendered it.
+
+describe('humanSummary breadth — no recipe renders a raw failure signature', () => {
+  const RAW_SIG = 'verify:build/typecheck-error'
+
+  it('no registered recipe outputs the raw signature when injected via payload', () => {
+    const fails: string[] = []
+    for (const kind of registeredKinds()) {
+      let result: string
+      try {
+        result = humanSummary(kind, {
+          signature: RAW_SIG,
+          taskId: 'mars-breadth01',
+          entityId: 'mars-breadth01',
+        })
+      } catch {
+        // A recipe that throws on a minimal payload is fine — it just does not
+        // read the signature field at all (or requires other fields). Skip it.
+        continue
+      }
+      if (result.includes(RAW_SIG)) {
+        fails.push(`${kind}: "${result.slice(0, 120)}"`)
+      }
+    }
+    expect(fails).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// recovery-abandoned recipe verbs + humanDetail
+// ---------------------------------------------------------------------------
+
+describe('recovery-abandoned recipe', () => {
+  const recipe = lookupRecipe('recovery-abandoned')
+
+  const makeCtx = (payload: Record<string, unknown>) => ({
+    kind: 'recovery-abandoned' as const,
+    entityId: 'mars-abc',
+    payload,
+    context: {},
+    title: 'Recovery task dropped',
+    body: '',
+    raisedAt: '2026-09-11T00:00:00.000Z',
+  })
+
+  // Helper: resolve verb list from the recipe (may be function or array).
+  const resolveVerbs = (payload: Record<string, unknown>) => {
+    const ctx = makeCtx(payload)
+    return typeof recipe.verbs === 'function'
+      ? recipe.verbs(ctx as Parameters<typeof recipe.verbs>[0])
+      : recipe.verbs
+  }
+
+  it('continuable origin: continue is the primary (first) verb', () => {
+    const verbs = resolveVerbs({
+      fixTaskId: 'fix-1',
+      originTaskId: 'mars-1',
+      branch: 'task/mars-1',
+      worktreePath: '/path/wt',
+      commitsAhead: 0,
+      continuable: true,
+      failureReasonCode: 'recovery-abandoned:no-commits',
+    })
+    expect(verbs[0]?.op).toBe('continue')
+    expect(verbs[0]?.style).toBe('primary')
+  })
+
+  it('recovery_exhausted origin: no continue verb', () => {
+    const verbs = resolveVerbs({
+      fixTaskId: 'fix-2',
+      originTaskId: 'mars-2',
+      branch: 'task/mars-2',
+      worktreePath: '/path/wt',
+      commitsAhead: 0,
+      continuable: false,
+      failureReasonCode: 'recovery-abandoned:no-commits',
+    })
+    expect(verbs.find((v) => v.op === 'continue')).toBeUndefined()
+  })
+
+  it('origin with no worktree: no continue verb', () => {
+    const verbs = resolveVerbs({
+      fixTaskId: 'fix-3',
+      originTaskId: 'mars-3',
+      branch: 'task/mars-3',
+      worktreePath: null,
+      commitsAhead: null,
+      continuable: false,
+      failureReasonCode: 'recovery-abandoned:no-commits',
+    })
+    expect(verbs.find((v) => v.op === 'continue')).toBeUndefined()
+  })
+
+  it('restart always carries needsConfirm: true', () => {
+    for (const continuable of [true, false]) {
+      const verbs = resolveVerbs({
+        fixTaskId: 'fix-4',
+        originTaskId: 'mars-4',
+        branch: 'task/mars-4',
+        worktreePath: '/path/wt',
+        commitsAhead: 0,
+        continuable,
+        failureReasonCode: continuable ? 'recovery-abandoned:no-commits' : null,
+      })
+      const restart = verbs.find((v) => v.op === 'restart')
+      expect(restart).toBeDefined()
+      expect(restart?.needsConfirm).toBe(true)
+    }
+  })
+
+  it('commitsAhead > 0 is reflected in humanDetail.restartConsequence', () => {
+    const ctx = makeCtx({
+      fixTaskId: 'fix-5',
+      originTaskId: 'mars-5',
+      branch: 'task/mars-5',
+      worktreePath: '/path/wt',
+      commitsAhead: 1,
+      continuable: true,
+      failureReasonCode: null,
+    })
+    const detail = recipe.humanDetail(ctx as Parameters<typeof recipe.humanDetail>[0])
+    expect(typeof detail['restartConsequence']).toBe('string')
+    expect(detail['restartConsequence'] as string).toContain('1 commit')
+    expect(detail['restartConsequence'] as string).toContain('task/mars-5')
+  })
+
+  it('commitsAhead === 0: no restartConsequence in humanDetail', () => {
+    const ctx = makeCtx({
+      fixTaskId: 'fix-6',
+      originTaskId: 'mars-6',
+      branch: 'task/mars-6',
+      worktreePath: '/path/wt',
+      commitsAhead: 0,
+      continuable: true,
+      failureReasonCode: 'recovery-abandoned:no-commits',
+    })
+    const detail = recipe.humanDetail(ctx as Parameters<typeof recipe.humanDetail>[0])
+    expect(detail['restartConsequence']).toBeUndefined()
+  })
+
+  it('commitsAhead > 0: restart label mentions the commit count and branch', () => {
+    const verbs = resolveVerbs({
+      fixTaskId: 'fix-7',
+      originTaskId: 'mars-7',
+      branch: 'task/mars-7',
+      worktreePath: '/path/wt',
+      commitsAhead: 3,
+      continuable: true,
+      failureReasonCode: null,
+    })
+    const restart = verbs.find((v) => v.op === 'restart')
+    expect(restart?.label).toContain('3 commits')
+    expect(restart?.label).toContain('task/mars-7')
   })
 })

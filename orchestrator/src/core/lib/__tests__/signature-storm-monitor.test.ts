@@ -470,7 +470,6 @@ describe('signature-storm — integration via recovery-spawn subscriber', () => 
   // deliberately ignores — see the isDiagnosticSignature suite.
   const STEP = 'setup:install-failed'
   const ENV_ERROR = 'ENOSPC: no space left on device — install failed'
-  const SIG = 'setup:install-failed/unclassified'
 
   /**
    * Fail a fresh origin task and drain the subscriber. Returns the task id.
@@ -867,5 +866,45 @@ describe('isDiagnosticSignature', () => {
     // Bare gate, but the error CLASS carries the diagnosis.
     expect(isDiagnostic('merge/uncommitted-changes')).toBe(true)
     expect(isDiagnostic('code/api-unreachable')).toBe(true)
+  })
+
+  it('still accepts setup:unhandled/unclassified (storm breaker must still trip)', async () => {
+    // The storm breaker must keep counting repeated unhandled failures.
+    // isDiagnosticSignature tests the last colon-segment ('unhandled'), which
+    // is NOT in NON_DIAGNOSTIC_SEGMENTS, so it is diagnostic for storm purposes.
+    const isDiagnostic = await load()
+    expect(isDiagnostic('setup:unhandled/unclassified')).toBe(true)
+    expect(isDiagnostic('code:unhandled/unclassified')).toBe(true)
+  })
+})
+
+describe('signatureNamesASharedCause', () => {
+  const load = async () => {
+    const m = await import('../signature-storm-monitor')
+    return m.signatureNamesASharedCause
+  }
+
+  it('rejects unhandled-step signatures: they carry no named cause', async () => {
+    const names = await load()
+    // 'unhandled' is the step-qualifier spelling of 'unclassified' —
+    // it names no cause, so no "one fix likely unblocks all" claim is valid.
+    expect(names('setup:unhandled/unclassified')).toBe(false)
+    expect(names('code:unhandled/unclassified')).toBe(false)
+  })
+
+  it('rejects the same generic bucket signatures that isDiagnosticSignature also rejects', async () => {
+    const names = await load()
+    expect(names('x/unclassified')).toBe(false)
+    expect(names('x/unknown')).toBe(false)
+    expect(names('code/unclassified')).toBe(false)
+    expect(names('/unclassified')).toBe(false)
+  })
+
+  it('accepts signatures with a real named cause', async () => {
+    const names = await load()
+    expect(names('verify:typecheck/typecheck-error')).toBe(true)
+    expect(names('code:worktree-lease-held/uncommitted-changes')).toBe(true)
+    expect(names('setup:install-failed/lockfile-drift')).toBe(true)
+    expect(names('code:coder-exit-nonzero/api-unreachable')).toBe(true)
   })
 })

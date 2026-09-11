@@ -387,7 +387,7 @@ describe('checkDiskSpace', () => {
   })
 
   it('returns ok:true when the threshold is 0 (always enough)', async () => {
-    const { r } = await loadModules(repo)
+    await loadModules(repo)
     process.env.MARS_LOW_DISK_THRESHOLD_BYTES = '0'
     // Reload to pick up env var
     vi.resetModules()

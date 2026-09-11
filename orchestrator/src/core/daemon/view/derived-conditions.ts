@@ -20,11 +20,12 @@ import { spawnSync } from 'node:child_process'
 import type { PersistedActionQueueRow, ConditionItemsSource } from './action-queue'
 import type { DispatchPauseState } from '../pause-state'
 import type { DbClient } from '../../lib/db'
-import { RECOVERY_EXHAUSTED_PREFIX, classifyError, isSameFailureFamily } from '../../lib/failure-signature'
+import { RECOVERY_EXHAUSTED_PREFIX, classifyError, failureSignatureFamily, normaliseExcerptKey, firstNonBlankLine } from '../../lib/failure-signature'
 import { findBaselineCaughtTaskIds } from '../../lib/baseline-attribution'
 import { readBudgetConfig } from '../../lib/spend-meter'
 import type { BudgetArcPayload } from '../../lib/payload-contracts/spend'
-import { isDiagnosticSignature, SIGNATURE_STORM_TRIP_THRESHOLD } from '../../lib/signature-storm-monitor'
+import { isDiagnosticSignature, signatureNamesASharedCause, SIGNATURE_STORM_TRIP_THRESHOLD } from '../../lib/signature-storm-monitor'
+import { resolveFailureKind } from '../../lib/failure-kinds'
 import { integrationBranchName } from '../../lib/blocker-resolution-primitives.js'
 
 // ── Stable ID helper ─────────────────────────────────────────────────────────
@@ -162,6 +163,7 @@ async function deriveFailedConditions(
   nowMs: number,
   baselineCaughtTaskIds: ReadonlySet<string>,
   waveCaughtTaskIds: ReadonlySet<string>,
+  repoRoot?: string,
 ): Promise<PersistedActionQueueRow[]> {
   const result = await client.execute(
     `SELECT t.id, t.failure_signature, t.prompt, t.updated_at, t.failure_reason_code,
@@ -248,6 +250,12 @@ async function deriveFailedConditions(
         // Filled in by the live probe below. Absent/null means "not looked at",
         // which the recipe renders as nothing rather than as "clean".
         worktreeDirtyCount: null as number | null,
+        // Filled by the commits-ahead probe below. Null means "not probed" (beyond
+        // MAX_DIRTY_PROBES cap or repoRoot absent), not "zero" — the recipe must
+        // never read null as safe (ADR-0057: absent/null means unknown, not clean).
+        realCommitsAhead: null as number | null,
+        checkpointCommitsAhead: null as number | null,
+        firstRealCommitSubject: null as string | null,
         // Filled by the recovery-in-flight check below. True when a fix/recovery
         // task is currently live for this failed task (queued/running/verifying/merging).
         // The view layer uses this to classify the row as 'notice' instead of 'alert'.
@@ -310,21 +318,60 @@ async function deriveFailedConditions(
   const { resolveVcs } = await import('../../ports/vcs/registry')
   const vcs = resolveVcs()
   const probeTargets = rows.slice(0, MAX_DIRTY_PROBES)
+
+  // Commits-ahead probe: resolve the integration branch once, outside the
+  // per-row loop. The `classifyCommitsAheadForBranch` call is the SAME
+  // classifier continue-task.ts uses to decide between remerge / supersede /
+  // restart — we import it dynamically here rather than at module top-level
+  // to avoid a static cycle between the view layer and the daemon action layer.
+  // A missing repoRoot means the outer ConditionsDeps did not wire it in —
+  // treat as "not probed" (null) rather than crashing.
+  let integrationBranch: string | null = null
+  if (repoRoot) {
+    const { resolveIntegrationBranch } = await import('../../config/daemon-intervals')
+    integrationBranch = resolveIntegrationBranch()
+  }
+
   for (let i = 0; i < probeTargets.length; i += DIRTY_PROBE_CONCURRENCY) {
     const batch = probeTargets.slice(i, i + DIRTY_PROBE_CONCURRENCY)
     await Promise.all(
       batch.map(async (queueRow) => {
+        // Dirty-worktree probe (unchanged from before).
         const paths = await vcs.listUncommittedPaths(
           typeof queueRow.payload.worktree === 'string' ? queueRow.payload.worktree : null,
         ).catch(() => null)
         if (paths !== null) queueRow.payload.worktreeDirtyCount = paths.length
+
+        // Commits-ahead classification — runs in the SAME bounded loop so we
+        // never add a second git-subprocess pass over the same worktrees.
+        // Null means "not probed"; the recipe renders null as nothing rather
+        // than assuming safe. Rows beyond MAX_DIRTY_PROBES carry null.
+        const branch = typeof queueRow.payload.branch === 'string'
+          ? queueRow.payload.branch
+          : null
+        if (branch && repoRoot && integrationBranch) {
+          try {
+            const { classifyCommitsAheadForBranch } = await import('../continue-task')
+            const classification = await classifyCommitsAheadForBranch(
+              branch,
+              integrationBranch,
+              repoRoot,
+            )
+            queueRow.payload.realCommitsAhead = classification.realCommits.length
+            queueRow.payload.checkpointCommitsAhead = classification.checkpointCommits.length
+            queueRow.payload.firstRealCommitSubject =
+              classification.realCommits[0]?.subject ?? null
+          } catch {
+            // Probe failed (branch missing, git error) — leave null ("not probed").
+          }
+        }
       }),
     )
   }
   if (rows.length > MAX_DIRTY_PROBES) {
     console.warn(
       `[action-queue] ${rows.length - MAX_DIRTY_PROBES} failed row(s) beyond the newest ` +
-        `${MAX_DIRTY_PROBES} were not probed for uncommitted work; their rows omit it rather than claim clean`,
+        `${MAX_DIRTY_PROBES} were not probed for uncommitted work or commits-ahead; their rows omit it rather than claim clean`,
     )
   }
 
@@ -766,8 +813,38 @@ function deriveBaselineBrokenConditions(
 
 /**
  * Derive `stale-worktree` rows by probing the filesystem for worktrees whose
- * last-modified time exceeds the configured threshold.  Only non-terminal tasks
- * that have a worktree directory are checked.
+ * most-recent activity signal exceeds the configured threshold.
+ *
+ * ## Activity signals (cheapest first, all taken via Math.max)
+ *
+ * 1. `<worktree>/.git` mtime — any commit, index write (`git add`), or ref
+ *    update touches this directory.  It is the single best cheap proxy for
+ *    "git work happened inside this tree."
+ * 2. `task.updated_at` — the DB row advances on every status change; useful
+ *    when a task was just dispatched but no commit has landed yet.
+ * 3. `<worktree>` root dir mtime — fallback of last resort.  A task worktree's
+ *    top-level entries (`ui/`, `orchestrator/`, `packages/`, …) are created
+ *    once at setup time and never touched again by normal coding work, so this
+ *    timestamp almost always reflects setup time, not recent activity.
+ *
+ * Taking Math.max of all three means the row only appears when NOTHING has
+ * moved — not just when one cheap proxy has not moved.
+ *
+ * ## `awaiting-human` tasks are excluded entirely
+ *
+ * A task in `awaiting-human` is explicitly parked waiting for a human who is
+ * WORKING INSIDE the worktree.  It is never "idle": human presence is the
+ * expected operating mode.  Raising a stale-worktree row for such a task
+ * would be a false alarm at best and, worse, could cause the operator to
+ * dismiss a whole class of rows on the assumption they are always noise —
+ * exactly the failure mode that matters when the kind eventually drives a
+ * real cleanup action.  Exclude `awaiting-human` unconditionally.
+ *
+ * ## Do NOT walk the tree recursively
+ *
+ * This function runs on an action-queue READ path on every poll, once per
+ * candidate worktree.  A recursive stat of a repo-sized tree here is not
+ * acceptable.  The three probes above are O(1) each.
  */
 async function deriveStaleWorktreeConditions(
   client: DbClient,
@@ -781,9 +858,10 @@ async function deriveStaleWorktreeConditions(
   })()
   const thresholdMs = thresholdHours * 3_600_000
 
+  // `awaiting-human` is excluded: see doc comment above.
   const result = await client.execute(
     `SELECT id, status, prompt, branch, updated_at FROM tasks
-       WHERE status NOT IN ('done', 'failed', 'dropped')
+       WHERE status NOT IN ('done', 'failed', 'dropped', 'awaiting-human')
        ORDER BY updated_at ASC`,
   )
 
@@ -798,14 +876,33 @@ async function deriveStaleWorktreeConditions(
     }
     const worktreePath = join(repoRoot, '.mars', 'worktrees', task.id)
     if (!existsSync(worktreePath)) continue
-    let mtimeMs: number
+
+    // Collect all available activity signals.
+    let activityMs: number
     try {
-      mtimeMs = statSync(worktreePath).mtimeMs
+      activityMs = statSync(worktreePath).mtimeMs
     } catch {
       continue
     }
-    if (nowMs - mtimeMs <= thresholdMs) continue
-    const ageHours = Math.round((nowMs - mtimeMs) / 3_600_000)
+
+    // Signal 1: <worktree>/.git mtime — moves on every commit / git-add / ref update.
+    const gitPath = join(worktreePath, '.git')
+    if (existsSync(gitPath)) {
+      try {
+        activityMs = Math.max(activityMs, statSync(gitPath).mtimeMs)
+      } catch {
+        // probe failed — fall through to other signals
+      }
+    }
+
+    // Signal 2: task.updated_at from the DB row.
+    const updatedAtMs = new Date(task.updated_at).getTime()
+    if (Number.isFinite(updatedAtMs)) {
+      activityMs = Math.max(activityMs, updatedAtMs)
+    }
+
+    if (nowMs - activityMs <= thresholdMs) continue
+    const ageHours = Math.round((nowMs - activityMs) / 3_600_000)
     rows.push({
       id: deriveId('stale-worktree', task.id),
       kind: 'stale-worktree',
@@ -832,7 +929,7 @@ async function deriveStaleWorktreeConditions(
         updatedAt: task.updated_at,
       },
       context: { taskId: task.id },
-      raisedAt: mtimeMs,
+      raisedAt: activityMs,
       lastSeenAt: nowMs,
       signature: `stale-worktree:${task.id}`,
     })
@@ -928,80 +1025,156 @@ interface SignatureWaveResult {
   caughtTaskIds: ReadonlySet<string>
 }
 
+/** Cap for the cause excerpt used in error-keyed wave titles. */
+const WAVE_TITLE_CAUSE_MAX = 80
+
 /**
  * Derive `signature-wave` rows from currently-failed tasks.
  *
  * When N ≥ {@link SIGNATURE_WAVE_THRESHOLD} distinct failed tasks share the
- * same failure family (same {@link isSameFailureFamily} bucket), one wave row
- * is raised in place of the N individual `failed` rows.  The wave row states
- * the shared-cause implication plainly; its `caughtTaskIds` payload lets the
- * operator see which tasks are affected without having to read N identical
- * alerts.
+ * same cause key, one wave row is raised in place of the N individual `failed`
+ * rows.  The wave row states the shared-cause implication plainly; its
+ * `caughtTaskIds` payload lets the operator see which tasks are affected.
  *
  * The result also carries `caughtTaskIds` as a set so
  * {@link deriveFailedConditions} can suppress the individual rows — exactly the
  * shape `baseline-broken` / `baselineCaughtTaskIds` uses.
  *
- * Only diagnostic signatures ({@link isDiagnosticSignature}) are eligible for
- * grouping: generic buckets like `code/unclassified` must not accidentally fold
- * unrelated failures.
+ * ## Two disjoint key spaces
+ *
+ * Only {@link isDiagnosticSignature} tasks are eligible. For eligible tasks
+ * the cause key lives in one of two disjoint key spaces:
+ *
+ * - **Signature-keyed** (`signatureNamesASharedCause(sig)` is true):
+ *   key = `sig\0${failureSignatureFamily(sig)}`.  The family key lets two
+ *   signatures that differ only in step granularity (e.g. `code:commit-contract/uncommitted-changes`
+ *   vs. `code/uncommitted-changes`) join the same group.  This is today's
+ *   behaviour for genuine named signatures like `verify:typecheck/typecheck-error`.
+ *
+ * - **Error-keyed** (signature does NOT name a shared cause — e.g.
+ *   `setup:unhandled/unclassified`): key = `err\0${normaliseExcerptKey(error)}`.
+ *   Tasks with an empty or null error are SKIPPED (no error text = no evidence
+ *   of a shared cause = no claim).  The normaliser strips hex IDs and numbers
+ *   so tasks that differ only by an embedded task-id produce the same key.
+ *
+ * The two key-space prefixes (`sig\0` vs `err\0`) are structurally disjoint:
+ * a named signature and an unnamed cause can never collide into the same bucket,
+ * which prevents `code:worktree-lease-held/unclassified` (named cause → sig key)
+ * from being absorbed into a wave seeded by `code:unhandled/unclassified`
+ * (unnamed cause → err key), even though `failureSignatureFamily` maps both to
+ * `code/unclassified`.
  */
 async function deriveSignatureWaveConditions(
   client: DbClient,
   nowMs: number,
 ): Promise<SignatureWaveResult> {
   const result = await client.execute(
-    `SELECT id, failure_signature, updated_at
+    `SELECT id, failure_signature, error, updated_at
        FROM tasks
       WHERE status = 'failed'
         AND failure_signature IS NOT NULL`,
   )
 
-  // Group tasks by failure family using isSameFailureFamily semantics.
-  // A family is seeded by the first signature seen; subsequent tasks are
-  // folded in if isSameFailureFamily matches any existing family's canonical.
-  // O(n * m) where m = distinct families; acceptable because failed-task count
-  // is bounded in practice (action-queue reads are not hot paths).
-  const families: { canonical: string; taskIds: string[]; latestMs: number }[] = []
+  // Per-group state: canonical signature, key type, first raw error (for
+  // error-keyed title), task ids, and latest update timestamp.
+  interface WaveGroup {
+    canonical: string
+    /** The bucket partition key — used for row identity (id + signature). */
+    key: string
+    keyType: 'sig' | 'err'
+    firstRawError: string | null
+    taskIds: string[]
+    latestMs: number
+  }
+
+  const groups = new Map<string, WaveGroup>()
 
   for (const r of result.rows) {
-    const row = r as { id: string; failure_signature: string; updated_at: string | null }
+    const row = r as {
+      id: string
+      failure_signature: string
+      error: string | null
+      updated_at: string | null
+    }
     const sig = row.failure_signature
+    // Non-diagnostic signatures are always skipped (same gate as before).
     if (!isDiagnosticSignature(sig)) continue
 
-    const existing = families.find((f) => isSameFailureFamily(f.canonical, sig))
     const taskMs = row.updated_at ? Date.parse(row.updated_at) : nowMs
+
+    let key: string
+    let keyType: 'sig' | 'err'
+    const firstRawError = row.error ?? null
+
+    if (signatureNamesASharedCause(sig)) {
+      // Signature names a real cause → group by failure family.
+      key = `sig:${failureSignatureFamily(sig)}`
+      keyType = 'sig'
+    } else {
+      // Signature is unnamed (e.g. setup:unhandled/unclassified) →
+      // group by normalised error text.
+      const normKey = normaliseExcerptKey(row.error ?? '')
+      // No error text = no evidence of a shared cause → skip entirely.
+      if (!normKey) continue
+      key = `err:${normKey}`
+      keyType = 'err'
+    }
+
+    const existing = groups.get(key)
     if (existing) {
       existing.taskIds.push(row.id)
       if (taskMs > existing.latestMs) existing.latestMs = taskMs
     } else {
-      families.push({ canonical: sig, taskIds: [row.id], latestMs: taskMs })
+      groups.set(key, { canonical: sig, key, keyType, firstRawError, taskIds: [row.id], latestMs: taskMs })
     }
   }
 
-  const waveGroups = families.filter((f) => f.taskIds.length >= SIGNATURE_WAVE_THRESHOLD)
+  const waveGroups = Array.from(groups.values()).filter(
+    (g) => g.taskIds.length >= SIGNATURE_WAVE_THRESHOLD,
+  )
 
   const caughtTaskIds = new Set<string>(waveGroups.flatMap((g) => g.taskIds))
 
   const rows: PersistedActionQueueRow[] = waveGroups.map((group) => {
     const count = group.taskIds.length
     const sortedIds = group.taskIds.slice().sort()
+
+    // Title names the cause (DEC-18: raw step ids must never be the sole
+    // cause description in an operator-facing field).
+    let causeText: string
+    if (group.keyType === 'sig') {
+      causeText = resolveFailureKind(group.canonical, '').warmTitle
+    } else {
+      // Use the first line of the raw (un-normalised) error of the first member.
+      const firstLine = group.firstRawError ? firstNonBlankLine(group.firstRawError) : ''
+      causeText = firstLine.length > WAVE_TITLE_CAUSE_MAX
+        ? `${firstLine.slice(0, WAVE_TITLE_CAUSE_MAX - 1)}…`
+        : firstLine || group.canonical
+    }
+
     return {
-      id: deriveId('signature-wave', group.canonical),
+      // Identity comes from the bucket partition key, not from group.canonical.
+      // For err-keyed waves, group.canonical is the raw failure_signature shared
+      // by all members (e.g. 'setup:unhandled/unclassified'), which is the SAME
+      // across different err buckets — using it for id/signature produces
+      // duplicate row ids.  group.key is the composite discriminator that uniquely
+      // identifies each bucket.
+      id: deriveId('signature-wave', group.key),
       kind: 'signature-wave',
       priority: 'high',
-      // Cold-reader headline (DEC-18: signature is an internal — disclosed in body, not subject).
-      title: `${count} tasks failed for the same reason — one fix likely unblocks all`,
+      // Title names the cause; raw signature stays in payload for diagnostics.
+      title: `${count} tasks failed the same way: ${causeText} — one fix likely unblocks all`,
       body: [
-        `${count} tasks all failed with the same failure pattern. This is the shape of an`,
+        `${count} tasks all failed the same way. This is the shape of an`,
         `environmental or systemic failure, not a per-task regression.`,
         ``,
-        `Shared failure pattern: ${group.canonical}`,
         `Affected tasks (${count}): ${sortedIds.join(', ')}`,
         ``,
-        `Fix the root cause, then \`mars continue\` or \`mars restart\` each affected task.`,
+        `Fix the root cause, then \`mars continue\` each affected task.`,
       ].join('\n'),
       payload: {
+        // Raw signature lives in payload for detail views / diagnostic scripts
+        // only — it must not appear in the title or body prose (DEC-18).
         signature: group.canonical,
         caughtTaskCount: count,
         caughtTaskIds: sortedIds,
@@ -1009,7 +1182,7 @@ async function deriveSignatureWaveConditions(
       context: {},
       raisedAt: group.latestMs,
       lastSeenAt: nowMs,
-      signature: `signature-wave:${group.canonical}`,
+      signature: `signature-wave:${group.key}`,
     }
   })
 
@@ -1337,7 +1510,7 @@ export const createConditionItemsSource = (deps: ConditionsDeps): ConditionItems
     ])
 
     const results = await Promise.all([
-      wants('failed') ? deriveFailedConditions(client, nowMs, baselineCaughtTaskIds, waveResult.caughtTaskIds) : [],
+      wants('failed') ? deriveFailedConditions(client, nowMs, baselineCaughtTaskIds, waveResult.caughtTaskIds, deps.repoRoot) : [],
       wants('stale-queued') ? deriveStaleQueuedConditions(client, deps) : [],
       wants('gate-broken') ? deriveGateBrokenConditions(client, nowMs) : [],
       wants('subscriber-stalled') ? deriveSubscriberStalledConditions(client, nowMs) : [],

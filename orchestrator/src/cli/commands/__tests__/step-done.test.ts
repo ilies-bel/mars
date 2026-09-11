@@ -15,8 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { resolve, sep, dirname } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { resolve, sep } from 'node:path'
 import {
   runCommandInProcess,
   makeFakeDaemon,
@@ -25,7 +24,6 @@ import {
 import type { DomainTaskStore } from '../../../core/store/task-store'
 import type { OrchestratorContext } from '../../../core/context'
 
-const _here = dirname(fileURLToPath(import.meta.url))
 
 let repo: string
 

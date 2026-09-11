@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import {
   createBaselineHealthChecker,
   type BaselineHealthDeps,
@@ -571,7 +571,7 @@ describe('overrideFailingStep callback pattern', () => {
     await checker.check()
 
     // Simulate the overrideFailingStep closure the daemon would pass
-    const overrideFailingStep = (taskId: string, failingStep: string): string | null => {
+    const overrideFailingStep = (_taskId: string, failingStep: string): string | null => {
       if (!checker.isBaselinePoisoned()) return null
       if (!failingStep.startsWith('verify:')) return null
       return 'verify:poisoned-baseline'

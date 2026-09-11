@@ -76,8 +76,6 @@ export const detectVerifyGates = (repoRoot: string): DetectedVerifyGate[] => {
       : existsSync(resolve(repoRoot, 'bun.lockb')) || existsSync(resolve(repoRoot, 'bun.lock'))
         ? 'bun'
         : 'npm'
-  const proposals: DetectedVerifyGate[] = []
-
   let rootPackage: { scripts?: unknown; workspaces?: unknown } | null = null
   if (existsSync(packageJson)) {
     try {

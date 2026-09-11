@@ -1276,7 +1276,7 @@ describe('sweepPhantomTasks — merging phantom detection', () => {
   it('fails a merging task with in-flight entry after the merge ceiling even with active job', async () => {
     // Even with an active merge job, a 'merging' task stuck for longer than
     // the merge ceiling must be failed — something is wrong with the merge worker.
-    const { q, actionQueue, watchdog } = await loadModules(repo)
+    const { q, watchdog } = await loadModules(repo)
     const nowMs = Date.now()
     const task = await q.enqueueTask('stale merge', undefined, { skipTriage: true })
 
@@ -1573,7 +1573,7 @@ describe('sweepPhantomTasks — hung verify runner (child died, heartbeat stoppe
     // Belt-and-suspenders: if status='running' (not 'verifying') with stale
     // heartbeat, the watchdog must use 'ceiling', not 'runner-hung'. The
     // runner-hung path is verifying-only.
-    const { q, actionQueue, watchdog } = await loadModules(repo)
+    const { q, watchdog } = await loadModules(repo)
     const nowMs = Date.now()
     const task = await q.enqueueTask('implement: heavy feature', undefined, { skipTriage: true })
 

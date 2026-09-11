@@ -154,7 +154,7 @@ const resolvedLeaseExpiryMs = (): number => {
  */
 export const buildPhantomBody = (
   taskId: string,
-  status: string,
+  _status: string,
   reason: 'dead-pid' | 'ceiling' | 'no-merge-job' | 'runner-hung',
   ageMinutes: number,
   prompt?: string,
