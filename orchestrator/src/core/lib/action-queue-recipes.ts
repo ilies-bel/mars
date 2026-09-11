@@ -77,6 +77,13 @@ export type RecipeVerb = {
    * which already accepted this field before any recipe emitted it.
    */
   hint?: string
+  /**
+   * When true, the client must present a confirmation dialog before executing
+   * the operation. Intended for destructive, irreversible ops (restart, purge)
+   * where accidental clicks would discard work without warning.
+   * Matches `alertVerbSchema.needsConfirm` (`ui/src/shared/schemas.ts`).
+   */
+  needsConfirm?: boolean
 }
 
 /**
@@ -1520,16 +1527,59 @@ const RECIPE_DEFINITIONS = {
       const fixTaskId = str(ctx.payload['fixTaskId']) || 'unknown'
       return `Recovery task ${fixTaskId} was manually dropped before it could run — the origin task needs manual resolution.`
     },
-    humanDetail: (ctx) => ({
-      raisedAt: ctx.raisedAt,
-      entityId: ctx.entityId,
-      fixTaskId: str(ctx.payload['fixTaskId']),
-      originTaskId: str(ctx.payload['originTaskId']),
-    }),
-    verbs: [
-      { op: 'restart', label: 'Restart', style: 'destructive' },
-      { op: 'purge', label: 'Delete task', style: 'destructive' },
-    ],
+    humanDetail: (ctx) => {
+      const commitsAhead =
+        typeof ctx.payload['commitsAhead'] === 'number'
+          ? (ctx.payload['commitsAhead'] as number)
+          : null
+      const branch =
+        typeof ctx.payload['branch'] === 'string' ? (ctx.payload['branch'] as string) : null
+      const detail: RecipeHumanDetail = {
+        raisedAt: ctx.raisedAt,
+        entityId: ctx.entityId,
+        fixTaskId: str(ctx.payload['fixTaskId']),
+        originTaskId: str(ctx.payload['originTaskId']),
+        ...(branch !== null ? { branch } : {}),
+        ...(commitsAhead !== null ? { commitsAhead } : {}),
+      }
+      if (commitsAhead !== null && commitsAhead > 0 && branch !== null) {
+        detail['restartConsequence'] = `Restart discards ${commitsAhead} commit${commitsAhead === 1 ? '' : 's'} on ${branch}.`
+      }
+      return detail
+    },
+    verbs: (ctx) => {
+      const continuable = ctx.payload['continuable'] === true
+      const commitsAhead =
+        typeof ctx.payload['commitsAhead'] === 'number'
+          ? (ctx.payload['commitsAhead'] as number)
+          : null
+      const branch =
+        typeof ctx.payload['branch'] === 'string' ? (ctx.payload['branch'] as string) : null
+
+      const verbs: RecipeVerb[] = []
+
+      // `continue` is the safe default whenever the origin is continuable: it
+      // resumes the coder on the existing worktree without discarding any commits.
+      // Only suppress it when the origin is known to be non-continuable (exhausted
+      // recovery slot, missing branch/worktree), in which case restart is the only
+      // forward path and must be named explicitly.
+      if (continuable) {
+        verbs.push({ op: 'continue', label: 'Resume on existing worktree', style: 'primary' })
+      }
+
+      // Restart is always destructive and always requires confirmation.  When the
+      // branch has commits ahead, say so in the label so the operator cannot miss
+      // what they are about to lose.
+      const restartLabel =
+        commitsAhead !== null && commitsAhead > 0 && branch !== null
+          ? `Restart — discards ${commitsAhead} commit${commitsAhead === 1 ? '' : 's'} on ${branch}`
+          : 'Restart'
+
+      verbs.push({ op: 'restart', label: restartLabel, style: 'destructive', needsConfirm: true })
+      verbs.push({ op: 'purge', label: 'Delete task', style: 'destructive' })
+
+      return verbs
+    },
   },
 
   'mockup-ready': {

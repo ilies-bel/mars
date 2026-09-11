@@ -416,3 +416,66 @@ describe('groupActionQueueRows — bulk-resolve verb', () => {
     expect(group.bulkResolveVerb?.op).toBe('proposal.slice')
   })
 })
+
+// ── recovery-abandoned grouping ───────────────────────────────────────────────
+//
+// Defect 3: rows with no cause key fell through to excerpt normalisation, which
+// produced four separate high-priority rows even when three had identical
+// situations.  After the fix, zero-ahead rows carry `failureReasonCode =
+// 'recovery-abandoned:no-commits'` and collapse into a group; a nonzero-ahead
+// row carries `failureReasonCode = null` and stays separate.
+
+describe('recovery-abandoned grouping', () => {
+  it('three zero-ahead rows collapse into a single group', () => {
+    _seq = 0
+    const rows = Array.from({ length: 3 }, () =>
+      makeRow('recovery-abandoned', 'recovery-abandoned:no-commits', {
+        humanDetail: {
+          fixTaskId: `fix-${_seq}`,
+          originTaskId: `mars-${_seq}`,
+          commitsAhead: 0,
+        },
+      }),
+    )
+
+    const result = groupActionQueueRows(rows)
+    expect(result).toHaveLength(1)
+    const group = result[0]
+    expect(group?.type).toBe('group')
+    if (group?.type !== 'group') throw new Error('expected group')
+    expect(group.count).toBe(3)
+  })
+
+  it('a nonzero-ahead row stays as a separate item (not grouped with zero-ahead rows)', () => {
+    _seq = 0
+    // Three zero-ahead rows: will collapse into one group.
+    const zeroRows = Array.from({ length: 3 }, () =>
+      makeRow('recovery-abandoned', 'recovery-abandoned:no-commits', {
+        humanDetail: { commitsAhead: 0 },
+      }),
+    )
+    // One nonzero-ahead row: no failureReasonCode → stays separate.
+    const hasCommitsRow = makeRow('recovery-abandoned', null, {
+      humanDetail: {
+        commitsAhead: 1,
+        branch: 'task/mars-a85fcea2',
+        restartConsequence: 'Restart discards 1 commit on task/mars-a85fcea2.',
+      },
+    })
+
+    const result = groupActionQueueRows([...zeroRows, hasCommitsRow])
+
+    // 1 group (the three zero-ahead) + 1 item (the nonzero-ahead) = 2
+    expect(result).toHaveLength(2)
+
+    const group = result.find((r) => r.type === 'group')
+    expect(group).toBeDefined()
+    if (group?.type !== 'group') throw new Error('expected group')
+    expect(group.count).toBe(3)
+
+    const single = result.find((r) => r.type === 'item')
+    expect(single).toBeDefined()
+    if (single?.type !== 'item') throw new Error('expected item')
+    expect(single.row.id).toBe(hasCommitsRow.id)
+  })
+})

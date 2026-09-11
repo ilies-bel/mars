@@ -276,6 +276,11 @@ export const alertVerbSchema = z.object({
   style: z.enum(['primary', 'destructive', 'default', 'snooze']),
   /** Client-side hint text — e.g. the command to copy for a 'copy' op. */
   hint: z.string().optional(),
+  /**
+   * When true, the client must present a confirmation dialog before executing
+   * the operation. Intended for destructive, irreversible ops (restart, purge).
+   */
+  needsConfirm: z.boolean().optional(),
 })
 
 /**
