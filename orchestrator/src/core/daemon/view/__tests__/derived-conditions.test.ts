@@ -792,3 +792,135 @@ describe('gate-broken recipe — humanSummary', () => {
   })
 })
 
+// ── signature-wave: bulkContinuable payload field ────────────────────────────
+//
+// `deriveSignatureWaveConditions` must compute `bulkContinuable` from the
+// `worktree_path` and `failure_reason` columns fetched alongside the tasks.
+// The wave is only bulk-continuable when EVERY member has an existing worktree
+// AND has not exhausted its recovery slot.
+
+const WAVE_SIGNATURE = 'code/rate-limit'
+const NOW_WAVE = Date.parse('2026-09-11T12:00:00.000Z')
+const UPDATED_AT = new Date(NOW_WAVE - 60_000).toISOString()
+
+/**
+ * Build a mock DbClient that answers the `failure_signature IS NOT NULL`
+ * query with the given task rows.
+ */
+const makeWaveDbClient = (
+  tasks: Array<{
+    id: string
+    failure_signature: string
+    error: string | null
+    updated_at: string
+    worktree_path: string | null
+    failure_reason: string | null
+  }>,
+): DbClient => ({
+  execute: async (stmt: DbStatement) => {
+    const sql = typeof stmt === 'string' ? stmt : stmt.sql
+    if (sql.includes('failure_signature IS NOT NULL')) {
+      return { rows: tasks, rowsAffected: 0 }
+    }
+    return { rows: [], rowsAffected: 0 }
+  },
+  batch: async () => [],
+  close: async () => {},
+})
+
+describe('signature-wave — bulkContinuable payload', () => {
+  let tmpDir: string
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(resolve(tmpdir(), 'mars-wave-test-'))
+  })
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  it('sets bulkContinuable=true when all members have existing worktrees and no exhausted slots', async () => {
+    const tasks = [
+      { id: 'mars-1', failure_signature: WAVE_SIGNATURE, error: null, updated_at: UPDATED_AT, worktree_path: tmpDir, failure_reason: null },
+      { id: 'mars-2', failure_signature: WAVE_SIGNATURE, error: null, updated_at: UPDATED_AT, worktree_path: tmpDir, failure_reason: null },
+      { id: 'mars-3', failure_signature: WAVE_SIGNATURE, error: null, updated_at: UPDATED_AT, worktree_path: tmpDir, failure_reason: null },
+    ]
+    const source = createConditionItemsSource({
+      getClient: () => makeWaveDbClient(tasks),
+      nowMs: NOW_WAVE,
+    })
+    const rows = await source.derive({ kinds: new Set(['signature-wave']) })
+
+    expect(rows).toHaveLength(1)
+    const row = rows[0]!
+    expect(row.kind).toBe('signature-wave')
+    expect(row.payload['bulkContinuable']).toBe(true)
+    expect(row.payload['caughtTaskIds']).toEqual(['mars-1', 'mars-2', 'mars-3'])
+  })
+
+  it('sets bulkContinuable=false when any member has a recovery-exhausted reason', async () => {
+    const tasks = [
+      { id: 'mars-1', failure_signature: WAVE_SIGNATURE, error: null, updated_at: UPDATED_AT, worktree_path: tmpDir, failure_reason: null },
+      { id: 'mars-2', failure_signature: WAVE_SIGNATURE, error: null, updated_at: UPDATED_AT, worktree_path: tmpDir, failure_reason: 'recovery_exhausted:prior recovery failed' },
+      { id: 'mars-3', failure_signature: WAVE_SIGNATURE, error: null, updated_at: UPDATED_AT, worktree_path: tmpDir, failure_reason: null },
+    ]
+    const source = createConditionItemsSource({
+      getClient: () => makeWaveDbClient(tasks),
+      nowMs: NOW_WAVE,
+    })
+    const rows = await source.derive({ kinds: new Set(['signature-wave']) })
+
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.payload['bulkContinuable']).toBe(false)
+    // caughtTaskIds must still be present regardless of bulkContinuable
+    expect(Array.isArray(rows[0]!.payload['caughtTaskIds'])).toBe(true)
+    expect((rows[0]!.payload['caughtTaskIds'] as string[]).length).toBe(3)
+  })
+
+  it('sets bulkContinuable=false when any member has a null worktree_path', async () => {
+    const tasks = [
+      { id: 'mars-1', failure_signature: WAVE_SIGNATURE, error: null, updated_at: UPDATED_AT, worktree_path: tmpDir, failure_reason: null },
+      { id: 'mars-2', failure_signature: WAVE_SIGNATURE, error: null, updated_at: UPDATED_AT, worktree_path: null, failure_reason: null },
+      { id: 'mars-3', failure_signature: WAVE_SIGNATURE, error: null, updated_at: UPDATED_AT, worktree_path: tmpDir, failure_reason: null },
+    ]
+    const source = createConditionItemsSource({
+      getClient: () => makeWaveDbClient(tasks),
+      nowMs: NOW_WAVE,
+    })
+    const rows = await source.derive({ kinds: new Set(['signature-wave']) })
+
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.payload['bulkContinuable']).toBe(false)
+  })
+
+  it('sets bulkContinuable=false when any member worktree path does not exist on disk', async () => {
+    const tasks = [
+      { id: 'mars-1', failure_signature: WAVE_SIGNATURE, error: null, updated_at: UPDATED_AT, worktree_path: tmpDir, failure_reason: null },
+      { id: 'mars-2', failure_signature: WAVE_SIGNATURE, error: null, updated_at: UPDATED_AT, worktree_path: '/nonexistent/path/mars-xxx', failure_reason: null },
+      { id: 'mars-3', failure_signature: WAVE_SIGNATURE, error: null, updated_at: UPDATED_AT, worktree_path: tmpDir, failure_reason: null },
+    ]
+    const source = createConditionItemsSource({
+      getClient: () => makeWaveDbClient(tasks),
+      nowMs: NOW_WAVE,
+    })
+    const rows = await source.derive({ kinds: new Set(['signature-wave']) })
+
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.payload['bulkContinuable']).toBe(false)
+  })
+
+  it('emits no signature-wave row when the group has fewer than the threshold', async () => {
+    // Only 2 tasks — below SIGNATURE_WAVE_THRESHOLD (3)
+    const tasks = [
+      { id: 'mars-1', failure_signature: WAVE_SIGNATURE, error: null, updated_at: UPDATED_AT, worktree_path: tmpDir, failure_reason: null },
+      { id: 'mars-2', failure_signature: WAVE_SIGNATURE, error: null, updated_at: UPDATED_AT, worktree_path: tmpDir, failure_reason: null },
+    ]
+    const source = createConditionItemsSource({
+      getClient: () => makeWaveDbClient(tasks),
+      nowMs: NOW_WAVE,
+    })
+    const rows = await source.derive({ kinds: new Set(['signature-wave']) })
+    expect(rows).toHaveLength(0)
+  })
+})
+

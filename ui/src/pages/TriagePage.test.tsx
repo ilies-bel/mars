@@ -2038,3 +2038,75 @@ describe('TriagePage – bindings and shortcuts overlay share one table', () => 
     }
   })
 })
+
+// ---------------------------------------------------------------------------
+// signature-wave: bulk verb presence, task-scoped verb absence
+// ---------------------------------------------------------------------------
+
+describe('TriageRow – signature-wave verb rules', () => {
+  it('renders a continue-all button when bulkContinuable=true', () => {
+    mockItems.mockReturnValue([
+      makeItem('signature-wave', {
+        entityId: 'wave-hash-abc123',
+        dag: null,
+        verbs: [{ op: 'continue-wave', label: 'Continue all 3', style: 'primary' }],
+        humanDetail: { caughtTaskIds: ['task-1', 'task-2', 'task-3'], caughtTaskCount: 3 },
+      }),
+    ])
+    const { container } = renderPage()
+    expect(container.querySelector('[data-testid="triage-verb-continue-wave"]')).not.toBeNull()
+  })
+
+  it('does NOT render restart or purge buttons on a signature-wave row', () => {
+    // The wave entityId is a hash, not a task id — those verbs must never appear.
+    mockItems.mockReturnValue([
+      makeItem('signature-wave', {
+        entityId: 'wave-hash-abc123',
+        dag: null,
+        // Server correctly sends no task-scoped verbs for this kind.
+        verbs: [],
+        humanDetail: { caughtTaskIds: ['task-1', 'task-2', 'task-3'], caughtTaskCount: 3 },
+      }),
+    ])
+    const { container } = renderPage()
+    expect(container.querySelector('[data-testid="triage-verb-restart"]')).toBeNull()
+    expect(container.querySelector('[data-testid="triage-verb-purge"]')).toBeNull()
+  })
+
+  it('renders caughtTaskIds list regardless of bulkContinuable', () => {
+    mockItems.mockReturnValue([
+      makeItem('signature-wave', {
+        entityId: 'wave-hash-abc123',
+        dag: null,
+        verbs: [],
+        humanDetail: { caughtTaskIds: ['task-1', 'task-2', 'task-3'], caughtTaskCount: 3 },
+      }),
+    ])
+    const html = renderToStaticMarkup(<TriagePage />)
+    // All three task ids must appear in the rendered output.
+    expect(html).toContain('task-1')
+    expect(html).toContain('task-2')
+    expect(html).toContain('task-3')
+  })
+
+  it('fires invokeAction("continue") per member when continue-wave is clicked', async () => {
+    const caughtIds = ['task-1', 'task-2', 'task-3']
+    mockItems.mockReturnValue([
+      makeItem('signature-wave', {
+        entityId: 'wave-hash-abc123',
+        dag: null,
+        verbs: [{ op: 'continue-wave', label: 'Continue all 3', style: 'primary' }],
+        humanDetail: { caughtTaskIds: caughtIds, caughtTaskCount: 3 },
+      }),
+    ])
+    const { container } = renderPage()
+    const btn = container.querySelector<HTMLElement>('[data-testid="triage-verb-continue-wave"]')
+    expect(btn).not.toBeNull()
+    await act(async () => { btn!.click() })
+    // One invokeAction call per member.
+    expect(mockInvokeAction).toHaveBeenCalledTimes(3)
+    expect(mockInvokeAction).toHaveBeenCalledWith('continue', 'task-1')
+    expect(mockInvokeAction).toHaveBeenCalledWith('continue', 'task-2')
+    expect(mockInvokeAction).toHaveBeenCalledWith('continue', 'task-3')
+  })
+})
