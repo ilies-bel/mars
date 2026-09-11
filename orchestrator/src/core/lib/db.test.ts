@@ -75,6 +75,34 @@ const makeTestTasksTable = async (c: DbClient): Promise<void> => {
 }
 
 describe('execute (pglite backend)', () => {
+  it('accepts null for a nullable epoch-millis column', async () => {
+    // The encoding guard exists to catch epoch-ms-vs-ISO-8601 confusion. It is
+    // NOT a NOT NULL constraint: `workflow_step_runs.finished_at` is null for
+    // every step that has started and not finished. When
+    // FIXTURE_TIMESTAMP_ENCODINGS gained ~40 tables (682487309), rejecting null
+    // here made every workflow step insert throw, so no task could reach setup
+    // and the orchestrator could not even run the task that would fix it.
+    const c = openDb(freshKey())
+
+    await expect(c.execute({
+      sql: `INSERT INTO workflow_step_runs (run_id, step_name, status, started_at, finished_at, attempt, seq)
+            VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      args: ['run-null-finish', 'code', 'running', Date.now(), null, 1, 1],
+    })).resolves.toBeDefined()
+  })
+
+  it('still rejects a wrongly-encoded value in that same column', async () => {
+    // Positive control for the test above: accepting absence must not weaken
+    // the guard into a no-op.
+    const c = openDb(freshKey())
+
+    await expect(c.execute({
+      sql: `INSERT INTO workflow_step_runs (run_id, step_name, status, started_at, finished_at, attempt, seq)
+            VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      args: ['run-iso-finish', 'code', 'done', Date.now(), new Date().toISOString(), 1, 1],
+    })).rejects.toThrow('workflow_step_runs.finished_at expects epoch milliseconds')
+  })
+
   it('names the timestamp column when a fixture uses an ISO string for epoch milliseconds', async () => {
     const c = openDb(freshKey())
     const createdAt = new Date().toISOString()

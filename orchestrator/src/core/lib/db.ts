@@ -291,6 +291,18 @@ function assertFixtureTimestampEncodings(sql: string, args: readonly DbInValue[]
       const placeholders = (valueSql.match(/\?/g) ?? []).length
       if (encoding && valueSql.trim() === '?') {
         const value = args[argIndex]
+        // Absence is not a mis-encoding. Nullable timestamp columns are
+        // legitimately null while the thing they time has not happened yet —
+        // `workflow_step_runs.finished_at` is null for every step that has
+        // started and not finished, and 271 live rows carry that null. This
+        // guard exists to catch the epoch-ms-vs-ISO-8601 confusion, not to
+        // impose a NOT NULL constraint the schema never declared. Rejecting
+        // null here took the whole orchestrator down: every workflow step
+        // insert threw, so no task could reach setup (see mars-18726a9d).
+        if (value === null || value === undefined) {
+          argIndex += placeholders
+          continue
+        }
         const valid = encoding === 'epoch-millis'
           ? (typeof value === 'number' && Number.isSafeInteger(value)) || typeof value === 'bigint'
           : typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(value) && !Number.isNaN(Date.parse(value))
