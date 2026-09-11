@@ -659,17 +659,40 @@ function deriveDaemonDiedConditions(
 
   let pid = 0
   let startedAt = ''
+  // crashDetectedAt = boot time of the NEW daemon (written at crash-detection).
+  // Kept for id derivation and as the "came back at" reference.
   let crashDetectedAt = new Date(nowMs).toISOString()
+  // stoppedAt = last heartbeat timestamp from the OLD daemon's running marker.
+  // Present only when the daemon had run long enough to write at least one
+  // heartbeat tick (MARS_HEARTBEAT_MS, default 5 s) into the file.
+  let stoppedAt: string | null = null
   try {
     const parsed = JSON.parse(readFileSync(crashMarkerPath, 'utf8')) as Record<string, unknown>
     if (typeof parsed.pid === 'number') pid = parsed.pid
     if (typeof parsed.startedAt === 'string') startedAt = parsed.startedAt
     if (typeof parsed.crashDetectedAt === 'string') crashDetectedAt = parsed.crashDetectedAt
+    if (typeof parsed.stoppedAt === 'string') stoppedAt = parsed.stoppedAt
   } catch {
     // If we can't read the marker, still show the row — presence alone is enough
   }
 
-  const raisedAt = crashDetectedAt ? Date.parse(crashDetectedAt) : nowMs
+  // Compute downtime from stoppedAt → crashDetectedAt (boot time).
+  let downtimeMs: number | null = null
+  if (stoppedAt) {
+    const stoppedMs = Date.parse(stoppedAt)
+    const bootMs = Date.parse(crashDetectedAt)
+    if (Number.isFinite(stoppedMs) && Number.isFinite(bootMs) && bootMs > stoppedMs) {
+      downtimeMs = bootMs - stoppedMs
+    }
+  }
+
+  // raisedAt: use stoppedAt when available so the alert is anchored to when
+  // the engine actually stopped rather than when the next boot detected it.
+  const stoppedAtMs = stoppedAt ? Date.parse(stoppedAt) : NaN
+  const raisedAtMs = Number.isFinite(stoppedAtMs)
+    ? stoppedAtMs
+    : (crashDetectedAt ? Date.parse(crashDetectedAt) : nowMs)
+
   return [
     {
       id: deriveId('daemon-died', crashDetectedAt || 'unknown'),
@@ -679,16 +702,17 @@ function deriveDaemonDiedConditions(
       body: [
         `The daemon (pid ${pid || 'unknown'}) exited without a clean shutdown.`,
         startedAt ? `Started:         ${startedAt}` : '',
-        `Crash detected:  ${crashDetectedAt}`,
+        stoppedAt ? `Last heartbeat:  ${stoppedAt}` : '',
+        `Restarted at:    ${crashDetectedAt}`,
         '',
         'Recovery:',
-        '  • Daemon has already restarted — check `.mars/watch.log` for errors',
+        '  • Check `.mars/watch.log` for the reason it stopped',
         '  • Run `mars list` to review any tasks that may need attention',
         '  • Run `mars restart <id>` to re-run any tasks that were interrupted',
       ].filter((l, i) => i === 0 || l !== '').join('\n'),
-      payload: { pid, startedAt, crashDetectedAt },
+      payload: { pid, startedAt, stoppedAt, downtimeMs, crashDetectedAt },
       context: {},
-      raisedAt: Number.isFinite(raisedAt) ? raisedAt : nowMs,
+      raisedAt: Number.isFinite(raisedAtMs) ? raisedAtMs : nowMs,
       lastSeenAt: nowMs,
       signature: 'daemon-died',
     },

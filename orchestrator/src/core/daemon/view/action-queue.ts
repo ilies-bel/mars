@@ -369,17 +369,17 @@ export const OPERATIONAL_ALERT_COPY: Record<
   'daemon-killed': null,
   'coder-question': null,
   'daemon-died': (row, _pauseState) => {
-    const detectedAt =
-      typeof row.payload.crashDetectedAt === 'string'
-        ? row.payload.crashDetectedAt
-        : new Date(row.lastSeenAt).toISOString()
     const pid = typeof row.payload.pid === 'number' ? row.payload.pid : null
     const pidClause = pid !== null ? ` (pid ${pid})` : ''
+    const downtimeMs = typeof row.payload.downtimeMs === 'number' ? row.payload.downtimeMs : null
+    const downtimeSummary = downtimeMs !== null
+      ? formatOperationalDuration(downtimeMs)
+      : 'an unknown period'
     return {
-      title: `The background engine${pidClause} crashed and has restarted`,
+      title: `The background engine${pidClause} stopped unexpectedly`,
       body:
-        `The crash was detected at ${detectedAt} and the engine has already respawned. ` +
-        `There is no task transcript for this system-level alert. Inspect \`.mars/watch.log\` for the crash, then run \`mars list\` to find interrupted tasks.`,
+        `The engine was down for ${downtimeSummary} and is now running again. ` +
+        `There is no task transcript for this system-level alert. Inspect \`.mars/watch.log\` to understand why it stopped, then run \`mars list\` to find interrupted tasks.`,
     }
   },
   'daemon-outage': (row, _pauseState) => {

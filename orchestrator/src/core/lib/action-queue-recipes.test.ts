@@ -669,4 +669,38 @@ describe('buildAlertSegment — registered kinds use recipe verbs', () => {
     expect(segment.humanSummary).toBeDefined()
     expect(segment.humanSummary!.length).toBeGreaterThan(10)
   })
+
+  it('daemon-died humanSummary does NOT claim automatic restart', () => {
+    // The daemon may have been restarted by the operator, not automatically.
+    // Claiming "restarted itself" or "automatically" teaches the wrong lesson.
+    const segment = buildAlertSegment(makeDaemonDiedItem(), 'test-item-id')
+    const summary = segment.humanSummary ?? ''
+    expect(summary).not.toMatch(/restarted itself/i)
+    expect(summary).not.toMatch(/automatically/i)
+  })
+
+  it('daemon-died humanSummary does not contain a raw ISO timestamp', () => {
+    // Raw ISO strings (e.g. 2026-09-11T12:01:29.239Z) are machine text in
+    // operator prose. The summary must use a formatted duration instead.
+    const segment = buildAlertSegment(
+      makeDaemonDiedItem({ payload: { crashDetectedAt: '2026-09-11T12:01:29.239Z' } }),
+      'test-item-id',
+    )
+    const summary = segment.humanSummary ?? ''
+    expect(summary).not.toMatch(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/)
+  })
+
+  it('daemon-died humanSummary reports downtime when downtimeMs is in the payload', () => {
+    // Given a marker with a known downtime, the summary must mention
+    // the duration rather than "unknown period".
+    const fortyOneMinutesMs = 41 * 60_000
+    const segment = buildAlertSegment(
+      makeDaemonDiedItem({ payload: { downtimeMs: fortyOneMinutesMs } }),
+      'test-item-id',
+    )
+    const summary = segment.humanSummary ?? ''
+    // Should contain a duration mention (e.g. "41 min")
+    expect(summary).toMatch(/\d+ min/)
+    expect(summary).not.toMatch(/unknown period/i)
+  })
 })

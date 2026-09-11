@@ -453,13 +453,15 @@ export const startDaemon = async (
   if (existsSync(runningMarker)) {
     try {
       const prev: unknown = JSON.parse(readFileSync(runningMarker, 'utf8'))
+      const prevObj = typeof prev === 'object' && prev !== null ? (prev as Record<string, unknown>) : {}
       const crashInfo = {
-        pid: typeof prev === 'object' && prev !== null && 'pid' in prev
-          ? (prev as Record<string, unknown>).pid
-          : -1,
-        startedAt: typeof prev === 'object' && prev !== null && 'startedAt' in prev
-          ? (prev as Record<string, unknown>).startedAt
-          : 'unknown',
+        pid: typeof prevObj.pid === 'number' ? prevObj.pid : -1,
+        startedAt: typeof prevObj.startedAt === 'string' ? prevObj.startedAt : 'unknown',
+        // lastHeartbeatAt written periodically into the running marker; use it
+        // as stoppedAt so crash alerts can report how long the engine was down.
+        stoppedAt: typeof prevObj.lastHeartbeatAt === 'string' ? prevObj.lastHeartbeatAt : undefined,
+        // crashDetectedAt is the boot time of the NEW daemon (i.e. NOW), kept
+        // for backward-compat id derivation and as the "came back at" time.
         crashDetectedAt: new Date().toISOString(),
       }
       writeFileSync(crashMarker, JSON.stringify(crashInfo), 'utf8')
@@ -5227,11 +5229,23 @@ export const startDaemon = async (
   // the end of shutdown(). Its presence on the NEXT startup indicates this
   // run exited uncleanly — see the unclean-exit detection block at the top of
   // startDaemon and the daemon-died-sweep reconciler.
-  writeFileSync(
-    runningMarker,
-    JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }),
-    'utf8',
-  )
+  // lastHeartbeatAt is refreshed every MARS_HEARTBEAT_MS (default 5 s) so a
+  // crash-time read of this file can bound how long the daemon was down.
+  const writeRunningMarker = (): void => {
+    try {
+      writeFileSync(
+        runningMarker,
+        JSON.stringify({ pid: process.pid, startedAt, lastHeartbeatAt: new Date().toISOString() }),
+        'utf8',
+      )
+    } catch {
+      // best-effort — the marker is advisory; failure here must not crash daemon
+    }
+  }
+  writeRunningMarker()
+  const runningMarkerHeartbeatMs = Number(process.env.MARS_HEARTBEAT_MS ?? 5_000)
+  const runningMarkerTimer = setInterval(writeRunningMarker, runningMarkerHeartbeatMs)
+  runningMarkerTimer.unref()
   log(`daemon listening on ${socketPath} (pid ${process.pid}, repo ${resolveContext().repoRoot})`)
 
   // ── Local HTTP action endpoint ────────────────────────────────────────────
@@ -6750,6 +6764,7 @@ export const startDaemon = async (
     clearInterval(devStalenessCheck)
     clearInterval(usageSamplerInterval)
     clearInterval(evictionInterval)
+    clearInterval(runningMarkerTimer)
     deferralWakeSweeper.stop()
     baselinePauseWatcher.stop()
     healthScheduler.stop()

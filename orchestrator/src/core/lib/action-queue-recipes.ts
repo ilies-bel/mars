@@ -495,16 +495,20 @@ const RECIPE_DEFINITIONS = {
 
   'daemon-died': {
     humanSummary: (ctx) => {
-      const crashedAt = str(ctx.payload['crashDetectedAt'])
-      return crashedAt
-        ? `The background engine crashed (detected at ${crashedAt}) and restarted itself — Mars tried to fix this automatically, but you need to verify it is healthy and dismiss this alert.`
-        : 'The background engine crashed and restarted itself — Mars tried to fix this automatically, but you need to verify it is healthy and dismiss this alert.'
+      const downtimeMs = typeof ctx.payload['downtimeMs'] === 'number' ? ctx.payload['downtimeMs'] : null
+      // Express downtime as a human-readable duration (same convention as daemon-outage).
+      const downtimeSummary = downtimeMs !== null
+        ? `~${Math.round(downtimeMs / 60_000)} min`
+        : 'an unknown period'
+      return `The background engine stopped and was down for ${downtimeSummary}. It is now running — verify it is healthy and dismiss this alert.`
     },
     humanDetail: (ctx) => ({
       raisedAt: ctx.raisedAt,
       entityId: ctx.entityId,
       pid: ctx.payload['pid'],
       startedAt: str(ctx.payload['startedAt']),
+      stoppedAt: str(ctx.payload['stoppedAt']),
+      downtimeMs: ctx.payload['downtimeMs'],
       crashDetectedAt: str(ctx.payload['crashDetectedAt']),
     }),
     verbs: [{ op: 'dismiss-daemon-died', label: 'Dismiss', style: 'primary' }],
