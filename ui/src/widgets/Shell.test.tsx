@@ -146,11 +146,11 @@ describe('SHELL_NAV_GROUPS', () => {
     expect(steward?.route).toBe('steward')
   })
 
-  it('Scores has a sidebar entry in the Insight group pointing at #/studio', () => {
-    const studio = groupNamed('Insight')?.entries.find((e) => e.label === 'Scores')
-    expect(studio).toBeDefined()
-    expect(studio?.route).toBe('studio')
-    expect(studio?.href).toBe('#/studio')
+  it('Scores has a sidebar entry in the Insight group pointing at #/scores', () => {
+    const scores = groupNamed('Insight')?.entries.find((e) => e.label === 'Scores')
+    expect(scores).toBeDefined()
+    expect(scores?.route).toBe('scores')
+    expect(scores?.href).toBe('#/scores')
   })
 
   // Group subtitles were removed: they doubled each header's height in a
@@ -243,9 +243,9 @@ describe('ShellSidebar — active state', () => {
     expect(html).not.toContain('var(--color-amber)')
   })
 
-  it('highlights Studio (not Progress) when activeRoute is studio', () => {
-    const html = renderToStaticMarkup(<ShellSidebar activeRoute="studio" decisionBadge={0} />)
-    expect(html).toMatch(/href="#\/studio"[^>]*aria-current="page"/)
+  it('highlights Scores (not Progress) when activeRoute is scores', () => {
+    const html = renderToStaticMarkup(<ShellSidebar activeRoute="scores" decisionBadge={0} />)
+    expect(html).toMatch(/href="#\/scores"[^>]*aria-current="page"/)
   })
 
   it('highlights Proposals (not Progress) when activeRoute is proposals', () => {
@@ -360,15 +360,15 @@ describe('Shell', () => {
     expect(html).toContain('bg-accent-on-dark/12')
   })
 
-  it('highlights Studio when hash is #/studio/<id>', () => {
-    const html = renderToStaticMarkup(<Shell hash="#/studio/abc123">page</Shell>)
-    expect(html).toMatch(/href="#\/studio"[^>]*aria-current="page"/)
+  it('highlights Scores when hash is #/scores/<id>', () => {
+    const html = renderToStaticMarkup(<Shell hash="#/scores/abc123">page</Shell>)
+    expect(html).toMatch(/href="#\/scores"[^>]*aria-current="page"/)
     expect(html.match(/aria-current="page"/g)).toHaveLength(1)
   })
 
-  it('highlights Studio when hash is bare #/studio', () => {
-    const html = renderToStaticMarkup(<Shell hash="#/studio">page</Shell>)
-    expect(html).toMatch(/href="#\/studio"[^>]*aria-current="page"/)
+  it('highlights Scores when hash is bare #/scores', () => {
+    const html = renderToStaticMarkup(<Shell hash="#/scores">page</Shell>)
+    expect(html).toMatch(/href="#\/scores"[^>]*aria-current="page"/)
   })
 
   it('highlights Steward when hash is #/steward', () => {

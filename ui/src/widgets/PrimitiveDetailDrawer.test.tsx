@@ -214,7 +214,7 @@ describe('PrimitiveDetailDrawer — agent primitive (runAgent)', () => {
     expect(html).toContain('data-testid="primitive-run-row"')
     expect(html).toContain('session:session-')
     expect(html).toContain('href="#/task/mars-t1"')
-    expect(html).toContain('href="#/studio/mars-t1"')
+    expect(html).toContain('href="#/scores/mars-t1"')
   })
 
   it('labels the history window explicitly (last N, not all-time)', () => {

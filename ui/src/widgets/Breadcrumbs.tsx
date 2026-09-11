@@ -5,7 +5,7 @@ import {
   parsePrimitiveRoute,
   parseProposalRoute,
   parseProposalNodeRoute,
-  parseStudioRoute,
+  parseScoresRoute,
   parseTaskRoute,
   parseTaskStep,
   taskHash,
@@ -53,7 +53,7 @@ const ORIGIN_CRUMBS: Record<RouteName, Crumb> = {
   progress: { label: 'Progress', href: '#/progress' },
   events: { label: 'Events', href: '#/events' },
   kpi: { label: 'KPI', href: '#/kpi' },
-  studio: { label: 'Scores', href: '#/studio' },
+  scores: { label: 'Scores', href: '#/scores' },
   reflections: { label: 'Reflections', href: '#/reflections' },
   control: { label: 'Control Room', href: '#/control' },
   steward: { label: 'Steward', href: '#/steward' },
@@ -84,14 +84,11 @@ export function deriveBreadcrumbs(hash: string): Crumb[] {
     return crumbs
   }
 
-  const studioTaskId = parseStudioRoute(hash)
-  if (studioTaskId) {
-    // The nav calls this section "Scores"; the trail used to call it "Studio"
-    // and to parent it under Progress, which it has never been a child of.
-    // Three names for one place is two too many.
+  const scoresTaskId = parseScoresRoute(hash)
+  if (scoresTaskId) {
     return [
-      { label: 'Scores', href: '#/studio' },
-      { label: truncateId(studioTaskId), href: null },
+      { label: 'Scores', href: '#/scores' },
+      { label: truncateId(scoresTaskId), href: null },
     ]
   }
 
