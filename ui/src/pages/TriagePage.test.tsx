@@ -225,9 +225,12 @@ describe('TriageRow – failed kind shows Continue + Restart', () => {
     expect(container.querySelector('[data-testid="triage-continue"]')).not.toBeNull()
   })
 
-  it('renders a Restart button', () => {
+  it('renders no Restart button when the server sent no restart verb', () => {
+    // The row has no hardcoded Restart. With `verbs: []` there is nothing to
+    // render — which is correct: the server withholds restart on arcs where
+    // the CLI would refuse it.
     const { container } = renderPage()
-    expect(container.querySelector('[data-testid="triage-restart"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="triage-verb-restart"]')).toBeNull()
   })
 })
 
@@ -248,14 +251,27 @@ describe('TriageRow – the daemon restart verb does not double the Restart cont
     ])
   })
 
-  it('drops the daemon restart verb', () => {
+  it('renders the daemon restart verb', () => {
+    // It used to be dropped, because the row drew its own Restart unconditionally
+    // and the two would have sat side by side. The row no longer draws one, so
+    // the server's verb is the only Restart — and the only one is the right
+    // number, because the server is the only thing that knows whether restart
+    // is the correct verb for this arc.
     const { container } = renderPage()
-    expect(container.querySelector('[data-testid="triage-verb-restart"]')).toBeNull()
+    expect(container.querySelector('[data-testid="triage-verb-restart"]')).not.toBeNull()
   })
 
-  it('keeps the guarded Restart control', () => {
+  it('keeps the confirm gate on the server restart verb', async () => {
+    // The guard was the point of the hardcoded control; it must survive the
+    // move. Clicking arms the confirmation rather than firing.
     const { container } = renderPage()
-    expect(container.querySelector('[data-testid="triage-restart"]')).not.toBeNull()
+    const btn = container.querySelector('[data-testid="triage-verb-restart"]') as HTMLButtonElement
+    expect(btn).not.toBeNull()
+    await act(async () => {
+      btn.click()
+    })
+    expect(mockInvokeAction).not.toHaveBeenCalled()
+    expect(container.querySelector('[data-testid="triage-restart-confirm"]')).not.toBeNull()
   })
 
   it('keeps every other daemon verb — only restart is duplicated', () => {
@@ -476,7 +492,12 @@ describe('TriageRow – decision button style field', () => {
 
 describe('TriageRow – Continue/Restart buttons fire invokeAction', () => {
   beforeEach(() => {
-    mockItems.mockReturnValue([makeItem('failed')])
+    // Restart reaches the row as a server verb now, not a hardcoded control.
+    mockItems.mockReturnValue([
+      makeItem('failed', {
+        verbs: [{ op: 'restart', label: 'Restart', style: 'destructive' }],
+      }),
+    ])
   })
 
   it('clicking Continue calls invokeAction("continue", entityId)', async () => {
@@ -491,8 +512,15 @@ describe('TriageRow – Continue/Restart buttons fire invokeAction', () => {
   })
 
   it('clicking Restart does NOT immediately call invokeAction — it opens an in-app confirm', async () => {
+    // Restart now arrives as a server verb rather than a hardcoded control;
+    // the confirm gate is what must not change.
+    mockItems.mockReturnValue([
+      makeItem('failed', {
+        verbs: [{ op: 'restart', label: 'Restart', style: 'destructive' }],
+      }),
+    ])
     const { container } = renderPage()
-    const btn = container.querySelector('[data-testid="triage-restart"]') as HTMLButtonElement
+    const btn = container.querySelector('[data-testid="triage-verb-restart"]') as HTMLButtonElement
     expect(btn).not.toBeNull()
     await act(async () => {
       btn.click()
@@ -507,7 +535,7 @@ describe('TriageRow – Continue/Restart buttons fire invokeAction', () => {
     // commits there contradicts the task drawer, which reports no branch on
     // record for the same task.
     const { container } = renderPage()
-    const btn = container.querySelector('[data-testid="triage-restart"]') as HTMLButtonElement
+    const btn = container.querySelector('[data-testid="triage-verb-restart"]') as HTMLButtonElement
     await act(async () => {
       btn.click()
     })
@@ -519,10 +547,13 @@ describe('TriageRow – Continue/Restart buttons fire invokeAction', () => {
 
   it('confirm text includes the branch when humanDetail.branch is present', async () => {
     mockItems.mockReturnValue([
-      makeItem('failed', { humanDetail: { branch: 'task/mars-abc123' } }),
+      makeItem('failed', {
+        humanDetail: { branch: 'task/mars-abc123' },
+        verbs: [{ op: 'restart', label: 'Restart', style: 'destructive' }],
+      }),
     ])
     const { container } = renderPage()
-    const btn = container.querySelector('[data-testid="triage-restart"]') as HTMLButtonElement
+    const btn = container.querySelector('[data-testid="triage-verb-restart"]') as HTMLButtonElement
     await act(async () => {
       btn.click()
     })
@@ -532,7 +563,7 @@ describe('TriageRow – Continue/Restart buttons fire invokeAction', () => {
 
   it('clicking "Yes, discard & restart" in the confirm step calls invokeAction("restart", entityId)', async () => {
     const { container } = renderPage()
-    const restartBtn = container.querySelector('[data-testid="triage-restart"]') as HTMLButtonElement
+    const restartBtn = container.querySelector('[data-testid="triage-verb-restart"]') as HTMLButtonElement
     await act(async () => {
       restartBtn.click()
     })
@@ -548,7 +579,7 @@ describe('TriageRow – Continue/Restart buttons fire invokeAction', () => {
 
   it('clicking Cancel in the confirm step dismisses it without dispatching', async () => {
     const { container } = renderPage()
-    const restartBtn = container.querySelector('[data-testid="triage-restart"]') as HTMLButtonElement
+    const restartBtn = container.querySelector('[data-testid="triage-verb-restart"]') as HTMLButtonElement
     await act(async () => {
       restartBtn.click()
     })
@@ -562,7 +593,7 @@ describe('TriageRow – Continue/Restart buttons fire invokeAction', () => {
     expect(mockInvokeAction).not.toHaveBeenCalled()
     expect(container.querySelector('[data-testid="triage-restart-confirm"]')).toBeNull()
     // The demoted Restart button is back, ready to be clicked again.
-    expect(container.querySelector('[data-testid="triage-restart"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="triage-verb-restart"]')).not.toBeNull()
   })
 })
 
@@ -635,42 +666,75 @@ describe('TriageRow – task id is a link to the task detail drawer', () => {
 })
 
 // ---------------------------------------------------------------------------
-// TriageRow — recovery-exhausted rows get carry-forward CLI hints, not
-// Continue/Restart (mars continue refuses non-zero on these).
+// TriageRow — recovery-exhausted rows: server verbs are the single source of
+// truth. The client must NOT infer Remerge/Supersede from recoveryExhausted.
 // ---------------------------------------------------------------------------
 
-describe('TriageRow – recovery-exhausted rows surface carry-forward options', () => {
-  beforeEach(() => {
-    // The daemon decides this and sends a boolean. This fixture used to set
-    // `failureReasonCode: 'recovery_exhausted:…'` — a shape production never
-    // produces, because the prefix is written onto `failure_reason` and
-    // `failureReasonCode` mirrors the different `failure_reason_code` column.
-    // The page's own prefix test therefore never fired on a real row: the one
-    // row whose branch holds salvageable commits was showing Restart.
+describe('TriageRow – recovery-exhausted rows render only server-sent verbs', () => {
+  it('has no Continue button when exhausted', () => {
     mockItems.mockReturnValue([
-      makeItem('failed', {
-        entityId: 'mars-abc123',
-        recoveryExhausted: true,
-      }),
+      makeItem('failed', { entityId: 'mars-abc123', recoveryExhausted: true }),
     ])
-  })
-
-  it('has no Continue button', () => {
     const { container } = renderPage()
     expect(container.querySelector('[data-testid="triage-continue"]')).toBeNull()
   })
 
-  it('has no Restart button', () => {
+  it('has no Restart button in the primary row when exhausted', () => {
+    mockItems.mockReturnValue([
+      makeItem('failed', { entityId: 'mars-abc123', recoveryExhausted: true }),
+    ])
     const { container } = renderPage()
     expect(container.querySelector('[data-testid="triage-restart"]')).toBeNull()
   })
 
-  it('renders the recovery-exhausted carry-forward panel with mars remerge / --supersede hints', () => {
+  it('never renders a client-inferred triage-recovery-exhausted panel', () => {
+    // The panel is deleted; the server verb loop is the only source of buttons.
+    mockItems.mockReturnValue([
+      makeItem('failed', { entityId: 'mars-abc123', recoveryExhausted: true }),
+    ])
     const { container } = renderPage()
-    const panel = container.querySelector('[data-testid="triage-recovery-exhausted"]')
-    expect(panel).not.toBeNull()
-    expect(panel?.textContent).toContain('mars remerge mars-abc123')
-    expect(panel?.textContent).toContain('mars task add --supersede mars-abc123')
+    expect(container.querySelector('[data-testid="triage-recovery-exhausted"]')).toBeNull()
+  })
+
+  it('row with verbs=[restart,purge] renders no Remerge or Supersede button', () => {
+    // The branch holds nothing — the server sends only restart+purge. The
+    // client must NOT infer remerge/supersede from recoveryExhausted alone.
+    // Note: restart verbs are filtered for task-recovery kinds (to avoid
+    // duplicating the guarded-confirm restart button), so only purge renders.
+    mockItems.mockReturnValue([
+      makeItem('failed', {
+        entityId: 'mars-874b2a81',
+        recoveryExhausted: true,
+        verbs: [
+          { op: 'restart', label: 'Restart from scratch', style: 'destructive' },
+          { op: 'purge', label: 'Discard task', style: 'destructive' },
+        ],
+      }),
+    ])
+    const { container } = renderPage()
+    // Absence assertion — the core regression guard.
+    expect(container.querySelector('[data-testid="triage-remerge"]')).toBeNull()
+    expect(container.querySelector('[data-testid="triage-supersede"]')).toBeNull()
+    expect(container.querySelector('[data-testid="triage-verb-remerge"]')).toBeNull()
+    expect(container.querySelector('[data-testid="triage-verb-supersede"]')).toBeNull()
+    // Purge verb renders (restart is filtered for task-recovery rows to avoid
+    // a duplicate unguarded button alongside the confirm-gated one).
+    expect(container.querySelector('[data-testid="triage-verb-purge"]')).not.toBeNull()
+  })
+
+  it('row with verbs=[remerge] renders the Remerge button via the verb loop', () => {
+    // Real commits ahead — the server sends remerge. The verb loop should render it.
+    mockItems.mockReturnValue([
+      makeItem('failed', {
+        entityId: 'mars-abc123',
+        recoveryExhausted: true,
+        verbs: [
+          { op: 'remerge', label: 'Remerge (3 commits)', style: 'primary' },
+        ],
+      }),
+    ])
+    const { container } = renderPage()
+    expect(container.querySelector('[data-testid="triage-verb-remerge"]')).not.toBeNull()
   })
 
   it('ignores a recovery_exhausted-looking failureReasonCode — the daemon decides', () => {
@@ -683,6 +747,7 @@ describe('TriageRow – recovery-exhausted rows surface carry-forward options', 
       }),
     ])
     const { container } = renderPage()
+    // No panel (it is deleted). Continue is still shown since recoveryExhausted=false.
     expect(container.querySelector('[data-testid="triage-recovery-exhausted"]')).toBeNull()
     expect(container.querySelector('[data-testid="triage-continue"]')).not.toBeNull()
   })
@@ -720,11 +785,10 @@ describe('TriagePage – several conditions for one task collapse to one card', 
     expect(container.querySelector('[data-testid="triage-continue"]')).toBeNull()
   })
 
-  it('shows the carry-forward panel exactly once', () => {
+  it('has no client-inferred carry-forward panel (server verbs are the source of truth)', () => {
+    // The triage-recovery-exhausted panel is deleted. Verbs come from item.verbs.
     const { container } = renderPage()
-    const panels = container.querySelectorAll('[data-testid="triage-recovery-exhausted"]')
-    expect(panels).toHaveLength(1)
-    expect(panels[0]?.textContent).toContain('mars remerge mars-6340b827')
+    expect(container.querySelector('[data-testid="triage-recovery-exhausted"]')).toBeNull()
   })
 
   it('keeps the collapsed conditions visible as read-only badges', () => {
@@ -1300,73 +1364,81 @@ describe('TriagePage – kind chip never renders a raw machine slug', () => {
 // Verb-status correctness: no card offers a verb refused for its task status
 // ---------------------------------------------------------------------------
 
-describe('TriageRow – phantom-merge does NOT offer Continue (task is done, not failed)', () => {
+describe('TriageRow – phantom-merge renders server-sent verbs (no client panel)', () => {
+  // The server recipe now sends verbs: [remerge (primary), copy-supersede].
+  // The client panel is deleted; the verb loop is the only source of buttons.
+  const phantomMergeVerbs = [
+    { op: 'remerge', label: 'Remerge — branch still has commits', style: 'primary' as const },
+    { op: 'copy', label: 'Supersede — run from checkpoint', style: 'default' as const, hint: 'mars task add --supersede task-phantom-merge' },
+  ]
+
   it('phantom-merge has no Continue button', () => {
-    mockItems.mockReturnValue([makeItem('phantom-merge')])
+    mockItems.mockReturnValue([makeItem('phantom-merge', { verbs: phantomMergeVerbs })])
     const { container } = renderPage()
     expect(container.querySelector('[data-testid="triage-continue"]')).toBeNull()
   })
 
-  it('phantom-merge has no Restart button', () => {
-    mockItems.mockReturnValue([makeItem('phantom-merge')])
+  it('phantom-merge has no Restart button (not a task-recovery kind)', () => {
+    mockItems.mockReturnValue([makeItem('phantom-merge', { verbs: phantomMergeVerbs })])
     const { container } = renderPage()
     expect(container.querySelector('[data-testid="triage-restart"]')).toBeNull()
   })
 
-  it('phantom-merge shows the carry-forward panel', () => {
-    mockItems.mockReturnValue([makeItem('phantom-merge')])
+  it('phantom-merge has no client-inferred carry-forward panel', () => {
+    mockItems.mockReturnValue([makeItem('phantom-merge', { verbs: phantomMergeVerbs })])
     const { container } = renderPage()
-    expect(
-      container.querySelector('[data-testid="triage-phantom-merge-panel"]'),
-    ).not.toBeNull()
+    expect(container.querySelector('[data-testid="triage-phantom-merge-panel"]')).toBeNull()
   })
 
-  it('phantom-merge shows a Remerge button (branch still has commits)', () => {
-    mockItems.mockReturnValue([makeItem('phantom-merge')])
+  it('phantom-merge renders Remerge verb from server verbs', () => {
+    mockItems.mockReturnValue([makeItem('phantom-merge', { verbs: phantomMergeVerbs })])
     const { container } = renderPage()
-    expect(container.querySelector('[data-testid="triage-remerge"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="triage-verb-remerge"]')).not.toBeNull()
   })
 
-  it('phantom-merge shows a Supersede button (carry forward from checkpoint)', () => {
-    mockItems.mockReturnValue([makeItem('phantom-merge')])
+  it('phantom-merge renders copy-supersede verb from server verbs', () => {
+    mockItems.mockReturnValue([makeItem('phantom-merge', { verbs: phantomMergeVerbs })])
     const { container } = renderPage()
-    expect(container.querySelector('[data-testid="triage-supersede"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="triage-verb-copy"]')).not.toBeNull()
   })
 })
 
-describe('TriageRow – phantom-merge-unknown does NOT offer Continue', () => {
+describe('TriageRow – phantom-merge-unknown renders server-sent verbs (no client panel)', () => {
+  // The server recipe sends only copy-supersede (no branch to remerge).
+  const phantomUnknownVerbs = [
+    { op: 'copy', label: 'Supersede — run from checkpoint', style: 'default' as const, hint: 'mars task add --supersede task-phantom-merge-unknown' },
+  ]
+
   it('phantom-merge-unknown has no Continue button', () => {
-    mockItems.mockReturnValue([makeItem('phantom-merge-unknown')])
+    mockItems.mockReturnValue([makeItem('phantom-merge-unknown', { verbs: phantomUnknownVerbs })])
     const { container } = renderPage()
     expect(container.querySelector('[data-testid="triage-continue"]')).toBeNull()
   })
 
   it('phantom-merge-unknown has no Restart button', () => {
-    mockItems.mockReturnValue([makeItem('phantom-merge-unknown')])
+    mockItems.mockReturnValue([makeItem('phantom-merge-unknown', { verbs: phantomUnknownVerbs })])
     const { container } = renderPage()
     expect(container.querySelector('[data-testid="triage-restart"]')).toBeNull()
   })
 
-  it('phantom-merge-unknown shows the carry-forward panel', () => {
-    mockItems.mockReturnValue([makeItem('phantom-merge-unknown')])
+  it('phantom-merge-unknown has no client-inferred carry-forward panel', () => {
+    mockItems.mockReturnValue([makeItem('phantom-merge-unknown', { verbs: phantomUnknownVerbs })])
     const { container } = renderPage()
-    expect(
-      container.querySelector('[data-testid="triage-phantom-merge-panel"]'),
-    ).not.toBeNull()
+    expect(container.querySelector('[data-testid="triage-phantom-merge-panel"]')).toBeNull()
   })
 
-  it('phantom-merge-unknown has no Remerge button (no surviving branch)', () => {
-    mockItems.mockReturnValue([makeItem('phantom-merge-unknown')])
+  it('phantom-merge-unknown has no Remerge button (no surviving branch — server decides)', () => {
+    mockItems.mockReturnValue([makeItem('phantom-merge-unknown', { verbs: phantomUnknownVerbs })])
     const { container } = renderPage()
-    // Remerge is only offered for phantom-merge (branch may still exist);
-    // phantom-merge-unknown has no surviving evidence, so only Supersede applies.
+    // Server sends no remerge verb; absence assertion guards against client-side inference.
+    expect(container.querySelector('[data-testid="triage-verb-remerge"]')).toBeNull()
     expect(container.querySelector('[data-testid="triage-remerge"]')).toBeNull()
   })
 
-  it('phantom-merge-unknown shows a Supersede button', () => {
-    mockItems.mockReturnValue([makeItem('phantom-merge-unknown')])
+  it('phantom-merge-unknown shows the Supersede copy verb', () => {
+    mockItems.mockReturnValue([makeItem('phantom-merge-unknown', { verbs: phantomUnknownVerbs })])
     const { container } = renderPage()
-    expect(container.querySelector('[data-testid="triage-supersede"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="triage-verb-copy"]')).not.toBeNull()
   })
 })
 

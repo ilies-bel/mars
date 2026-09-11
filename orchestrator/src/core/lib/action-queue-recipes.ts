@@ -1740,7 +1740,25 @@ const RECIPE_DEFINITIONS = {
       taskId: str(ctx.payload['taskId']),
       tombstonePath: str(ctx.payload['tombstonePath']),
     }),
-    verbs: [],
+    /**
+     * Branch has unmerged commits (confirmed by `git cherry`). Offer Remerge
+     * as the primary action; Supersede as the copy-to-clipboard fallback for
+     * when the branch is stale and the operator wants a fresh task instead.
+     * The server decides this based on kind ('phantom-merge' vs 'phantom-merge-unknown'),
+     * so no client-side commit-count check is needed.
+     */
+    verbs: (ctx) => {
+      const taskId = str(ctx.payload['taskId']) || ctx.entityId
+      return [
+        { op: 'remerge', label: 'Remerge — branch still has commits', style: 'primary' as const },
+        {
+          op: 'copy',
+          label: 'Supersede — run from checkpoint',
+          style: 'default' as const,
+          hint: `mars task add --supersede ${taskId}`,
+        },
+      ]
+    },
   },
 
   'phantom-merge-unknown': {
@@ -1752,7 +1770,22 @@ const RECIPE_DEFINITIONS = {
       taskId: str(ctx.payload['taskId']),
       tombstonePath: str(ctx.payload['tombstonePath']),
     }),
-    verbs: [],
+    /**
+     * No surviving branch or checkpoint refs — cannot determine if commits landed.
+     * Only the Supersede copy verb is offered: operator verifies manually first,
+     * then supersedes to carry any lost work forward from the checkpoint ref.
+     */
+    verbs: (ctx) => {
+      const taskId = str(ctx.payload['taskId']) || ctx.entityId
+      return [
+        {
+          op: 'copy',
+          label: 'Supersede — run from checkpoint',
+          style: 'default' as const,
+          hint: `mars task add --supersede ${taskId}`,
+        },
+      ]
+    },
   },
 
   'worktree-hook-trust-request': {

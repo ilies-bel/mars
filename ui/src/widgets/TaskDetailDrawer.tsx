@@ -21,7 +21,7 @@ import { ChevronRight, MoreHorizontal } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import type { AgentToolCall, ProgressProposalNode, ProgressTask, Task, TaskChangesResponse, TraceEvent } from '@/shared/schemas'
+import type { AgentToolCall, AlertVerb, ProgressProposalNode, ProgressTask, Task, TaskChangesResponse, TraceEvent } from '@/shared/schemas'
 import { taskSchema } from '@/shared/schemas'
 import { fetchAgentToolCalls, fetchRunTimeline, fetchStepSpans, fetchTaskChanges, invokeAction } from '@/shared/api'
 import { parseDiff } from '@/shared/diff'
@@ -252,6 +252,14 @@ interface TaskDetailDrawerProps {
    * running effects.
    */
   initialState?: LoadState
+  /**
+   * Server-sent verbs from the matching `failed` action queue item
+   * (`item.verbs`). When provided, `RecoveryCommands` renders these verbs
+   * instead of deriving Continue/Remerge/Supersede from `recoveryExhausted`
+   * locally, keeping the drawer and the triage row in agreement.
+   * Supplied by `App.tsx` from the live `useActionQueue` feed.
+   */
+  failedVerbs?: AlertVerb[]
 }
 
 type LoadState =
@@ -550,6 +558,7 @@ export const RecoveryCommands = ({
   recoveryExhausted = false,
   branch = null,
   worktreePath = null,
+  verbs: verbsProp,
 }: {
   taskId: string
   /**
@@ -567,6 +576,15 @@ export const RecoveryCommands = ({
   recoveryExhausted?: boolean
   branch?: string | null
   worktreePath?: string | null
+  /**
+   * Server-sent verb buttons from the matching action queue item (`item.verbs`).
+   * When provided, the primary action area renders these verbs instead of
+   * deriving Continue/Remerge/Supersede from `recoveryExhausted` locally —
+   * eliminating the client-side duplication that caused the row and the drawer
+   * to disagree (round 17 headline defect). Restart and Drop are always
+   * rendered separately with confirmation dialogs, regardless of this prop.
+   */
+  verbs?: AlertVerb[]
 }) => {
 
   // `mars continue` needs a worktree to resume ON. Without one it silently
@@ -575,8 +593,16 @@ export const RecoveryCommands = ({
   // destructive action under the name of the safe one. The drawer was also
   // promising, in its CLI note, to keep "every commit the coder already
   // landed" for a task that has never had a commit.
+  //
+  // This still matters with server verbs: it is the fallback when the row
+  // carries none, and it must not be looser than the server's own rule.
   const resumable = branch !== null && branch !== '' && worktreePath !== null && worktreePath !== ''
   const canContinue = !recoveryExhausted && resumable
+  // Primary verbs from the server: filter out restart/drop since those are
+  // always rendered below with dedicated confirmation dialogs.
+  const serverVerbs = (verbsProp ?? []).filter(
+    (v) => v.op !== 'restart' && v.op !== 'drop',
+  )
   const [confirming, setConfirming] = useState<'restart' | 'drop' | null>(null)
   const [loading, setLoading] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
@@ -682,9 +708,43 @@ export const RecoveryCommands = ({
         </div>
       ) : null}
 
-      {/* Action buttons */}
+      {/* Action buttons — primary area.
+          When the server has sent verbs (`serverVerbs`), render those instead
+          of deriving Continue/Remerge/Supersede from `recoveryExhausted` locally.
+          This keeps the drawer and the triage row in agreement: both render
+          exactly what the server decided (round 17 headline defect fix). */}
       <div className="flex flex-wrap gap-2">
-        {canContinue ? (
+        {serverVerbs.length > 0 ? (
+          serverVerbs.map((verb) => {
+            const isCopy = verb.op === 'copy'
+            const isLoading = loading === verb.op
+            return (
+              <button
+                key={verb.op}
+                data-testid={`recovery-verb-${verb.op}`}
+                onClick={() => {
+                  if (isCopy) {
+                    void navigator.clipboard.writeText(verb.hint ?? verb.op)
+                    setLoading(verb.op)
+                    setTimeout(() => setLoading(null), 600)
+                  } else {
+                    void invoke(verb.op)
+                  }
+                }}
+                disabled={loading !== null || confirming !== null}
+                className={
+                  verb.style === 'primary'
+                    ? 'rounded border border-highlight/60 bg-highlight/10 px-3 py-1 font-mono text-label text-highlight hover:bg-highlight/20 disabled:cursor-not-allowed disabled:opacity-40'
+                    : verb.style === 'destructive'
+                    ? 'rounded border border-error/40 bg-error/10 px-3 py-1 font-mono text-label text-error hover:bg-error/20 disabled:cursor-not-allowed disabled:opacity-40'
+                    : 'rounded border border-primary/30 bg-primary/5 px-3 py-1 font-mono text-label text-primary hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-40'
+                }
+              >
+                {isLoading ? (isCopy ? 'Copied!' : `${verb.label}…`) : verb.label}
+              </button>
+            )
+          })
+        ) : canContinue ? (
           <button
             data-testid="continue-btn"
             onClick={() => void invoke('continue')}
@@ -693,38 +753,6 @@ export const RecoveryCommands = ({
           >
             {loading === 'continue' ? 'Continuing…' : 'Continue'}
           </button>
-        ) : null}
-
-        {recoveryExhausted ? (
-          <>
-            {/* Continue is not withheld out of caution — it would be refused.
-                Mars allows exactly one recovery attempt per failure and this
-                task's is spent, so `mars continue` exits non-zero. Saying so
-                is the difference between a missing button and a rule. */}
-            <span
-              data-testid="continue-spent"
-              className="self-center text-micro text-muted-foreground"
-            >
-              Continue is spent — this task already used its one retry. Carry
-              the work forward instead:
-            </span>
-            <button
-              data-testid="remerge-btn"
-              onClick={() => void invoke('remerge')}
-              disabled={loading !== null || confirming !== null}
-              className="rounded border border-highlight/60 bg-highlight/10 px-3 py-1 font-mono text-label text-highlight hover:bg-highlight/20 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              {loading === 'remerge' ? 'Remerging…' : 'Remerge'}
-            </button>
-            <button
-              data-testid="supersede-btn"
-              onClick={() => void invoke('supersede')}
-              disabled={loading !== null || confirming !== null}
-              className="rounded border border-border bg-primary/5 px-3 py-1 font-mono text-label text-muted-foreground hover:bg-foreground/5 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              {loading === 'supersede' ? 'Superseding…' : 'Supersede'}
-            </button>
-          </>
         ) : null}
 
         {/* Restart and Delete are DESTRUCTIVE and sit behind a disclosure,
@@ -777,13 +805,27 @@ export const RecoveryCommands = ({
         </div>
       </div>
 
-      {/* CLI equivalent — keeps text strings for terminal users and tests. */}
+      {/* CLI equivalent — keeps text strings for terminal users and tests.
+          When server verbs are available, surface their copy hints. Otherwise
+          fall back to the static Continue / Restart hint pair. */}
       <details className="mt-2">
         <summary className="cursor-pointer select-none text-micro text-muted-foreground">
           Show CLI equivalent
         </summary>
         <div className="mt-1 space-y-0.5">
-          {canContinue ? (
+          {serverVerbs.length > 0 ? (
+            serverVerbs.map((verb) =>
+              verb.op === 'copy' && verb.hint ? (
+                <p key={verb.op} className="font-mono text-micro text-muted-foreground">
+                  <code>{verb.hint}</code>
+                </p>
+              ) : verb.op !== 'copy' ? (
+                <p key={verb.op} className="font-mono text-micro text-muted-foreground">
+                  <code>mars {verb.op} {taskId}</code>
+                </p>
+              ) : null,
+            )
+          ) : canContinue ? (
             <>
               <p className="font-mono text-micro text-muted-foreground">
                 <code>mars continue {taskId}</code> — Resumes on the existing
@@ -810,27 +852,10 @@ export const RecoveryCommands = ({
               </p>
             </>
           ) : (
-            <>
-              <p className="font-mono text-micro text-muted-foreground">
-                This arc has already spent its one recovery attempt, so{' '}
-                <code>mars continue</code> will refuse. Carry the work forward
-                instead:
-              </p>
-              <p className="font-mono text-micro text-muted-foreground">
-                <code>mars remerge {taskId}</code> — If the branch holds real
-                coder or human commits — merges them without re-running.
-              </p>
-              <p className="font-mono text-micro text-muted-foreground">
-                <code>mars task add --supersede {taskId}</code> — If the branch
-                holds only an auto-generated salvage checkpoint — inherits it
-                onto a fresh task.
-              </p>
-              <p className="font-mono text-micro text-muted-foreground">
-                <code>mars restart {taskId}</code> — Only when nothing on the
-                branch is worth keeping — Discards the worktree, branch and all
-                commits.
-              </p>
-            </>
+            <p className="font-mono text-micro text-muted-foreground">
+              <code>mars restart {taskId}</code> — Discards the worktree,
+              branch and all commits, then re-runs from setup.
+            </p>
           )}
         </div>
       </details>
@@ -1226,6 +1251,7 @@ export const TaskDetailBody = ({
   currentStep,
   changesData,
   changesUnsupported,
+  failedVerbs,
 }: {
   task: Task
   /** Drill-in handler threaded into the OriginTree; omit for display-only. */
@@ -1251,6 +1277,11 @@ export const TaskDetailBody = ({
    * through to ChangesSection.isUnsupported. Omit in production.
    */
   changesUnsupported?: boolean
+  /**
+   * Server-sent verbs from the matching action queue item. Forwarded to
+   * `RecoveryCommands` so the drawer renders the same verbs as the triage row.
+   */
+  failedVerbs?: AlertVerb[]
 }) => {
   const promptLines = task.prompt.split('\n')
   // The header already shows the whole prompt when it's a single short line;
@@ -1378,6 +1409,7 @@ export const TaskDetailBody = ({
               recoveryExhausted={task.recoveryExhausted ?? false}
               branch={task.branch}
               worktreePath={task.worktreePath}
+              verbs={failedVerbs}
             />
           ) : null}
         </div>
@@ -2273,6 +2305,7 @@ export const TaskDetailDrawer = ({
   initialState,
   toolInvocations,
   agentToolCallsBySession: agentToolCallsBySessionProp,
+  failedVerbs,
 }: TaskDetailDrawerProps) => {
   const { focusedProjectId: projectId } = useFocusedProject()
   const drawerRef = useRef<HTMLElement>(null)
@@ -2817,7 +2850,7 @@ export const TaskDetailDrawer = ({
           data-testid="task-detail-body"
           className="flex-1 overflow-y-auto p-4"
         >
-          <TaskDetailBody task={state.task} onNavigate={navigate} currentId={currentId} currentStep={currentStep} />
+          <TaskDetailBody task={state.task} onNavigate={navigate} currentId={currentId} currentStep={currentStep} failedVerbs={failedVerbs} />
           <StewardLedgerPanel
             targetKind={isProposal ? 'arc' : 'task'}
             targetId={currentId}

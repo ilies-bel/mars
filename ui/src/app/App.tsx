@@ -33,6 +33,7 @@ import {
 } from '@/shared/routing'
 import type { RouteName } from '@/shared/routing'
 import { useCounts } from '@/entities/counts/useCounts'
+import { useActionQueue } from '@/entities/actionQueue/useActionQueue'
 import { useSseConnected } from '@/shared/sseStatus'
 import { useTabTitleBadge } from '@/shared/useTabTitleBadge'
 import { useProposals } from '@/entities/proposals/useProposals'
@@ -194,6 +195,19 @@ const AppInner = () => {
   const sseConnected = useSseConnected()
   useTabTitleBadge(needsYou, sseConnected && known)
 
+  // Server-sent verbs for the currently-open task drawer. Found by matching the
+  // drawer's taskId against the action queue's entityId. When present, the
+  // drawer renders these verbs instead of deriving them from recoveryExhausted
+  // locally — keeping the triage row and the drawer in agreement.
+  // Read the queue separately from the tab badge above. The badge deliberately
+  // uses useCounts() rather than recomputing from these rows — a local
+  // recompute drops every `type: 'group'` row and disagreed with the three
+  // counts on screen. The drawer needs the rows themselves, not a count.
+  const { items: aqItems } = useActionQueue()
+  const drawerFailedVerbs = taskId
+    ? (aqItems.find((item) => item.entityId === taskId)?.verbs ?? undefined)
+    : undefined
+
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-background">
       <AlertNotifier />
@@ -246,6 +260,7 @@ const AppInner = () => {
             tasks={tasks ?? []}
             proposals={proposals}
             activeStepName={activeStepName}
+            failedVerbs={drawerFailedVerbs}
           />
         </FallbackBoundary>
       ) : null}

@@ -239,15 +239,6 @@ const TASK_RECOVERY_KINDS = new Set([
 ])
 
 /**
- * Phantom-merge condition kinds: task was marked done but no merge SHA was
- * recorded. These are derived conditions (no stored row). The operator should
- * remerge the branch or supersede the task to carry the work forward.
- * `mars continue` would be refused here — the underlying task is `done`,
- * not `failed` — so these kinds get a dedicated carry-forward panel instead.
- */
-const PHANTOM_MERGE_KINDS = new Set(['phantom-merge', 'phantom-merge-unknown'])
-
-/**
  * Kinds whose rows surface only the Chat → link and no action buttons.
  * The reflect and scorer flows are purely conversational — the operator
  * discusses proposals in chat rather than clicking a verb in this view.
@@ -790,7 +781,6 @@ const leadDecisionIndex = (decisions: Decision[]): number => {
   // (refused for non-failed tasks) nor Restart (destructive) is the right CTA.
   // A dedicated carry-forward panel offers Remerge (branch still has commits)
   // and Supersede (carry work forward from checkpoint ref).
-  const isPhantomMerge = PHANTOM_MERGE_KINDS.has(item.kind)
   // A task-recovery row renders its own restart affordance below: guarded by a
   // confirm step that names the branch and says what is lost, or — once the
   // single recovery attempt is spent — deliberately withheld in favour of the
@@ -798,9 +788,14 @@ const leadDecisionIndex = (decisions: Decision[]): number => {
   // fires immediately with no confirmation. Rendering both put two Restart
   // buttons on every failed row, one of them destructive on first click, and
   // sat a live Restart beside a panel stating that Restart will not help.
-  const verbs = (item.verbs ?? []).filter(
-    (verb) => !(isTaskRecovery && verb.op === 'restart'),
-  )
+  // Every verb the server sent, restart included. Restart used to be filtered
+  // out here and replaced by a hardcoded, always-present control below — which
+  // meant the row showed Restart on tasks the server was deliberately NOT
+  // offering it for (an exhausted arc with commits ahead, where the CLI refuses
+  // restart and names remerge). The confirm gate that made the hardcoded
+  // control safe now wraps the server's own destructive verbs instead, so the
+  // guard survives without the client deciding which verbs exist.
+  const verbs = item.verbs ?? []
   // For task-recovery rows, copy verbs move into the "⋯ More" disclosure so
   // they don't clutter the primary action row. Non-copy verbs (purge, dismiss,
   // …) remain visible because they are the primary CTA for their recipe.
@@ -1254,109 +1249,30 @@ const leadDecisionIndex = (decisions: Decision[]): number => {
               )
             })}
 
-            {/* Recovery-exhausted carry-forward panel — only for task-recovery
-                kinds whose single recovery attempt has already been spent. */}
-            {isTaskRecovery && isRecoveryExhausted && (
-              <div
-                className="mt-1 flex w-full flex-col gap-2 rounded border border-warn/30 bg-warn/5 px-3 py-2"
-                data-testid="triage-recovery-exhausted"
-              >
-                {/* "Recovery spent" named a state without naming what it
-                    costs the reader — which is Continue, the verb every other
-                    failed row leads with. State the rule, then the way out. */}
-                <p className="text-micro text-warn">
-                  Continue is spent — Mars allows one retry per failure and this
-                  task used it. Carry the work forward instead:
-                </p>
-                <div className="flex flex-wrap items-center gap-2">
-                  <code className="font-mono text-micro text-warn/70 select-all">
-                    mars remerge {item.entityId}
-                  </code>
-                  <button
-                    disabled={pending !== null}
-                    onClick={() => void handleVerb('remerge')}
-                    className="rounded border border-warn/60 bg-warn/10 px-2 py-1 text-micro text-warn transition-colors hover:bg-warn/20 disabled:opacity-50"
-                    data-testid="triage-remerge"
-                  >
-                    {pending === 'remerge' ? '…' : 'Remerge'}
-                  </button>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <code className="font-mono text-micro text-warn/70 select-all">
-                    mars task add --supersede {item.entityId}
-                  </code>
-                  <button
-                    disabled={pending !== null}
-                    onClick={() => void handleVerb('supersede')}
-                    className="rounded border border-warn/40 px-2 py-1 text-micro text-warn transition-colors hover:bg-warn/10 disabled:opacity-50"
-                    data-testid="triage-supersede"
-                  >
-                    {pending === 'supersede' ? '…' : 'Supersede'}
-                  </button>
-                </div>
-              </div>
-            )}
           </>
-        )}
-
-        {/* ── Phantom-merge carry-forward panel ───────────────────────────────
-            The task is `done` but no merge SHA was recorded — mars continue
-            would be refused (it only works on `failed` tasks). Instead offer
-            Remerge (re-land the branch if it still holds commits) and Supersede
-            (carry the work forward from the checkpoint ref). For the unknown
-            variant (no surviving evidence) only Supersede is applicable. */}
-        {isPhantomMerge && (
-          <div
-            className="mt-1 flex w-full flex-col gap-2 rounded border border-warn/30 bg-warn/5 px-3 py-2"
-            data-testid="triage-phantom-merge-panel"
-          >
-            <p className="font-mono text-micro text-warn">
-              {item.kind === 'phantom-merge'
-                ? 'Marked done — no merge SHA on record. Carry the commits forward:'
-                : 'No surviving evidence — verify manually, then carry forward:'}
-            </p>
-            {item.kind === 'phantom-merge' && (
-              <div className="flex flex-wrap items-center gap-2">
-                <code className="select-all font-mono text-micro text-warn/70">
-                  mars remerge {item.entityId}
-                </code>
-                <button
-                  disabled={pending !== null}
-                  onClick={() => void handleVerb('remerge')}
-                  className="rounded border border-warn/60 bg-warn/10 px-2 py-1 font-mono text-micro text-warn transition-colors hover:bg-warn/20 disabled:opacity-50"
-                  data-testid="triage-remerge"
-                >
-                  {pending === 'remerge' ? '…' : 'Remerge — branch still has commits'}
-                </button>
-              </div>
-            )}
-            <div className="flex flex-wrap items-center gap-2">
-              <code className="select-all font-mono text-micro text-warn/70">
-                mars task add --supersede {item.entityId}
-              </code>
-              <button
-                disabled={pending !== null}
-                onClick={() => void handleVerb('supersede')}
-                className="rounded border border-warn/40 px-2 py-1 text-micro text-warn transition-colors hover:bg-warn/10 disabled:opacity-50"
-                data-testid="triage-supersede"
-              >
-                {pending === 'supersede' ? '…' : 'Supersede — run from checkpoint'}
-              </button>
-            </div>
-          </div>
         )}
 
         {/* ── Task-recovery primary actions ────────────────────────────────────
             Continue is the sole visible primary CTA. Restart is hidden behind
             a "⋯" disclosure (two-click path) to prevent misclicks during
             failure storms. The disclosure dropdown is always rendered in the
-            DOM (visibility:hidden, pointer-events:none when closed) so that
-            [data-testid="triage-restart"] remains queryable in tests — jsdom
-            does not honour CSS pointer-events, so .click() still fires.
+            DOM (visibility:hidden, pointer-events:none when closed) so its
+            buttons stay queryable in tests — jsdom does not honour CSS
+            pointer-events, so .click() still fires.
             Chat is repositioned as an icon button immediately after Continue
             so it is discoverable without dominating the row. */}
-        {!isChatOnly && isTaskRecovery && !isRecoveryExhausted && (
+        {!isChatOnly && isTaskRecovery && (
           <>
+            {/* Continue and its chat shortcut only when continue is actually
+                available. The "⋯" disclosure below is NOT gated on that: an
+                exhausted row still needs Restart and Delete to be reachable.
+                They used to hang off this same condition, which was harmless
+                only while a carry-forward panel rendered in the exhausted
+                case. That panel is gone (the server sends the verbs now), so
+                gating the disclosure too left an exhausted row with no actions
+                at all. */}
+            {continueAvailable && (
+              <>
             {/* Continue — sole visible primary CTA */}
             <button
               disabled={pending !== null}
@@ -1377,6 +1293,8 @@ const leadDecisionIndex = (decisions: Decision[]): number => {
             >
               <MessageSquare size={13} strokeWidth={2} aria-hidden="true" />
             </a>
+              </>
+            )}
 
             {/* More ⋯ — disclosure that hides Restart (and copy verbs) */}
             <div ref={moreRef} className="relative">
@@ -1400,20 +1318,6 @@ const leadDecisionIndex = (decisions: Decision[]): number => {
                   moreOpen ? '' : 'invisible pointer-events-none',
                 ].join(' ')}
               >
-                {/* Restart — error-tinted to signal its destructive nature */}
-                <button
-                  type="button"
-                  role="menuitem"
-                  disabled={pending !== null}
-                  onClick={() => {
-                    setArmedVerb({ op: 'restart', label: 'Restart', style: 'destructive' })
-                    setMoreOpen(false)
-                  }}
-                  className="flex w-full items-center px-3 py-1.5 text-left font-mono text-micro text-error transition-colors hover:bg-error/5 disabled:opacity-50"
-                  data-testid="triage-restart"
-                >
-                  Restart
-                </button>
                 {/* Copy verbs, and the destructive ones. A destructive verb
                     arms the confirmation rather than firing, exactly as
                     Restart above it does — the disclosure is not a shortcut

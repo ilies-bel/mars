@@ -108,14 +108,15 @@ describe('RecoveryCommands — recovery_exhausted arc', () => {
     />,
   )
 
-  it('renders Remerge button', () => {
-    expect(html).toContain('data-testid="remerge-btn"')
-    expect(html).toContain('>Remerge<')
+  // Server decides verbs — client must never infer Remerge/Supersede
+  it('never renders client-inferred Remerge button (server decides verbs)', () => {
+    expect(html).not.toContain('data-testid="remerge-btn"')
+    expect(html).not.toContain('>Remerge<')
   })
 
-  it('renders Supersede button', () => {
-    expect(html).toContain('data-testid="supersede-btn"')
-    expect(html).toContain('>Supersede<')
+  it('never renders client-inferred Supersede button (server decides verbs)', () => {
+    expect(html).not.toContain('data-testid="supersede-btn"')
+    expect(html).not.toContain('>Supersede<')
   })
 
   it('does NOT render Continue button — mars continue refuses on exhausted arcs', () => {
@@ -130,27 +131,23 @@ describe('RecoveryCommands — recovery_exhausted arc', () => {
     expect(html).toContain('data-testid="drop-btn"')
   })
 
-  // CLI disclosure assertions to verify carry-forward verb strings
-  it('CLI disclosure contains mars remerge taskId', () => {
-    expect(html).toContain('mars remerge mars-bff7e039')
+  // CLI disclosure: server-verb-first — no client-inferred carry-forward commands
+  it('CLI disclosure does NOT contain client-inferred mars remerge command', () => {
+    expect(html).not.toContain('mars remerge mars-bff7e039')
   })
 
-  it('CLI disclosure contains mars task add --supersede taskId', () => {
-    expect(html).toContain('mars task add --supersede mars-bff7e039')
+  it('CLI disclosure does NOT contain client-inferred mars task add --supersede command', () => {
+    expect(html).not.toContain('mars task add --supersede mars-bff7e039')
   })
 
   it('CLI disclosure does NOT offer mars continue <taskId> as a command', () => {
-    // The explanation mentions "mars continue" generically (will refuse)
-    // but must NOT present "mars continue mars-bff7e039" as a usable command.
+    // recovery_exhausted: mars continue would be refused by the server.
+    // The fallback CLI section must not surface it when exhausted and no server verbs.
     expect(html).not.toContain('mars continue mars-bff7e039')
   })
 
-  it('CLI disclosure explains that mars continue will refuse', () => {
-    expect(html).toContain('will refuse')
-  })
-
-  it('mars remerge appears before mars restart in document order', () => {
-    expect(html.indexOf('mars remerge')).toBeLessThan(html.indexOf('mars restart'))
+  it('CLI disclosure shows mars restart as the only fallback command', () => {
+    expect(html).toContain('mars restart mars-bff7e039')
   })
 })
 
