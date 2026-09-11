@@ -74,7 +74,7 @@ const CHROME_PATHS_WIN: readonly string[] = [
  * Return the path of the first Chrome/Chromium binary found, or `null`.
  * Pure filesystem check — no child processes.
  */
-export const findChromeBinary = (): string | null => {
+const findChromeBinary = (): string | null => {
   const paths =
     process.platform === 'darwin'
       ? CHROME_PATHS_DARWIN
