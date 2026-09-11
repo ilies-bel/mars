@@ -239,6 +239,55 @@ export type Recipe<K extends ActionQueueKind = ActionQueueKind> = {
   entityTitle?: (ctx: RecipeContext<K>) => string | null
 }
 
+// ── Shared verb-category classifier ──────────────────────────────────────────
+
+/**
+ * The primary forward-path category for a failed task.
+ *
+ * - `continue`  — worktree exists and recovery slot is available.
+ * - `remerge`   — real commits on the branch; a re-verify-and-merge can land them.
+ * - `restart`   — nothing to discard (no worktree, no real commits, no checkpoints).
+ * - `unknown`   — worktreeExists or realCommitsAhead is null (not probed), or the
+ *                 only forward path is supersede (no bulk form exists for that).
+ */
+export type TaskVerbCategory = 'continue' | 'remerge' | 'restart' | 'unknown'
+
+/**
+ * Classify the primary forward-path verb for a failed task.
+ *
+ * This mirrors the decision table in the `failed` recipe's `verbs` function.
+ * Both the per-row `failed` recipe and the `signature-wave` bulk-verb logic
+ * call this to answer the same question about one task or N tasks respectively.
+ *
+ * The returned category names the safest primary action; Restart is always
+ * appended as a destructive fallback by each call site.
+ */
+export function classifyTaskVerbCategory(opts: {
+  worktreeExists: boolean | null
+  recoveryExhausted: boolean
+  realCommitsAhead: number | null
+  checkpointCommitsAhead?: number | null
+}): TaskVerbCategory {
+  const { worktreeExists, recoveryExhausted, realCommitsAhead } = opts
+  const checkpointCommitsAhead = opts.checkpointCommitsAhead ?? 0
+
+  if (worktreeExists === null) return 'unknown'
+
+  // Worktree present and recovery unspent: continue is safe.
+  if (worktreeExists && !recoveryExhausted) return 'continue'
+
+  // Real commits exist on the branch: remerge can land them (with or without worktree).
+  if (realCommitsAhead === null) return 'unknown'
+  if (realCommitsAhead > 0) return 'remerge'
+
+  // realCommitsAhead = 0
+  // Checkpoint commits exist: supersede is the path, but it has no bulk form.
+  if (checkpointCommitsAhead > 0) return 'unknown'
+
+  // Nothing ahead, nothing to lose → restart is the only forward path.
+  return 'restart'
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const str = (v: unknown): string =>
@@ -416,60 +465,37 @@ const RECIPE_DEFINITIONS = {
 
       const verbs: RecipeVerb[] = []
 
-      if (worktreeExists === null) {
-        // Not probed (beyond MAX_DIRTY_PROBES cap or repoRoot absent) — cannot
-        // claim any safe verb. The destructive pair below still requires confirmation.
-      } else if (worktreeExists) {
-        // Worktree exists. Continue is safe when recovery has not been exhausted.
-        // When exhausted, the coder cannot run there again; fall through to the
-        // commits-ahead classification to determine what can be salvaged.
-        if (!recoveryExhausted) {
-          verbs.push({ op: 'continue', label: 'Resume on existing worktree', style: 'primary' })
-        } else if (realCommitsAhead === null) {
-          // Not probed — cannot claim any safe verb.
-        } else if (realCommitsAhead > 0) {
-          const n = realCommitsAhead
-          verbs.push({
-            op: 'remerge',
-            label: `Re-verify and merge ${n} commit${n === 1 ? '' : 's'}`,
-            style: 'primary',
-          })
-        } else if (checkpointCommitsAhead !== null && checkpointCommitsAhead > 0) {
-          verbs.push({
-            op: 'copy',
-            label: 'Copy supersede command',
-            style: 'default',
-            hint: `mars task add --supersede ${taskId} --prompt-file <path>`,
-          })
-        }
-        // else: exhausted + 0 real + 0 checkpoint → restart is the only forward
-        // path; the destructive pair below communicates this.
-      } else {
-        // Worktree missing (worktreeExists === false). `mars continue` requires
-        // the worktree to be on disk — without it the operation hard-errors or
-        // silently degrades to a destructive restart. Real commits on the branch
-        // are still accessible via `mars remerge`, which does not need the
-        // worktree directory. Decision is based on commit counts alone.
-        if (realCommitsAhead === null) {
-          // Not probed — cannot claim any safe verb.
-        } else if (realCommitsAhead > 0) {
-          const n = realCommitsAhead
-          verbs.push({
-            op: 'remerge',
-            label: `Re-verify and merge ${n} commit${n === 1 ? '' : 's'}`,
-            style: 'primary',
-          })
-        } else if (checkpointCommitsAhead !== null && checkpointCommitsAhead > 0) {
-          verbs.push({
-            op: 'copy',
-            label: 'Copy supersede command',
-            style: 'default',
-            hint: `mars task add --supersede ${taskId} --prompt-file <path>`,
-          })
-        }
-        // else: missing worktree + 0 real + 0 checkpoint → restart is the only
-        // forward path; the destructive pair below communicates this.
+      // Use the shared classifier — same decision table as the wave raiser uses
+      // for bulk-verb unanimity. One source of truth; no drift between row and wave.
+      const category = classifyTaskVerbCategory({
+        worktreeExists,
+        recoveryExhausted,
+        realCommitsAhead,
+        checkpointCommitsAhead,
+      })
+
+      if (category === 'continue') {
+        verbs.push({ op: 'continue', label: 'Resume on existing worktree', style: 'primary' })
+      } else if (category === 'remerge') {
+        const n = realCommitsAhead!
+        verbs.push({
+          op: 'remerge',
+          label: `Re-verify and merge ${n} commit${n === 1 ? '' : 's'}`,
+          style: 'primary',
+        })
+      } else if (category === 'unknown' && checkpointCommitsAhead !== null && checkpointCommitsAhead > 0) {
+        // Supersede is the only non-destructive path (checkpoint commits, zero real commits).
+        // There is no bulk form for supersede, so classifyTaskVerbCategory returns 'unknown'.
+        // For the individual row, the Copy button is still the right offer.
+        verbs.push({
+          op: 'copy',
+          label: 'Copy supersede command',
+          style: 'default',
+          hint: `mars task add --supersede ${taskId} --prompt-file <path>`,
+        })
       }
+      // 'restart': restart is the only forward path; the destructive verb below names it.
+      // 'unknown' without checkpoints: no safe primary verb; destructive pair still confirms.
 
       // Restart label names the commit count it would discard when commits are
       // at risk — an operator reading the label cannot miss what Restart deletes.
@@ -1242,16 +1268,28 @@ const RECIPE_DEFINITIONS = {
       caughtTaskCount: ctx.payload['caughtTaskCount'],
       caughtTaskIds: ctx.payload['caughtTaskIds'],
     }),
-    // Offer a bulk-continue button only when every affected task can take it.
+    // Offer a bulk verb only when every affected task unanimously agrees on one.
     // The wave entityId is a hash, not a task id, so task-scoped verbs like
-    // restart/purge cannot be used here — the client dispatches continue per
-    // member via the continue-wave op.
+    // restart/purge cannot be used here — the client dispatches the op per
+    // member via the *-wave ops (continue-wave, restart-wave, remerge-wave).
+    //
+    // bulkVerb is set by deriveSignatureWaveConditions, which calls
+    // classifyTaskVerbCategory for each member and checks for unanimity.
     verbs: (ctx) => {
-      if (ctx.payload['bulkContinuable'] !== true) return []
       const count = typeof ctx.payload['caughtTaskCount'] === 'number'
-        ? ctx.payload['caughtTaskCount']
+        ? (ctx.payload['caughtTaskCount'] as number)
         : (ctx.payload['caughtTaskIds'] as unknown[])?.length ?? 0
-      return [{ op: 'continue-wave', label: `Continue all ${count}`, style: 'primary' as const }]
+      const bulkVerb = ctx.payload['bulkVerb'] as string | null | undefined
+      if (bulkVerb === 'continue') {
+        return [{ op: 'continue-wave', label: `Continue all ${count}`, style: 'primary' as const }]
+      }
+      if (bulkVerb === 'restart') {
+        return [{ op: 'restart-wave', label: `Restart all ${count} — discards nothing`, style: 'primary' as const }]
+      }
+      if (bulkVerb === 'remerge') {
+        return [{ op: 'remerge-wave', label: `Re-verify and merge all ${count}`, style: 'primary' as const }]
+      }
+      return []
     },
   },
 

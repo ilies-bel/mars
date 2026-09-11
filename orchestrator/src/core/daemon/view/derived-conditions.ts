@@ -27,6 +27,7 @@ import type { BudgetArcPayload } from '../../lib/payload-contracts/spend'
 import { isDiagnosticSignature, signatureNamesASharedCause, SIGNATURE_STORM_TRIP_THRESHOLD } from '../../lib/signature-storm-monitor'
 import { resolveFailureKind } from '../../lib/failure-kinds'
 import { integrationBranchName } from '../../lib/blocker-resolution-primitives.js'
+import { classifyTaskVerbCategory } from '../../lib/action-queue-recipes'
 
 // ── Stable ID helper ─────────────────────────────────────────────────────────
 
@@ -1105,7 +1106,7 @@ async function deriveSignatureWaveConditions(
   nowMs: number,
 ): Promise<SignatureWaveResult> {
   const result = await client.execute(
-    `SELECT id, failure_signature, error, updated_at, worktree_path, failure_reason
+    `SELECT id, failure_signature, error, updated_at, worktree_path, failure_reason, branch
        FROM tasks
       WHERE status = 'failed'
         AND failure_signature IS NOT NULL`,
@@ -1113,11 +1114,13 @@ async function deriveSignatureWaveConditions(
 
   // Per-group state: canonical signature, key type, first raw error (for
   // error-keyed title), task ids, latest update timestamp, and per-member
-  // continuability data for the bulk verb.
+  // data for the bulk-verb unanimity check.
   interface WaveMember {
     id: string
     worktreePath: string | null
     recoveryExhausted: boolean
+    /** Git branch the task was on, or null when none was allocated (e.g. setup failure). */
+    branch: string | null
   }
   interface WaveGroup {
     canonical: string
@@ -1140,6 +1143,7 @@ async function deriveSignatureWaveConditions(
       updated_at: string | null
       worktree_path: string | null
       failure_reason: string | null
+      branch: string | null
     }
     const sig = row.failure_signature
     // Non-diagnostic signatures are always skipped (same gate as before).
@@ -1170,6 +1174,7 @@ async function deriveSignatureWaveConditions(
       worktreePath: row.worktree_path ?? null,
       recoveryExhausted: typeof row.failure_reason === 'string'
         && row.failure_reason.startsWith(RECOVERY_EXHAUSTED_PREFIX),
+      branch: row.branch ?? null,
     }
 
     const existing = groups.get(key)
@@ -1192,12 +1197,25 @@ async function deriveSignatureWaveConditions(
     const count = group.taskIds.length
     const sortedIds = group.taskIds.slice().sort()
 
-    // A bulk-continue is only safe when EVERY affected task has an existing
-    // worktree (so `mars continue` won't silently degrade to restart) AND
-    // has not exhausted its recovery slot (so continue is actually accepted).
-    const bulkContinuable = group.members.every(
-      (m) => !m.recoveryExhausted && m.worktreePath !== null && existsSync(m.worktreePath),
-    )
+    // Classify each member's primary forward-path verb using the same decision
+    // function the `failed` recipe uses for per-row verbs. For wave members
+    // without a git probe, we use a branch-presence shortcut:
+    //   - branch === null → realCommitsAhead = 0 (nothing on a nonexistent branch)
+    //   - branch !== null → realCommitsAhead = null (not probed; treated as unknown)
+    // This is conservative: a member with a branch but unknown commits counts as
+    // 'unknown', which prevents a false "Restart all" when commits may exist.
+    const memberCategories = group.members.map((m) => {
+      const worktreeExists = m.worktreePath !== null && existsSync(m.worktreePath)
+      // No branch → nothing ahead; branch present but unprobed → unknown.
+      const realCommitsAhead = m.branch === null ? 0 : null
+      return classifyTaskVerbCategory({ worktreeExists, recoveryExhausted: m.recoveryExhausted, realCommitsAhead })
+    })
+
+    const firstCategory = memberCategories[0] ?? 'unknown'
+    const bulkVerb: string | null =
+      firstCategory !== 'unknown' && memberCategories.every((c) => c === firstCategory)
+        ? firstCategory
+        : null
 
     // Title names the cause (DEC-18: raw step ids must never be the sole
     // cause description in an operator-facing field).
@@ -1211,6 +1229,17 @@ async function deriveSignatureWaveConditions(
         ? `${firstLine.slice(0, WAVE_TITLE_CAUSE_MAX - 1)}…`
         : firstLine || group.canonical
     }
+
+    // Body instruction depends on the unanimous bulk verb so operators know
+    // what action to take after fixing the root cause.
+    const bulkInstruction =
+      bulkVerb === 'continue'
+        ? 'Fix the root cause, then `mars continue` each affected task.'
+        : bulkVerb === 'restart'
+        ? 'Fix the root cause, then `mars restart` each affected task — nothing will be discarded.'
+        : bulkVerb === 'remerge'
+        ? 'Fix the root cause, then `mars remerge` each affected task.'
+        : 'Review each affected task and choose the appropriate recovery action.'
 
     return {
       // Identity comes from the bucket partition key, not from group.canonical.
@@ -1230,7 +1259,7 @@ async function deriveSignatureWaveConditions(
         ``,
         `Affected tasks (${count}): ${sortedIds.join(', ')}`,
         ``,
-        `Fix the root cause, then \`mars continue\` each affected task.`,
+        bulkInstruction,
       ].join('\n'),
       payload: {
         // Raw signature lives in payload for detail views / diagnostic scripts
@@ -1238,9 +1267,10 @@ async function deriveSignatureWaveConditions(
         signature: group.canonical,
         caughtTaskCount: count,
         caughtTaskIds: sortedIds,
-        // true iff every affected task can accept `mars continue` right now:
-        // worktree exists and recovery slot is not exhausted.
-        bulkContinuable,
+        // Unanimous bulk verb when every member agrees on the same forward path:
+        // 'continue' | 'restart' | 'remerge' | null (null = members disagree or unknown).
+        // Used by the signature-wave recipe to offer a single-click bulk action.
+        bulkVerb,
       },
       context: {},
       raisedAt: group.latestMs,
