@@ -5,12 +5,22 @@
  * probeE2eTooling and asserts on the returned report. No child processes are
  * spawned; the function is pure filesystem-only.
  *
- * Test cases:
- *   1. Everything present     → available: true
- *   2. Playwright missing     → available: false, missing/setupSteps mention package
- *   3. Browsers missing       → available: false, setupSteps include playwright install
- *   4. No boot plan           → available: false, missing mentions dev server
- *   5. Monorepo subdirectory  → boot plan resolved from ui/ subdir, available varies
+ * ## Test structure
+ *
+ * ### Existing playwright-local probe tests (Tests 1–7)
+ *
+ * These tests verify the `playwright-local` implementation's probe logic by
+ * passing `{ drivers: [playwrightLocalDriver] }` to `probeE2eTooling`. This
+ * isolates them from any other registered driver (e.g. `chrome-exec`) that
+ * might be available on the test machine and would otherwise cause
+ * `available: false` assertions to fail.
+ *
+ * ### Registry behavior tests (Tests 8–9)
+ *
+ * These tests verify that `probeE2eTooling` uses the registry correctly: it
+ * returns the first available driver, falls back to later candidates, and
+ * collects all candidates' setup steps when none is available.
+ * Fully mocked drivers are used so tests are deterministic on any machine.
  */
 
 import { describe, it, expect, afterEach } from 'vitest'
@@ -18,6 +28,8 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readdirSync 
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { probeE2eTooling } from '../e2e-tooling'
+import { playwrightLocalDriver } from '../../ports/ui-driver/playwright-local'
+import type { UiDriver, UiDriverProbeResult, UiSessionSpec, UiSessionResult } from '../../ports/ui-driver/types'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -71,12 +83,15 @@ const createBrowsersDir = (browsersPath: string): void => {
   writeFileSync(join(chromiumDir, 'chrome'), '#!/bin/sh\n')
 }
 
-/** Run the probe with PLAYWRIGHT_BROWSERS_PATH overridden to a temp dir. */
+/**
+ * Run the probe with PLAYWRIGHT_BROWSERS_PATH overridden to a temp dir, using
+ * only the playwright-local driver for test isolation.
+ */
 const probeWithBrowserPath = (repoRoot: string, browsersPath: string) => {
   const prev = process.env.PLAYWRIGHT_BROWSERS_PATH
   process.env.PLAYWRIGHT_BROWSERS_PATH = browsersPath
   try {
-    return probeE2eTooling(repoRoot)
+    return probeE2eTooling(repoRoot, { drivers: [playwrightLocalDriver] })
   } finally {
     if (prev === undefined) {
       delete process.env.PLAYWRIGHT_BROWSERS_PATH
@@ -85,6 +100,29 @@ const probeWithBrowserPath = (repoRoot: string, browsersPath: string) => {
     }
   }
 }
+
+// ---------------------------------------------------------------------------
+// Mock driver factory
+// ---------------------------------------------------------------------------
+
+/** Build a deterministic mock UiDriver for registry tests. */
+const makeMockDriver = (
+  kind: string,
+  state: 'available' | 'absent',
+  setupSteps: string[] = [],
+  installCost = 1,
+): UiDriver => ({
+  kind,
+  capability: `mock-${kind}`,
+  installCost,
+  probe: (_repoRoot: string): UiDriverProbeResult => ({
+    state,
+    evidence: state === 'available' ? `${kind}: available` : `${kind}: absent`,
+    setupSteps,
+  }),
+  runSession: (_spec: UiSessionSpec): Promise<UiSessionResult> =>
+    Promise.resolve({ captureResults: [] }),
+})
 
 // ---------------------------------------------------------------------------
 // Test 1: Everything present → available: true
@@ -103,7 +141,7 @@ describe('probeE2eTooling', () => {
       const report = probeWithBrowserPath(root, browsersDir)
 
       expect(report.available).toBe(true)
-      expect(report.runner).toBe('playwright')
+      expect(report.runner).toBe('playwright-local')
       expect(report.missing).toHaveLength(0)
       expect(report.setupSteps).toHaveLength(0)
     })
@@ -155,11 +193,11 @@ describe('probeE2eTooling', () => {
       const report = probeWithBrowserPath(root, browsersDir)
 
       expect(report.available).toBe(false)
-      // At least playwright package and config are missing
-      expect(report.missing.length).toBeGreaterThanOrEqual(2)
+      // At least playwright package and config are missing (combined into evidence)
+      expect(report.missing.length).toBeGreaterThanOrEqual(1)
     })
 
-    it('sets runner to playwright when playwright dep is found even if other pieces missing', () => {
+    it('returns available:false when playwright dep is found but other pieces missing', () => {
       const root = makeTmpDir()
       const browsersDir = makeTmpDir()
 
@@ -169,7 +207,7 @@ describe('probeE2eTooling', () => {
 
       const report = probeWithBrowserPath(root, browsersDir)
 
-      expect(report.runner).toBe('playwright')
+      expect(report.runner).toBe('none')
       expect(report.available).toBe(false)
     })
   })
@@ -289,7 +327,7 @@ describe('probeE2eTooling', () => {
 
       const report = probeWithBrowserPath(root, browsersDir)
 
-      expect(report.runner).toBe('playwright')
+      expect(report.runner).toBe('playwright-local')
       expect(report.missing.some((m) => m.includes('@playwright/test'))).toBe(false)
     })
   })
@@ -316,7 +354,7 @@ describe('probeE2eTooling', () => {
 
       const report = probeWithBrowserPath(root, browsersDir)
 
-      expect(report.runner).toBe('playwright')
+      expect(report.runner).toBe('playwright-local')
       expect(report.missing.some((m) => m.includes('@playwright/test'))).toBe(false)
       expect(report.available).toBe(true)
     })
@@ -358,7 +396,7 @@ describe('probeE2eTooling', () => {
       const prev = process.env.PLAYWRIGHT_BROWSERS_PATH
       delete process.env.PLAYWRIGHT_BROWSERS_PATH
       try {
-        const report = probeE2eTooling(root)
+        const report = probeE2eTooling(root, { drivers: [playwrightLocalDriver] })
         const macOsPath = join(homedir(), 'Library', 'Caches', 'ms-playwright')
         const hasCache = existsSync(macOsPath) && readdirSync(macOsPath).length > 0
         // If the macOS cache dir is populated, browsers must not appear in missing.
@@ -368,6 +406,103 @@ describe('probeE2eTooling', () => {
       } finally {
         if (prev !== undefined) process.env.PLAYWRIGHT_BROWSERS_PATH = prev
       }
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // Test 8: Registry behavior — first available driver wins
+  // ---------------------------------------------------------------------------
+
+  describe('registry resolution', () => {
+    it('returns the first available driver and its kind as runner', () => {
+      const driverA = makeMockDriver('mock-A', 'available', [], 2)
+      const driverB = makeMockDriver('mock-B', 'available', [], 1)
+      const root = makeTmpDir()
+
+      const report = probeE2eTooling(root, { drivers: [driverA, driverB] })
+
+      expect(report.available).toBe(true)
+      // driverA is first in list, so it wins even though driverB has lower cost.
+      expect(report.runner).toBe('mock-A')
+      expect(report.missing).toHaveLength(0)
+      expect(report.setupSteps).toHaveLength(0)
+    })
+
+    it('falls back to the second driver when the first is absent', () => {
+      const driverA = makeMockDriver('mock-A', 'absent', ['install-A'])
+      const driverB = makeMockDriver('mock-B', 'available', [])
+      const root = makeTmpDir()
+
+      const report = probeE2eTooling(root, { drivers: [driverA, driverB] })
+
+      expect(report.available).toBe(true)
+      expect(report.runner).toBe('mock-B')
+    })
+
+    it('returns available:false with deduped setup steps when no driver is available', () => {
+      const shared = 'brew install --cask google-chrome'
+      const driverA = makeMockDriver('mock-A', 'absent', ['install-A', shared], 2)
+      const driverB = makeMockDriver('mock-B', 'absent', [shared, 'install-B'], 1)
+      const root = makeTmpDir()
+
+      const report = probeE2eTooling(root, { drivers: [driverA, driverB] })
+
+      expect(report.available).toBe(false)
+      expect(report.runner).toBe('none')
+      // Cheapest (driverB, cost=1) steps should come first; shared step deduped.
+      const sharedCount = report.setupSteps.filter((s) => s === shared).length
+      expect(sharedCount).toBe(1)
+      expect(report.setupSteps).toContain('install-B')
+      expect(report.setupSteps).toContain('install-A')
+    })
+
+    it('collects missing evidence from all candidates when none available', () => {
+      const driverA = makeMockDriver('mock-A', 'absent', ['install-A'])
+      const driverB = makeMockDriver('mock-B', 'absent', ['install-B'])
+      const root = makeTmpDir()
+
+      const report = probeE2eTooling(root, { drivers: [driverA, driverB] })
+
+      expect(report.missing).toContain('mock-A: absent')
+      expect(report.missing).toContain('mock-B: absent')
+    })
+
+    it('an empty driver list returns available:false with no steps', () => {
+      const root = makeTmpDir()
+      const report = probeE2eTooling(root, { drivers: [] })
+      expect(report.available).toBe(false)
+      expect(report.runner).toBe('none')
+      expect(report.missing).toHaveLength(0)
+      expect(report.setupSteps).toHaveLength(0)
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // Test 9: Open registry — new driver requires no resolver change
+  // ---------------------------------------------------------------------------
+
+  describe('open registry — adding a driver requires no resolver change', () => {
+    it('a third-party driver injected via options is picked up by the existing resolver', () => {
+      const thirdPartyDriver = makeMockDriver('custom-driver', 'available', [])
+      const root = makeTmpDir()
+
+      // The resolver is the same probeE2eTooling function; no changes needed.
+      const report = probeE2eTooling(root, { drivers: [thirdPartyDriver] })
+
+      expect(report.available).toBe(true)
+      expect(report.runner).toBe('custom-driver')
+    })
+
+    it('a driver registered as absent does not prevent other drivers from being found', () => {
+      const absent = makeMockDriver('absent-driver', 'absent', ['install-X'])
+      const present = makeMockDriver('present-driver', 'available', [])
+      const root = makeTmpDir()
+
+      // Even if the absent driver is first, the present one is found.
+      const report = probeE2eTooling(root, { drivers: [absent, present] })
+
+      expect(report.available).toBe(true)
+      expect(report.runner).toBe('present-driver')
     })
   })
 })

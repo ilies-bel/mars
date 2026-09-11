@@ -329,6 +329,32 @@ module.exports = {
     },
 
     {
+      name: 'ui-driver-port-only',
+      severity: 'error',
+      comment:
+        'UI driver implementations (playwright-local.ts, chrome-exec.ts) are reachable ' +
+        'only through the UiDriver Port (core/ports/ui-driver/*, ADR-0097). These implementation ' +
+        'files contain live-process logic (Playwright launch, Chrome spawn) that must stay behind ' +
+        'the serializable port contract — a caller that imports playwright-local.ts or chrome-exec.ts ' +
+        'directly bypasses the open registry, hard-wires a specific driver, and can never be ' +
+        'transparently replaced by a remote or sandboxed driver. Resolve a UiDriver through ' +
+        'registry.ts (`resolveUiDriver`, `listUiDrivers`) to detect and use whatever tooling is ' +
+        'available on the current machine. Test files are excepted (a unit test\'s vi.mock(\'.../chrome-exec\') ' +
+        'must name the real module path to intercept what the implementation actually calls).',
+      from: {
+        path: '^orchestrator/src/',
+        pathNot: [
+          '^orchestrator/src/core/ports/ui-driver/',
+          '(^|/)__tests__/',
+          '\\.(test|spec)\\.ts$',
+        ],
+      },
+      to: {
+        path: '^orchestrator/src/core/ports/ui-driver/(playwright-local|chrome-exec)\\.ts$',
+      },
+    },
+
+    {
       name: 'no-cli-to-core',
       severity: 'error',
       comment:
