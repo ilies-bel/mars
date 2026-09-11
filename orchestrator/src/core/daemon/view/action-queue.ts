@@ -93,6 +93,15 @@ export interface ActionQueueRow {
   title: string
   body: string
   at: string
+  /**
+   * ISO timestamp of when this item was last seen by the raiser. Distinct from
+   * `at` (which answers "when did this become true?") — `lastSeenAt` answers
+   * "when was this last refreshed?". A surface that wants "first seen 6d ago,
+   * last seen 2m ago" can use both fields independently.
+   *
+   * Do NOT render this as the row's age; that role belongs to `at`.
+   */
+  lastSeenAt: string
   dag: {
     blockers: { id: string; status: string; summary: string }[]
     blocking: { id: string; status: string; summary: string }[]
@@ -1792,34 +1801,24 @@ export const buildActionQueueView = async ({
           : (isActionQueueKind(row.kind) && KIND_CLASS[row.kind as ActionQueueKind] === 'notice' ? row.kind : null))
       : null
 
-    // Derived items are regenerated on every read, so their `lastSeenAt` is the
-    // query time — rendering it makes every derived item claim it happened "0s
-    // ago" no matter how old the underlying evidence is. Their `raisedAt` is
-    // the real evidence time (a gate's `last_failure_at`, a crash's
-    // `crashDetectedAt`, a worktree's mtime), so read that instead.
+    // `at` answers one question for every row: "when did this become true?"
+    // That is `raisedAt` unconditionally. Previous versions maintained a
+    // per-kind allowlist ("which kinds have a lying lastSeenAt?") that had to
+    // be extended three separate times as new raisers started bumping
+    // lastSeenAt on recompute — derived kinds, then `reflect-recommended`,
+    // then stored kinds whose raisers silently joined the same pattern. An
+    // allowlist in the render layer tracking a raiser-side property is
+    // structurally unsound: any raiser can bump lastSeenAt without touching
+    // this file, and the next bug is silent by construction. The fix inverts
+    // the invariant: use raisedAt everywhere. lastSeenAt is preserved as its
+    // own labelled field so surfaces that need both can have both.
     //
-    // This was previously patched per-kind for `failed` and `daemon-died`,
-    // which left the other derived kinds lying: five quarantined gates all
-    // rendered "0s ago" on a live queue. It is a structural property of
-    // DERIVED_KINDS, not tied to any single class, so check membership once
-    // and apply it.
-    //
-    // `failed` keeps its sharper source: the task's own updatedAt is the exact
-    // failure time, where raisedAt is only the derive-time fallback.
-    //
-    // `reflect-recommended` is a stored (non-derived) row, but its raiser
-    // bumps `lastSeenAt` on every detector recompute — so `lastSeenAt` tracks
-    // when evidence was last evaluated, NOT when the advisory was first raised.
-    // Using it would make the row always appear brand-new to the operator.
-    // `raisedAt` is the stable origin timestamp; use it here too.
-    //
-    // All other stored rows have a meaningful lastSeenAt.
+    // `failed` keeps its sharper source: the task's own updatedAt is the
+    // exact failure time; raisedAt is only the derive-time fallback.
     const rowAt =
       row.kind === 'failed'
         ? (taskById.get(entityId)?.updatedAt ?? new Date(row.raisedAt).toISOString())
-        : DERIVED_KINDS.has(row.kind as ActionQueueKind) || row.kind === 'reflect-recommended'
-          ? new Date(row.raisedAt).toISOString()
-          : new Date(row.lastSeenAt).toISOString()
+        : new Date(row.raisedAt).toISOString()
 
     rows.push({
       id: row.id,
@@ -1829,6 +1828,7 @@ export const buildActionQueueView = async ({
       title,
       body,
       at: rowAt,
+      lastSeenAt: new Date(row.lastSeenAt).toISOString(),
       dag,
       errorKind,
       actions,
@@ -1920,6 +1920,7 @@ export const buildActionQueueView = async ({
       title: batchTitle,
       body: batchBody,
       at: newest.at,
+      lastSeenAt: newest.lastSeenAt,
       dag: null,
       errorKind: 'daemon-killed-batch',
       actions: batchActions,
@@ -2290,6 +2291,7 @@ export const buildActionQueueHistoryView = async ({
       title,
       body,
       at: new Date(row.lastSeenAt).toISOString(),
+      lastSeenAt: new Date(row.lastSeenAt).toISOString(),
       dag,
       errorKind,
       actions: [], // Resolved rows are read-only; no actions.

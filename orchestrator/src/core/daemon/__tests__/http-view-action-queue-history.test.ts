@@ -280,6 +280,7 @@ describe('GET /view/action-queue/history via HTTP server', () => {
       title: 'Resolved task',
       body: 'body text',
       at: '2024-01-01T00:00:00.000Z',
+      lastSeenAt: '2024-01-01T00:00:00.000Z',
       dag: null,
       errorKind: 'failed-task',
       actions: [],

@@ -135,7 +135,10 @@ describe('buildActionQueueView — condition rows report evidence time, not deri
     expect(rows[0]!.at).toBe(EVIDENCE)
   })
 
-  it('keeps lastSeenAt for stored decision rows', async () => {
+  it('uses raisedAt for stored decision rows; lastSeenAt is a separate field', async () => {
+    // Stored rows whose raisers bump lastSeenAt on recompute (e.g. gate-enrichment)
+    // previously made the row always appear brand-new to the operator. The fix:
+    // at = raisedAt unconditionally, lastSeenAt emitted as its own labelled field.
     const rows = await buildActionQueueView({
       stateStore: makeStateStore([
         makeRow({
@@ -149,8 +152,35 @@ describe('buildActionQueueView — condition rows report evidence time, not deri
       taskStore: makeTaskStore([]),
       ...BASE_PARAMS,
     })
-    expect(rows[0]!.at).toBe(DERIVED)
+    expect(rows[0]!.at).toBe(EVIDENCE)
+    expect(rows[0]!.lastSeenAt).toBe(DERIVED)
   })
+
+  // Exhaustive guard: loops over every registered kind so that a new raiser
+  // bumping lastSeenAt fails loudly here rather than silently shipping.
+  // Excludes 'failed' which has its own sharper source (task.updatedAt).
+  it.each(ACTION_QUEUE_KINDS.filter((k) => k !== 'failed'))(
+    'at equals raisedAt for kind "%s" even when lastSeenAt is far later',
+    async (kind) => {
+      const rows = await buildActionQueueView({
+        stateStore: makeStateStore([
+          makeRow({
+            id: `row-${kind}`,
+            kind: kind as PersistedActionQueueRow['kind'],
+            payload: {},
+            raisedAt: Date.parse(EVIDENCE),
+            lastSeenAt: Date.parse(DERIVED),
+          }),
+        ]),
+        taskStore: makeTaskStore([]),
+        ...BASE_PARAMS,
+      })
+      // Some kinds may require specific payloads to emit a row; skip those rather
+      // than masking them — the key invariant is "if emitted, at === raisedAt".
+      if (rows.length === 0) return
+      expect(rows[0]!.at).toBe(EVIDENCE)
+    },
+  )
 })
 
 // ── title/body derivation from Failure kind registry (slice 2) ───────────────
