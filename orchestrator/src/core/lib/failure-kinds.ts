@@ -1150,7 +1150,16 @@ export const resolveFailureKind = (
         warmTitle,
       }
     }
-    return unknownFailureKind(failingStepFromSignature(signature), capturedError)
+    // Before falling back to the generic step-family label, look up the step
+    // part of the signature in the registry. A registered kind whose name is
+    // not step-shaped (e.g. `done-with-unverifiable-merge`) loses its identity
+    // when an error-class suffix is appended (`…/unclassified`). Returning the
+    // registered parent kind can only add information — it is never less
+    // specific than the generic bucket.
+    const parentStep = failingStepFromSignature(signature)
+    const parentHit = lookupFailureKind(parentStep)
+    if (parentHit) return parentHit
+    return unknownFailureKind(parentStep, capturedError)
   }
   return unknownFailureKind('unknown', capturedError)
 }

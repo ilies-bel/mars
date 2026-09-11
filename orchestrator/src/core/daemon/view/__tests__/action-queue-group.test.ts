@@ -207,6 +207,27 @@ describe('groupActionQueueRows', () => {
     expect(group.priority).toBe('high')
   })
 
+  it('two rows sharing failureReasonCode but with different humanDetail.failureSignature stay in separate buckets', () => {
+    // The live symptom: mars-874b2a81 (setup/unclassified) and mars-3176234e
+    // (code/test-assertion-error) both carried failure_reason_code='terminal/unclassified'.
+    // The old grouper bucketed by reason code and collapsed them into one group
+    // with a single misleading headline. The fix: prefer humanDetail.failureSignature
+    // as the bucket key so different root causes stay separated.
+    _seq = 0
+    const rows = [
+      makeRow('failed', 'terminal/unclassified', {
+        humanDetail: { failureSignature: 'setup/unclassified' },
+      }),
+      makeRow('failed', 'terminal/unclassified', {
+        humanDetail: { failureSignature: 'code/test-assertion-error' },
+      }),
+    ]
+    const result = groupActionQueueRows(rows)
+    // Different signatures → two separate singletons, not one group.
+    expect(result).toHaveLength(2)
+    expect(result.every((r) => r.type === 'item')).toBe(true)
+  })
+
   it('previewIds contains at most 3 entity ids; overflowCount holds the rest', () => {
     _seq = 0
     const rows = Array.from({ length: 6 }, () => makeRow('failed', 'code/typecheck-error'))
