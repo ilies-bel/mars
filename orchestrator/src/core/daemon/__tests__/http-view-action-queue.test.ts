@@ -253,7 +253,7 @@ describe('buildActionQueueView — stale-worktree row', () => {
     expect(row.staleWorktreeDetail!.status).toBe('done')
     expect(row.staleWorktreeDetail!.ageHours).toBe(48)
     expect(row.staleWorktreeDetail!.branch).toBe('task/abc')
-    expect(row.dag).toBeNull()
+    expect(row.dag).not.toBeNull()
   })
 
   describe('with real git worktree', () => {

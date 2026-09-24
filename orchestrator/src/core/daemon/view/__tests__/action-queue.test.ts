@@ -14,7 +14,12 @@
 
 import { describe, it, expect } from 'vitest'
 import { groupActionQueueRows } from '../action-queue-group'
-import type { ActionQueueRow } from '../action-queue'
+import {
+  buildActionQueueView,
+  type ActionQueueRow,
+  type PersistedActionQueueRow,
+  type TaskForActionQueue,
+} from '../action-queue'
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -161,5 +166,69 @@ describe('action-queue shared grouping layer — HR-3 regression', () => {
   it('empty input returns empty output — no crash on zero rows', () => {
     const grouped = groupActionQueueRows([])
     expect(grouped).toHaveLength(0)
+  })
+})
+
+// ── task-backed operator rows carry dag + entityTitle ────────────────────────
+
+describe('buildActionQueueView — task-backed rows resolve dag and entityTitle', () => {
+  const persisted = (
+    kind: PersistedActionQueueRow['kind'],
+    payload: Record<string, unknown>,
+    context: Record<string, unknown> = {},
+  ): PersistedActionQueueRow => ({
+    id: `row-${kind}`,
+    kind,
+    priority: 'normal',
+    title: 't',
+    body: 'b',
+    payload,
+    context,
+    raisedAt: Date.parse('2026-01-01T00:00:00.000Z'),
+    lastSeenAt: Date.parse('2026-01-01T00:00:00.000Z'),
+  })
+  const task: TaskForActionQueue = {
+    id: 'mars-live0001',
+    status: 'running',
+    prompt: 'Ship the parked thing',
+    intent: 'Parked task title',
+    blockedBy: [],
+    parentProposalId: null,
+    failureSignature: null,
+    branch: null,
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  } as TaskForActionQueue
+
+  const build = (rows: PersistedActionQueueRow[]) =>
+    buildActionQueueView({
+      stateStore: {
+        listOpenActionQueueItems: async () => rows,
+        listResolvedActionQueueItems: async () => ({ items: [], nextCursor: null }),
+      },
+      taskStore: { listTasksForActionQueueItems: async () => [task] },
+      repoRoot: '/nonexistent',
+      filter: 'open',
+    })
+
+  it('awaiting-human and stale-worktree rows for a real task carry dag and entityTitle', async () => {
+    const view = await build([
+      persisted('awaiting-human', { taskId: task.id }),
+      persisted('stale-worktree', {}, { taskId: task.id }),
+    ])
+    expect(view).toHaveLength(2)
+    for (const row of view) {
+      expect(row.entityId).toBe(task.id)
+      expect(row.dag).not.toBeNull()
+      expect(row.entityTitle).toBe('Parked task title')
+    }
+  })
+
+  it('rows whose entityId is a slug carry neither', async () => {
+    const view = await build([
+      persisted('reflect-recommended', {}),
+    ])
+    expect(view).toHaveLength(1)
+    expect(view[0].dag).toBeNull()
+    expect(view[0].entityTitle).toBeNull()
   })
 })

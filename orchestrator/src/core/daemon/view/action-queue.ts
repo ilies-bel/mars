@@ -1408,8 +1408,12 @@ export const buildActionQueueView = async ({
     }
 
     // DAG enrichment for task-backed rows.
+    // Keyed on "does entityId resolve to a real task row?", not on the kind:
+    // awaiting-human / stale-worktree rows are task-backed too, and the UI
+    // treats a non-null dag as the "this row links to a fetchable task" signal.
+    // Slug-keyed rows (proposals, gates, scorers) never match taskById.
     let dag: ActionQueueRow['dag'] = null
-    if (isTaskFailure) {
+    {
       const task = taskById.get(entityId)
       if (task) {
         const blockers = task.blockedBy.map(toNode)
@@ -1654,6 +1658,11 @@ export const buildActionQueueView = async ({
           raisedAt: new Date(row.raisedAt).toISOString(),
         })
       }
+    }
+    // Task-backed rows without a recipe accessor fall back to the task's own
+    // display title so the card can name what it is about.
+    if (entityTitle === null && taskForGoals) {
+      entityTitle = taskDisplayTitle(taskForGoals)
     }
 
     // Surface the live preview URL for awaiting-validation rows. The merge
@@ -2051,8 +2060,12 @@ export const buildActionQueueHistoryView = async ({
     const errorKind = toErrorKind(row.kind)
 
     // DAG enrichment (same as live view).
+    // Keyed on "does entityId resolve to a real task row?", not on the kind:
+    // awaiting-human / stale-worktree rows are task-backed too, and the UI
+    // treats a non-null dag as the "this row links to a fetchable task" signal.
+    // Slug-keyed rows (proposals, gates, scorers) never match taskById.
     let dag: ActionQueueRow['dag'] = null
-    if (isTaskFailure) {
+    {
       const task = taskById.get(entityId)
       if (task) {
         const blockers = task.blockedBy.map(toNode)
