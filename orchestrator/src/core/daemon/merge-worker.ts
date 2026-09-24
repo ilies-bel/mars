@@ -596,7 +596,7 @@ async function runMergeJob(
         const durationBadge =
           s.duration !== undefined ? ` ${s.duration}ms` : ''
         outputParts.push(
-          `=== ${s.name} (${s.passed ? 'pass' : 'FAIL'}) [integration]${durationBadge} ===\n${s.output}`,
+          `${gateBlockHeader(s, 'integration', durationBadge)}\n${s.output}`,
         )
         collectedGateChecks.push({
           name: s.name,
@@ -698,7 +698,7 @@ async function runMergeJob(
         const durationBadge =
           s.duration !== undefined ? ` ${s.duration}ms` : ''
         outputParts.push(
-          `=== ${s.name} (${s.passed ? 'pass' : 'FAIL'}) [task]${durationBadge} ===\n${s.output}`,
+          `${gateBlockHeader(s, 'task', durationBadge)}\n${s.output}`,
         )
         collectedGateChecks.push({
           name: s.name,
@@ -856,10 +856,8 @@ async function runMergeJob(
       const gateSlug = gateNameRaw !== null
         ? gateNameRaw.replace(/[^a-z0-9]/gi, '-').toLowerCase().replace(/-{2,}/g, '-').replace(/^-|-$/g, '')
         : 'unknown'
-      // First non-header output line: the human-readable violation.
-      const firstViolation = gateOutput.split('\n').find(l => l.trim() !== '' && !l.startsWith('===')) ?? ''
       const readableReason = gateNameRaw !== null
-        ? `Gate ${gateNameRaw} rejected the change: ${firstViolation}`.slice(0, 400).trim()
+        ? `Gate ${gateNameRaw} rejected the change:\n${failingGateEvidence(gateOutput)}`
         : 'task-tier gate rejected the rebased tree'
       const errorMsg = `verify:gate/${gateSlug}: ${readableReason}`
 
@@ -896,9 +894,8 @@ async function runMergeJob(
       const gateSlug = gateNameRaw !== null
         ? gateNameRaw.replace(/[^a-z0-9]/gi, '-').toLowerCase().replace(/-{2,}/g, '-').replace(/^-|-$/g, '')
         : 'unknown'
-      const firstViolation = gateOutput.split('\n').find(l => l.trim() !== '' && !l.startsWith('===')) ?? ''
       const readableReason = gateNameRaw !== null
-        ? `Integration gate ${gateNameRaw} failed: ${firstViolation}`.slice(0, 400).trim()
+        ? `Integration gate ${gateNameRaw} failed:\n${failingGateEvidence(gateOutput)}`
         : 'integration-tier gate rejected the merge'
       const errorMsg = `verify:gate/${gateSlug}: ${readableReason}`
 
@@ -1032,6 +1029,43 @@ function waitForJobOrTimeout(signal: AbortSignal, bus: EventEmitter, ms: number)
     bus.once('merge-job.enqueued', done)
     signal.addEventListener('abort', done, { once: true })
   })
+}
+
+
+/** Max lines of a failing gate's own output kept in a rejection message. */
+const GATE_TAIL_LINES = 40
+/** Char cap on that tail; `merge.ts` truncates the whole error at 2000. */
+const GATE_TAIL_CHARS = 1500
+
+/**
+ * Header line for one gate's block in the aggregated gate output. Carries the
+ * resolved command and exit code so a rejection is reproducible from the
+ * message alone. The `=== <name> (FAIL)` prefix is parsed by
+ * {@link failingGateEvidence} and the rejection intercepts below.
+ */
+const gateBlockHeader = (
+  s: { name: string; passed: boolean; cmd?: string; args?: readonly string[]; exitCode?: number | null },
+  tier: 'task' | 'integration',
+  durationBadge: string,
+): string => {
+  const cmd = s.cmd !== undefined ? ` cmd=${[s.cmd, ...(s.args ?? [])].join(' ')}` : ''
+  const exit = s.exitCode !== undefined ? ` exit=${s.exitCode === null ? 'killed' : s.exitCode}` : ''
+  return `=== ${s.name} (${s.passed ? 'pass' : 'FAIL'}) [${tier}]${durationBadge}${cmd}${exit} ===`
+}
+
+/**
+ * The first FAIL gate's own block from aggregated gate output — its header
+ * (command + exit code) plus a bounded tail of ITS output. Other gates'
+ * blocks are never blended in.
+ */
+const failingGateEvidence = (gateOutput: string): string => {
+  const block = gateOutput
+    .split(/\n\n(?==== )/)
+    .find((b) => /^=== [^\s(]+ \(FAIL\)/.test(b))
+  if (block === undefined) return gateOutput.slice(-GATE_TAIL_CHARS)
+  const [header = '', ...body] = block.split('\n')
+  const tail = body.slice(-GATE_TAIL_LINES).join('\n').slice(-GATE_TAIL_CHARS)
+  return `${header}\n${tail}`
 }
 
 /**

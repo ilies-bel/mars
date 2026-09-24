@@ -1681,6 +1681,77 @@ describe('startMergeWorker — rebased-tree gate failure (regression mars-4d58c1
     // The gate name must appear in the error for operator readability.
     expect(failedJob?.error).toContain('lint')
   })
+
+  it('rejection carries only the failing gate\'s own command, exit code and output tail', async () => {
+    _mockIntegrationGates = [
+      {
+        scope: '.',
+        steps: [
+          { name: 'knip', cmd: 'npm', args: ['run', 'knip'], required: true, tier: 'task', dir: '.' },
+          { name: 'test', cmd: 'npm', args: ['test'], required: true, tier: 'task', dir: '.' },
+        ],
+      },
+    ]
+    const testOutput = [
+      '> vitest run',
+      ...Array.from({ length: 60 }, (_, i) => `noise line ${i}`),
+      'AssertionError: expected 1 to be 2',
+    ].join('\n')
+    _mockVerifierRun.mockReset()
+    _mockVerifierRun
+      .mockResolvedValueOnce({
+        passed: true,
+        steps: [{ name: 'knip', passed: true, output: '> knip\nKNIP-ONLY-MARKER', cmd: 'npm', args: ['run', 'knip'], exitCode: 0 }],
+      })
+      .mockResolvedValueOnce({
+        passed: false,
+        steps: [{ name: 'test', passed: false, output: testOutput, cmd: 'npm', args: ['test'], exitCode: 1 }],
+      })
+
+    const mergeFnThatCallsVerify = async (args: {
+      onVerifyRebasedTree?: (info: { baseSha: string; taskSha: string; attempt: number }) => Promise<{ passed: boolean; output?: string }>
+    }) => {
+      const verdict = await args.onVerifyRebasedTree!({ baseSha: 'b'.repeat(40), taskSha: 'a'.repeat(40), attempt: 1 })
+      return {
+        merged: false as const,
+        reason: 'rebased-verify-failed' as const,
+        rebasedVerifyOutput: verdict.output ?? '',
+        conflictResolved: false,
+        aborted: false,
+        output: '',
+        supervisorConversation: [],
+        vegaSessionId: null,
+        retriesAttempted: 0,
+      }
+    }
+
+    const { store, calls, jobs, enqueueJob } = makeFakeStore()
+    const job = enqueueJob({ id: 'j-gate-evidence', worktreePath: '/tmp' })
+    const { startMergeWorker } = await import('../merge-worker.js')
+    const ac = new AbortController()
+    const handle = startMergeWorker({
+      store,
+      log: () => {},
+      bus: new EventEmitter(),
+      signal: ac.signal,
+      pollIntervalMs: 10,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      mergeFn: mergeFnThatCallsVerify as any,
+    })
+    await waitFor(() => calls.includes(`markFailed:${job.id}`))
+    ac.abort()
+    await handle.stop()
+
+    const error = jobs.get(job.id)?.error ?? ''
+    expect(error).toMatch(/^verify:gate\/test:/)
+    expect(error).toContain('cmd=npm test')
+    expect(error).toContain('exit=1')
+    expect(error).toContain('AssertionError: expected 1 to be 2')
+    // Bounded: the head of a 60-line log is dropped.
+    expect(error).not.toContain('noise line 0\n')
+    // Not blended with the passing gate's output.
+    expect(error).not.toContain('KNIP-ONLY-MARKER')
+  })
 })
 
 // ---------------------------------------------------------------------------
