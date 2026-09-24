@@ -702,7 +702,7 @@ let cachedMarsBinFor: string | undefined = undefined
  * back to the bare name. Deliberately NOT derived from process.execPath,
  * which under the daemon is plain `node`.
  */
-export const resolveMarsBin = (): string => {
+const resolveMarsBin = (): string => {
   const override = process.env.MARS_BIN
   const fingerprint = claudeBinEnvFingerprint(override, process.env.PATH)
   if (cachedMarsBin && cachedMarsBinFor === fingerprint) return cachedMarsBin
