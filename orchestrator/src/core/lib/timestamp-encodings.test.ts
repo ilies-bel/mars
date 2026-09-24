@@ -1,113 +1,76 @@
 /**
  * Exhaustiveness tests for FIXTURE_TIMESTAMP_ENCODINGS.
  *
- * When you add a new table to pg-schema.ts that has bigint or timestamptz
- * columns, you MUST:
- *   1. Add the table+columns to FIXTURE_TIMESTAMP_ENCODINGS in
- *      timestamp-encodings.ts with the correct encoding ('iso-8601' or
- *      'epoch-millis').
- *   2. Add the table name to TABLES_WITH_TIMESTAMP_COLUMNS below.
- *   3. Update the doc comment in pg-schema.ts and CLAUDE.md if the table is
- *      one an operator is likely to query directly.
+ * The expected set of timestamp columns is DERIVED from the DDL in
+ * pg-schema.ts (CREATE TABLE bodies plus ALTER TABLE ... ADD COLUMN), not from
+ * a hand-written list, so a new table or column with a timestamp fails here
+ * until it is registered in timestamp-encodings.ts.
  *
- * The test below will fail with a clear list of missing entries if either
- * registry drifts from the other.
+ * The DDL array is module-private, so the test parses the source text rather
+ * than importing it. A column counts as a timestamp when it is declared
+ * `bigint` or `timestamptz` AND its name looks like one (`*_at`, `*_ts`, `*_until`, `*_end`,
+ * `*_ms`, or exactly `ts`/`at`/`timestamp`). bigint counters, ids and
+ * positions are therefore ignored. Text-typed date columns (e.g.
+ * learned_recipes.learned_at) are excluded because they use neither encoding.
+ * A `*_ms` bigint that is a duration goes in DURATION_MS_COLUMNS below.
  */
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { describe, it, expect } from 'vitest'
 import { FIXTURE_TIMESTAMP_ENCODINGS } from './timestamp-encodings.js'
 
-/**
- * Every table in the canonical schema that has at least one column of type
- * `timestamptz` or `bigint` epoch-milliseconds. Text-typed date columns
- * (e.g. learned_recipes.learned_at, health_silences.silenced_at,
- * kpi_snapshots.taken_at) are deliberately excluded — they do not use either
- * of the two supported encodings and cannot be displayed with the standard
- * expressions.
- *
- * Add a table name here when you add a new table with real timestamp columns.
- * The test below fails with a diff if any table listed here is absent from
- * the registry.
- */
-const TABLES_WITH_TIMESTAMP_COLUMNS = new Set<string>([
-  // timestamptz (iso-8601) tables
-  'tasks',
-  'merge_jobs',
-  'task_deployments',
-  'task_terminal_reopens',
-  'arc_rescue_attempts',
-  'candidate_lessons',
-  'steward_ledger',
-  'failure_signature_streak',
-  'signature_storm_events',
-  'dispatch_spend_control',
-  'purged_tasks_archive',
-  'workflow_patch_proposals',
-  'usage_snapshots',
-  'mcp_worker_audit',
-  'deferrals',
-  'main_thread_entries',
-  'archive_entries',
-  'daemon_heartbeat',
-  'domain_flows',
-  'chat_thread_tasks',
-  // bigint epoch-millis tables
-  'proposals',
-  'chat_threads',
-  'task_blockers',
-  'task_proposal_blockers',
-  'task_acceptance',
-  'action_queue_items',
-  'action_queue_history',
-  'self_heal_attempts',
-  'trace_events',
-  'events',
-  'task_transcripts',
-  'task_durable_transcripts',
-  'chat_messages',
-  'chat_feedback',
-  'conversation_pending_messages',
-  'conversation_notice_batches',
-  'diagnoses_root_cause',
-  'diagnoses_inconclusive',
-  'gate_enrichment',
-  'gate_burn_in',
-  'verify_gates',
-  'verify_gate_failure_streaks',
-  'gate_fix_proposals',
-  'scorers',
-  'scorer_results',
-  'workflow_configs',
-  'tool_promotion_attempts',
-  'workflow_runs',
-  'workflow_step_runs',
-  'promotion_ledger',
-  'auto_recipe_runs',
-  'questions',
-  'task_progress',
-  'subscriber_processed_events',
-  'subscriber_stalls',
-  'signals',
-  'notice_dismissals',
-  'chat_memory_windows',
-  'presence_transitions',
-  'cards',
-  'failure_reflection_signatures',
-  'proposal_notes',
-])
+const DURATION_MS_COLUMNS = new Set(['requeue_dispatch_uptime_ms', 'threshold_ms'])
+const TIMESTAMP_NAME = /(_at|_ts|_ms|_until|_end)$|^(ts|at|timestamp)$/
+
+/** table -> column names declared bigint/timestamptz with timestamp-like names. */
+function timestampColumnsFromDdl(): Map<string, Set<string>> {
+  const src = readFileSync(fileURLToPath(new URL('./pg-schema.ts', import.meta.url)), 'utf8')
+  const out = new Map<string, Set<string>>()
+  const add = (table: string, col: string, type: string): void => {
+    if (!/^(bigint|timestamptz)$/i.test(type)) return
+    if (!TIMESTAMP_NAME.test(col) || DURATION_MS_COLUMNS.has(col)) return
+    if (!out.has(table)) out.set(table, new Set())
+    out.get(table)!.add(col)
+  }
+  for (const m of src.matchAll(/CREATE TABLE IF NOT EXISTS (\w+)\s*\(([\s\S]*?)\n\s*\)`/g)) {
+    for (const line of m[2]!.split('\n')) {
+      const c = line.trim().match(/^(\w+)\s+(\w+)/)
+      if (c) add(m[1]!, c[1]!, c[2]!)
+    }
+  }
+  for (const m of src.matchAll(/ALTER TABLE (\w+) ADD COLUMN IF NOT EXISTS (\w+) (\w+)/g)) {
+    add(m[1]!, m[2]!, m[3]!)
+  }
+  return out
+}
+
+const derived = timestampColumnsFromDdl()
 
 describe('FIXTURE_TIMESTAMP_ENCODINGS', () => {
-  it('covers every table known to have timestamp columns', () => {
-    const registered = new Set(Object.keys(FIXTURE_TIMESTAMP_ENCODINGS))
-    const missing = [...TABLES_WITH_TIMESTAMP_COLUMNS].filter(t => !registered.has(t))
-    expect(missing, 'Add these tables to FIXTURE_TIMESTAMP_ENCODINGS in timestamp-encodings.ts').toEqual([])
+  it('parses a plausible number of tables from the DDL (guards the parser)', () => {
+    expect(derived.size).toBeGreaterThan(40)
+    expect(derived.get('task_progress')).toEqual(new Set(['created_at']))
   })
 
-  it('contains no table that is absent from TABLES_WITH_TIMESTAMP_COLUMNS', () => {
-    // Orphaned entries in the registry that nobody knows about are almost as
-    // dangerous as missing entries — they silently carry stale info.
-    const registered = Object.keys(FIXTURE_TIMESTAMP_ENCODINGS)
-    const orphaned = registered.filter(t => !TABLES_WITH_TIMESTAMP_COLUMNS.has(t))
-    expect(orphaned, 'Remove or add these tables to TABLES_WITH_TIMESTAMP_COLUMNS').toEqual([])
+  it('registers every timestamp column declared in the schema DDL', () => {
+    const registry: Record<string, Record<string, string>> = FIXTURE_TIMESTAMP_ENCODINGS
+    const missing: string[] = []
+    for (const [table, cols] of derived) {
+      for (const col of cols) {
+        if (!registry[table] || !(col in registry[table]!)) missing.push(`${table}.${col}`)
+      }
+    }
+    expect(missing, 'Add these columns to FIXTURE_TIMESTAMP_ENCODINGS in timestamp-encodings.ts').toEqual([])
+  })
+
+  it('registers no table or column that the schema DDL does not declare as a timestamp', () => {
+    const stale: string[] = []
+    for (const [table, cols] of Object.entries(FIXTURE_TIMESTAMP_ENCODINGS)) {
+      for (const col of Object.keys(cols)) {
+        if (!derived.get(table)?.has(col)) stale.push(`${table}.${col}`)
+      }
+    }
+    expect(stale, 'Remove these stale entries (or fix the DDL parser heuristics)').toEqual([])
   })
 
   it('every column encoding value is a recognised encoding type', () => {

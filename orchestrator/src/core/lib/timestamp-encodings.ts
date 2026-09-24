@@ -34,7 +34,7 @@
  *   workflow_configs, tool_promotion_attempts, workflow_runs, workflow_step_runs,
  *   promotion_ledger, auto_recipe_runs, questions, task_progress,
  *   subscriber_processed_events, subscriber_stalls, signals, notice_dismissals,
- *   chat_memory_windows, presence_transitions, cards, failure_reflection_signatures,
+ *   chat_memory_windows, presence_pings, presence_transitions, cards, failure_reflection_signatures,
  *   proposal_notes
  */
 export const FIXTURE_TIMESTAMP_ENCODINGS = {
@@ -45,6 +45,10 @@ export const FIXTURE_TIMESTAMP_ENCODINGS = {
     leased_at: 'iso-8601',
     created_at: 'iso-8601',
     updated_at: 'iso-8601',
+    // Mixed within one table: this column is bigint epoch-ms (Date.now() at
+    // requeue), unlike its timestamptz siblings. requeue_dispatch_uptime_ms is
+    // a duration, not a timestamp, and is deliberately absent.
+    requeue_anchor_ms: 'epoch-millis',
   },
   /** timestamptz — claimed_at/started_at/finished_at are nullable; all iso-8601 */
   merge_jobs: {
@@ -332,6 +336,10 @@ export const FIXTURE_TIMESTAMP_ENCODINGS = {
     from_ms: 'epoch-millis',
     to_ms: 'epoch-millis',
     recorded_at: 'epoch-millis',
+  },
+  /** bigint epoch-ms; singleton row (id = 1) holding the latest ping */
+  presence_pings: {
+    last_seen_ms: 'epoch-millis',
   },
   /** bigint epoch-ms */
   cards: {
