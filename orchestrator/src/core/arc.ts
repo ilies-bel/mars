@@ -1400,7 +1400,7 @@ export class Arc {
 
     const result = await this.store.atomic(async (scope) => {
       const before = await scope.execute({
-        sql: `SELECT status, origin_id FROM tasks WHERE id = ?`,
+        sql: `SELECT status, origin_id, parent_proposal_id FROM tasks WHERE id = ?`,
         args: [id],
       })
       if (before.rows.length === 0) {
@@ -1409,6 +1409,7 @@ export class Arc {
       const beforeRow = before.rows[0] as unknown as {
         status: TaskStatus
         origin_id: string | null
+        parent_proposal_id: string | null
       }
       const previousStatus = beforeRow.status
       // NULL origin_id means "self" throughout the schema (see getTask's
@@ -1806,6 +1807,18 @@ export class Arc {
         sql: `DELETE FROM tasks WHERE id = ?`,
         args: [id],
       })
+
+      // Release the proposal: a 'taken' proposal whose last task just went
+      // away would otherwise be stranded (cannot be retaken or worked).
+      // Same transaction as the delete, like the edge cleanup above.
+      if (beforeRow.parent_proposal_id) {
+        await scope.execute({
+          sql: `UPDATE proposals SET status = 'prd-ready', updated_at = ?
+                 WHERE id = ? AND status = 'taken'
+                   AND NOT EXISTS (SELECT 1 FROM tasks WHERE parent_proposal_id = ?)`,
+          args: [Date.now(), beforeRow.parent_proposal_id, beforeRow.parent_proposal_id],
+        })
+      }
 
       return {
         taskId: id,

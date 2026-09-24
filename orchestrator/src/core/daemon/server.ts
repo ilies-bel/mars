@@ -4187,6 +4187,12 @@ export const startDaemon = async (
         originId: resolved.id,
         parentProposalId: resolved.id,
         workflow: resolvedWorkflow,
+        // Enqueue directly (like `mars task add`): an explicitly shaped and
+        // taken proposal needs no triage, and a 'draft' task here never
+        // dispatched nor surfaced in the action queue. Priority matches
+        // `task add`'s default (proposals carry no priority of their own).
+        skipTriage: true,
+        priority: 1,
         spec: {
           files: [],
           verifyCmd: null,

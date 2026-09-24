@@ -35,6 +35,7 @@ interface QueueMod {
   enqueueTask: typeof import('../queue').enqueueTask
   getTask: typeof import('../queue').getTask
   listTasksForProposal: typeof import('../queue').listTasksForProposal
+  dropTask: typeof import('../queue').dropTask
 }
 
 const setupRepo = (): string => {
@@ -222,5 +223,58 @@ describe('proposal take — creates one task with workflow=live and proposal lin
     await p.markProposalSliced(proposalId, 1)
 
     expect(sliceWorkflowSpy).not.toHaveBeenCalled()
+  })
+})
+
+describe('proposal take — dispatchability and release on drop', () => {
+  let repo: string
+
+  beforeEach(() => {
+    repo = setupRepo()
+  })
+
+  afterEach(() => {
+    delete process.env.MARS_REPO
+    rmSync(repo, { recursive: true, force: true })
+  })
+
+  // Mirrors handleProposalTake's enqueue options (skipTriage + priority 1).
+  const takeProposal = async (p: ProposalsMod, q: QueueMod, proposalId: string) => {
+    expect(await p.claimProposalForSlicing(proposalId)).toBe(true)
+    const task = await q.enqueueTask('PRD prompt', undefined, {
+      originId: proposalId,
+      parentProposalId: proposalId,
+      workflow: 'task',
+      skipTriage: true,
+      priority: 1,
+      spec: { files: [], verifyCmd: null, doneCriteria: [], mergeMode: 'auto' },
+    })
+    await (p as unknown as { markProposalTaken: (id: string) => Promise<void> }).markProposalTaken(
+      proposalId,
+    )
+    return task
+  }
+
+  it('a taken proposal yields a queued (dispatchable) task, not a stuck draft', async () => {
+    const { p, q } = await loadMods(repo)
+    const proposalId = await seedPrdReady(p)
+    const task = await takeProposal(p, q, proposalId)
+
+    const created = await q.getTask(task.id)
+    expect(created!.status).toBe('queued')
+    expect(created!.priority).toBe(1)
+    expect((await p.getProposal(proposalId))!.status).toBe('taken')
+  })
+
+  it('dropping the only task of a taken proposal returns it to prd-ready', async () => {
+    const { p, q } = await loadMods(repo)
+    const proposalId = await seedPrdReady(p)
+    const task = await takeProposal(p, q, proposalId)
+
+    await q.dropTask(task.id)
+
+    expect((await p.getProposal(proposalId))!.status).toBe('prd-ready')
+    // Retakeable: the claim succeeds again.
+    expect(await p.claimProposalForSlicing(proposalId)).toBe(true)
   })
 })
