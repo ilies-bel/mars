@@ -139,7 +139,7 @@ describe('GET /view/steward', () => {
       expect(body.signatureStorm.tripThreshold).toBe(3)
       // agentSpec static fields
       expect(body.agentSpec.name).toBe('steward')
-      expect(body.agentSpec.dispatchSites).toBe(0)
+      expect(body.agentSpec).not.toHaveProperty('dispatchSites')
     } finally {
       await close()
     }

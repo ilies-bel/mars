@@ -63,7 +63,6 @@ export const StewardViewSchema = z.object({
     model: z.string(),
     allowedTools: z.array(z.string()),
     eventVariants: z.array(z.string()),
-    dispatchSites: z.number(),
   }),
   gateHealth: z.object({
     scopes: z.array(z.object({

@@ -161,7 +161,6 @@ export const stubAppServices = (
       model: 'claude-sonnet-5',
       allowedTools: ['Read', 'Bash', 'Grep', 'Glob', 'PromptOptimize'],
       eventVariants: ['kpi-degraded', 'resource-load', 'onboarding', 'workflow-suggestion'],
-      dispatchSites: 0,
     },
     gateHealth: { scopes: [] },
   }),

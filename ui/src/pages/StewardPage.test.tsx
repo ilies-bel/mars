@@ -72,7 +72,6 @@ const makeStewardView = (overrides: Partial<StewardView> = {}): StewardView => (
     model: 'claude-sonnet-5',
     allowedTools: ['Read', 'Bash', 'Grep', 'Glob'],
     eventVariants: ['kpi-degraded', 'resource-load', 'onboarding', 'workflow-suggestion'],
-    dispatchSites: 0,
   },
   gateHealth: {
     scopes: [
@@ -449,7 +448,7 @@ describe('StewardPage', () => {
 
   it('says in a sentence that nothing calls the agent, rather than "(0 dispatch sites)"', () => {
     const html = renderToStaticMarkup(<StewardPage />)
-    expect(html).toContain('Nothing calls this agent')
+    expect(html).toContain('Everything above runs as ordinary orchestrator code')
     expect(html).toContain('claude-sonnet-5')
     // The old heading required knowing what a dispatch site is to notice that
     // the page's namesake agent never runs.

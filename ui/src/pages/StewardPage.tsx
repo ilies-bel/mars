@@ -883,21 +883,10 @@ export const StewardPage = () => {
         <div className="eyebrow mb-1 text-muted-foreground">
           Agent spec — {data.agentSpec.name}
         </div>
-        {/* "(0 DISPATCH SITES)" used to sit inside the heading above, in caps,
-            as the only hint that the LLM agent this page is named after is
-            never actually called. A reader had to know what a dispatch site
-            was to notice the page was describing something dormant while the
-            lanes above it said "executing" — the lanes execute as ordinary
-            orchestrator code; this spec is a different thing that does not
-            run. Say that in a sentence.
-
-            Note this count is a declared constant in app-services.ts, not a
-            search of the codebase, so it states an intent rather than a
-            measurement. Filed separately. */}
+        {/* No dispatch-site count: the backend cannot measure one, and a
+            hard-coded constant would state an intent as an observation. */}
         <p className="mb-1.5 max-w-[70ch] text-label leading-relaxed text-muted-foreground">
-          {data.agentSpec.dispatchSites === 0
-            ? 'Nothing calls this agent. Everything above runs as ordinary orchestrator code — the configuration below is what would run if it were ever dispatched.'
-            : `Dispatched from ${data.agentSpec.dispatchSites} place${data.agentSpec.dispatchSites === 1 ? '' : 's'} in the orchestrator.`}
+          Everything above runs as ordinary orchestrator code — the configuration below is the declared agent spec.
         </p>
         <div className="flex flex-wrap gap-x-4 gap-y-1 font-mono text-micro text-muted-foreground">
           <span>model: <span className="text-foreground">{data.agentSpec.model}</span></span>
