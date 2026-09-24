@@ -4,6 +4,7 @@ import { resolveStateClient } from './store/state-client'
 import { buildEventInsert } from './lib/outbox'
 import { withTransaction, type DbClient } from './lib/db.js'
 import { ensureSchema } from './lib/pg-schema.js'
+import { checkSourceBudget } from './lib/proposal-budget.js'
 import type { EventName, EventPayload } from '../bus/events.js'
 import type { SuggestionOutcome } from './lib/suggestion-outcome.js'
 export type { SuggestionOutcome, LeverBinding, LeverGap } from './lib/suggestion-outcome.js'
@@ -77,6 +78,8 @@ export interface Proposal {
   userStories: string[]
   lastSliceError: string | null
   lastSliceFailedAt: number | null
+  /** Why the row was born deflected (e.g. `source-budget:<source>:<used>/<ceiling>`); null otherwise. */
+  deflectionReason: string | null
   /**
    * Structured lever binding from ADR-0092. Non-null only for reflection-
    * sourced proposals created after the binding feature landed. Null means
@@ -367,6 +370,7 @@ const rowToProposal = (
     lastSliceError: (row.last_slice_error as string | null) ?? null,
     lastSliceFailedAt:
       row.last_slice_failed_at == null ? null : Number(row.last_slice_failed_at),
+    deflectionReason: (row.deflection_reason as string | null) ?? null,
     suggestionOutcome: parseSuggestionOutcome(row.suggestion_outcome),
   }
 }
@@ -490,13 +494,19 @@ export const createProposal = async (
     }
   }
 
+  // Over-budget automated producers are still recorded (nothing is lost) but
+  // born `expired` with a reason: never listed as a draft, never announced.
+  const budget = authorKind === 'agent' ? await checkSourceBudget(c, source) : null
+  const deflectionReason =
+    budget?.overBudget === true ? `source-budget:${source}:${budget.used}/${budget.ceiling}` : null
+
   const result = await c.execute({
     sql: `INSERT INTO proposals
             (id, title, problem, solution, out_of_scope, notes,
              status, source, author_kind, author_name,
              kpi_tag, fingerprint, origin_session_id, suggestion_outcome,
-             created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             created_at, updated_at, deflection_reason)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT (source, fingerprint) WHERE fingerprint IS NOT NULL
           DO UPDATE SET
             notes = CASE
@@ -509,7 +519,7 @@ export const createProposal = async (
           RETURNING id, title, problem, solution, out_of_scope, notes, status,
                     source, author_kind, author_name, coordinated, created_at,
                     updated_at, last_slice_error, last_slice_failed_at,
-                    suggestion_outcome`,
+                    suggestion_outcome, deflection_reason`,
     args: [
       id,
       effectiveTitle,
@@ -517,7 +527,7 @@ export const createProposal = async (
       solution,
       outOfScope,
       notes,
-      opts?.deflected === true ? 'deflected' : 'draft',
+      deflectionReason !== null ? 'expired' : opts?.deflected === true ? 'deflected' : 'draft',
       source,
       authorKind,
       authorName,
@@ -527,11 +537,17 @@ export const createProposal = async (
       suggestionOutcomeJson,
       now,
       now,
+      deflectionReason,
     ],
   })
   const row = result.rows[0] as unknown as Record<string, unknown>
   const proposal = rowToProposal(row, [])
-  if (proposal.id === id && proposal.status === 'deflected') return proposal
+  if (
+    proposal.id === id &&
+    (proposal.status === 'deflected' || proposal.deflectionReason !== null)
+  ) {
+    return proposal
+  }
   if (proposal.id === id) {
     await emitProposalBusEvent('proposal.added', { proposalId: id, source, title: effectiveTitle })
     // ADR-0094 primary fix: raise the draft-proposal action-queue row in the

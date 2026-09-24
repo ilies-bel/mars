@@ -187,6 +187,7 @@ const DDL: readonly string[] = [
   `ALTER TABLE proposals ADD COLUMN IF NOT EXISTS coordinated boolean NOT NULL DEFAULT false`,
   `ALTER TABLE proposals ADD COLUMN IF NOT EXISTS last_slice_error text`,
   `ALTER TABLE proposals ADD COLUMN IF NOT EXISTS last_slice_failed_at bigint`,
+  `ALTER TABLE proposals ADD COLUMN IF NOT EXISTS deflection_reason text`,
   `ALTER TABLE proposals DROP COLUMN IF EXISTS auto_approve`,
   // Structured lever binding — every reflection finding binds to a lever or
   // declares a gap (ADR-0092). Stored as JSON text so round-trips are
