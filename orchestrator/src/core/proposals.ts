@@ -40,6 +40,9 @@ export type ProposalSource =
 
 export const PROPOSAL_STATUSES = [
   'draft',
+  // Over-budget automated drafts parked outside the operator's queue. Hidden
+  // from default listings; promoted to 'draft' on repetition.
+  'deflected',
   'prd-ready',
   'slicing',
   'sliced',
@@ -411,6 +414,11 @@ export interface CreateProposalOptions {
    * before the binding feature.
    */
   suggestionOutcome?: SuggestionOutcome | null
+  /**
+   * Store the row as `deflected` instead of `draft`: no action-queue row is
+   * raised and default listings hide it until it is promoted.
+   */
+  deflected?: boolean
 }
 
 export const createProposal = async (
@@ -488,7 +496,7 @@ export const createProposal = async (
              status, source, author_kind, author_name,
              kpi_tag, fingerprint, origin_session_id, suggestion_outcome,
              created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT (source, fingerprint) WHERE fingerprint IS NOT NULL
           DO UPDATE SET
             notes = CASE
@@ -509,6 +517,7 @@ export const createProposal = async (
       solution,
       outOfScope,
       notes,
+      opts?.deflected === true ? 'deflected' : 'draft',
       source,
       authorKind,
       authorName,
@@ -522,6 +531,7 @@ export const createProposal = async (
   })
   const row = result.rows[0] as unknown as Record<string, unknown>
   const proposal = rowToProposal(row, [])
+  if (proposal.id === id && proposal.status === 'deflected') return proposal
   if (proposal.id === id) {
     await emitProposalBusEvent('proposal.added', { proposalId: id, source, title: effectiveTitle })
     // ADR-0094 primary fix: raise the draft-proposal action-queue row in the
@@ -570,6 +580,11 @@ export const recordFailureReflectionOccurrence = async (
 export interface ListProposalsFilter {
   source?: ProposalSource
   status?: string
+  /**
+   * Include `deflected` rows. Default false: the deflected tail is hidden
+   * unless an explicit `status` filter names it.
+   */
+  includeDeflected?: boolean
 }
 
 export type ProposalIdResolution =
@@ -796,6 +811,9 @@ export const listProposals = async (
     where.push('status = ?')
     args.push(filter.status)
   }
+  if (!filter?.includeDeflected && !filter?.status) {
+    where.push("status <> 'deflected'")
+  }
   const sql = `SELECT * FROM proposals${
     where.length > 0 ? ` WHERE ${where.join(' AND ')}` : ''
   } ORDER BY created_at DESC`
@@ -815,6 +833,7 @@ export const listProposals = async (
 /** Legal lifecycle moves, keyed by current status. */
 const STATUS_TRANSITIONS: Record<ProposalStatus, readonly ProposalStatus[]> = {
   draft: ['prd-ready', 'dismissed', 'expired'],
+  deflected: ['draft', 'dismissed', 'expired'],
   'prd-ready': ['slicing', 'dismissed'],
   slicing: ['sliced', 'taken', 'prd-ready'],
   sliced: ['prd-ready', 'dismissed'],
@@ -1340,7 +1359,7 @@ export interface PriorProposalOutcome {
 
 const fateForProposalStatus = (status: string): ProposalFate => {
   if (status === 'dismissed' || status === 'expired') return 'dismissed'
-  if (status === 'draft') return 'open'
+  if (status === 'draft' || status === 'deflected') return 'open'
   // 'prd-ready' | 'slicing' | 'sliced' | 'taken' — moved past the operator's
   // draft gate, i.e. accepted and acted on.
   return 'promoted'
