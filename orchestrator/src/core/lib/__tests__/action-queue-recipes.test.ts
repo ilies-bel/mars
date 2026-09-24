@@ -629,3 +629,54 @@ describe('recovery-abandoned recipe', () => {
     expect(restart?.label).toContain('task/mars-7')
   })
 })
+
+// ---------------------------------------------------------------------------
+// prose ↔ buttons agreement — a card body must not recommend a `mars <verb>`
+// that the same card does not offer as a verb.
+// ---------------------------------------------------------------------------
+
+/** Verbs a body may name as `mars <verb>` without a matching button op. */
+const namedMarsVerbs = (body: string): string[] =>
+  [...body.matchAll(/`mars ([a-z][a-z-]*)/g)].map((m) => m[1] as string)
+
+/** Returns the `mars <verb>` names in `body` that no offered verb covers. */
+const missingVerbs = (
+  body: string,
+  offered: ReadonlyArray<{ op: string; hint?: string }>,
+): string[] =>
+  namedMarsVerbs(body).filter(
+    (name) => !offered.some((v) => v.op === name || (v.hint ?? '').includes(`mars ${name}`)),
+  )
+
+describe('recipe prose names only verbs the recipe offers', () => {
+  it('rejects a body that names a verb absent from the offered verbs', () => {
+    const offered = [{ op: 'restart' }, { op: 'purge' }]
+    expect(missingVerbs('Run `mars continue abc` to resume.', offered)).toEqual(['continue'])
+    expect(missingVerbs('Run `mars restart abc`.', offered)).toEqual([])
+  })
+
+  it('recovery-abandoned prose names continue and offers it ahead of restart', () => {
+    const recipe = lookupRecipe('recovery-abandoned')
+    const ctx = {
+      kind: 'recovery-abandoned' as const,
+      entityId: 'mars-abc',
+      payload: {
+        fixTaskId: 'fix-1',
+        originTaskId: 'mars-abc',
+        branch: 'task/mars-abc',
+        commitsAhead: 2,
+        continuable: true,
+      },
+      context: {},
+      title: 'Recovery task dropped',
+      body: '',
+      raisedAt: '2026-09-11T00:00:00.000Z',
+    } as Parameters<typeof recipe.humanSummary>[0]
+    const verbs = getRecipeVerbs(recipe, ctx)
+    const ops = verbs.map((v) => v.op)
+    expect(ops.indexOf('continue')).toBeGreaterThanOrEqual(0)
+    expect(ops.indexOf('continue')).toBeLessThan(ops.indexOf('restart'))
+    expect(verbs.find((v) => v.op === 'restart')?.style).toBe('destructive')
+    expect(missingVerbs(recipe.humanSummary(ctx), verbs)).toEqual([])
+  })
+})
