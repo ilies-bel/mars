@@ -18,6 +18,7 @@ interface ProposalsMod {
   listProposals: typeof import('../proposals').listProposals
   expireProposals: typeof import('../proposals').expireProposals
   reviveProposal: typeof import('../proposals').reviveProposal
+  dismissProposal: typeof import('../proposals').dismissProposal
   initProposals: typeof import('../proposals').initProposals
   appendProposalNotes: typeof import('../proposals').appendProposalNotes
 }
