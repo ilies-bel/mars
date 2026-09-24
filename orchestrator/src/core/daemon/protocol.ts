@@ -91,6 +91,14 @@ export type DaemonRequest =
       author?: Author
       originSessionId?: string | null
       explicitTitle?: string
+      /**
+       * PRD body fields populated at creation time (`mars proposal add
+       * --problem/--solution`). Omitted entirely when the operator did not
+       * supply the flag, so `createProposal` keeps its existing behaviour of
+       * falling back to the body derived from a multi-line `goal`.
+       */
+      problem?: string
+      solution?: string
     }
   /**
    * Update a single content field on an existing proposal.

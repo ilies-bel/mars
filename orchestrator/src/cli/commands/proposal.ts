@@ -44,7 +44,13 @@ import { dirname, join } from 'node:path'
 import { resolveVcs } from '../../core/ports/vcs/registry'
 import type { Command, CommandDeps } from '../command'
 import { errorMessage, spawnNoticeErr } from './shared'
-import { findAtPathToken, hasFlag, parsePriority, resolvePromptSource } from '../args'
+import {
+  findAtPathToken,
+  hasFlag,
+  parsePriority,
+  resolveFlagBody,
+  resolvePromptSource,
+} from '../args'
 
 /** Render a proposal detail body (shared by `proposal show` and `show`). */
 export const renderProposalDetail = async (
@@ -123,13 +129,52 @@ export const renderProposalDetail = async (
 }
 
 const proposalAddUsage =
-  'usage: mars proposal add ("<goal>" | @<file> | -) [--author kind:name] [--title "<text>"]'
+  'usage: mars proposal add ("<goal>" | @<file> | -) [--author kind:name] [--title "<text>"] ' +
+  '[--problem ("<text>" | @<file> | -)] [--solution ("<text>" | @<file> | -)]'
+
+/**
+ * PRD body fields settable at creation time. Each maps 1:1 onto the field of
+ * the same name accepted by `mars proposal set <id> <field>`, so an operator
+ * who knows one surface can guess the other.
+ */
+const PROPOSAL_ADD_BODY_FLAGS = ['--problem', '--solution'] as const
 
 const proposalAdd: Command = {
   path: 'proposal add',
   summary: 'create a proposal/plan (author detected from env/git)',
   usage: proposalAddUsage,
   run: async (args, deps) => {
+    // `-` reads fd 0, which is drained by the first reader: a second `-` in
+    // the same invocation would silently store an empty field. Reject the
+    // collision up front rather than persisting a half-empty proposal.
+    const stdinClaims = [
+      ...(args.positional.length === 1 && args.positional[0] === '-' ? ['<goal>'] : []),
+      ...PROPOSAL_ADD_BODY_FLAGS.filter((f) => args.flags[f] === '-'),
+    ]
+    if (stdinClaims.length > 1) {
+      deps.err(
+        `[mars] error: only one argument may read stdin, but ${stdinClaims.join(' and ')} both use '-'.\n` +
+          `Pass the other one as "<text>" or @<file>.`,
+      )
+      return { code: 2 }
+    }
+
+    // An undeclared flag lands in `positional` (the shared parser pulls every
+    // declared flag into `flags` first), so a leftover `--foo` here is always
+    // a flag this leaf does not accept. The shared "unknown flag" message says
+    // nothing about what IS accepted; for the remaining PRD fields the answer
+    // is `mars proposal set`, so name both surfaces rather than dead-ending.
+    const undeclaredFlag = args.positional.find((p) => p.startsWith('--'))
+    if (undeclaredFlag !== undefined) {
+      deps.err(
+        `[mars] error: unknown flag: ${undeclaredFlag}\n` +
+          `${proposalAddUsage}\n` +
+          `Other PRD fields are set after creation:\n` +
+          `  mars proposal set <id> <out-of-scope|notes> ("<text>" | @<file> | -)`,
+      )
+      return { code: 2 }
+    }
+
     const goalResult = resolvePromptSource(args.positional, args.flags)
     if (!goalResult.ok) {
       deps.err(goalResult.message)
@@ -139,6 +184,20 @@ const proposalAdd: Command = {
     if (!goal) {
       deps.err(proposalAddUsage)
       return { code: 2 }
+    }
+
+    // Resolve the PRD body flags through the same "<text>" | @<file> | -
+    // channels every other prose-body input accepts.
+    const bodyFields: { problem?: string; solution?: string } = {}
+    for (const flag of PROPOSAL_ADD_BODY_FLAGS) {
+      const raw = args.flags[flag]
+      if (raw === undefined) continue
+      const resolved = resolveFlagBody(flag, raw)
+      if (!resolved.ok) {
+        deps.err(resolved.message)
+        return { code: 2 }
+      }
+      bodyFields[flag === '--problem' ? 'problem' : 'solution'] = resolved.value
     }
     const author = resolveAuthor(args.flags['--author'])
     const originSessionId = detectOriginSession()
@@ -164,6 +223,7 @@ const proposalAdd: Command = {
         author: author ?? undefined,
         originSessionId: originSessionId ?? undefined,
         ...(titleFlag !== undefined && { explicitTitle: titleFlag }),
+        ...bodyFields,
       })) as { id: string }
       deps.out(`${idea.id} (author: ${formatAuthor(author)})`)
     } catch (error: unknown) {

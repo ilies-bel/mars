@@ -139,6 +139,12 @@ export const FLAGS_WITH_VALUES: ReadonlySet<string> = new Set([
   // mars proposal add --title "<text>": explicit proposal title, stored
   // verbatim instead of derived from the goal's first line / heading.
   '--title',
+  // mars proposal add --problem/--solution: populate the PRD body fields at
+  // creation time instead of requiring a follow-up `mars proposal set <id>
+  // problem|solution ...`. Both accept the standard prose-body forms
+  // ("<text>" | @<file> | -), resolved by `resolveFlagBody`.
+  '--problem',
+  '--solution',
   // mars block <task> <new-blocker> --replace <old-blocker>: atomically swap
   // a blocker edge without the task passing through `queued`.
   '--replace',
@@ -451,6 +457,57 @@ export const resolvePromptSource = (
     }
   }
   return { ok: true, value: joined }
+}
+
+/**
+ * Resolve a prose body supplied as a *flag value* (e.g. `--problem @body.md`).
+ *
+ * This is the flag-shaped sibling of {@link resolvePromptSource}, which reads
+ * the body from positionals. Both honour the same three documented channels
+ * and normalise them identically, so `--problem @body.md` and
+ * `mars proposal set <id> problem @body.md` store byte-identical text:
+ *
+ *   - `@<path>` — file contents verbatim, one trailing newline stripped
+ *   - `-`       — stdin verbatim, one trailing newline stripped
+ *   - anything else — the literal inline value, untouched
+ *
+ * `flagName` appears in error messages only, so a failed read names the flag
+ * the operator actually typed rather than a generic "cannot read file".
+ *
+ * `readStdin` is injectable for the same reason it is on
+ * {@link resolvePromptSource}: tests supply a pure function instead of
+ * reading fd 0.
+ */
+export const resolveFlagBody = (
+  flagName: string,
+  raw: string,
+  readStdin: () => string = () => readFileSync(0, 'utf8'),
+): FlagResult<string> => {
+  const stripTrailingNewline = (s: string): string => (s.endsWith('\n') ? s.slice(0, -1) : s)
+
+  if (raw === '-') {
+    try {
+      return { ok: true, value: stripTrailingNewline(readStdin()) }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      return { ok: false, message: `[mars] error: cannot read stdin for ${flagName}: ${msg}` }
+    }
+  }
+
+  if (raw.startsWith('@')) {
+    const filePath = raw.slice(1)
+    try {
+      return { ok: true, value: stripTrailingNewline(readFileSync(filePath, 'utf8')) }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      return {
+        ok: false,
+        message: `[mars] error: cannot read ${flagName} file '${filePath}': ${msg}`,
+      }
+    }
+  }
+
+  return { ok: true, value: raw }
 }
 
 // ── Per-flag validators ─────────────────────────────────────────────────────

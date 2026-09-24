@@ -707,6 +707,12 @@ const proposalCreateHandler = handler('proposal.create', async (req, _deps) => {
     author: req.author,
     originSessionId: req.originSessionId,
     ...(req.explicitTitle !== undefined && { explicitTitle: req.explicitTitle }),
+    // Spread conditionally: `createProposal` distinguishes an absent `problem`
+    // (fall back to the body derived from a multi-line goal) from an explicit
+    // one (prepend the derived body to it), so passing `undefined` through
+    // would be wrong for the absent case.
+    ...(req.problem !== undefined && { problem: req.problem }),
+    ...(req.solution !== undefined && { solution: req.solution }),
   })
   return { ok: true, data: proposal }
 })
