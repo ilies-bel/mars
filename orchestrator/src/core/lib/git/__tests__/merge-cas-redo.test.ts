@@ -176,6 +176,9 @@ describe('mergeBranch — CAS fast-forward redo on concurrent base advance', () 
 
     expect(result.merged).toBe(false)
     expect(result.aborted).toBe(true)
+    // Every negative outcome names why — the merge worker fails closed on a
+    // reasonless `merged: false`.
+    expect(result.reason).toBe('integration-advanced')
     // The redo budget is bounded: mergeBranch neither hangs nor spins past a
     // small, fixed number of attempts.
     expect(result.retriesAttempted).toBeGreaterThan(0)

@@ -27,7 +27,7 @@ import {
   isZeroCommitBranch as gitIsZeroCommitBranch,
   checkMergeTargetStatus as gitCheckMergeTargetStatus,
 } from '../../lib/git/merge'
-import type { MergeArgs, MergeResult as GitMergeResult } from '../../lib/git/merge'
+import type { MergeArgs } from '../../lib/git/merge'
 import {
   commitMain,
   autoCommitWorktreeIfDeterministic,
@@ -267,37 +267,6 @@ type _MissingMergeArg = Exclude<keyof Omit<MergeArgs, 'traceCtx'>, (typeof MERGE
  */
 export const mergeArgForwardIsExhaustive: _MissingMergeArg extends never ? true : _MissingMergeArg = true
 
-/**
- * Every field of the lib's `MergeResult`. Keep in sync with the return
- * literal in `merge()`. Adding a new field to `GitMergeResult` without
- * updating this list fails the build and names the missing field.
- */
-export const MERGE_RESULT_KEYS = [
-  'merged',
-  'conflictResolved',
-  'aborted',
-  'output',
-  'supervisorConversation',
-  'retriesAttempted',
-  'vegaSessionId',
-  'integrationGateFailed',
-  'integrationGateOutput',
-  'vegaTimedOut',
-  'reason',
-  'rebasedVerifyOutput',
-  'lastSyncedSha',
-  'operatorAutoCommitSha',
-  'mergePreSha',
-  'mergePostSha',
-] as const satisfies ReadonlyArray<keyof GitMergeResult>
-
-type _MissingMergeResult = Exclude<keyof GitMergeResult, (typeof MERGE_RESULT_KEYS)[number]>
-/**
- * Fails to compile if any `GitMergeResult` field is absent from
- * {@link MERGE_RESULT_KEYS}. The build error names the forgotten field.
- */
-export const mergeResultForwardIsExhaustive: _MissingMergeResult extends never ? true : _MissingMergeResult = true
-
 // ---------------------------------------------------------------------------
 
 export const localGitVcs: Vcs = {
@@ -366,29 +335,10 @@ export const localGitVcs: Vcs = {
       ...forwardedArgs,
       traceCtx: reconstructTraceCtx(spec.trace),
     })
-    // Exhaustive reconstruction: every field in GitMergeResult must appear
-    // below. The `: GitMergeResult` annotation catches missing REQUIRED fields
-    // at compile time; MERGE_RESULT_KEYS (+ mergeResultForwardIsExhaustive)
-    // catches missing OPTIONAL fields. Do not remove any entry from this list.
-    const forwardedResult: GitMergeResult = {
-      merged: result.merged,
-      conflictResolved: result.conflictResolved,
-      aborted: result.aborted,
-      output: result.output,
-      supervisorConversation: result.supervisorConversation,
-      retriesAttempted: result.retriesAttempted,
-      vegaSessionId: result.vegaSessionId,
-      integrationGateFailed: result.integrationGateFailed,
-      integrationGateOutput: result.integrationGateOutput,
-      vegaTimedOut: result.vegaTimedOut,
-      reason: result.reason,
-      rebasedVerifyOutput: result.rebasedVerifyOutput,
-      lastSyncedSha: result.lastSyncedSha,
-      operatorAutoCommitSha: result.operatorAutoCommitSha,
-      mergePreSha: result.mergePreSha,
-      mergePostSha: result.mergePostSha,
-    }
-    return forwardedResult
+    // Returned whole: the lib result is a discriminated union (a negative
+    // outcome always carries a `reason`), which a field-by-field rebuild
+    // would widen back to `merged: boolean`.
+    return result
   },
 
   async status(spec: StatusSpec): Promise<VcsStatus> {

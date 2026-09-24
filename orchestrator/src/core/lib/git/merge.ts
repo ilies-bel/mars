@@ -241,21 +241,41 @@ export interface OperatorAutoCommitInfo {
 }
 
 /**
- * Machine-readable reason for a `merged: false` {@link MergeResult} that is
- * neither an abort nor an integration-gate failure.
- *
- * The dirty-tree reason this union used to carry was retired by slice 5,
- * together with the Step 3 re-sync / dirty-classification / checkpoint
- * machinery that reported it. Dirt is now attributed (stale-tree debris →
- * reset, operator dirt → auto-commit) rather than ever reported as a merge
- * failure, so a dirty integration checkout post-merge is no longer
- * representable here.
+ * Machine-readable reason for EVERY `merged: false` {@link MergeResult}. The
+ * result type makes it mandatory, so a negative outcome that cannot name why
+ * it did not merge fails to compile instead of surfacing as the merge
+ * worker's runtime `merge:unknown-outcome` guard.
  *
  * - `'rebased-verify-failed'` — {@link MergeArgs.onVerifyRebasedTree} rejected
  *   the rebased tree, so nothing was fast-forwarded. `main` is untouched and
  *   the failure belongs to the task branch, not to the merge target.
+ * - `'integration-gate-failed'` — the integration-tier gate rejected the
+ *   fast-forward, which was reverted (`integrationGateFailed: true`).
+ * - `'worktree-dirty-before-rebase'` — the task worktree was dirty when the
+ *   rebase was about to run.
+ * - `'rebase-no-in-progress-state'` — the rebase failed but left nothing for
+ *   the supervisor to reconcile.
+ * - `'vega-timeout'` — the vcs-supervisor hit its wall-clock timeout
+ *   (`vegaTimedOut: true`); the rebase was aborted.
+ * - `'vega-outcome-rejected'` — the supervisor finished but the git tree
+ *   checks rejected its outcome; the rebase was aborted.
+ * - `'not-fast-forwardable'` — the integration tip is not an ancestor of the
+ *   task tip and the situation is not a retryable concurrent advance.
+ * - `'task-branch-moved'` — the task branch moved between the rebased-tree
+ *   verify and the fast-forward, so the verified tree cannot land.
+ * - `'integration-advanced'` — the integration branch kept advancing
+ *   concurrently until the retry budget ran out.
  */
-export type MergeFailureReason = 'rebased-verify-failed'
+export type MergeFailureReason =
+  | 'rebased-verify-failed'
+  | 'integration-gate-failed'
+  | 'worktree-dirty-before-rebase'
+  | 'rebase-no-in-progress-state'
+  | 'vega-timeout'
+  | 'vega-outcome-rejected'
+  | 'not-fast-forwardable'
+  | 'task-branch-moved'
+  | 'integration-advanced'
 
 /**
  * Interval (ms) at which {@link MergeArgs.onHeartbeat} fires while the merge
@@ -415,8 +435,7 @@ export interface MergeArgs {
   }) => Promise<MergeGateOutcome>
 }
 
-export interface MergeResult {
-  merged: boolean
+interface MergeResultBase {
   conflictResolved: boolean
   aborted: boolean
   output: string
@@ -457,12 +476,6 @@ export interface MergeResult {
    * failed the post-supervisor tree checks.
    */
   vegaTimedOut?: boolean
-  /**
-   * Machine-readable reason for a `merged: false` outcome that is not an abort
-   * or integration-gate failure. See {@link MergeFailureReason} for the closed
-   * vocabulary and what each member means.
-   */
-  reason?: MergeFailureReason
   /**
    * Verify output from {@link MergeArgs.onVerifyRebasedTree} when it rejected
    * the rebased tree. Set exactly when `reason === 'rebased-verify-failed'`,
@@ -508,6 +521,16 @@ export interface MergeResult {
    */
   mergePostSha?: string
 }
+
+/**
+ * Outcome of {@link mergeBranch}. Discriminated on `merged`: a negative
+ * outcome MUST carry a {@link MergeFailureReason}, a landed one never does.
+ * Previously `reason` was optional, so `merged: false` could mean either
+ * "did not merge, here is why" or "did not merge, reason unknown".
+ */
+export type MergeResult =
+  | (MergeResultBase & { merged: true; reason?: undefined })
+  | (MergeResultBase & { merged: false; reason: MergeFailureReason })
 
 let cachedSupervisorSpec: string | null = null
 
@@ -1089,6 +1112,7 @@ export const mergeBranch = async ({
       if (statusResult.stdout.trim().length > 0) {
         return {
           merged: false,
+          reason: 'worktree-dirty-before-rebase',
           conflictResolved: false,
           aborted: true,
           output: `worktree dirty before rebase:\n${statusResult.stdout}${output}`,
@@ -1127,6 +1151,7 @@ export const mergeBranch = async ({
         if (!rebaseInProgress) {
           return {
             merged: false,
+            reason: 'rebase-no-in-progress-state',
             conflictResolved: false,
             aborted: true,
             output: `rebase produced no in-progress state: nothing to reconcile (rebase exit ${rebaseResult.exitCode})\n${output}`,
@@ -1170,6 +1195,7 @@ export const mergeBranch = async ({
           await gprobe(['rebase', '--abort'], worktreePath).catch(() => {})
           return {
             merged: false,
+            reason: 'vega-timeout',
             conflictResolved: false,
             aborted: true,
             vegaTimedOut: true,
@@ -1198,6 +1224,7 @@ export const mergeBranch = async ({
           await gprobe(['rebase', '--abort'], worktreePath).catch(() => {})
           return {
             merged: false,
+            reason: 'vega-outcome-rejected',
             conflictResolved: false,
             aborted: true,
             output: `vcs-supervisor outcome rejected by git tree (stillInProgress=${stillInProgress}, advanced=${advanced}, treeClean=${treeClean}); rebase aborted.\n${output}`,
@@ -1311,6 +1338,7 @@ export const mergeBranch = async ({
 
         return {
           merged: false,
+          reason: 'not-fast-forwardable',
           conflictResolved,
           aborted: true,
           output: `fast-forward into ${integrationBranch} not possible: ${integrationSha} is not an ancestor of ${taskSha}.\n${output}`,
@@ -1334,6 +1362,7 @@ export const mergeBranch = async ({
         if (casSha !== verifiedSha) {
           return {
             merged: false,
+            reason: 'task-branch-moved',
             conflictResolved,
             aborted: true,
             output:
@@ -1394,6 +1423,7 @@ export const mergeBranch = async ({
           // Budget exhausted on a persistent forward advance.
           return {
             merged: false,
+            reason: 'integration-advanced',
             conflictResolved,
             aborted: true,
             output: `integration moved during merge, retry needed: ${integrationBranch} advanced concurrently.\n${output}`,
@@ -1406,6 +1436,7 @@ export const mergeBranch = async ({
         // Non-retryable divergent state: abort immediately without burning budget.
         return {
           merged: false,
+          reason: 'not-fast-forwardable',
           conflictResolved,
           aborted: true,
           output: `fast-forward into ${integrationBranch} not possible: ${currentIntegrationSha} is not an ancestor of ${taskSha}.\n${output}`,
@@ -1512,6 +1543,7 @@ export const mergeBranch = async ({
         }
         return {
           merged: false,
+          reason: 'integration-gate-failed',
           conflictResolved,
           aborted: false,
           integrationGateFailed: true,

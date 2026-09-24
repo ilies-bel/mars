@@ -228,13 +228,22 @@ export interface MergeSpec {
 
 /**
  * Machine-readable reason for a `merged: false` {@link MergeResult} that is
- * neither an abort nor an integration-gate failure.
+ * any cause. The lib's `MergeResult` requires it on every negative outcome.
  *
  * Re-declared here (rather than imported from `lib/git/merge`) to keep this
  * module self-contained and serializable per ADR-0097. Consumer slices
  * migrating `merge.ts` callers import this from the port instead.
  */
-export type MergeFailureReason = 'rebased-verify-failed'
+export type MergeFailureReason =
+  | 'rebased-verify-failed'
+  | 'integration-gate-failed'
+  | 'worktree-dirty-before-rebase'
+  | 'rebase-no-in-progress-state'
+  | 'vega-timeout'
+  | 'vega-outcome-rejected'
+  | 'not-fast-forwardable'
+  | 'task-branch-moved'
+  | 'integration-advanced'
 
 /** Result of {@link Vcs.merge}. */
 export interface MergeResult {
