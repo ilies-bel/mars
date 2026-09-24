@@ -11,7 +11,7 @@ import { formatDuration } from '@/shared/time'
 import { formatTokensLabel } from '@/shared/displayStrings'
 import type { StepCardEntry } from './TaskDetailDrawer'
 
-export type StepOutcome = StepCardEntry['outcome']
+type StepOutcome = StepCardEntry['outcome']
 
 /** Outcome → short human label for a timeline row. */
 export const outcomeLabel = (outcome: StepOutcome): string => {
@@ -46,7 +46,7 @@ export const isBlamedPhaseUnmatched = (
   blamedPhase !== '' &&
   !stepNames.some((n) => n.toLowerCase().includes(blamedPhase.toLowerCase()))
 
-export interface StepRailRow {
+interface StepRailRow {
   card: StepCardEntry
   /** Which run of this step the card is; set only when the step ran more than once. */
   attempt?: number
@@ -58,7 +58,7 @@ export interface StepRailRow {
   tokensLabel: string | null
 }
 
-export interface StepRail {
+interface StepRail {
   rows: StepRailRow[]
   /**
    * The blamed phase when no row carries that name (e.g. `merge` after a passed
