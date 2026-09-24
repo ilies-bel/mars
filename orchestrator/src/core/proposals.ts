@@ -1164,17 +1164,40 @@ export const dismissProposal = async (
     )
   }
   const c = stateClient()
+  const current = await getProposal(id)
+  if (!current) throw new Error(`proposal ${id} not found`)
+  if (current.status === 'dismissed' || current.status === 'expired') {
+    throw new Error(
+      `proposal ${id} is already '${current.status}'; nothing to dismiss`,
+    )
+  }
+  if (current.status === 'slicing') {
+    throw new Error(
+      `proposal ${id} is being sliced right now; wait for the slice to finish before dismissing`,
+    )
+  }
+  // Slices / taken tasks point back via tasks.parent_proposal_id. Refuse (rather
+  // than dismiss and orphan them) while any of those tasks is unsettled.
+  const live = await c.execute({
+    sql: `SELECT id FROM tasks
+           WHERE parent_proposal_id = ? AND status NOT IN ('done', 'dropped')
+           ORDER BY created_at`,
+    args: [id],
+  })
+  if (live.rows.length > 0) {
+    const ids = live.rows.map((row) => String(row.id))
+    throw new Error(
+      `proposal ${id} cannot be dismissed: ${ids.length} live task(s) were cut from it: ${ids.join(', ')}. ` +
+        `Finish or drop those tasks first (e.g. 'mars drop <task-id>').`,
+    )
+  }
   const now = Date.now()
   const r = await c.execute({
-    sql: `UPDATE proposals SET status = 'dismissed', fingerprint = NULL, updated_at = ? WHERE id = ? AND status = 'draft'`,
-    args: [now, id],
+    sql: `UPDATE proposals SET status = 'dismissed', fingerprint = NULL, updated_at = ? WHERE id = ? AND status = ?`,
+    args: [now, id, current.status],
   })
   if (r.rowsAffected === 0) {
-    const current = await getProposal(id)
-    if (!current) throw new Error(`proposal ${id} not found`)
-    throw new Error(
-      `proposal ${id} is '${current.status}'; only draft proposals can be dismissed`,
-    )
+    throw new Error(`proposal ${id} changed status concurrently; retry the dismiss`)
   }
   // ADR-0094: close the open draft-proposal action-queue row in the same
   // logical operation as the status flip. A dismissed proposal's row can

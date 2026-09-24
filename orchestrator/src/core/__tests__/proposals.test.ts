@@ -88,8 +88,34 @@ describe('proposals — lifecycle-transition guards', () => {
       // The existing guarded UPDATE in dismissProposal rejects this because
       // AND status='draft' matches zero rows.
       await expect(p.dismissProposal(proposal.id)).rejects.toThrow(
-        /only draft proposals can be dismissed/,
+        /already 'dismissed'/,
       )
+    })
+
+    it('dismisses a prd-ready proposal', async () => {
+      const { p } = await loadMods(repo)
+
+      const proposal = await p.createProposal('Shaped proposal', {
+        source: 'human',
+        problem: 'a problem',
+        solution: 'a solution',
+      })
+      await p.setProposalField(proposal.id, 'status', 'prd-ready')
+      const dismissed = await p.dismissProposal(proposal.id)
+      expect(dismissed.status).toBe('dismissed')
+    })
+
+    it('dismisses a sliced proposal with no live tasks', async () => {
+      const { p } = await loadMods(repo)
+
+      const proposal = await p.createProposal('Sliced proposal', {
+        source: 'human',
+        problem: 'a problem',
+        solution: 'a solution',
+      })
+      await p.setProposalField(proposal.id, 'status', 'sliced')
+      const dismissed = await p.dismissProposal(proposal.id)
+      expect(dismissed.status).toBe('dismissed')
     })
 
     it('setProposalField allows other status transitions from non-dismissed proposals', async () => {
