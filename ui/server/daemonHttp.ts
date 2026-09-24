@@ -13,6 +13,7 @@
  * standalone package that renders descriptors it's handed.
  */
 
+import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { DAEMON_ERROR } from '../src/shared/daemonErrors.ts'
@@ -62,6 +63,18 @@ export const readDaemonHttpPort = async (
 }
 
 /**
+ * Envelope for "no daemon reachable". Names the path it looked in and tells a
+ * missing `.mars` state dir (wrong repo) apart from a stopped daemon.
+ */
+export const noDaemonBody = (stateDir: string) => ({
+  ok: false,
+  error: existsSync(stateDir)
+    ? `daemon not running (no daemon port file at ${portFilePath(stateDir)})`
+    : `daemon not running: no .mars state dir at ${stateDir} — wrong repo? (start with --repo <path>)`,
+  errorCode: DAEMON_ERROR.NO_DAEMON,
+})
+
+/**
  * Maximum time (ms) to wait for any single daemon HTTP response before giving
  * up and returning 504 / PROXY_TIMEOUT. Ten seconds is generous enough for
  * slow queries while short enough that a hanging daemon route does not block
@@ -90,7 +103,7 @@ const withDaemon = async (
   if (port === null) {
     return {
       status: 503,
-      body: { ok: false, error: 'daemon not running', errorCode: DAEMON_ERROR.NO_DAEMON },
+      body: noDaemonBody(stateDir),
     }
   }
   const signal = AbortSignal.timeout(PROXY_TIMEOUT_MS)
@@ -109,7 +122,7 @@ const withDaemon = async (
     if (errCode === 'ECONNREFUSED') {
       return {
         status: 503,
-        body: { ok: false, error: 'daemon not running', errorCode: DAEMON_ERROR.NO_DAEMON },
+        body: noDaemonBody(stateDir),
       }
     }
     // AbortSignal.timeout() causes fetch to throw a DOMException with

@@ -1,6 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { resolve, sep } from 'node:path'
 import { findProject } from '../../orchestrator/src/registry/projects.ts'
 
 export interface RepoContext {
@@ -25,9 +24,24 @@ const detectRepoRoot = (start: string): string => {
   }).trim()
 }
 
-const makeContext = (repoRoot: string): RepoContext => {
+const WORKTREES_SEGMENT = `${sep}.mars${sep}worktrees${sep}`
+
+/**
+ * A task worktree (`<repo>/.mars/worktrees/<id>`) is never a valid state dir:
+ * the daemon only publishes `http.port` in the main checkout. Walk up past it.
+ */
+export const stripWorktreePath = (repoRoot: string): string => {
+  const idx = repoRoot.indexOf(WORKTREES_SEGMENT)
+  return idx === -1 ? repoRoot : repoRoot.slice(0, idx)
+}
+
+const makeContext = (rawRoot: string): RepoContext => {
+  const repoRoot = stripWorktreePath(rawRoot)
+  if (repoRoot !== rawRoot) {
+    console.warn(`mars-ui: repo ${rawRoot} is a task worktree; using ${repoRoot}`)
+  }
+  // Never create `.mars/` here: a missing state dir must be diagnosed, not populated.
   const stateDir = resolve(repoRoot, '.mars')
-  if (!existsSync(stateDir)) mkdirSync(stateDir, { recursive: true })
   // Tasks (`queueDbPath`) and proposals/actionQueue (`stateDbPath`) now share a
   // single `.mars/mars.db` file (see ADR-0034), matching the orchestrator's
   // `context.ts`. Both names resolve to the same path so the UI's TaskDb /

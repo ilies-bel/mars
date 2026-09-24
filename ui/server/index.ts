@@ -16,6 +16,7 @@ import {
   proxyDelete,
   proxyGet as realProxyGet,
   proxyPost as realProxyPost,
+  noDaemonBody,
   proxyStream,
   readDaemonHttpPort,
 } from './daemonHttp.ts'
@@ -1568,11 +1569,7 @@ export const startServer = async (
           }
           const port = await readDaemonHttpPort(ctx.stateDir)
           if (port === null) {
-            return jsonResponse(503, {
-              ok: false,
-              error: 'daemon not running',
-              errorCode: DAEMON_ERROR.NO_DAEMON,
-            })
+            return jsonResponse(503, noDaemonBody(ctx.stateDir))
           }
           let daemonResp: Response
           try {
