@@ -757,7 +757,9 @@ const RECIPE_DEFINITIONS = {
     // entityTitle carries the PRD's human-readable name so the UI can label
     // group members without parsing it back out of the body prose.
     entityTitle: (ctx) => str(ctx.payload['proposalTitle']) || null,
-    verbs: [],
+    // Same op as bulkResolveVerb: the bulk handler loops the per-item dispatch,
+    // so a lone member must be able to retry too.
+    verbs: [{ op: 'proposal.slice', label: 'Retry', style: 'primary' as const }],
     bulkResolveVerb: { op: 'proposal.slice', label: 'Retry', style: 'primary' as const },
   },
 

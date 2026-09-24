@@ -110,6 +110,13 @@ describe('action-queue recipe registry — exhaustiveness', () => {
     const hasGenericDismiss = verbs.some((v) => v.op === 'dismiss')
     expect(hasGenericDismiss).toBe(GENERIC_DISMISS_KINDS.has(kind))
   })
+
+  it.each(ACTION_QUEUE_KINDS)('kind "%s" offers its bulkResolveVerb op per item too', (kind) => {
+    const recipe = lookupRecipe(kind)
+    if (recipe.bulkResolveVerb === undefined) return
+    const ops = getRecipeVerbs(recipe, makeCtx({ kind })).map((v) => v.op)
+    expect(ops).toContain(recipe.bulkResolveVerb.op)
+  })
 })
 
 // ── Suite 2: Snooze lifecycle ─────────────────────────────────────────────────
