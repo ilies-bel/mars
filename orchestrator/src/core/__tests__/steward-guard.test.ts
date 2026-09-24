@@ -43,7 +43,14 @@ describe('Steward repeat guard', () => {
     expect(first.outcome).toBe('blocked')
     expect(first.fixTaskId).toBeTruthy()
 
-    await queue.updateTask(first.fixTaskId!, { status: 'done' })
+    // Must be `failed`, not `done`: a recovery that reaches `done` settles its
+    // origin via the landed-recovery gate in queue-fix-tasks.ts, which would
+    // short-circuit the second dispatch to 'noop'. `failed` clears the
+    // in-flight dedup guard without asserting the work shipped.
+    await queue.updateTask(first.fixTaskId!, {
+      status: 'failed',
+      failureReason: 'steward fix did not resolve the failure',
+    })
 
     const second = await fixTasks.handleTaskFailureWithFixTask({
       taskId: task.id,
