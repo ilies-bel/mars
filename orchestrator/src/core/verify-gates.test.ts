@@ -292,3 +292,30 @@ describe('whole-suite migration in ensureVerifyGatesSchema', () => {
     expect(offenders).toHaveLength(0)
   })
 })
+
+describe('signal-free gate detection', () => {
+  it('flags npm script indirection and literal clauses, one level deep', async () => {
+    const { findCannotFailReason } = await import('./verify-gates.js')
+    const scripts = () => ({ knip: 'knip --no-exit-code', ok: 'knip' })
+    expect(findCannotFailReason('npm', ['run', 'knip'], '.', scripts)).toMatch(/--no-exit-code/)
+    expect(findCannotFailReason('npm', ['run', 'ok'], '.', scripts)).toBeNull()
+    expect(findCannotFailReason('bash', ['-c', 'tsc || true'], '.', () => null)).toMatch(/\|\| true/)
+  })
+
+  it('derives cannot-fail and never-passed conditions from gate state', async () => {
+    const { deriveSignalFreeGates } = await import('./verify-gates.js')
+    const base = {
+      scope: '.', args: [], required: true, tier: 'task', source: 'human', state: 'active',
+      quarantinedAt: null, quarantineSignature: null, lastFailureSignature: null,
+      lastFailureAt: null, lastFailureOriginId: null, timeoutMin: null, evidence: null,
+    } as const
+    const now = 10 * 24 * 3600 * 1000
+    const gates = [
+      { ...base, id: 'a', name: 'knip', cmd: 'npm', args: ['run', 'knip'], createdAt: now, lastPassAt: now },
+      { ...base, id: 'b', name: 'e2e', cmd: 'npm', args: ['run', 'e2e'], createdAt: 0, lastPassAt: null },
+      { ...base, id: 'c', name: 'fresh', cmd: 'npm', args: ['run', 'e2e'], createdAt: now, lastPassAt: null },
+    ]
+    const res = deriveSignalFreeGates(gates, now, () => ({ knip: 'knip --no-exit-code' }))
+    expect(res.map((r) => `${r.name}:${r.kind}`)).toEqual(['knip:cannot-fail', 'e2e:never-passed'])
+  })
+})

@@ -9,8 +9,11 @@
  */
 
 import { randomUUID } from 'node:crypto'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { z } from 'zod'
 import { resolveStateClient } from './store/state-client.js'
+import { getRepoRoot } from './context.js'
 import type { DbTx } from './lib/db.js'
 import type { VerifyScope, VerifyStepSpec } from './ports/verifier/types.js'
 
@@ -109,6 +112,87 @@ export const assertNotWholeSuiteIntegrationGate = (
       { code: 'WHOLE_SUITE_INTEGRATION_GATE' as const },
     )
   }
+}
+
+/**
+ * Patterns that make a command exit 0 whatever the underlying tool finds:
+ * `--no-exit-code`, a trailing `|| true` / `|| :`, a trailing `; exit 0`.
+ * Returns the offending clause, or `null`.
+ */
+const findAlwaysPassClause = (command: string): string | null => {
+  const m = /--no-exit-code|\|\|\s*(?:true|:)\s*$|;\s*exit\s+0\s*$/.exec(command.trim())
+  return m ? m[0].trim() : null
+}
+
+/**
+ * Return a description of why a gate command can never fail, or `null`.
+ * Checks the literal command and, for `npm run <script>` / `npm test`, the
+ * script body read from the package.json at `scope` (one level of
+ * indirection). `readScripts(scope)` returns that package's scripts map.
+ */
+export const findCannotFailReason = (
+  cmd: string,
+  args: string[],
+  scope: string,
+  readScripts: (scope: string) => Record<string, string> | null,
+): string | null => {
+  const literal = findAlwaysPassClause([cmd, ...args].join(' '))
+  if (literal) return `command contains '${literal}', which makes it always exit 0`
+  if (cmd !== 'npm') return null
+  const script = args[0] === 'run' ? args[1] : args[0] === 'test' ? 'test' : undefined
+  if (!script) return null
+  const body = readScripts(scope)?.[script]
+  const clause = body === undefined ? null : findAlwaysPassClause(body)
+  return clause
+    ? `npm script '${script}' in ${scope}/package.json contains '${clause}' (${body}), which makes it always exit 0`
+    : null
+}
+
+const readScopeScripts = (scope: string): Record<string, string> | null => {
+  try {
+    const pkg = JSON.parse(readFileSync(join(getRepoRoot(), scope, 'package.json'), 'utf8')) as {
+      scripts?: Record<string, string>
+    }
+    return pkg.scripts ?? null
+  } catch {
+    return null
+  }
+}
+
+/** A gate that carries no signal, and why. */
+export interface SignalFreeGate {
+  gateId: string
+  scope: string
+  name: string
+  kind: 'cannot-fail' | 'never-passed'
+  reason: string
+}
+
+/** A gate registered longer ago than this without ever passing is reported. */
+const NEVER_PASSED_STALE_MS = 24 * 60 * 60 * 1000
+
+/**
+ * Derive (never store) the gates that carry no signal: commands that cannot
+ * fail, and active gates registered over {@link NEVER_PASSED_STALE_MS} ago
+ * that have never recorded a pass. A gate that starts passing, or is fixed,
+ * drops out on the next read (ADR-0094: condition, not a stored row).
+ */
+export const deriveSignalFreeGates = (
+  gates: readonly VerifyGate[],
+  now: number = Date.now(),
+  readScripts: (scope: string) => Record<string, string> | null = readScopeScripts,
+): SignalFreeGate[] => {
+  const out: SignalFreeGate[] = []
+  for (const g of gates) {
+    if (g.state !== 'active') continue
+    const base = { gateId: g.id, scope: g.scope, name: g.name }
+    const cannotFail = findCannotFailReason(g.cmd, g.args, g.scope, readScripts)
+    if (cannotFail) out.push({ ...base, kind: 'cannot-fail', reason: cannotFail })
+    if (g.lastPassAt === null && now - g.createdAt > NEVER_PASSED_STALE_MS) {
+      out.push({ ...base, kind: 'never-passed', reason: 'registered but has never recorded a passing run' })
+    }
+  }
+  return out
 }
 
 /** Idempotent CREATE TABLE for the verify_gates table. */
@@ -391,6 +475,15 @@ export const addVerifyGate = async (input: VerifyGateInput): Promise<string> => 
   // A required integration-tier gate with a whole-suite command cannot complete
   // within its declared budget — it holds the merge lock indefinitely.
   assertNotWholeSuiteIntegrationGate(tier, required, cmd, args, name)
+
+  // A gate whose command always exits 0 asserts nothing; never register one.
+  const cannotFail = findCannotFailReason(cmd, args, scope, readScopeScripts)
+  if (cannotFail) {
+    throw Object.assign(
+      new Error(`verify gate '${name}': ${cannotFail}. Remove the no-op clause so the real exit code propagates.`),
+      { code: 'CANNOT_FAIL_GATE' as const },
+    )
+  }
 
   const createdAt = Date.now()
   await c.execute(

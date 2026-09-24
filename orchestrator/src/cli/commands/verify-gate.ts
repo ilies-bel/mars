@@ -18,6 +18,7 @@
 import path from 'node:path'
 import {
   addVerifyGate,
+  deriveSignalFreeGates,
   getVerifyGate,
   listVerifyGates,
   removeVerifyGate,
@@ -62,6 +63,14 @@ const verifyGateList: Command = {
         deps.out(`     ${g.id}  ${g.scope}/${g.name}  (${g.quarantineSignature ?? 'unknown reason'})`)
       }
       deps.out('     restore with: mars verify-gate restore <id>')
+      deps.out('')
+    }
+    const signalFree = deriveSignalFreeGates(gates)
+    if (signalFree.length > 0) {
+      deps.out(`!! ${signalFree.length} verify gate condition(s) carry NO SIGNAL !!`)
+      for (const f of signalFree) {
+        deps.out(`     ${f.gateId}  ${f.scope}/${f.name}  [${f.kind}] ${f.reason}`)
+      }
       deps.out('')
     }
     // Header
