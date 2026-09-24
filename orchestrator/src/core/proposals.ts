@@ -884,10 +884,14 @@ export const setProposalField = async (
   // door around the verbs and the bus events they emit.
   if (field === 'status') {
     const current = await getProposal(id)
-    if (current && current.status !== value) {
+    // `isProposalStatus` narrows away the legacy statuses the `Proposal.status`
+    // docstring allows ('promoted', 'superseded', …). Those stay unguarded on
+    // purpose: no verb owns a transition out of a status the lifecycle no
+    // longer knows, so this setter must remain able to repair such a row.
+    if (current && isProposalStatus(current.status) && current.status !== value) {
       const from = current.status
-      const to = value as ProposalStatus
-      if (!(STATUS_TRANSITIONS[from]?.includes(to) ?? false)) {
+      const to = assertValidProposalStatus(value)
+      if (!STATUS_TRANSITIONS[from].includes(to)) {
         const verb = STATUS_VERBS[`${from}->${to}`]
         throw new Error(
           `proposal ${id} is '${from}'; moving it to '${to}' is not a legal transition. ` +
