@@ -895,6 +895,46 @@ const TimelineStep = ({ group, now }: TimelineStepProps) => {
   )
 }
 
+const TimelineEventRow = ({ event: e, now }: { event: TraceEvent; now: number }) => (
+  <div
+    className={`ml-2 flex items-baseline gap-1 rounded border-l-2 px-2 py-0.5 font-mono text-micro ${severityRowClass(e.severity)}`}
+  >
+    <span className="shrink-0 text-muted-foreground">{relativeTime(e.timestamp, now)}</span>
+    {/* A log_line run shares this chip on every row, so it distinguishes nothing. */}
+    {e.kind === 'log_line' ? null : (
+      <span className={`eyebrow shrink-0 ${severityColor(e.severity)} text-muted-foreground`}>
+        {humanizeKind(e.kind)}
+      </span>
+    )}
+    <span className={marsToolTextClass(e)}>{summarizeTraceEvent(e)}</span>
+  </div>
+)
+
+/** One Timeline row, or a counted expandable row for a run of log lines. */
+const TimelineEventRun = ({ events, now }: { events: TraceEvent[]; now: number }) => {
+  const [open, setOpen] = useState(false)
+  if (events.length === 1) return <TimelineEventRow event={events[0]} now={now} />
+  const first = events[0]
+  const last = events[events.length - 1]
+  return (
+    <div data-testid={`timeline-log-run-${first.id}`}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="ml-2 flex w-full items-baseline gap-1 rounded border-l-2 border-transparent px-2 py-0.5 text-left font-mono text-micro text-muted-foreground hover:bg-foreground/5"
+      >
+        {open ? <ChevronDown className="size-3 shrink-0" /> : <ChevronRight className="size-3 shrink-0" />}
+        <span className="rounded bg-primary/20 px-1 font-semibold">×{events.length}</span>
+        <span className="shrink-0">
+          {relativeTime(first.timestamp, now)} – {relativeTime(last.timestamp, now)}
+        </span>
+        <span className="min-w-0 truncate">{summarizeTraceEvent(first)}</span>
+      </button>
+      {open && events.map((e) => <TimelineEventRow key={e.id} event={e} now={now} />)}
+    </div>
+  )
+}
+
 interface TimelineTaskGroupProps {
   group: TaskGroup
   now: number
@@ -902,12 +942,29 @@ interface TimelineTaskGroupProps {
 
 const TimelineTaskGroup = ({ group, now }: TimelineTaskGroupProps) => {
   const [expanded, setExpanded] = useState(true)
-  const nonStepEvents = group.events.filter(
-    (e) =>
-      e.kind !== 'step_started' &&
-      e.kind !== 'step_ended' &&
-      e.kind !== 'tool_invoked',
-  )
+  // Consecutive log_line events from the same source fold into one run, the
+  // way Flat collapses them; every other event is a run of one.
+  const nonStepEvents = group.events
+    .filter(
+      (e) =>
+        e.kind !== 'step_started' &&
+        e.kind !== 'step_ended' &&
+        e.kind !== 'tool_invoked',
+    )
+    .reduce<TraceEvent[][]>((runs, e) => {
+      const prev = runs[runs.length - 1]
+      if (
+        prev &&
+        e.kind === 'log_line' &&
+        prev[0].kind === 'log_line' &&
+        prev[0].payload.source === e.payload.source
+      ) {
+        prev.push(e)
+      } else {
+        runs.push([e])
+      }
+      return runs
+    }, [])
 
   return (
     <div className="border-l-2 border-border pl-3">
@@ -956,21 +1013,8 @@ const TimelineTaskGroup = ({ group, now }: TimelineTaskGroupProps) => {
       {expanded && (
         <div className="flex flex-col gap-0.5 pb-1">
           {/* Non-step events (task.failed, task.blocked, recovery.spawned, etc.) */}
-          {nonStepEvents.map((e) => (
-            <div
-              key={e.id}
-              className={`ml-2 flex items-baseline gap-1 rounded border-l-2 px-2 py-0.5 font-mono text-micro ${severityRowClass(e.severity)}`}
-            >
-              <span className="shrink-0 text-muted-foreground">
-                {relativeTime(e.timestamp, now)}
-              </span>
-              <span className={`eyebrow shrink-0 ${severityColor(e.severity)} text-muted-foreground`}>
-                {humanizeKind(e.kind)}
-              </span>
-              <span className={marsToolTextClass(e)}>
-                {summarizeTraceEvent(e)}
-              </span>
-            </div>
+          {nonStepEvents.map((run) => (
+            <TimelineEventRun key={run[0].id} events={run} now={now} />
           ))}
           {/* Step groups with nested tool calls */}
           {group.steps.map((sg) => (
@@ -1076,7 +1120,7 @@ const TimelineView = ({ events, now }: TimelineViewProps) => {
 const PAGE_LIMIT = 100
 
 export const EventsPage = ({
-  initialView = 'flat',
+  initialView = 'timeline',
 }: {
   /**
    * Which view the page opens on.
@@ -1109,6 +1153,12 @@ export const EventsPage = ({
    * because switching today would ship sixty-five raw log lines as the first
    * thing anyone sees. Give Timeline Flat's log handling (mars-abedd418) and
    * it becomes the better default on both counts, at which point flip it.
+   *
+   * Then mars-abedd418 gave Timeline Flat's log handling: consecutive
+   * `log_line` events from one source fold into a single ×N row (expandable),
+   * and the always-identical LOG chip is dropped. With the row-level gap
+   * closed, Timeline's better structure won and it became the landing view
+   * again (third move), listed first in the tab strip.
    *
    * Exposed so a test can pin a view explicitly rather than depending on
    * whichever is currently the default; fourteen flat-view tests broke the
@@ -1376,7 +1426,7 @@ export const EventsPage = ({
             <div className="h-4 w-px shrink-0 bg-primary/20" aria-hidden="true" />
 
             {/* Default first, so the strip reads in the order it behaves. */}
-            {(['flat', 'timeline'] as const).map((mode) => (
+            {(['timeline', 'flat'] as const).map((mode) => (
               <button
                 key={mode}
                 type="button"

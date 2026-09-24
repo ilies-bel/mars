@@ -1787,7 +1787,7 @@ describe('EventsPage — timeline view toggle', () => {
     expect(html).toContain('data-testid="events-view-timeline"')
   })
 
-  it('defaults to flat view (virtualizer list is rendered)', () => {
+  it('renders the flat view (virtualizer list) when asked for it', () => {
     const events = [makeEvent({ id: 'ev-flat-1' })]
     const qc = makeClient(makeResponse(events))
     const html = renderPage(qc)
@@ -1796,8 +1796,27 @@ describe('EventsPage — timeline view toggle', () => {
   })
 })
 
+describe('EventsPage — timeline log_line collapsing', () => {
+  it('folds consecutive log lines into one counted row without LOG chips', () => {
+    const logs = [1, 2, 3, 4].map((i) =>
+      makeEvent({
+        id: `log-${i}`,
+        kind: 'log_line',
+        severity: 'info',
+        timestamp: 1000 + i,
+        payload: { source: 'workflow', message: `line ${i}` },
+      }),
+    )
+    const html = renderPage(makeClient(makeResponse(logs)), 'timeline')
+    expect(html).toContain('data-testid="timeline-log-run-log-1"')
+    expect(html).toContain('×4')
+    expect(html).not.toContain('>LOG<')
+  })
+})
+
 // ---------------------------------------------------------------------------
 // Which view the page opens on
+
 //
 // This landed on Timeline once, for a reason that has since been fixed: Flat
 // printed "run-agent step failed" twenty-two times in a row with no indication
@@ -1808,19 +1827,19 @@ describe('EventsPage — timeline view toggle', () => {
 // behind a content-free LOG chip, raw event names where Flat says "verify step
 // failed", the run/step pair for a single failure printed as two adjacent rows
 // carrying identical text, and a pnpm install entry dumping a wall of progress
-// characters into the page. Flat is the better landing view now; Timeline's
-// grouping stays one click away.
+// characters into the page. Timeline has since been given Flat's log handling and
+// is the landing view again.
 // ---------------------------------------------------------------------------
 
 describe('EventsPage — landing view', () => {
-  it('opens on Flat', () => {
+  it('opens on Timeline', () => {
     const qc = makeClient(makeResponse([makeEvent({ id: 'ev-default' })]))
     const html = renderToStaticMarkup(
       <QueryClientProvider client={qc}>
         <EventsPage />
       </QueryClientProvider>,
     )
-    const flatIdx = html.indexOf('data-testid="events-view-flat"')
+    const flatIdx = html.indexOf('data-testid="events-view-timeline"')
     expect(flatIdx).toBeGreaterThan(-1)
     // The selected control carries the raised surface treatment. React emits
     // `class` AFTER `data-testid`, so the slice runs forward to the tag's end.
@@ -1835,8 +1854,8 @@ describe('EventsPage — landing view', () => {
         <EventsPage />
       </QueryClientProvider>,
     )
-    expect(html.indexOf('data-testid="events-view-flat"')).toBeLessThan(
-      html.indexOf('data-testid="events-view-timeline"'),
+    expect(html.indexOf('data-testid="events-view-timeline"')).toBeLessThan(
+      html.indexOf('data-testid="events-view-flat"'),
     )
   })
 
