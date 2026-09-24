@@ -41,6 +41,7 @@ export const FLAGS_WITH_VALUES: ReadonlySet<string> = new Set([
   '--technical-file',
   '--since',
   '--limit',
+  '--months',
   '--out',
   '--author',
   '--by',

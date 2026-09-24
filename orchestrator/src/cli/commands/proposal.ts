@@ -37,6 +37,8 @@ import {
   isProposalSource,
   type ProposalSource,
 } from '../../core/proposals'
+import { resolveStateClient } from '../../core/store/state-client'
+import { computeYieldBySource, computeVolumeByMonth } from '../../core/lib/proposal-yield'
 import { isDaemonReachable } from '../../core/daemon/paths'
 import { getDefaultTaskStore } from '../../core/store/task-store-default'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
@@ -688,35 +690,36 @@ const proposalList: Command = {
 
 const proposalYield: Command = {
   path: 'proposal yield',
-  summary: 'measure triage yield (actioned rate) per source and per month',
-  usage: 'usage: mars proposal yield',
-  run: async (_args, deps) => {
+  summary: 'measure triage yield per source and volume vs action rate per month',
+  usage: 'usage: mars proposal yield [--months <n>] [--json]',
+  run: async (args, deps) => {
+    const monthsFlag = args.flags['--months']
+    const months = monthsFlag === undefined ? 6 : Number(monthsFlag)
+    if (!Number.isInteger(months) || months < 1) {
+      deps.err(`--months must be a positive integer; got '${monthsFlag}'`)
+      return { code: 2 }
+    }
     try {
-      const bySource = await deps.store.query({
-        sql: `SELECT source, COUNT(*) AS total,
-                     SUM(CASE WHEN status IN ('sliced','prd-ready') THEN 1 ELSE 0 END) AS actioned
-              FROM proposals GROUP BY source ORDER BY total DESC`,
-        args: [],
-      })
-      const byMonth = await deps.store.query({
-        sql: `SELECT to_char(to_timestamp(created_at / 1000.0), 'YYYY-MM') AS month,
-                     COUNT(*) AS created,
-                     SUM(CASE WHEN status IN ('sliced','prd-ready') THEN 1 ELSE 0 END) AS actioned
-              FROM proposals GROUP BY 1 ORDER BY 1`,
-        args: [],
-      })
-      const render = (label: string, rows: readonly unknown[]): void => {
-        deps.out(label)
-        for (const row of rows) {
-          const r = row as { source?: string; month?: string; total?: unknown; created?: unknown; actioned: unknown }
-          const total = Number(r.total ?? r.created)
-          const actioned = Number(r.actioned)
-          const pct = total > 0 ? ((actioned / total) * 100).toFixed(1) : '0.0'
-          deps.out(`  ${r.source ?? r.month}\t${total}\t${actioned}\t${pct}%`)
-        }
+      const client = resolveStateClient()
+      const now = new Date()
+      const sinceMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - (months - 1), 1)
+      const bySource = await computeYieldBySource(client, { sinceMs })
+      const byMonth = await computeVolumeByMonth(client, { monthsBack: months })
+      if (hasFlag(args, '--json')) {
+        deps.out(JSON.stringify({ bySource, byMonth }))
+        return { code: 0 }
       }
-      render('source\ttotal\tactioned\trate', bySource.rows)
-      render('month\tcreated\tactioned\trate', byMonth.rows)
+      const row = (cells: readonly (string | number)[]): string =>
+        cells.map((c, i) => String(c).padEnd(i === 0 ? 14 : 10)).join('').trimEnd()
+      deps.out(row(['source', 'total', 'sliced', 'prd-ready', 'actioned%']))
+      for (const r of bySource) {
+        deps.out(row([r.source, r.total, r.sliced, r.prdReady, `${r.actionedPct}%`]))
+      }
+      deps.out('')
+      deps.out(row(['month', 'created', 'actioned', 'rate']))
+      for (const r of byMonth) {
+        deps.out(row([r.month, r.created, r.actioned, `${r.ratePct}%`]))
+      }
     } catch (error: unknown) {
       deps.err(errorMessage(error))
       return { code: 1 }
