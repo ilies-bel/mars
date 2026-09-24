@@ -1237,6 +1237,51 @@ describe('blocker-resolution (task_blockers)', () => {
       const depReloaded = await q.getTask(dep.id)
       expect(depReloaded?.status).toBe('queued')
     })
+
+    it('a landed recovery settles the origin done when the origin\'s own re-run then fails', async () => {
+      // Interleaving: origin re-queued by `mars continue`, recovery spawned after
+      // and merged (done), then the origin's own re-run fails verify with its
+      // single recovery slot already spent. The arc must end done, not
+      // `recovery_exhausted`.
+      const { q } = await loadModules(repo)
+      const origin = await q.enqueueTask('origin', undefined, { skipTriage: true })
+      await q.resolveQueueClient().execute({
+        sql: `UPDATE tasks SET status = 'running', recovery_spawned_count = 1 WHERE id = ?`,
+        args: [origin.id],
+      })
+      await makeOwnRecovery(q, origin.id, 'done')
+
+      const { handleTaskFailureWithFixTask } = await import('../../queue-fix-tasks')
+      await handleTaskFailureWithFixTask({
+        taskId: origin.id,
+        failingStep: 'verify:spec-verify-cmd',
+        errorOutput: 'boom',
+      })
+
+      const reloaded = await q.getTask(origin.id)
+      expect(reloaded?.status).toBe('done')
+      expect(reloaded?.failureReason).toBeFalsy()
+    })
+
+    it('settles an origin already parked failed when a landed recovery exists', async () => {
+      const { q } = await loadModules(repo)
+      const origin = await q.enqueueTask('origin', undefined, { skipTriage: true })
+      await q.resolveQueueClient().execute({
+        sql: `UPDATE tasks SET status = 'failed', failure_reason = 'verify:spec-verify-cmd',
+                     recovery_spawned_count = 1 WHERE id = ?`,
+        args: [origin.id],
+      })
+      await makeOwnRecovery(q, origin.id, 'done')
+
+      const { handleTaskFailureWithFixTask } = await import('../../queue-fix-tasks')
+      await handleTaskFailureWithFixTask({
+        taskId: origin.id,
+        failingStep: 'verify:spec-verify-cmd',
+        errorOutput: 'boom',
+      })
+
+      expect((await q.getTask(origin.id))?.status).toBe('done')
+    })
   })
 
   describe('recoverAllBlockedTasks', () => {

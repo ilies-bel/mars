@@ -53,7 +53,7 @@ import { getRepoRoot } from './context'
 import { listUniqueCommitsAhead } from './lib/sweep'
 import { recordStewardIntervention } from './steward-ledger'
 import { raiseStewardRepeatActionQueueItem, shouldStewardFire } from './steward-guard'
-import { serialiseVerifyOutputPayload } from './lib/main-commiter-payload'
+import { parseMainCommiterPayload, serialiseVerifyOutputPayload } from './lib/main-commiter-payload'
 
 /**
  * Maximum number of times a task can be auto-restarted for an environmental
@@ -690,6 +690,31 @@ export const handleTaskFailureWithFixTask = async (
       outstandingFixResult.rows[0] as unknown as { id: string }
     ).id
     return { outcome: 'noop', supersedingTaskId }
+  }
+
+  // Landed-recovery gate (arc mars-bd11e05a). A recovery that already reached
+  // `done` is positive evidence the origin's work shipped; a failure reported
+  // by a duplicate run of the origin (e.g. an operator `mars continue` racing
+  // the recovery spawn) is not new information about the arc. Settle the origin
+  // `done` instead of burning the recovery budget and parking it `failed`
+  // with an unactionable `recovery_exhausted:` alert. Main-committer recoveries
+  // clean the integration branch and do not deliver the origin's work, so they
+  // never count. Only origin rows reach here (the recovery-task branch above
+  // returned already).
+  const landed = await s.query({
+    sql: `SELECT id, recovery_payload FROM tasks
+           WHERE fix_for_task_id = ? AND kind = 'fix' AND status = 'done'`,
+    args: [input.taskId],
+  })
+  if (landed.rows.length > 0) {
+    const deliversWork = (
+      landed.rows as unknown as Array<{ recovery_payload: string | null }>
+    ).some((r) => parseMainCommiterPayload(r.recovery_payload) === null)
+    if (deliversWork) {
+      const { Arc } = await import('./arc')
+      await Arc.load(input.taskId).propagateRecoveryDone()
+      return { outcome: 'noop' }
+    }
   }
 
   // Configuration-failure fast path: steps named `preflight:*` are operator-
