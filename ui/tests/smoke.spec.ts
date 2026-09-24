@@ -52,14 +52,19 @@ test.describe('@smoke', () => {
     const nav = page.locator('nav[aria-label="Main navigation"]')
     await expect(nav).toBeVisible({ timeout: 15_000 })
 
-    // All four group headings must appear in the sidebar.
-    await expect(nav.getByText('Decide')).toBeVisible()
-    await expect(nav.getByText('Watch')).toBeVisible()
-    await expect(nav.getByText('Tune')).toBeVisible()
-    await expect(nav.getByText('Advanced')).toBeVisible()
+    // All four group headings must appear in the sidebar. These are the
+    // `label` fields of SHELL_NAV_GROUPS in Shell.tsx (three scrolling groups
+    // plus the pinned Control footer) — keep them in step when that list is
+    // regrouped. `exact: true` matters for 'Control': without it the match is
+    // a substring and also hits the 'Control Room' nav entry, which trips
+    // Playwright strict mode rather than failing the assertion.
+    await expect(nav.getByText('Inbox', { exact: true })).toBeVisible()
+    await expect(nav.getByText('Activity', { exact: true })).toBeVisible()
+    await expect(nav.getByText('Insight', { exact: true })).toBeVisible()
+    await expect(nav.getByText('Control', { exact: true })).toBeVisible()
   })
 
-  // ── Decide group ──────────────────────────────────────────────────────────
+  // ── Inbox group ──────────────────────────────────────────────────────────
 
   test('#/ (default) renders the triage page', async ({ page }) => {
     await page.goto('/')
@@ -89,7 +94,7 @@ test.describe('@smoke', () => {
     await assertRouteRendered(page, 'chat-page')
   })
 
-  // ── Watch group ───────────────────────────────────────────────────────────
+  // ── Activity group ───────────────────────────────────────────────────────────
 
   test('#/progress renders the progress board', async ({ page }) => {
     await page.goto('/#/progress')
@@ -105,20 +110,13 @@ test.describe('@smoke', () => {
     await assertRouteRendered(page, 'events-page')
   })
 
-  // ── Tune group ────────────────────────────────────────────────────────────
+  // ── Insight group ────────────────────────────────────────────────────────────
 
   test('#/kpi renders the KPI page', async ({ page }) => {
     await page.goto('/#/kpi')
     const nav = page.locator('nav[aria-label="Main navigation"]')
     await expect(nav).toBeVisible({ timeout: 15_000 })
     await assertRouteRendered(page, 'kpi-page')
-  })
-
-  test('#/control renders the control room', async ({ page }) => {
-    await page.goto('/#/control')
-    const nav = page.locator('nav[aria-label="Main navigation"]')
-    await expect(nav).toBeVisible({ timeout: 15_000 })
-    await assertRouteRendered(page, 'control-page')
   })
 
   test('#/reflections renders the reflections page', async ({ page }) => {
@@ -128,7 +126,14 @@ test.describe('@smoke', () => {
     await assertRouteRendered(page, 'reflections-page')
   })
 
-  // ── Advanced group ────────────────────────────────────────────────────────
+  // ── Control group ────────────────────────────────────────────────────────
+
+  test('#/control renders the control room', async ({ page }) => {
+    await page.goto('/#/control')
+    const nav = page.locator('nav[aria-label="Main navigation"]')
+    await expect(nav).toBeVisible({ timeout: 15_000 })
+    await assertRouteRendered(page, 'control-page')
+  })
 
   test('#/steward renders the steward page', async ({ page }) => {
     await page.goto('/#/steward')

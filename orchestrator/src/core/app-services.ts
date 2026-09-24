@@ -2370,7 +2370,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
         model: 'claude-sonnet-5',
         allowedTools: ['Read', 'Bash', 'Grep', 'Glob', 'PromptOptimize'],
         eventVariants: ['kpi-degraded', 'resource-load', 'onboarding', 'workflow-suggestion'],
-        },
+      },
       gateHealth: {
         scopes: [...gatesByScope].map(([scope, gates]) => ({ scope, gates })),
       },
