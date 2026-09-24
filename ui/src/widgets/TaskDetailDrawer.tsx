@@ -31,7 +31,7 @@ import { dagClusterStyle } from '@/shared/dagColors'
 import { relativeTime, formatDuration } from '@/shared/time'
 import { scoresHash, taskHash } from '@/shared/routing'
 import { humanizeFailureCode } from '@/shared/actionQueueDetail'
-import { formatTokensLabel } from '@/shared/displayStrings'
+import { blamedPhaseOf, buildStepRail, isBlamedPhaseUnmatched, outcomeLabel } from './stepRailModel'
 import { isDestructiveVerb } from '@/entities/actionQueue/destructiveVerb'
 import { ConfirmDestructive } from '@/entities/actionQueue/ConfirmDestructive'
 import { taskTitle } from '@/shared/promptTitle'
@@ -393,20 +393,6 @@ const buildSubgraphLayout = (
 /** Re-exported so StudioView / PrimitiveDetailDrawer keep their existing import
  * path; the single definition lives in `@/shared/time`. */
 export { formatDuration } from '@/shared/time'
-
-/** Outcome → short human label for the timeline row. */
-const outcomeLabel = (outcome: StepSpan['outcome']): string => {
-  switch (outcome) {
-    case 'running':
-      return 'running…'
-    case 'completed':
-      return 'done'
-    case 'failed':
-      return 'failed'
-    case 'killed':
-      return 'killed'
-  }
-}
 
 /** Returns the humanized command line for a tool_invoked event payload. */
 const humanizeCmd = (payload: Record<string, unknown>): string => {
@@ -1425,8 +1411,7 @@ export const TaskDetailBody = ({
           {task.status === 'failed' &&
             (() => {
               const blamed = blamedPhaseOf(task.failureSignature)
-              return blamed != null &&
-                !currentStep.stepName.toLowerCase().includes(blamed) ? (
+              return isBlamedPhaseUnmatched(blamed, [currentStep.stepName]) ? (
                 <p className="mt-0.5 text-micro text-muted-foreground" data-testid="last-step-vs-blamed">
                   The failure is blamed on{' '}
                   <span className="text-foreground">{blamed}</span>, not on this step.
@@ -1765,8 +1750,14 @@ const StepCard = ({
   isActive,
   attempt,
   attemptsTotal,
+  durationLabel,
+  tokensLabel,
 }: {
   entry: StepCardEntry
+  /** Pre-formatted duration from the step-rail model; null while in flight. */
+  durationLabel: string | null
+  /** Pre-formatted token line from the step-rail model; null for non-LLM steps. */
+  tokensLabel: string | null
   toolEvents: TraceEvent[]
   agentToolCalls: AgentToolCall[]
   isActive: boolean
@@ -1862,9 +1853,9 @@ const StepCard = ({
         </div>
 
         {/* Duration badge (right) */}
-        {entry.durationMs != null ? (
+        {durationLabel != null ? (
           <span className="shrink-0 font-mono text-body text-muted-foreground">
-            {formatDuration(entry.durationMs)}
+            {durationLabel}
           </span>
         ) : null}
       </summary>
@@ -1872,14 +1863,11 @@ const StepCard = ({
       {/* Expanded content — always in DOM, hidden by <details> when closed */}
       <div data-testid="step-card-expanded" className="border-t border-border px-3 pb-3">
         {/* Token counts (LLM-backed steps) */}
-        {(() => {
-          const label = formatTokensLabel(entry.inputTokens, entry.outputTokens, entry.cacheReadTokens)
-          return label !== null ? (
-            <p data-testid="step-card-tokens" className="pt-2 text-micro text-muted-foreground">
-              {label}
-            </p>
-          ) : null
-        })()}
+        {tokensLabel !== null ? (
+          <p data-testid="step-card-tokens" className="pt-2 text-micro text-muted-foreground">
+            {tokensLabel}
+          </p>
+        ) : null}
         {entry.claudeSessionId != null ? (
           <p
             className="pt-1 text-micro text-muted-foreground"
@@ -1994,13 +1982,6 @@ const StepCard = ({
  *
  * Replaces the old flat StepTimeline and RunTimelineSection components.
  */
-/** The pipeline phase a failure signature blames — the word before the colon. */
-const blamedPhaseOf = (signature: string | null | undefined): string | null => {
-  if (signature == null || signature === '') return null
-  const head = signature.split(':')[0]?.trim().toLowerCase() ?? ''
-  return ['setup', 'code', 'verify', 'merge'].includes(head) ? head : null
-}
-
 const StepCardList = ({
   cards,
   toolEvents,
@@ -2038,7 +2019,9 @@ const StepCardList = ({
    * single-instance Scores view.
    */
   studioHref?: string
-}) => (
+}) => {
+  const rail = buildStepRail(cards, blamedPhase)
+  return (
   <section
     data-testid="step-card-list"
     className="border-b border-border px-4 py-3"
@@ -2057,24 +2040,18 @@ const StepCardList = ({
         </a>
       ) : null}
     </div>
-    {blamedPhase != null &&
-      blamedPhase !== '' &&
-      !cards.some((c) => c.stepName.toLowerCase().includes(blamedPhase.toLowerCase())) && (
-        <p className="mb-3 text-micro text-muted-foreground" data-testid="step-blamed-phase-gap">
-          The failure is blamed on <span className="text-foreground">{blamedPhase}</span>, which
-          runs after these and left no step of its own.
-        </p>
-      )}
-    {cards.length === 0 ? (
+    {rail.blamedPhaseGap !== null && (
+      <p className="mb-3 text-micro text-muted-foreground" data-testid="step-blamed-phase-gap">
+        The failure is blamed on <span className="text-foreground">{rail.blamedPhaseGap}</span>, which
+        runs after these and left no step of its own.
+      </p>
+    )}
+    {rail.rows.length === 0 ? (
       <p className="text-body text-muted-foreground">No steps recorded yet</p>
     ) : (
       <div className="flex flex-col">
-        {cards.map((card, i) => {
-          // How many times this step ran, and which run this card is. Lists
-          // here are a handful of entries, so counting per card is cheaper
-          // than threading a map through the implicit-return component above.
-          const runsOfThisStep = cards.filter((c) => c.stepName === card.stepName).length
-          const attemptIndex = cards.slice(0, i + 1).filter((c) => c.stepName === card.stepName).length
+        {rail.rows.map((row, i) => {
+          const card = row.card
           const cardStartedAt = new Date(card.startedAt).getTime()
           const cardEndedAt = card.endedAt == null ? null : new Date(card.endedAt).getTime()
           const cardTools = toolEvents.filter(
@@ -2093,10 +2070,12 @@ const StepCardList = ({
                 toolEvents={cardTools}
                 agentToolCalls={cardAgentCalls}
                 isActive={activeStepName != null && card.stepName === activeStepName}
-                attempt={runsOfThisStep > 1 ? attemptIndex : undefined}
-                attemptsTotal={runsOfThisStep > 1 ? runsOfThisStep : undefined}
+                attempt={row.attempt}
+                attemptsTotal={row.attemptsTotal}
+                durationLabel={row.durationLabel}
+                tokensLabel={row.tokensLabel}
               />
-              {i < cards.length - 1 ? (
+              {i < rail.rows.length - 1 ? (
                 <div
                   className="mx-4 h-4 border-l-2 border-dashed border-border"
                   aria-hidden="true"
@@ -2108,7 +2087,8 @@ const StepCardList = ({
       </div>
     )}
   </section>
-)
+  )
+}
 
 /**
  * Renders the step timeline for a PROPOSAL subject, grouping spans by taskId.
