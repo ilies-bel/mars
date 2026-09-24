@@ -150,8 +150,8 @@ describe('startWorkerMcpServer', () => {
 
     expect(resp.id).toBe(2)
     const tools = (resp.result as Record<string, unknown>).tools as Array<Record<string, unknown>>
-    expect(tools).toHaveLength(3)
-    expect(tools.map(t => t.name)).toEqual(['mars_task_note', 'mars_task_check', 'mars_task_context'])
+    expect(tools).toHaveLength(4)
+    expect(tools.map(t => t.name)).toEqual(['mars_task_note', 'mars_task_check', 'mars_task_context', 'mars_task_followup'])
 
     serverInput.end()
     await serverDone
@@ -334,6 +334,55 @@ describe('startWorkerMcpServer', () => {
     expect(result.isError).toBe(true)
     expect(capturedRequests).toHaveLength(0)
 
+    serverInput.end()
+    await serverDone
+  })
+
+  it('mars_task_followup files a draft proposal stamped with the origin task id', async () => {
+    const TASK_ID = 'mars-abc123'
+    const { serverInput, serverOutput, serverDone } = startServer(
+      { MARS_MCP_TASK_ID: TASK_ID, MARS_MCP_WORKER_CLASS: 'Fixer' },
+      sendRequest,
+    )
+    await handshake(serverInput, serverOutput)
+
+    sendMsg(serverInput, {
+      jsonrpc: '2.0',
+      id: 30,
+      method: 'tools/call',
+      params: { name: 'mars_task_followup', arguments: { title: 'Cycle bug', body: 'repro steps' } },
+    })
+    const resp = await nextLine(serverOutput) as Record<string, unknown>
+    const result = resp.result as { isError?: boolean }
+    expect(result.isError).toBeFalsy()
+
+    expect(capturedRequests[0]).toMatchObject({
+      op: 'proposal.create',
+      explicitTitle: 'Cycle bug',
+      author: { kind: 'agent', name: `mcp-worker:${TASK_ID}` },
+    })
+    expect((capturedRequests[0] as { goal: string }).goal).toContain(TASK_ID)
+    expect((capturedRequests[0] as { goal: string }).goal).toContain('repro steps')
+
+    serverInput.end()
+    await serverDone
+  })
+
+  it('mars_task_followup is rejected for read-only worker classes', async () => {
+    const { serverInput, serverOutput, serverDone } = startServer(
+      { MARS_MCP_TASK_ID: 'mars-abc123', MARS_MCP_WORKER_CLASS: 'Planner' },
+      sendRequest,
+    )
+    await handshake(serverInput, serverOutput)
+    sendMsg(serverInput, {
+      jsonrpc: '2.0',
+      id: 31,
+      method: 'tools/call',
+      params: { name: 'mars_task_followup', arguments: { title: 't', body: 'b' } },
+    })
+    const resp = await nextLine(serverOutput) as { result: { isError?: boolean } }
+    expect(resp.result.isError).toBe(true)
+    expect(capturedRequests).toHaveLength(0)
     serverInput.end()
     await serverDone
   })

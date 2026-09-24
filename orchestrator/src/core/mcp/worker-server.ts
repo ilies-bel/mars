@@ -24,6 +24,11 @@ const TaskCheckArgsSchema = z.object({
   uncheck: z.boolean().optional(),
 })
 
+const TaskFollowupArgsSchema = z.object({
+  title: z.string().trim().min(1, 'title must be a non-empty string'),
+  body: z.string().trim().min(1, 'body must be a non-empty string'),
+})
+
 // ---------------------------------------------------------------------------
 // Per-class tool matrix — the declarative gating of which tools each worker
 // class may call. A class not listed here falls back to FALLBACK_TOOLS.
@@ -35,7 +40,12 @@ const TaskCheckArgsSchema = z.object({
 // ---------------------------------------------------------------------------
 
 /** Tools available to implementation workers (can tick done criteria). */
-const IMPLEMENTATION_TOOLS = ['mars_task_note', 'mars_task_check', 'mars_task_context'] as const
+const IMPLEMENTATION_TOOLS = [
+  'mars_task_note',
+  'mars_task_check',
+  'mars_task_context',
+  'mars_task_followup',
+] as const
 
 /** Tools available to read-only synthesis workers (cannot tick done criteria). */
 const SYNTHESIS_TOOLS = ['mars_task_note', 'mars_task_context'] as const
@@ -223,6 +233,25 @@ export async function startWorkerMcpServer(
               additionalProperties: false,
             },
           },
+          {
+            name: 'mars_task_followup',
+            description:
+              'File a follow-up (out-of-scope defect, deferred cleanup, or work you cannot finish) as a draft proposal for operator triage. Stamped with the current task id. Returns the new proposal id. Use this instead of `mars task add` / `mars proposal add`, which workers cannot run.',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                title: { type: 'string', minLength: 1, description: 'Short title' },
+                body: {
+                  type: 'string',
+                  minLength: 1,
+                  description:
+                    'Standalone brief: symptom, reproduction, suggested fix, verification command',
+                },
+              },
+              required: ['title', 'body'],
+              additionalProperties: false,
+            },
+          },
         ]
         respond(id, {
           tools: ALL_TOOL_DEFS.filter((t) => allowedToolNames.has(t.name)),
@@ -290,6 +319,39 @@ export async function startWorkerMcpServer(
             )
             const verb = parsed.data.uncheck ? 'unchecked' : 'checked'
             respond(id, { content: [{ type: 'text', text: `Criterion ${parsed.data.index} ${verb}` }] })
+          } catch (err) {
+            respond(id, {
+              content: [{ type: 'text', text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
+              isError: true,
+            })
+          }
+        } else if (toolName === 'mars_task_followup') {
+          const parsed = TaskFollowupArgsSchema.safeParse(p?.arguments)
+          if (!parsed.success) {
+            respond(id, {
+              content: [{ type: 'text', text: `Invalid arguments: ${parsed.error.message}` }],
+              isError: true,
+            })
+            break
+          }
+          try {
+            const proposal = await withAudit('mars_task_followup', parsed.data, taskId, () =>
+              deps.sendRequest({
+                op: 'proposal.create',
+                goal: `Follow-up filed by worker task ${taskId}.\n\n${parsed.data.body}`,
+                explicitTitle: parsed.data.title,
+                author: { kind: 'agent', name: `mcp-worker:${taskId}` },
+              }),
+            )
+            const proposalId = (proposal as { data?: { id?: string } } | null)?.data?.id
+            respond(id, {
+              content: [
+                {
+                  type: 'text',
+                  text: `Follow-up filed as draft proposal${proposalId ? ` ${proposalId}` : ''} (origin task ${taskId})`,
+                },
+              ],
+            })
           } catch (err) {
             respond(id, {
               content: [{ type: 'text', text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
