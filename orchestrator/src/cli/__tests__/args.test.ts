@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { checkNpmScriptExists, containsAbsoluteRepoPath, hasFlag, isFullSuiteVerifyCmd, isNoOpVerifyCmd, parseArgs } from '../args'
+import { checkNpmScriptExists, containsAbsoluteRepoPath, hasFlag, isFullSuiteVerifyCmd, isNoOpVerifyCmd, parseArgs, resolveFlagBody } from '../args'
 
 describe('boolean flags', () => {
   it('reports a supplied boolean flag even though it is not positional', () => {
@@ -488,5 +488,43 @@ describe('isNoOpVerifyCmd', () => {
       expect(msg).not.toBeNull()
       expect(msg).toContain('[mars] --verify')
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// resolveFlagBody — the flag-shaped sibling of resolvePromptSource
+// ---------------------------------------------------------------------------
+
+describe('resolveFlagBody', () => {
+  it("reads stdin for '-' and strips exactly one trailing newline", () => {
+    const r = resolveFlagBody('--problem', '-', () => 'piped body\n')
+
+    expect(r).toEqual({ ok: true, value: 'piped body' })
+  })
+
+  it("leaves an interior newline alone when reading stdin", () => {
+    const r = resolveFlagBody('--problem', '-', () => 'line one\nline two\n')
+
+    expect(r).toEqual({ ok: true, value: 'line one\nline two' })
+  })
+
+  it('reports a stdin read failure against the flag the operator typed', () => {
+    const r = resolveFlagBody('--solution', '-', () => {
+      throw new Error('EBADF')
+    })
+
+    expect(r.ok).toBe(false)
+    if (!r.ok) {
+      expect(r.message).toContain('--solution')
+      expect(r.message).toContain('EBADF')
+    }
+  })
+
+  it('returns an inline value untouched', () => {
+    // Only the @<file> and - channels normalise; an inline value is verbatim.
+    expect(resolveFlagBody('--problem', 'inline text')).toEqual({
+      ok: true,
+      value: 'inline text',
+    })
   })
 })

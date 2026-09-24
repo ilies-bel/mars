@@ -347,3 +347,99 @@ describe('@<path>-in-title guard', () => {
     expect(code).not.toBe(2)
   })
 })
+
+// ---------------------------------------------------------------------------
+// 6. `proposal add --problem/--solution`: PRD body fields at creation time
+// ---------------------------------------------------------------------------
+
+describe('proposal add --problem/--solution', () => {
+  let bodyDir: string
+  let problemFile: string
+
+  beforeEach(() => {
+    bodyDir = mkdtempSync(resolve(tmpdir(), 'mars-prd-body-test-'))
+    problemFile = resolve(bodyDir, 'problem.md')
+    // Trailing newline is deliberate: it must be stripped, exactly as the
+    // positional @<file> channel strips it.
+    writeFileSync(problemFile, 'The CLI cannot populate PRD fields.\n')
+  })
+
+  afterEach(() => {
+    rmSync(bodyDir, { recursive: true, force: true })
+  })
+
+  it('forwards --problem @<file> contents, minus one trailing newline', async () => {
+    const { code, daemonCalls } = await run([
+      'proposal', 'add', 'goal text', '--problem', `@${problemFile}`,
+    ])
+
+    expect(code).toBe(0)
+    expect(daemonCalls[0]).toMatchObject({
+      op: 'proposal.create',
+      goal: 'goal text',
+      problem: 'The CLI cannot populate PRD fields.',
+    })
+  })
+
+  it('forwards an inline --solution verbatim', async () => {
+    const { code, daemonCalls } = await run([
+      'proposal', 'add', 'goal text', '--solution', 'Add the two flags.',
+    ])
+
+    expect(code).toBe(0)
+    expect(daemonCalls[0]).toMatchObject({
+      op: 'proposal.create',
+      solution: 'Add the two flags.',
+    })
+  })
+
+  it('omits both fields entirely when neither flag is supplied', async () => {
+    // Absence must stay absence: `createProposal` distinguishes "no problem
+    // given" (derive it from a multi-line goal) from an explicit one, so
+    // sending `problem: undefined` would change behaviour.
+    const { code, daemonCalls } = await run(['proposal', 'add', 'goal text'])
+
+    expect(code).toBe(0)
+    expect(daemonCalls[0]).not.toHaveProperty('problem')
+    expect(daemonCalls[0]).not.toHaveProperty('solution')
+  })
+
+  it('rejects an unreadable --problem file, naming the flag and the path', async () => {
+    const missing = resolve(bodyDir, 'does-not-exist.md')
+
+    const { code, err, daemonCalls } = await run([
+      'proposal', 'add', 'goal text', '--problem', `@${missing}`,
+    ])
+
+    expect(code).not.toBe(0)
+    const errText = err.join('\n')
+    expect(errText).toContain('--problem')
+    expect(errText).toContain(missing)
+    // No proposal may be created from a body that could not be read.
+    expect(daemonCalls).toHaveLength(0)
+  })
+
+  it('rejects two arguments both reading stdin instead of storing an empty field', async () => {
+    const { code, err, daemonCalls } = await run([
+      'proposal', 'add', '-', '--problem', '-',
+    ])
+
+    expect(code).not.toBe(0)
+    expect(err.join('\n')).toContain('--problem')
+    expect(daemonCalls).toHaveLength(0)
+  })
+
+  it('names the accepted flags and `proposal set` when given an undeclared flag', async () => {
+    const { code, err, daemonCalls } = await run([
+      'proposal', 'add', 'goal text', '--notes', 'some notes',
+    ])
+
+    expect(code).not.toBe(0)
+    const errText = err.join('\n')
+    expect(errText).toContain('--notes')
+    // The whole point of the hint: both routes to a PRD body are named.
+    expect(errText).toContain('--problem')
+    expect(errText).toContain('mars proposal set')
+    expect(daemonCalls).toHaveLength(0)
+  })
+})
