@@ -5,18 +5,10 @@
  * registered kind instead of returning `undefined`; `changes` lets a future
  * consumer react to a registration without polling).
  *
- * The built-in `local-git` is registered by this file, at the bottom of the
- * module body. It used to self-register inside `./local-git.ts` instead, which
- * made registration a side effect of somebody importing that module — and only
- * `app-services.ts` did. Every other entry point that reached `resolveVcs()`
- * first, the setup step included, got
- * `Unknown Vcs implementation 'local-git' — known: (none registered)`, so no
- * task could get past `setup`.
- *
- * Importing `./local-git` from here is only possible because it is now a leaf:
- * it no longer imports `../../lib/git/checkpoint` (which imports this
- * registry). That cycle is what made a direct import impossible before — the
- * replayed module found `registerVcs` in its temporal dead zone.
+ * The built-in `local-git` is registered lazily on first lookup (see
+ * `ensureBuiltinsRegistered`), so importing the registry is enough to make
+ * `resolveVcs()` answer without depending on module evaluation order in the
+ * registry <-> local-git <-> lib/git/checkpoint import cycle.
  *
  * The active implementation is selected via `resolvePortKind('vcs', env)`
  * (`../../config/registry.ts`'s shared Port catalog, `MARS_VCS_KIND`, default
@@ -31,13 +23,29 @@ type VcsMap = Record<string, Vcs>
 
 const registry = createServiceRegistry<VcsMap>()
 
-/** Register a `Vcs` implementation. Built-ins self-register in their own file. */
+/**
+ * Built-ins are registered lazily on first lookup, never at module scope:
+ * `./local-git` reaches `lib/git/checkpoint`, which imports this registry, so
+ * a module-scope `registerVcs(localGitVcs)` ran while `localGitVcs` was still
+ * undefined whenever a fresh module graph (e.g. after `vi.resetModules()`)
+ * entered through a different root. By lookup time every module has finished
+ * evaluating. Idempotent, and never overrides a kind registered explicitly.
+ */
+const ensureBuiltinsRegistered = (): void => {
+  if (!registry.has(localGitVcs.kind)) registry.provide(localGitVcs.kind, localGitVcs)
+}
+
+/** Register a `Vcs` implementation. */
 export const registerVcs = (impl: Vcs): Disposer => registry.provide(impl.kind, impl)
 
-export const getVcs = (kind: string): Vcs | undefined => registry.get(kind)
+export const getVcs = (kind: string): Vcs | undefined => {
+  ensureBuiltinsRegistered()
+  return registry.get(kind)
+}
 
 /** Like {@link getVcs}, but throws naming every registered kind instead of returning `undefined`. */
 export const requireVcs = (kind: string): Vcs => {
+  ensureBuiltinsRegistered()
   if (!registry.has(kind)) {
     const known = listVcses()
       .map((impl) => impl.kind)
@@ -48,7 +56,10 @@ export const requireVcs = (kind: string): Vcs => {
   return registry.require(kind)
 }
 
-export const listVcses = (): readonly Vcs[] => registry.keys().map((kind) => registry.require(kind))
+export const listVcses = (): readonly Vcs[] => {
+  ensureBuiltinsRegistered()
+  return registry.keys().map((kind) => registry.require(kind))
+}
 
 /**
  * Resolves the active `Vcs` implementation from `env` (typically
@@ -61,7 +72,3 @@ export const listVcses = (): readonly Vcs[] => registry.keys().map((kind) => reg
  */
 export const resolveVcs = (env: Record<string, string | undefined> = process.env): Vcs =>
   requireVcs(resolvePortKind('vcs', env))
-
-// Built-ins. Registered here, unconditionally, as the last thing this module
-// does — so importing the registry is enough to make `resolveVcs()` answer.
-registerVcs(localGitVcs)

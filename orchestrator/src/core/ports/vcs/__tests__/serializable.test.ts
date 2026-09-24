@@ -480,3 +480,15 @@ describe('merge() — exhaustive per-field forwarding to mergeBranch', () => {
     ).toBe(conversation)
   })
 })
+
+describe('registry built-in registration under vi.resetModules()', () => {
+  it('resolves local-git whichever root enters the module graph first', async () => {
+    for (const firstRoot of ['../../../lib/git/checkpoint', '../local-git', '../registry']) {
+      vi.resetModules()
+      await import(firstRoot)
+      const reg = await import('../registry')
+      expect(reg.requireVcs('local-git').kind).toBe('local-git')
+      expect(reg.listVcses().map((impl) => impl.kind)).toContain('local-git')
+    }
+  })
+})
