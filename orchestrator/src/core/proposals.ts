@@ -852,14 +852,14 @@ export const setProposalField = async (
   // trail and could re-ask the operator a question they already answered.
   // This mirrors the `AND status = 'draft'` guard in `dismissProposal` — the
   // same conditional-update pattern applied in the opposite direction.
-  // Use `reviveProposal` to move an 'expired' proposal back to 'draft'; that
+  // Use `reviveProposal` to move an 'expired' or 'dismissed' proposal back to 'draft'; that
   // path explicitly checks the precondition and emits the right bus event.
   if (field === 'status' && value === 'draft') {
     const current = await getProposal(id)
     if (current?.status === 'dismissed') {
       throw new Error(
         `proposal ${id} is 'dismissed'; a dismissed proposal cannot be moved back to 'draft'. ` +
-          `Use 'mars proposal revive' only on expired proposals.`,
+          `Use 'mars proposal revive <id>' to undo the dismissal.`,
       )
     }
   }
@@ -1597,8 +1597,9 @@ export const expireProposals = async (
 }
 
 /**
- * Revive an expired proposal back to draft status so it can be triaged again.
- * Throws if the proposal is not currently 'expired'. Emits `proposal.added` so
+ * Revive an expired or dismissed proposal back to draft status so it can be
+ * triaged again (dismiss is a one-keystroke gesture, so it must be undoable).
+ * Throws if the proposal is in any other status. Emits `proposal.added` so
  * the action-queue-repopulator subscriber raises a new draft-proposal row.
  */
 export const reviveProposal = async (idOrPrefix: string): Promise<Proposal> => {
@@ -1615,16 +1616,19 @@ export const reviveProposal = async (idOrPrefix: string): Promise<Proposal> => {
   const id = resolved.id
   const current = await getProposal(id)
   if (!current) throw new Error(`proposal ${id} not found`)
-  if (current.status !== 'expired') {
+  if (current.status !== 'expired' && current.status !== 'dismissed') {
     throw new Error(
-      `proposal ${id} is '${current.status}'; only expired proposals can be revived`,
+      `proposal ${id} is '${current.status}'; only expired or dismissed proposals can be revived`,
     )
   }
   const c = stateClient()
-  await c.execute({
-    sql: `UPDATE proposals SET status = 'draft', updated_at = ? WHERE id = ? AND status = 'expired'`,
-    args: [Date.now(), id],
+  const r = await c.execute({
+    sql: `UPDATE proposals SET status = 'draft', updated_at = ? WHERE id = ? AND status = ?`,
+    args: [Date.now(), id, current.status],
   })
+  if (r.rowsAffected === 0) {
+    throw new Error(`proposal ${id} changed status concurrently; retry the revive`)
+  }
   // Emit proposal.added so the action-queue-repopulator raises a new
   // draft-proposal row. The old row was superseded when the proposal expired.
   await emitProposalBusEvent('proposal.added', {

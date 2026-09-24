@@ -183,8 +183,22 @@ describe('reviveProposal()', () => {
     expect(proposal.status).toBe('draft')
 
     await expect(p.reviveProposal(proposal.id)).rejects.toThrow(
-      /only expired proposals can be revived/,
+      /only expired or dismissed proposals can be revived/,
     )
+  })
+
+  it('flips a dismissed proposal back to draft', async () => {
+    const { p } = await loadMods(repo)
+    const proposal = await p.createProposal('Accidentally dismissed', {
+      source: 'human',
+      author: { kind: 'human', name: 'operator' },
+    })
+    await p.dismissProposal(proposal.id)
+    expect((await p.getProposal(proposal.id))?.status).toBe('dismissed')
+
+    const revived = await p.reviveProposal(proposal.id)
+    expect(revived.status).toBe('draft')
+    expect(revived.title).toBe('Accidentally dismissed')
   })
 
   it('throws when the proposal does not exist', async () => {

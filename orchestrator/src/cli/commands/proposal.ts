@@ -1044,7 +1044,7 @@ const proposalReslice: Command = {
 
 const proposalRevive: Command = {
   path: 'proposal revive',
-  summary: 'revive an expired proposal back to draft for triage',
+  summary: 'revive an expired or dismissed proposal back to draft for triage',
   usage: 'usage: mars proposal revive <id>',
   run: async (args, deps) => {
     const id = args.positional[0]
