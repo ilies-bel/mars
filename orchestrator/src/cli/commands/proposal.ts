@@ -644,7 +644,7 @@ const proposalDelete: Command = {
 const proposalList: Command = {
   path: 'proposal list',
   summary: 'list proposals; filter by source and/or status',
-  usage: `usage: mars proposal list [--source ${VALID_SOURCES.join('|')}] [--status <status>]`,
+  usage: `usage: mars proposal list [--source ${VALID_SOURCES.join('|')}] [--status <status>] [--all]`,
   run: async (args, deps) => {
     const sourceFlag = args.flags['--source']
     const statusFlag = args.flags['--status']
@@ -660,6 +660,9 @@ const proposalList: Command = {
     } = {}
     if (sourceFlag) filter.source = sourceFlag
     if (statusFlag) filter.status = statusFlag
+    // The deflected tail (expired proposals) is hidden from default listings;
+    // an explicit --status or --all shows it.
+    const hideDeflected = statusFlag === undefined && !hasFlag(args, '--all')
     let ideas
     try {
       ideas = await listProposals(filter)
@@ -667,13 +670,56 @@ const proposalList: Command = {
       deps.err(errorMessage(error))
       return { code: 1 }
     }
+    const deflected = hideDeflected ? ideas.filter((i) => i.status === 'expired') : []
+    if (hideDeflected) ideas = ideas.filter((i) => i.status !== 'expired')
     if (ideas.length === 0) {
       deps.out('no proposals')
-      return { code: 0 }
     }
     for (const i of ideas) {
       const title = i.title.trim() || '(no title)'
       deps.out(`${i.id.slice(0, 8)}\t${i.status}\tsource=${i.source}\t${title}`)
+    }
+    if (deflected.length > 0) {
+      deps.out(`(${deflected.length} deflected proposal(s) hidden; pass --all to show)`)
+    }
+    return { code: 0 }
+  },
+}
+
+const proposalYield: Command = {
+  path: 'proposal yield',
+  summary: 'measure triage yield (actioned rate) per source and per month',
+  usage: 'usage: mars proposal yield',
+  run: async (_args, deps) => {
+    try {
+      const bySource = await deps.store.query({
+        sql: `SELECT source, COUNT(*) AS total,
+                     SUM(CASE WHEN status IN ('sliced','prd-ready') THEN 1 ELSE 0 END) AS actioned
+              FROM proposals GROUP BY source ORDER BY total DESC`,
+        args: [],
+      })
+      const byMonth = await deps.store.query({
+        sql: `SELECT to_char(to_timestamp(created_at / 1000.0), 'YYYY-MM') AS month,
+                     COUNT(*) AS created,
+                     SUM(CASE WHEN status IN ('sliced','prd-ready') THEN 1 ELSE 0 END) AS actioned
+              FROM proposals GROUP BY 1 ORDER BY 1`,
+        args: [],
+      })
+      const render = (label: string, rows: readonly unknown[]): void => {
+        deps.out(label)
+        for (const row of rows) {
+          const r = row as { source?: string; month?: string; total?: unknown; created?: unknown; actioned: unknown }
+          const total = Number(r.total ?? r.created)
+          const actioned = Number(r.actioned)
+          const pct = total > 0 ? ((actioned / total) * 100).toFixed(1) : '0.0'
+          deps.out(`  ${r.source ?? r.month}\t${total}\t${actioned}\t${pct}%`)
+        }
+      }
+      render('source\ttotal\tactioned\trate', bySource.rows)
+      render('month\tcreated\tactioned\trate', byMonth.rows)
+    } catch (error: unknown) {
+      deps.err(errorMessage(error))
+      return { code: 1 }
     }
     return { code: 0 }
   },
@@ -1129,7 +1175,7 @@ const proposalGroupUsage = `usage: mars proposal <subcommand>
   PRD:       add-user-story  remove-user-story
   Lifecycle: promote  slice  take  reslice  dismiss  revive  mockup
   Blockers:  block  unblock  blockers  block-task  unblock-task  task-blockers
-  Reports:   ship-summary`
+  Reports:   ship-summary  yield`
 
 const proposalGroup: Command = {
   path: 'proposal',
@@ -1163,5 +1209,6 @@ export const proposalCommands: readonly Command[] = [
   proposalUnblockTask,
   proposalTaskBlockers,
   proposalShipSummary,
+  proposalYield,
   proposalGroup,
 ]
