@@ -133,6 +133,11 @@ export const finalizeReport = async (
     )
   }
 
+  // The branch was just deleted and a report task never merges. Detach it from
+  // the row first: the done-implies-merged guard in updateTask reads the row's
+  // branch, sees a missing ref, and would redirect this to 'failed' as
+  // 'done-with-unverifiable-merge'. A NULL branch means "nothing to verify".
+  await updateTask(taskId, { branch: null, worktreePath: null }, store)
   await updateTask(taskId, { status: 'done', failedPhase: null }, store)
 
   return { taskId, success: true, message: 'report complete' }

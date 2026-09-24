@@ -279,6 +279,21 @@ describe('finalizeReport — happy path', () => {
     expect(doneCalls[0][1]).toMatchObject({ status: 'done', failedPhase: null })
   })
 
+  it('detaches branch and worktreePath before the done transition', async () => {
+    // The done-implies-merged guard in updateTask reads the row's branch; the
+    // branch was just deleted, so it must be NULL first or the report task is
+    // redirected to failed/done-with-unverifiable-merge.
+    const taskId = 'mars-report-02b'
+
+    await finalizeReport(makeCtx(taskId), worktreeOpts(taskId))
+
+    const patches = mockUpdateTask.mock.calls.map((c) => c[1] as Record<string, unknown>)
+    const detachIdx = patches.findIndex((p) => p.branch === null && p.worktreePath === null)
+    const doneIdx = patches.findIndex((p) => p.status === 'done')
+    expect(detachIdx).toBeGreaterThanOrEqual(0)
+    expect(detachIdx).toBeLessThan(doneIdx)
+  })
+
   it('calls removeWorktree with the resolved worktree ref', async () => {
     const taskId = 'mars-report-03'
 
