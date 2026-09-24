@@ -642,7 +642,15 @@ describe('queue-fix-tasks', () => {
     // Without this, a second task.failed for the same origin would be treated
     // as a duplicate in-flight event and return 'noop' (the bug-fix guard).
     // Here we specifically test the post-recovery-completion exhaustion path.
-    await q.updateTask(first.fixTaskId!, { status: 'done' })
+    // NOTE: must be `failed`, not `done`. A recovery that reaches `done` now
+    // settles its origin via the landed-recovery gate in queue-fix-tasks.ts,
+    // which would short-circuit this call to 'noop'. `failed` is the terminal
+    // status that means "no longer outstanding" without asserting the work
+    // shipped — which is what these exhaustion/steward paths exercise.
+    await q.updateTask(first.fixTaskId!, {
+      status: 'failed',
+      failureReason: 'recovery did not resolve the failure',
+    })
 
     // Second failure: no outstanding fix, retry_count=1 > budget=0 -> failed.
     // The failure must remove every task_blockers row pointing from this task.
@@ -711,7 +719,15 @@ describe('queue-fix-tasks', () => {
     // Simulate the fix task completing (terminal = not outstanding) so the
     // second call is treated as a post-recovery re-failure, not a duplicate
     // in-flight event.
-    await q.updateTask(first.fixTaskId!, { status: 'done' })
+    // NOTE: must be `failed`, not `done`. A recovery that reaches `done` now
+    // settles its origin via the landed-recovery gate in queue-fix-tasks.ts,
+    // which would short-circuit this call to 'noop'. `failed` is the terminal
+    // status that means "no longer outstanding" without asserting the work
+    // shipped — which is what these exhaustion/steward paths exercise.
+    await q.updateTask(first.fixTaskId!, {
+      status: 'failed',
+      failureReason: 'recovery did not resolve the failure',
+    })
 
     // Second failure: no outstanding fix, retry budget exhausted -> failed + actionQueue raised.
     const second = await ft.handleTaskFailureWithFixTask({
@@ -1187,7 +1203,15 @@ describe('queue-fix-tasks', () => {
     expect(r1.fixTaskId).toBeTruthy()
     // Finish the first fix task so the second dispatch is not deduped by
     // the existing-open-fix-task short-circuit.
-    await q.updateTask(r1.fixTaskId!, { status: 'done' })
+    // NOTE: must be `failed`, not `done`. A recovery that reaches `done` now
+    // settles its origin via the landed-recovery gate in queue-fix-tasks.ts,
+    // which would short-circuit this call to 'noop'. `failed` is the terminal
+    // status that means "no longer outstanding" without asserting the work
+    // shipped — which is what these exhaustion/steward paths exercise.
+    await q.updateTask(r1.fixTaskId!, {
+      status: 'failed',
+      failureReason: 'recovery did not resolve the failure',
+    })
 
     // 2nd dispatch: steward already intervened for this signature → steward-repeat.
     // No new fix-task is created; source task stays blocked.
@@ -1230,7 +1254,15 @@ describe('queue-fix-tasks', () => {
       failingStep: 'verify:typecheck',
       errorOutput: 'TS2304: cannot find name foo',
     })
-    await q.updateTask(r1.fixTaskId!, { status: 'done' })
+    // NOTE: must be `failed`, not `done`. A recovery that reaches `done` now
+    // settles its origin via the landed-recovery gate in queue-fix-tasks.ts,
+    // which would short-circuit this call to 'noop'. `failed` is the terminal
+    // status that means "no longer outstanding" without asserting the work
+    // shipped — which is what these exhaustion/steward paths exercise.
+    await q.updateTask(r1.fixTaskId!, {
+      status: 'failed',
+      failureReason: 'recovery did not resolve the failure',
+    })
 
     // Capture the source task's error summary before the steward-repeat —
     // it must survive untouched.
@@ -1270,7 +1302,15 @@ describe('queue-fix-tasks', () => {
       errorOutput: 'TS2304: cannot find name foo',
     })
     expect(r1.outcome).toBe('blocked')
-    await q.updateTask(r1.fixTaskId!, { status: 'done' })
+    // NOTE: must be `failed`, not `done`. A recovery that reaches `done` now
+    // settles its origin via the landed-recovery gate in queue-fix-tasks.ts,
+    // which would short-circuit this call to 'noop'. `failed` is the terminal
+    // status that means "no longer outstanding" without asserting the work
+    // shipped — which is what these exhaustion/steward paths exercise.
+    await q.updateTask(r1.fixTaskId!, {
+      status: 'failed',
+      failureReason: 'recovery did not resolve the failure',
+    })
 
     // 2nd, 3rd, 4th: steward already intervened → all steward-repeat, no fix tasks.
     for (const _ of [1, 2, 3]) {
@@ -1314,7 +1354,12 @@ describe('queue-fix-tasks', () => {
 
     // Drive the fix-task into a terminal-but-non-open status. The ledger
     // MUST still see it — it counts every historical row regardless of status.
-    await q.updateTask(r1.fixTaskId!, { status: 'failed' })
+    // `updateTask` rejects a 'failed' transition with no reason — a reasonless
+    // failed row is unactionable and cannot be self-healed.
+    await q.updateTask(r1.fixTaskId!, {
+      status: 'failed',
+      failureReason: 'recovery did not resolve the failure',
+    })
 
     // Helper-level check: countFixTaskAttempts reads self_heal_attempts across
     // all task statuses; getMaxFixAttempts honours MARS_MAX_FIX_ATTEMPTS.
