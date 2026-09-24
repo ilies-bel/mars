@@ -48,6 +48,21 @@ describe('Steward prompt optimizer', () => {
     expect(codex.sections.find((section) => section.name === '## Save your work')?.depthPercent).toBeGreaterThan(80)
   })
 
+  it('measures a prompt not materially shorter than a real task-id dispatch', async () => {
+    const shared = await import('../workflows/primitives/shared')
+    const taskPrompt = 'Implement the requested change.'
+    const measured = shared.measureWorkerDispatchPrompt('Coder', taskPrompt, 'claude')
+    const dispatched = `${shared.buildCoderSystemPrompt()}\n\n${shared.composePrompt(
+      taskPrompt,
+      null,
+      'coder',
+      null,
+      'mars-12345678',
+      '/some/worktree',
+    )}`
+    expect(measured.totalBytes).toBeGreaterThanOrEqual(Buffer.byteLength(dispatched) * 0.98)
+  })
+
   it('applies autonomously once per content version, records prior text, and announces the edit', async () => {
     const optimizer = await import('./steward-prompt-optimizer')
     const entries: Array<{ targetVersion: string; outcome: string }> = []

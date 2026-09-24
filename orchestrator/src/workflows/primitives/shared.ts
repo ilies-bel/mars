@@ -748,6 +748,9 @@ const directiveLines = (text: string): string[] =>
     .map((line) => line.replace(/^[-*\d.\s#>`]+/u, '').replace(/[`*_]/gu, '').trim().toLowerCase())
     .filter((line) => line.length >= 24 && /(?:must|never|do not|always|before|commit|verify)/u.test(line))
 
+const MEASUREMENT_TASK_ID = 'mars-00000000'
+const MEASUREMENT_WORKTREE_ROOT = '/synthetic/worktree'
+
 /**
  * Inspect a real Coder dispatch composition. It deliberately calls the same
  * `buildCoderSystemPrompt` and `composePrompt` functions used by workflow
@@ -762,7 +765,22 @@ export const measureWorkerDispatchPrompt = (
     throw new Error(`prompt measurement currently supports Coder; received '${worker}'`)
   }
   const system = buildCoderSystemPrompt()
-  const user = composePrompt(taskPrompt, null, 'coder')
+  // Mirror the real dispatch (tools/coder/run-agent.ts): sections gated on a
+  // non-empty taskId (progress journal) and worktreeRoot (orientation) must be
+  // present or the measurement understates every actual prompt. Synthetic,
+  // fixed values keep it deterministic.
+  // Deliberately omitted because their content is per-task, not stable shape:
+  // spec, lessons, gateSteps, indexCard, domainFlow, verifyFailureOutput,
+  // resumeFromPriorAttempt (resume-only), and workflow (null = the default
+  // commit-mandate prefix a normal coder dispatch gets).
+  const user = composePrompt(
+    taskPrompt,
+    null,
+    'coder',
+    null,
+    MEASUREMENT_TASK_ID,
+    MEASUREMENT_WORKTREE_ROOT,
+  )
   const inlinedPrefix = '<mars_system_instructions>\n'
   const inlinedSuffix = '</mars_system_instructions>\n\n'
   const wire =
