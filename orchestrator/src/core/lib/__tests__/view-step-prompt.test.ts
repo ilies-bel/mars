@@ -21,10 +21,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+// Registry first: entering the cycle ports/vcs/registry ⇄ git/checkpoint from
+// the checkpoint side leaves localGitVcs undefined at registration time.
+import '../../ports/vcs/registry'
+import { createAppServices } from '../../app-services'
 import { openTraceEventStore, type TraceEventStore } from '../trace-events-store'
 import { openLibsql } from '../libsql'
 import type { Client } from '@libsql/client'
-import { createAppServices } from '../../app-services'
 import type { AppServices } from '../../app-services'
 import {
   extractFirstUserMessageText,
@@ -120,6 +123,26 @@ describe('viewStepPrompt — resolution outcomes', () => {
   afterEach(async () => {
     client.close()
     await store.close()
+  })
+
+  it('returns the captured prompt when addressed by phase name (real run shape)', async () => {
+    // Real runs store stepName='run-agent' with phase='code'; the route is
+    // addressed as ?stepName=code. Matching on payload.stepName alone missed.
+    await insertStarted(client, {
+      taskId: 'task-A',
+      workflowInstanceId: 'wf-real',
+      stepName: 'run-agent',
+      timestamp: '2025-01-01T10:00:00.000Z',
+      workerName: 'Coder',
+      promptText: 'the fully rendered coder prompt',
+    })
+
+    const byPhase = await svc.viewStepPrompt({ workflowInstanceId: 'wf-real', stepName: 'code' })
+    expect(byPhase.prompt).toBe('the fully rendered coder prompt')
+    expect(byPhase.source).toBe('persisted')
+
+    const byName = await svc.viewStepPrompt({ workflowInstanceId: 'wf-real', stepName: 'run-agent' })
+    expect(byName.prompt).toBe('the fully rendered coder prompt')
   })
 
   it('returns the persisted promptText with source=persisted', async () => {

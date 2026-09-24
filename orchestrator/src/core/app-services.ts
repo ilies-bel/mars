@@ -958,11 +958,13 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
     })
     // Newest-first ordering from the store: the first match is the latest
     // emission for this (workflowInstanceId, stepName) pair.
-    const startEvent = started.find(
-      (e) =>
-        e.payload.workflowInstanceId === workflowInstanceId &&
-        e.payload.stepName === stepName,
-    )
+    // `stepName` is matched against the payload's step name (e.g. 'run-agent')
+    // OR the event's phase (e.g. 'code'): callers address a step by either the
+    // engine step name or the pipeline phase the Studio shows.
+    const matchesStep = (e: (typeof started)[number]): boolean =>
+      e.payload.workflowInstanceId === workflowInstanceId &&
+      (e.payload.stepName === stepName || e.phase === stepName)
+    const startEvent = started.find(matchesStep)
     if (!startEvent) return miss
 
     if (typeof startEvent.payload.promptText === 'string') {
@@ -998,11 +1000,7 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
       q: workflowInstanceId,
       limit: 1000,
     })
-    const endEvent = ended.find(
-      (e) =>
-        e.payload.workflowInstanceId === workflowInstanceId &&
-        e.payload.stepName === stepName,
-    )
+    const endEvent = ended.find(matchesStep)
     const sessionId =
       endEvent && typeof endEvent.payload.sessionId === 'string'
         ? endEvent.payload.sessionId
