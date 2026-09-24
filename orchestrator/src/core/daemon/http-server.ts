@@ -38,6 +38,8 @@ export interface StepSpan {
   declaredTier: 'fast' | 'balanced' | 'flagship' | null
   /** Resolved native model id for this step (populated by Phase 4B slice 1). */
   resolvedModel: string | null
+  /** Names of MCP servers the run resolved; `null` = not recorded, `[]` = none. */
+  resolvedMcpServers?: string[] | null
   /**
    * Parsed gate outcomes from the `=== gate outcomes ===` JSON block at the
    * end of the verify step's `commandOutput`. Present only on verify-phase
@@ -74,6 +76,12 @@ export interface RunTimelineStep {
   declaredTier: 'fast' | 'balanced' | 'flagship' | null
   /** Resolved native model id for this step (populated by Phase 4B slice 1). */
   resolvedModel: string | null
+  /**
+   * Names of the MCP servers the run resolved (code steps). `null` = not
+   * recorded (pre-change run, non-LLM step, or resolution not attempted);
+   * `[]` = recorded and no servers were resolved.
+   */
+  resolvedMcpServers: string[] | null
 }
 
 /**

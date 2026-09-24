@@ -384,6 +384,9 @@ export const runWorkerWithSpan = async (
     outcome,
     ...(failureReason !== undefined ? { failureReason } : {}),
     sessionId: result.sessionId ?? null,
+    // Names (never configs) of the MCP servers this run resolved. `null` =
+    // resolution was not attempted / not recorded; `[]` = resolved, none.
+    resolvedMcpServers: result.resolvedMcpServers ? [...result.resolvedMcpServers] : null,
     durationMs: Date.now() - startedAt,
     usageSignals: {
       inputTokens: usage.inputTokens,

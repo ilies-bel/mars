@@ -730,6 +730,12 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
               ? s.payload.resolvedModel
               : null,
           verifyGateOutcomes,
+          resolvedMcpServers:
+          Array.isArray(endEvent?.payload.resolvedMcpServers)
+            ? (endEvent.payload.resolvedMcpServers as unknown[]).filter(
+                (n): n is string => typeof n === 'string',
+              )
+            : null,
         }
       })
       // Ascending by startedAt — preserves workflow execution order.
@@ -842,6 +848,12 @@ export const createAppServices = (deps: AppServicesDeps): AppServices => {
         resolvedModel:
           typeof s.payload.resolvedModel === 'string'
             ? s.payload.resolvedModel
+            : null,
+        resolvedMcpServers:
+          Array.isArray(endEvent?.payload.resolvedMcpServers)
+            ? (endEvent.payload.resolvedMcpServers as unknown[]).filter(
+                (n): n is string => typeof n === 'string',
+              )
             : null,
       }
 

@@ -1616,3 +1616,33 @@ describe('runWorkerWithSpan — worker-model-mismatch guard', () => {
     expect(mismatches).toHaveLength(1)
   })
 })
+
+describe('runWorkerWithSpan — resolvedMcpServers on step_ended', () => {
+  const endedPayload = async (result: RunAgentResult) => {
+    const traceStore = await openTraceEventStore(tmpDbPath())
+    await runWorkerWithSpan({
+      worker: makeWorker('Coder', result),
+      prompt: 'p',
+      runOptions: { cwd: '/tmp' },
+      traceStore,
+      stepName: 'run-claude-code',
+      workflowInstanceId: 'wf-mcp',
+      originId: 'task-mcp',
+      taskId: 'task-mcp',
+    })
+    const events = await traceStore.query({ taskId: 'task-mcp', kind: ['step_ended'] })
+    return events[0]!.payload
+  }
+
+  it('records the resolved names', async () => {
+    const p = await endedPayload({ ...successResult(), resolvedMcpServers: ['mars-worker'] })
+    expect(p.resolvedMcpServers).toEqual(['mars-worker'])
+  })
+
+  it('distinguishes an empty resolved set from "not recorded"', async () => {
+    const empty = await endedPayload({ ...successResult(), resolvedMcpServers: [] })
+    const unrecorded = await endedPayload(successResult())
+    expect(empty.resolvedMcpServers).toEqual([])
+    expect(unrecorded.resolvedMcpServers).toBeNull()
+  })
+})
