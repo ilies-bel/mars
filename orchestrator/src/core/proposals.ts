@@ -819,13 +819,16 @@ const STATUS_TRANSITIONS: Record<ProposalStatus, readonly ProposalStatus[]> = {
   slicing: ['sliced', 'taken', 'prd-ready'],
   sliced: ['prd-ready', 'dismissed'],
   taken: [],
+  // 'dismissed' and 'expired' are both exits that only `reviveProposal` undoes,
+  // and it emits 'proposal.added' so the action queue re-raises the row. Leaving
+  // either reachable here would let the raw setter strand that event.
   dismissed: [],
-  expired: ['draft'],
+  expired: [],
 }
 
 /** The verb that performs a transition, for error messages on illegal jumps. */
 const STATUS_VERBS: Record<string, string> = {
-  'expired->draft': "'mars proposal revive <id>'",
+  'expired->draft': "'mars proposal revive <id>' to bring it back to draft",
   'dismissed->draft': "'mars proposal revive <id>' to undo the dismissal",
   'dismissed->prd-ready': "'mars proposal revive <id>' to undo the dismissal",
   'draft->slicing': "'mars proposal slice <id>' after 'mars proposal promote <id>'",

@@ -19,6 +19,7 @@ interface ProposalsMod {
   createProposal: typeof import('../proposals').createProposal
   dismissProposal: typeof import('../proposals').dismissProposal
   setProposalField: typeof import('../proposals').setProposalField
+  reviveProposal: typeof import('../proposals').reviveProposal
   initProposals: typeof import('../proposals').initProposals
 }
 
@@ -68,7 +69,9 @@ describe('proposals — lifecycle-transition guards', () => {
       // unguarded and produced the status-reversion anomaly.
       await expect(
         p.setProposalField(proposal.id, 'status', 'draft'),
-      ).rejects.toThrow(/dismissed.*cannot be moved back to 'draft'/)
+      ).rejects.toThrow(
+        /is 'dismissed'.*moving it to 'draft' is not a legal transition.*mars proposal revive/,
+      )
     })
 
     it('setProposalField refuses illegal jumps and names the verb', async () => {
@@ -84,6 +87,23 @@ describe('proposals — lifecycle-transition guards', () => {
       await expect(
         p.setProposalField(draft.id, 'status', 'sliced'),
       ).rejects.toThrow(/mars proposal promote/)
+    })
+
+    it('setProposalField rejects status=draft on an expired proposal', async () => {
+      const { p } = await loadMods(repo)
+
+      // 'expired' exits the lifecycle the same way 'dismissed' does: only
+      // reviveProposal brings it back, and only that path emits
+      // 'proposal.added' so the action queue re-raises the row.
+      const proposal = await p.createProposal('Expiring one', { source: 'human' })
+      await p.setProposalField(proposal.id, 'status', 'expired')
+
+      await expect(
+        p.setProposalField(proposal.id, 'status', 'draft'),
+      ).rejects.toThrow(/not a legal transition.*mars proposal revive/)
+
+      const revived = await p.reviveProposal(proposal.id)
+      expect(revived.status).toBe('draft')
     })
 
     it('dismissProposal itself still works on a draft proposal', async () => {
