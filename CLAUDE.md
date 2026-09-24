@@ -810,6 +810,8 @@ Note: `merge_jobs.created_at` and related columns are `timestamptz`, **not** `bi
 applying the epoch-ms pattern gives `ERROR: operator does not exist: timestamp with
 time zone / numeric`.
 
+**Nullability:** the encoding registry describes the *shape* of a value that exists; it never implies NOT NULL. The fixture guard in `src/core/lib/db.ts` skips `null`/`undefined` for every encoded column (e.g. `workflow_step_runs.finished_at`, `merge_jobs.claimed_at`) and leaves NOT NULL enforcement to the DB schema.
+
 **Column naming conventions:**
 
 - `action_queue_items` uses **`status`** (not `state`) for its lifecycle

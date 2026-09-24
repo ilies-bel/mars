@@ -128,6 +128,24 @@ describe('execute (pglite backend)', () => {
     })).rejects.toThrow() // DB-level NOT NULL violation, not a guard message
   })
 
+  it('accepts null for a nullable iso-8601 column but still rejects malformed values', async () => {
+    const c = openDb(freshKey())
+    const now = new Date().toISOString()
+    await c.execute({
+      sql: `INSERT INTO tasks (id, prompt, status, created_at, updated_at) VALUES (?, ?, 'queued', ?, ?)`,
+      args: ['mj-task', 'p', now, now],
+    })
+    const insert = (id: string, finishedAt: unknown) => c.execute({
+      sql: `INSERT INTO merge_jobs (id, task_id, status, claimed_at, finished_at, integration_branch, worktree_path, branch, created_at, updated_at)
+            VALUES (?, ?, 'queued', ?, ?, 'main', '/tmp/wt', 'task/x', ?, ?)`,
+      args: [id, 'mj-task', null, finishedAt as string | null, now, now],
+    })
+
+    await expect(insert('00000000-0000-0000-0000-000000000001', null)).resolves.toBeDefined()
+    await expect(insert('00000000-0000-0000-0000-000000000002', 1700000000000))
+      .rejects.toThrow('merge_jobs.finished_at expects an ISO-8601 timestamp')
+  })
+
   it('names the timestamp column when a fixture uses an ISO string for epoch milliseconds', async () => {
     const c = openDb(freshKey())
     const createdAt = new Date().toISOString()
