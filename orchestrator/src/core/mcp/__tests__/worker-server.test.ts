@@ -602,3 +602,34 @@ describe('startWorkerMcpServer', () => {
     await serverDone
   })
 })
+
+describe('mars-worker MCP spawn command', () => {
+  it('resolves the mars binary, never the claude binary', async () => {
+    const { marsWorkerMcpConfigJson } = await import('../../lib/git/claude.js')
+    const prev = { m: process.env.MARS_BIN, c: process.env.MARS_CLAUDE_BIN }
+    process.env.MARS_BIN = '/opt/fake/mars-bin'
+    process.env.MARS_CLAUDE_BIN = '/opt/fake/claude-bin'
+    try {
+      const entry = marsWorkerMcpConfigJson('t1').mcpServers['mars-worker'] as {
+        command: string
+        args: string[]
+        env: Record<string, string>
+      }
+      expect(entry.command).toBe('/opt/fake/mars-bin')
+      expect(entry.args).toEqual(['mcp', 'worker'])
+      expect(entry.env.MARS_MCP_TASK_ID).toBe('t1')
+    } finally {
+      if (prev.m === undefined) delete process.env.MARS_BIN
+      else process.env.MARS_BIN = prev.m
+      if (prev.c === undefined) delete process.env.MARS_CLAUDE_BIN
+      else process.env.MARS_CLAUDE_BIN = prev.c
+    }
+  })
+
+  it('probe reports failure when the command cannot serve MCP', async () => {
+    const { probeMarsWorkerMcp } = await import('../../lib/git/claude.js')
+    // `false` exits immediately, like `claude mcp worker` rejecting the subcommand.
+    const r = await probeMarsWorkerMcp('/usr/bin/false', 3000)
+    expect(r.ok).toBe(false)
+  })
+})

@@ -663,14 +663,15 @@ export const buildWorkerEnv = (taskId?: string, workerClass?: string): NodeJS.Pr
  * through `MARS_MCP_TASK_ID` in its inherited environment (set by
  * `buildWorkerEnv(taskId)`).
  */
-const marsWorkerMcpConfigJson = (
+export const marsWorkerMcpConfigJson = (
   taskId: string,
-  marsBinPath: string,
 ): { mcpServers: Record<string, unknown> } => ({
   mcpServers: {
     'mars-worker': {
       type: 'stdio',
-      command: marsBinPath,
+      // Resolved internally (not a parameter) so the claude binary can never
+      // be passed here by mistake — that bug silently disabled the tools.
+      command: resolveMarsBin(),
       args: ['mcp', 'worker'],
       env: { MARS_MCP_TASK_ID: taskId },
     },
@@ -691,6 +692,107 @@ export const claudeBinEnvFingerprint = (
   override: string | undefined,
   path: string | undefined,
 ): string => `${override ?? ''}${path ?? ''}`
+
+let cachedMarsBin: string | null = null
+let cachedMarsBinFor: string | undefined = undefined
+
+/**
+ * Resolve the `mars` CLI executable (dev: tsx wrapper from install-dev.sh,
+ * prod: compiled binary). MARS_BIN overrides; otherwise PATH search; falls
+ * back to the bare name. Deliberately NOT derived from process.execPath,
+ * which under the daemon is plain `node`.
+ */
+export const resolveMarsBin = (): string => {
+  const override = process.env.MARS_BIN
+  const fingerprint = claudeBinEnvFingerprint(override, process.env.PATH)
+  if (cachedMarsBin && cachedMarsBinFor === fingerprint) return cachedMarsBin
+  cachedMarsBinFor = fingerprint
+  if (override && override.length > 0) {
+    cachedMarsBin = override
+    return override
+  }
+  const isWindows = process.platform === 'win32'
+  const names = isWindows ? ['mars.exe', 'mars.cmd'] : ['mars']
+  for (const dir of (process.env.PATH ?? '').split(isWindows ? ';' : ':')) {
+    if (dir.length === 0 || !isAbsolute(dir)) continue
+    for (const name of names) {
+      const candidate = join(dir, name)
+      if (isExecutableFile(candidate)) {
+        cachedMarsBin = candidate
+        return candidate
+      }
+    }
+  }
+  cachedMarsBin = 'mars'
+  return 'mars'
+}
+
+const probedMarsWorkerBins = new Set<string>()
+
+/**
+ * Dispatch-time probe (once per resolved binary per process): spawn
+ * `<mars> mcp worker`, send `initialize`, and require serverInfo.name ===
+ * 'mars-worker'. An MCP client silently drops a stdio server that exits on
+ * startup, so failure is surfaced with a loud console.error. Fire-and-forget;
+ * never blocks or fails a dispatch. (A boot-time probe would need a hook in
+ * daemon startup; probing at first dispatch covers the same once-per-boot
+ * budget without touching that path.)
+ */
+export const probeMarsWorkerMcp = (
+  bin: string,
+  timeoutMs = 10_000,
+): Promise<{ ok: true } | { ok: false; reason: string }> =>
+  new Promise((resolveFn) => {
+    let settled = false
+    let out = ''
+    const child = spawn(bin, ['mcp', 'worker'], {
+      env: { ...process.env, MARS_MCP_TASK_ID: 'mcp-probe' },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+    const finish = (r: { ok: true } | { ok: false; reason: string }): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      child.kill('SIGKILL')
+      resolveFn(r)
+    }
+    const timer = setTimeout(() => finish({ ok: false, reason: 'timed out waiting for initialize' }), timeoutMs)
+    child.on('error', (e) => finish({ ok: false, reason: `spawn failed: ${e.message}` }))
+    child.on('close', (code) => finish({ ok: false, reason: `exited (code ${code}) before answering initialize` }))
+    child.stdout.on('data', (chunk: Buffer) => {
+      out += chunk.toString()
+      for (const line of out.split('\n')) {
+        try {
+          const msg = JSON.parse(line) as { result?: { serverInfo?: { name?: string } } }
+          if (msg.result?.serverInfo?.name === 'mars-worker') return finish({ ok: true })
+        } catch {
+          /* partial or non-JSON line */
+        }
+      }
+    })
+    child.stdin.on('error', () => {})
+    child.stdin.write(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'mars-probe', version: '0' } },
+      }) + '\n',
+    )
+  })
+
+const ensureMarsWorkerProbed = (bin: string): void => {
+  if (probedMarsWorkerBins.has(bin)) return
+  probedMarsWorkerBins.add(bin)
+  void probeMarsWorkerMcp(bin).then((r) => {
+    if (!r.ok) {
+      console.error(
+        `[mars-worker-mcp] PROBE FAILED for '${bin} mcp worker': ${r.reason}. ` +
+          'Dispatched workers will NOT have mars_task_note/check/context tools. Set MARS_BIN or fix PATH.',
+      )
+    }
+  })
+}
 
 export const resolveClaudeBin = (): string => {
   const override = process.env.MARS_CLAUDE_BIN
@@ -844,9 +946,8 @@ export const runClaudeCode = async ({
       // emit an mcpConfig; codegraph is then pinned to the main checkout's index
       // (the worker runs inside a worktree) and the extra servers merge on top.
       ...(() => {
-        const marsWorkerServers = taskId
-          ? marsWorkerMcpConfigJson(taskId, resolveClaudeBin()).mcpServers
-          : {}
+        if (taskId) ensureMarsWorkerProbed(resolveMarsBin())
+        const marsWorkerServers = taskId ? marsWorkerMcpConfigJson(taskId).mcpServers : {}
         const mergedServers = { ...marsWorkerServers, ...(mcpServers ?? {}) }
         return Object.keys(mergedServers).length > 0
           ? { mcpConfig: codegraphMcpConfigJson(resolveCodegraphRoot(cwd), mergedServers) }
