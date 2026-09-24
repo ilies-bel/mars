@@ -71,6 +71,21 @@ describe('proposals — lifecycle-transition guards', () => {
       ).rejects.toThrow(/dismissed.*cannot be moved back to 'draft'/)
     })
 
+    it('setProposalField refuses illegal jumps and names the verb', async () => {
+      const { p } = await loadMods(repo)
+
+      const dismissed = await p.createProposal('Dismissed one', { source: 'human' })
+      await p.dismissProposal(dismissed.id)
+      await expect(
+        p.setProposalField(dismissed.id, 'status', 'prd-ready'),
+      ).rejects.toThrow(/not a legal transition.*mars proposal revive/)
+
+      const draft = await p.createProposal('Draft one', { source: 'human' })
+      await expect(
+        p.setProposalField(draft.id, 'status', 'sliced'),
+      ).rejects.toThrow(/mars proposal promote/)
+    })
+
     it('dismissProposal itself still works on a draft proposal', async () => {
       const { p } = await loadMods(repo)
 
@@ -100,6 +115,7 @@ describe('proposals — lifecycle-transition guards', () => {
         problem: 'a problem',
         solution: 'a solution',
       })
+      await p.setProposalField(proposal.id, 'problem', 'a problem')
       await p.setProposalField(proposal.id, 'status', 'prd-ready')
       const dismissed = await p.dismissProposal(proposal.id)
       expect(dismissed.status).toBe('dismissed')
@@ -113,6 +129,9 @@ describe('proposals — lifecycle-transition guards', () => {
         problem: 'a problem',
         solution: 'a solution',
       })
+      await p.setProposalField(proposal.id, 'problem', 'a problem')
+      await p.setProposalField(proposal.id, 'status', 'prd-ready')
+      await p.setProposalField(proposal.id, 'status', 'slicing')
       await p.setProposalField(proposal.id, 'status', 'sliced')
       const dismissed = await p.dismissProposal(proposal.id)
       expect(dismissed.status).toBe('dismissed')

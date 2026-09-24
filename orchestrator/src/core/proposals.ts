@@ -812,6 +812,33 @@ export const listProposals = async (
   return proposals
 }
 
+/** Legal lifecycle moves, keyed by current status. */
+const STATUS_TRANSITIONS: Record<ProposalStatus, readonly ProposalStatus[]> = {
+  draft: ['prd-ready', 'dismissed', 'expired'],
+  'prd-ready': ['slicing', 'dismissed'],
+  slicing: ['sliced', 'taken', 'prd-ready'],
+  sliced: ['prd-ready', 'dismissed'],
+  taken: [],
+  dismissed: [],
+  expired: ['draft'],
+}
+
+/** The verb that performs a transition, for error messages on illegal jumps. */
+const STATUS_VERBS: Record<string, string> = {
+  'expired->draft': "'mars proposal revive <id>'",
+  'dismissed->draft': "'mars proposal revive <id>' to undo the dismissal",
+  'dismissed->prd-ready': "'mars proposal revive <id>' to undo the dismissal",
+  'draft->slicing': "'mars proposal slice <id>' after 'mars proposal promote <id>'",
+  'draft->sliced': "'mars proposal promote <id>' then 'mars proposal slice <id>'",
+  'draft->taken': "'mars proposal promote <id>' then 'mars proposal take <id>'",
+  'prd-ready->draft': "'mars proposal dismiss <id>' (a shaped proposal cannot return to draft)",
+  'prd-ready->sliced': "'mars proposal slice <id>'",
+  'prd-ready->taken': "'mars proposal take <id>'",
+  'sliced->taken': "'mars proposal take <id>' on a prd-ready proposal",
+  'sliced->draft': "'mars proposal dismiss <id>' (it would orphan the tasks cut from it)",
+  'taken->draft': 'no verb: it would orphan the tasks cut from the proposal',
+}
+
 export type ProposalField =
   | 'title'
   | 'problem'
@@ -847,20 +874,23 @@ export const setProposalField = async (
   }
   const id = resolved.id
   const c = stateClient()
-  // Guard: a dismissed proposal cannot be moved back to 'draft'. Dismissal is
-  // an explicit operator decision; silently reversing it would lose the audit
-  // trail and could re-ask the operator a question they already answered.
-  // This mirrors the `AND status = 'draft'` guard in `dismissProposal` — the
-  // same conditional-update pattern applied in the opposite direction.
-  // Use `reviveProposal` to move an 'expired' or 'dismissed' proposal back to 'draft'; that
-  // path explicitly checks the precondition and emits the right bus event.
-  if (field === 'status' && value === 'draft') {
+  // Guard: reject (from, to) pairs no lifecycle verb performs, naming the verb
+  // that owns the transition. Dismissal is an explicit operator decision (undo
+  // it via `reviveProposal`, which emits 'proposal.added') and 'taken'/'sliced'
+  // anchor tasks cut from the proposal, so the raw setter must not be a back
+  // door around the verbs and the bus events they emit.
+  if (field === 'status') {
     const current = await getProposal(id)
-    if (current?.status === 'dismissed') {
-      throw new Error(
-        `proposal ${id} is 'dismissed'; a dismissed proposal cannot be moved back to 'draft'. ` +
-          `Use 'mars proposal revive <id>' to undo the dismissal.`,
-      )
+    if (current && current.status !== value) {
+      const from = current.status
+      const to = value as ProposalStatus
+      if (!(STATUS_TRANSITIONS[from]?.includes(to) ?? false)) {
+        const verb = STATUS_VERBS[`${from}->${to}`]
+        throw new Error(
+          `proposal ${id} is '${from}'; moving it to '${to}' is not a legal transition. ` +
+            (verb ? `Use ${verb}.` : `No verb performs '${from}' -> '${to}'.`),
+        )
+      }
     }
   }
   // Guard: a proposal with no substantive body cannot be moved to 'prd-ready'.

@@ -130,6 +130,9 @@ describe('GET /origins/:taskId', () => {
       problem: 'p',
       solution: 's',
     })
+    await proposals.setProposalField(prop.id, 'problem', 'a problem')
+    await proposals.setProposalField(prop.id, 'status', 'prd-ready')
+    await proposals.setProposalField(prop.id, 'status', 'slicing')
     await proposals.setProposalField(prop.id, 'status', 'sliced')
 
     const slice1 = await queue.enqueueTask('slice 1', undefined, {

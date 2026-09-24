@@ -74,6 +74,7 @@ describe('findOpenReflectionDraftForKpi', () => {
       source: 'reflection',
       kpiTag: 'success_rate',
     })
+    await setProposalField(created.id, 'problem', 'a problem')
     await setProposalField(created.id, 'status', 'prd-ready')
     expect(await findOpenReflectionDraftForKpi('success_rate')).toBeNull()
   })
@@ -90,6 +91,9 @@ describe('findOpenReflectionDraftForKpi', () => {
       source: 'reflection',
       kpiTag: 'p95_latency',
     })
+    await setProposalField(created.id, 'problem', 'a problem')
+    await setProposalField(created.id, 'status', 'prd-ready')
+    await setProposalField(created.id, 'status', 'slicing')
     await setProposalField(created.id, 'status', 'sliced')
     expect(await findOpenReflectionDraftForKpi('p95_latency')).toBeNull()
   })

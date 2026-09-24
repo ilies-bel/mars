@@ -77,6 +77,8 @@ describe('runStartupReconcile — stranded slicing proposals', { timeout: 120_00
     const { reconcile } = await loadModules(repo)
     const proposals = (await import('../../proposals')) as unknown as ProposalsModule
     const proposal = await proposals.createProposal('Interrupted slice', { source: 'human' })
+    await proposals.setProposalField(proposal.id, 'problem', 'a problem')
+    await proposals.setProposalField(proposal.id, 'status', 'prd-ready')
     await proposals.setProposalField(proposal.id, 'status', 'slicing')
 
     const summary = await reconcile.runStartupReconcile(makeDeps())
@@ -89,6 +91,8 @@ describe('runStartupReconcile — stranded slicing proposals', { timeout: 120_00
     const { reconcile } = await loadModules(repo)
     const proposals = (await import('../../proposals')) as unknown as ProposalsModule
     const proposal = await proposals.createProposal('Active slice', { source: 'human' })
+    await proposals.setProposalField(proposal.id, 'problem', 'a problem')
+    await proposals.setProposalField(proposal.id, 'status', 'prd-ready')
     await proposals.setProposalField(proposal.id, 'status', 'slicing')
 
     const summary = await reconcile.runStartupReconcile({
