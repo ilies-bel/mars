@@ -828,7 +828,7 @@ export const listProposals = async (
     args.push(filter.status)
   }
   if (!filter?.includeDeflected && !filter?.status) {
-    where.push("status <> 'deflected'")
+    where.push('deflection_reason IS NULL')
   }
   const sql = `SELECT * FROM proposals${
     where.length > 0 ? ` WHERE ${where.join(' AND ')}` : ''
@@ -844,6 +844,23 @@ export const listProposals = async (
     proposals.push(rowToProposal(r2, userStories))
   }
   return proposals
+}
+
+/**
+ * Count rows hidden from the default `listProposals` view by the capacity-
+ * ceiling deflection (ADR-0094 triage-capacity work): over-budget agent
+ * drafts born `expired` with a `deflection_reason`. `mars proposal list`
+ * uses this to print the trailing "N deflected" footer so an operator always
+ * knows the tail exists, even though it is one flag (`--deflected`) away
+ * from the default listing.
+ */
+export const countDeflectedProposals = async (): Promise<number> => {
+  await initProposals()
+  const c = stateClient()
+  const r = await c.execute(
+    `SELECT COUNT(*) AS n FROM proposals WHERE deflection_reason IS NOT NULL AND status = 'expired'`,
+  )
+  return Number((r.rows[0] as unknown as { n: number | bigint }).n ?? 0)
 }
 
 /** Legal lifecycle moves, keyed by current status. */

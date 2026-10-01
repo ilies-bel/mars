@@ -235,6 +235,9 @@ export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   '--keep-blocked',
   // mars kpi drill --tail: show only arcs above the p90 cost threshold.
   '--tail',
+  // mars proposal list --deflected: show only the capacity-ceiling-deflected
+  // tail (hidden from the default listing) instead of the triage queue.
+  '--deflected',
 ])
 
 // Short aliases are normalised to their long form before flag lookup.

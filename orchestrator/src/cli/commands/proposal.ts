@@ -26,6 +26,7 @@ import {
   resolveProposalId,
   dismissProposal,
   listProposals,
+  countDeflectedProposals,
   listProposalDependencies,
   validateProposalShaped,
   setProposalCoordinated,
@@ -646,10 +647,11 @@ const proposalDelete: Command = {
 const proposalList: Command = {
   path: 'proposal list',
   summary: 'list proposals; filter by source and/or status',
-  usage: `usage: mars proposal list [--source ${VALID_SOURCES.join('|')}] [--status <status>] [--all]`,
+  usage: `usage: mars proposal list [--source ${VALID_SOURCES.join('|')}] [--status <status>] [--deflected]`,
   run: async (args, deps) => {
     const sourceFlag = args.flags['--source']
     const statusFlag = args.flags['--status']
+    const deflectedOnly = hasFlag(args, '--deflected')
     if (sourceFlag !== undefined && !isProposalSource(sourceFlag)) {
       deps.err(
         `--source must be one of: ${VALID_SOURCES.join('|')}; got '${sourceFlag}'`,
@@ -659,12 +661,14 @@ const proposalList: Command = {
     const filter: {
       source?: ProposalSource
       status?: string
+      includeDeflected?: boolean
     } = {}
     if (sourceFlag) filter.source = sourceFlag
     if (statusFlag) filter.status = statusFlag
-    // The deflected tail (expired proposals) is hidden from default listings;
-    // an explicit --status or --all shows it.
-    const hideDeflected = statusFlag === undefined && !hasFlag(args, '--all')
+    // `--deflected` asks to see the hidden tail rather than the default
+    // triage queue, so it must bypass the capacity-ceiling exclusion that
+    // `listProposals` applies by default (ListProposalsFilter.includeDeflected).
+    if (deflectedOnly) filter.includeDeflected = true
     let ideas
     try {
       ideas = await listProposals(filter)
@@ -672,17 +676,26 @@ const proposalList: Command = {
       deps.err(errorMessage(error))
       return { code: 1 }
     }
-    const deflected = hideDeflected ? ideas.filter((i) => i.status === 'expired') : []
-    if (hideDeflected) ideas = ideas.filter((i) => i.status !== 'expired')
+    if (deflectedOnly) {
+      ideas = ideas.filter((i) => i.deflectionReason !== null)
+    }
     if (ideas.length === 0) {
       deps.out('no proposals')
     }
     for (const i of ideas) {
       const title = i.title.trim() || '(no title)'
-      deps.out(`${i.id.slice(0, 8)}\t${i.status}\tsource=${i.source}\t${title}`)
+      const reasonSuffix = deflectedOnly ? `\treason=${i.deflectionReason}` : ''
+      deps.out(`${i.id.slice(0, 8)}\t${i.status}\tsource=${i.source}\t${title}${reasonSuffix}`)
     }
-    if (deflected.length > 0) {
-      deps.out(`(${deflected.length} deflected proposal(s) hidden; pass --all to show)`)
+    // The deflected tail is hidden from the default (non --deflected) listing;
+    // name it on stderr so a scripted reader diffing stdout rows never mistakes
+    // the footer for a proposal, and an operator under queue pressure can tell
+    // "hidden" from "no more producers".
+    if (!deflectedOnly) {
+      const deflectedCount = await countDeflectedProposals()
+      if (deflectedCount > 0) {
+        deps.err(`${deflectedCount} deflected (mars proposal list --deflected)`)
+      }
     }
     return { code: 0 }
   },
