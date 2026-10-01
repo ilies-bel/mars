@@ -18,11 +18,13 @@ import {
   ARCHITECTURE_REPORT_LEVER,
   CODEGRAPH_SUGGESTION_LEVER,
   IDLE_PROPOSAL_OFFER_LEVER,
+  TRIAGE_YIELD_LEVER,
   UNVERIFIED_COMMITS_LEVER,
 } from '../conversation-copy.js'
 import { readLeverAutonomyLevel } from '../../daemon/config.js'
 import { detectIdleProposal } from './idle-proposal.js'
 import { detectTokenSpendTrend } from './token-spend-trend.js'
+import { detectTriageYieldDrop } from './triage-yield.js'
 import { detectManualPush } from './manual-push.js'
 import { detectCodegraphSuggestion } from './codegraph-suggestion.js'
 
@@ -127,6 +129,23 @@ export const runNoticeSweep = async (deps: NoticeSweepDeps): Promise<NoticeSweep
       await speak({
         kind: 'trend.token-spend',
         payload: { changePct: trend.changePct, windowDays: trend.windowDays },
+        priority: 'routine',
+      })
+    }
+  }
+
+  if (allowed(TRIAGE_YIELD_LEVER)) {
+    const drop = await detectTriageYieldDrop(client)
+    if (drop) {
+      await speak({
+        kind: 'trend.triage-yield',
+        payload: {
+          recentRatePct: drop.recentRatePct,
+          priorRatePct: drop.priorRatePct,
+          recentCreated: drop.recentCreated,
+          windowDays: drop.windowDays,
+          topSource: drop.topSource ?? 'an unknown source',
+        },
         priority: 'routine',
       })
     }

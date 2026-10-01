@@ -34,6 +34,7 @@ export const AutonomousNoticeKindSchema = z.enum([
   'suggestion.codegraph',
   'observation.manual-push',
   'trend.token-spend',
+  'trend.triage-yield',
   'gate.main-broken',
   'merge.operator-auto-commit',
   'steward.prompt-optimizer-ack',
@@ -53,6 +54,7 @@ export const IDLE_PROPOSAL_OFFER_LEVER = 'idle_proposal_offer' as const
 export const CODEGRAPH_SUGGESTION_LEVER = 'codegraph_suggestion' as const
 export const UNVERIFIED_COMMITS_LEVER = 'unverified_commits' as const
 export const ARCHITECTURE_REPORT_LEVER = 'architecture_report' as const
+export const TRIAGE_YIELD_LEVER = 'triage_yield' as const
 export const STEWARD_PROMPT_OPTIMIZER_LEVER = 'steward_prompt_optimizer' as const
 export const STEWARD_WORKFLOW_PATCH_LEVER = 'steward_workflow_patch' as const
 
@@ -75,6 +77,18 @@ export interface AutonomousNoticePayloads {
    * not claim to have written a report it has not written.
    */
   'trend.token-spend': { changePct: number; windowDays: number }
+  /**
+   * Proposal triage yield collapsed against the operator's own prior
+   * window. `topSource` names the source that produced the most proposals
+   * in the recent window, so the operator knows where the flood came from.
+   */
+  'trend.triage-yield': {
+    recentRatePct: number
+    priorRatePct: number
+    recentCreated: number
+    windowDays: number
+    topSource: string
+  }
   /** The integration branch is failing, so incoming work cannot verify. */
   'gate.main-broken': { failingCheck: string; blockedTasks: number }
   /**
@@ -323,6 +337,23 @@ const REGISTRY: { [Kind in AutonomousNoticeKind]: NoticeKindEntry<Kind> } = {
       },
       defer(),
       silence(ARCHITECTURE_REPORT_LEVER, 'Disable spend trend alerts', 'never'),
+    ],
+  },
+  'trend.triage-yield': {
+    act: 'announcement',
+    actionable: false,
+    collapseKey: 'triage-yield',
+    render: (p) =>
+      `I am flagging proposal triage because only ${p.recentRatePct}% of the ${p.recentCreated} proposals created in the last ${p.windowDays} days were actioned; ${sentenceValue(p.topSource)} produced most of them.`,
+    lever: TRIAGE_YIELD_LEVER,
+    offers: () => [
+      {
+        id: 'report',
+        label: 'Write me a report',
+        target: { type: 'subject', title: 'Why proposal triage yield collapsed' },
+      },
+      defer(),
+      silence(TRIAGE_YIELD_LEVER, 'Disable triage yield alerts', 'never'),
     ],
   },
   'gate.main-broken': {
